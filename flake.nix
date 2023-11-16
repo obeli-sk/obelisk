@@ -22,7 +22,7 @@
         in
         {
           devShells.default = pkgs.mkShell {
-            nativeBuildInputs = with pkgs; [ rustToolchain pkg-config wasm-tools nixpkgs-fmt rustup ];
+            nativeBuildInputs = with pkgs; [ rustToolchain pkg-config wasm-tools nixpkgs-fmt ];
             buildInputs = with pkgs; [ openssl ];
             shellHook = ''
               project_root="$(git rev-parse --show-toplevel 2>/dev/null)"
