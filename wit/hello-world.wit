@@ -1,5 +1,6 @@
 package my-org:my-component
 
 world example {
-    export hello-world: func() -> string
+    import sleep: func(millis: u64)
+    export execute: func() -> string
 }

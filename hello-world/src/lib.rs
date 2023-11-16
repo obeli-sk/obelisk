@@ -5,8 +5,8 @@ use bindings::Guest;
 struct Component;
 
 impl Guest for Component {
-    /// Say hello!
-    fn hello_world() -> String {
+    fn execute() -> String {
+        bindings::sleep(1000);
         "Hello, World!".to_string()
     }
 }

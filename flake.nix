@@ -28,7 +28,7 @@
               project_root="$(git rev-parse --show-toplevel 2>/dev/null)"
               export CARGO_INSTALL_ROOT="$project_root/.cargo"
               export PATH="$CARGO_INSTALL_ROOT/bin:$PATH"
-              cargo_packages="cargo-component@0.4.1"
+              cargo_packages="cargo-component@0.4.1 cargo-expand@1.0.74"
               cargo install --offline $cargo_packages 2>/dev/null || cargo install $cargo_packages
             '';
           };
