@@ -1,6 +1,10 @@
-package my-org:my-component
+package my-org:my-workflow
 
-world example {
-    import sleep: func(millis: u64)
+interface host-activities {
+    sleep: func(millis: u64)
+}
+
+world sleepy-workflow {
+    import host-activities
     export execute: func() -> string
 }

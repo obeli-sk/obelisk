@@ -6,12 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-cargo-component-bindings = "0.4.1"
+cargo-component-bindings = "0.4"
 
 [lib]
 crate-type = ["cdylib"]
 
 [package.metadata.component]
-package = "component:hello-world"
+package = "my-org:my-workflow"
 
 [package.metadata.component.dependencies]

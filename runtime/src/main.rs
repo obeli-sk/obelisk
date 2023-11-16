@@ -7,12 +7,11 @@ use wasmtime::{
 };
 
 wasmtime::component::bindgen!({
-    world: "example",
+    world: "sleepy-workflow",
     path: "../wit/hello-world.wit",
     async: true,
 });
 
-#[derive(Default)]
 struct Imports {
     event_history: Vec<Event>,
     idx: usize,
@@ -32,7 +31,7 @@ enum HostFunctionError {
 }
 
 #[async_trait::async_trait]
-impl ExampleImports for Imports {
+impl my_org::my_workflow::host_activities::Host for Imports {
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
         let expected = Event::Sleep(Duration::from_millis(millis));
         match self.event_history.get(self.idx) {
@@ -68,8 +67,9 @@ async fn execute_next_step(
             idx: 0,
         },
     );
-    let (example, _instance) = Example::instantiate_async(&mut store, &component, linker).await?;
-    example.call_execute(&mut store).await
+    let (workflow, _instance) =
+        SleepyWorkflow::instantiate_async(&mut store, &component, linker).await?;
+    workflow.call_execute(&mut store).await
 }
 
 async fn execute_all(
@@ -118,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a wasmtime execution context
     let engine = Engine::new(&config)?;
     let mut linker = Linker::new(&engine);
-    Example::add_to_linker(&mut linker, |state: &mut Imports| state)?;
+    SleepyWorkflow::add_to_linker(&mut linker, |state: &mut Imports| state)?;
     // Read and compile the wasm component
     let component = Component::from_file(&engine, wasm)?;
     let mut event_history = Vec::new();
