@@ -1,6 +1,3 @@
 [toolchain]
 channel = "1.73.0"
-targets = [
-    # "x86_64-unknown-linux-musl",  # Tools
-    "wasm32-unknown-unknown",     # Cloudflare Workers
-]
+targets = ["wasm32-unknown-unknown", "wasm32-wasi"]

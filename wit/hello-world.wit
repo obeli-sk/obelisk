@@ -1,0 +1,5 @@
+package my-org:my-component
+
+world example {
+    export hello-world: func() -> string
+}
