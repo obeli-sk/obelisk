@@ -91,11 +91,9 @@ async fn execute_all(
                 match source {
                     HostFunctionError::Persist(event) => {
                         // handle the event
+                        println!("Handling {event:?}");
                         match event {
-                            Event::Sleep(duration) => {
-                                println!("Sleeping {duration:?}");
-                                tokio::time::sleep(*duration).await
-                            }
+                            Event::Sleep(duration) => tokio::time::sleep(*duration).await,
                         }
                         event_history.push(event.to_owned());
                     }
@@ -112,7 +110,7 @@ async fn execute_all(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wasm = std::env::args().skip(1).next().expect("USAGE: demo WASM");
-    // Enable component model (which isn't supported by default)
+    // Enable component model and async support
     let mut config = Config::new();
     config.async_support(true).wasm_component_model(true);
     // Create a wasmtime execution context
