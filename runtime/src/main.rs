@@ -36,8 +36,8 @@ where
     Ok(ret0)
 }
 
-struct Imports {
-    event_history: Vec<Event>,
+struct Imports<'a> {
+    event_history: &'a [Event],
     idx: usize,
 }
 
@@ -55,7 +55,7 @@ enum HostFunctionError {
 }
 
 #[async_trait::async_trait]
-impl my_org::my_workflow::host_activities::Host for Imports {
+impl my_org::my_workflow::host_activities::Host for Imports<'_> {
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
         let event = Event::Sleep(Duration::from_millis(millis));
         match self.event_history.get(self.idx) {
@@ -80,13 +80,13 @@ impl my_org::my_workflow::host_activities::Host for Imports {
 async fn execute_next_step(
     execution_config: &mut ExecutionConfig<'_>,
     engine: &Engine,
-    instance_pre: &InstancePre<Imports>,
+    instance_pre: &InstancePre<Imports<'_>>,
 ) -> wasmtime::Result<String> {
     // Instantiate the component
     let mut store = Store::new(
         &engine,
         Imports {
-            event_history: execution_config.event_history.clone(),
+            event_history: execution_config.event_history,
             idx: 0,
         },
     );
@@ -97,7 +97,7 @@ async fn execute_all(
     execution_config: &mut ExecutionConfig<'_>,
     engine: &Engine,
     component: &Component,
-    linker: &Linker<Imports>,
+    linker: &Linker<Imports<'_>>,
 ) -> wasmtime::Result<String> {
     let instance_pre = linker.instantiate_pre(component)?;
     loop {
