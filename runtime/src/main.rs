@@ -13,35 +13,6 @@ wasmtime::component::bindgen!({
     async: true,
 });
 
-pub async fn execute<S, T>(
-    mut store: S,
-    instance_pre: &wasmtime::component::InstancePre<T>,
-    name: &str,
-) -> wasmtime::Result<String>
-where
-    S: wasmtime::AsContextMut<Data = T>,
-    T: Send,
-{
-    let instance = instance_pre.instantiate_async(&mut store).await?;
-    // new
-    let func = {
-        let mut store = store.as_context_mut();
-        let mut exports = instance.exports(&mut store);
-        let mut exports = exports.root();
-        exports.typed_func::<(), (String,)>(name)?.func().clone()
-    };
-    // call_execute
-    let callee = unsafe { wasmtime::component::TypedFunc::<(), (String,)>::new_unchecked(func) };
-    let (ret0,) = callee.call_async(&mut store, ()).await?;
-    callee.post_return_async(&mut store).await?;
-    Ok(ret0)
-}
-
-struct HostImports<'a, E: AsRef<Event>> {
-    event_history: &'a [E],
-    idx: usize,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 enum Event {
     Sleep(Duration),
@@ -55,26 +26,35 @@ enum HostFunctionError {
     Handle(Event),
 }
 
-#[async_trait::async_trait]
-impl my_org::my_workflow::host_activities::Host for HostImports<'_, EventWrapper> {
-    async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
-        let event = Event::Sleep(Duration::from_millis(millis));
+struct HostImports<'a, E: AsRef<Event>> {
+    event_history: &'a [E],
+    idx: usize,
+}
+
+impl<E: AsRef<Event>> HostImports<'_, E> {
+    fn handle(&mut self, event: Event) -> Result<(), HostFunctionError> {
         match self.event_history.get(self.idx).map(AsRef::as_ref) {
+            None => {
+                // new event needs to be handled by the runtime
+                Err(HostFunctionError::Handle(event))
+            }
             Some(current) if *current == event => {
                 println!("Skipping {current:?}");
                 self.idx += 1;
                 Ok(())
             }
-            Some(other) => {
-                anyhow::bail!(HostFunctionError::NonDeterminismDetected(format!(
-                    "Expected {event:?}, got {other:?}"
-                )))
-            }
-            None => {
-                // new event needs to be handled by the runtime
-                anyhow::bail!(HostFunctionError::Handle(event))
-            }
+            Some(other) => Err(HostFunctionError::NonDeterminismDetected(format!(
+                "Expected {event:?}, got {other:?}"
+            ))),
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl my_org::my_workflow::host_activities::Host for HostImports<'_, EventWrapper> {
+    async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
+        let event = Event::Sleep(Duration::from_millis(millis));
+        Ok(self.handle(event)?)
     }
 }
 
@@ -88,7 +68,7 @@ enum ExecutionError {
     UnknownError(anyhow::Error),
 }
 
-// struct that holds the wasmtime error in order to avoid cloning the event
+// Holds the wasmtime error in order to avoid cloning the event
 struct EventWrapper(anyhow::Error);
 impl AsRef<Event> for EventWrapper {
     fn as_ref(&self) -> &Event {
@@ -108,6 +88,32 @@ impl Debug for EventWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.as_ref().fmt(f)
     }
+}
+
+pub async fn execute<S, T>(
+    mut store: S,
+    instance_pre: &wasmtime::component::InstancePre<T>,
+    function_name: &str,
+) -> wasmtime::Result<String>
+where
+    S: wasmtime::AsContextMut<Data = T>,
+    T: Send,
+{
+    let instance = instance_pre.instantiate_async(&mut store).await?;
+    let func = {
+        let mut store = store.as_context_mut();
+        let mut exports = instance.exports(&mut store);
+        let mut exports = exports.root();
+        exports
+            .typed_func::<(), (String,)>(function_name)?
+            .func()
+            .clone()
+    };
+    // call func
+    let callee = unsafe { wasmtime::component::TypedFunc::<(), (String,)>::new_unchecked(func) };
+    let (ret0,) = callee.call_async(&mut store, ()).await?;
+    callee.post_return_async(&mut store).await?;
+    Ok(ret0)
 }
 
 async fn execute_next_step(
@@ -183,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a wasmtime execution context
     let engine = Engine::new(&config)?;
     let mut linker = Linker::new(&engine);
-    // add host functions
+    // Add host functions
     my_org::my_workflow::host_activities::add_to_linker(
         &mut linker,
         |state: &mut HostImports<_>| state,
