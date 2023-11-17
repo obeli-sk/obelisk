@@ -2,15 +2,39 @@ use std::time::Duration;
 
 use wasmtime::{
     self,
-    component::{Component, Linker},
+    component::{Component, InstancePre, Linker},
     Config, Engine, Store,
 };
 
 wasmtime::component::bindgen!({
-    world: "sleepy-workflow",
-    path: "../wit/hello-world.wit",
+    world: "keep-wasmtime-bindgen-happy",
+    path: "../wit/host-world.wit",
     async: true,
 });
+
+pub async fn execute<S, T>(
+    mut store: impl wasmtime::AsContextMut<Data = T>,
+    instance_pre: &wasmtime::component::InstancePre<T>,
+    name: &str,
+) -> wasmtime::Result<String>
+where
+    S: wasmtime::AsContextMut<Data = T>,
+    T: Send,
+{
+    let instance = instance_pre.instantiate_async(&mut store).await?;
+    // new
+    let execute = {
+        let mut store = store.as_context_mut();
+        let mut exports = instance.exports(&mut store);
+        let mut __exports = exports.root();
+        *__exports.typed_func::<(), (String,)>(name)?.func()
+    };
+    // call_execute
+    let callee = unsafe { wasmtime::component::TypedFunc::<(), (String,)>::new_unchecked(execute) };
+    let (ret0,) = callee.call_async(&mut store, ()).await?;
+    callee.post_return_async(&mut store).await?;
+    Ok(ret0)
+}
 
 struct Imports {
     event_history: Vec<Event>,
@@ -54,32 +78,30 @@ impl my_org::my_workflow::host_activities::Host for Imports {
 }
 
 async fn execute_next_step(
-    event_history: Vec<Event>,
+    execution_config: &mut ExecutionConfig<'_>,
     engine: &Engine,
-    component: &Component,
-    linker: &Linker<Imports>,
+    instance_pre: &InstancePre<Imports>,
 ) -> wasmtime::Result<String> {
     // Instantiate the component
     let mut store = Store::new(
         &engine,
         Imports {
-            event_history,
+            event_history: execution_config.event_history.clone(),
             idx: 0,
         },
     );
-    let (workflow, _instance) =
-        SleepyWorkflow::instantiate_async(&mut store, &component, linker).await?;
-    workflow.call_execute(&mut store).await
+    execute::<&mut Store<_>, _>(&mut store, &instance_pre, execution_config.function_name).await
 }
 
 async fn execute_all(
-    event_history: &mut Vec<Event>,
+    execution_config: &mut ExecutionConfig<'_>,
     engine: &Engine,
     component: &Component,
     linker: &Linker<Imports>,
 ) -> wasmtime::Result<String> {
+    let instance_pre = linker.instantiate_pre(component)?;
     loop {
-        let res = execute_next_step(event_history.clone(), &engine, &component, &linker).await;
+        let res = execute_next_step(execution_config, engine, &instance_pre).await;
         match res {
             Ok(output) => return Ok(output),
             Err(err)
@@ -95,7 +117,7 @@ async fn execute_all(
                         match event {
                             Event::Sleep(duration) => tokio::time::sleep(*duration).await,
                         }
-                        event_history.push(event.to_owned());
+                        execution_config.event_history.push(event.to_owned());
                     }
                     HostFunctionError::NonDeterminismDetected(err) => {
                         panic!("Non determinism detected: {err}")
@@ -107,23 +129,39 @@ async fn execute_all(
     }
 }
 
+#[derive(Debug)]
+struct ExecutionConfig<'a> {
+    event_history: &'a mut Vec<Event>,
+    function_name: &'a str,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let wasm = std::env::args().skip(1).next().expect("USAGE: demo WASM");
+    let mut args = std::env::args().skip(1);
+    let wasm = args.next().expect("Parameters: file.wasm function_name");
+    let function_name = args.next().expect("Parameters: file.wasm function_name");
     // Enable component model and async support
     let mut config = Config::new();
     config.async_support(true).wasm_component_model(true);
     // Create a wasmtime execution context
     let engine = Engine::new(&config)?;
     let mut linker = Linker::new(&engine);
-    SleepyWorkflow::add_to_linker(&mut linker, |state: &mut Imports| state)?;
+    // add host functions
+    my_org::my_workflow::host_activities::add_to_linker(&mut linker, |state: &mut Imports| state)?;
     // Read and compile the wasm component
     let component = Component::from_file(&engine, wasm)?;
+    // Prepare ExecutionConfig
     let mut event_history = Vec::new();
-    let output = execute_all(&mut event_history, &engine, &component, &linker).await?;
-    println!("Finished: {output}, event_history: {event_history:?}");
+    let mut execution_config = ExecutionConfig {
+        event_history: &mut event_history,
+        function_name: &function_name,
+    };
+    // Execute once recording the events
+    let output = execute_all(&mut execution_config, &engine, &component, &linker).await?;
+    println!("Finished: {output}, {execution_config:?}");
     println!();
-    let output = execute_all(&mut event_history, &engine, &component, &linker).await?;
-    println!("Finished: {output}, event_history: {event_history:?}");
+    // Execute by replaying the event history
+    let output = execute_all(&mut execution_config, &engine, &component, &linker).await?;
+    println!("Finished: {output}, {execution_config:?}");
     Ok(())
 }
