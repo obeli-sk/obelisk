@@ -49,9 +49,9 @@ enum Event {
 
 #[derive(thiserror::Error, Debug)]
 enum HostFunctionError {
-    #[error("Non deterministic execution: {0}")]
+    #[error("non deterministic execution: {0}")]
     NonDeterminismDetected(String),
-    #[error("Handle {0:?}")]
+    #[error("handle: {0:?}")]
     Handle(Event),
 }
 
@@ -80,11 +80,11 @@ impl my_org::my_workflow::host_activities::Host for HostImports<'_, EventWrapper
 
 #[derive(thiserror::Error, Debug)]
 enum ExecutionError {
-    #[error("Non deterministic execution: {0}")]
+    #[error("non deterministic execution: {0}")]
     NonDeterminismDetected(String),
-    #[error("Handle {0:?}")]
+    #[error("handle: {0:?}")]
     Handle(EventWrapper),
-    #[error("Unknown error: {0:?}")]
+    #[error("unknown error: {0:?}")]
     UnknownError(anyhow::Error),
 }
 
@@ -161,7 +161,7 @@ async fn execute_all(
             Err(ExecutionError::NonDeterminismDetected(reason)) => {
                 panic!("Non determinism detected: {reason}")
             }
-            Err(ExecutionError::UnknownError(err)) => panic!("Unknown error {err:?}"),
+            Err(ExecutionError::UnknownError(err)) => panic!("Unknown error: {err:?}"),
         }
     }
 }
