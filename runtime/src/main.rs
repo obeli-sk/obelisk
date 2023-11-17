@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fmt::Debug, time::Duration};
 
 use wasmtime::{
     self,
@@ -37,8 +37,8 @@ where
     Ok(ret0)
 }
 
-struct HostImports<'a> {
-    event_history: &'a [Event],
+struct HostImports<'a, E: AsRef<Event>> {
+    event_history: &'a [E],
     idx: usize,
 }
 
@@ -56,10 +56,10 @@ enum HostFunctionError {
 }
 
 #[async_trait::async_trait]
-impl my_org::my_workflow::host_activities::Host for HostImports<'_> {
+impl my_org::my_workflow::host_activities::Host for HostImports<'_, EventWrapper> {
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
         let event = Event::Sleep(Duration::from_millis(millis));
-        match self.event_history.get(self.idx) {
+        match self.event_history.get(self.idx).map(AsRef::as_ref) {
             Some(current) if *current == event => {
                 println!("Skipping {current:?}");
                 self.idx += 1;
@@ -83,15 +83,37 @@ enum ExecutionError {
     #[error("Non deterministic execution: {0}")]
     NonDeterminismDetected(String),
     #[error("Handle {0:?}")]
-    Handle(Event),
+    Handle(EventWrapper),
     #[error("Unknown error: {0:?}")]
     UnknownError(anyhow::Error),
 }
 
+// struct that holds the wasmtime error in order to avoid cloning the event
+struct EventWrapper(anyhow::Error);
+impl AsRef<Event> for EventWrapper {
+    fn as_ref(&self) -> &Event {
+        match self
+            .0
+            .source()
+            .expect("source must be present")
+            .downcast_ref::<HostFunctionError>()
+            .expect("source must be HostFunctionError")
+        {
+            HostFunctionError::Handle(event) => event,
+            other => panic!("HostFunctionError::Handle expected, got {other:?}"),
+        }
+    }
+}
+impl Debug for EventWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.as_ref().fmt(f)
+    }
+}
+
 async fn execute_next_step(
-    execution_config: &mut ExecutionConfig<'_>,
+    execution_config: &mut ExecutionConfig<'_, EventWrapper>,
     engine: &Engine,
-    instance_pre: &InstancePre<HostImports<'_>>,
+    instance_pre: &InstancePre<HostImports<'_, EventWrapper>>,
 ) -> Result<String, ExecutionError> {
     // Instantiate the component
     let mut store = Store::new(
@@ -109,19 +131,19 @@ async fn execute_next_step(
                 .and_then(|source| source.downcast_ref::<HostFunctionError>())
             {
                 Some(HostFunctionError::NonDeterminismDetected(reason)) => {
-                    ExecutionError::NonDeterminismDetected(reason.to_string())
+                    ExecutionError::NonDeterminismDetected(reason.clone())
                 }
-                Some(HostFunctionError::Handle(event)) => ExecutionError::Handle(event.clone()),
+                Some(HostFunctionError::Handle(_)) => ExecutionError::Handle(EventWrapper(err)),
                 None => ExecutionError::UnknownError(err),
             }
         })
 }
 
 async fn execute_all(
-    execution_config: &mut ExecutionConfig<'_>,
+    execution_config: &mut ExecutionConfig<'_, EventWrapper>,
     engine: &Engine,
     component: &Component,
-    linker: &Linker<HostImports<'_>>,
+    linker: &Linker<HostImports<'_, EventWrapper>>,
 ) -> wasmtime::Result<String> {
     let instance_pre = linker.instantiate_pre(component)?;
     loop {
@@ -130,10 +152,10 @@ async fn execute_all(
             Ok(output) => return Ok(output),
             Err(ExecutionError::Handle(event)) => {
                 println!("Handling {event:?}");
-                match event {
-                    Event::Sleep(duration) => tokio::time::sleep(duration).await,
+                match event.as_ref() {
+                    Event::Sleep(duration) => tokio::time::sleep(*duration).await,
                 }
-                execution_config.event_history.push(event.to_owned());
+                execution_config.event_history.push(event);
             }
 
             Err(ExecutionError::NonDeterminismDetected(reason)) => {
@@ -145,8 +167,8 @@ async fn execute_all(
 }
 
 #[derive(Debug)]
-struct ExecutionConfig<'a> {
-    event_history: &'a mut Vec<Event>,
+struct ExecutionConfig<'a, E: AsRef<Event>> {
+    event_history: &'a mut Vec<E>,
     function_name: &'a str,
 }
 
@@ -162,9 +184,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::new(&config)?;
     let mut linker = Linker::new(&engine);
     // add host functions
-    my_org::my_workflow::host_activities::add_to_linker(&mut linker, |state: &mut HostImports| {
-        state
-    })?;
+    my_org::my_workflow::host_activities::add_to_linker(
+        &mut linker,
+        |state: &mut HostImports<_>| state,
+    )?;
     // Read and compile the wasm component
     let component = Component::from_file(&engine, wasm)?;
     // Prepare ExecutionConfig
