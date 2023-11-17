@@ -9,4 +9,8 @@ impl Guest for Component {
         sleep(1000);
         "Hello, World!".to_string()
     }
+
+    fn second() -> String {
+        "second".to_string()
+    }
 }

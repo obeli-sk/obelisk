@@ -7,4 +7,5 @@ interface host-activities {
 world sleepy-workflow {
     import host-activities
     export execute: func() -> string
+    export second: func() -> string
 }
