@@ -51,27 +51,27 @@ enum HostFunctionError {
     #[error("Non deterministic execution: {0}")]
     NonDeterminismDetected(String),
     #[error("Persisting {0:?}")]
-    Persist(Event),
+    Handle(Event),
 }
 
 #[async_trait::async_trait]
 impl my_org::my_workflow::host_activities::Host for Imports {
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
-        let expected = Event::Sleep(Duration::from_millis(millis));
+        let event = Event::Sleep(Duration::from_millis(millis));
         match self.event_history.get(self.idx) {
-            Some(current) if *current == expected => {
+            Some(current) if *current == event => {
                 println!("Skipping {current:?}");
                 self.idx += 1;
                 Ok(())
             }
             Some(other) => {
                 anyhow::bail!(HostFunctionError::NonDeterminismDetected(format!(
-                    "Expected {expected:?}, got {other:?}"
+                    "Expected {event:?}, got {other:?}"
                 )))
             }
             None => {
-                // persist the new event and quit the current execution
-                anyhow::bail!(HostFunctionError::Persist(expected))
+                // new event needs to be handled by the runtime
+                anyhow::bail!(HostFunctionError::Handle(event))
             }
         }
     }
@@ -111,8 +111,7 @@ async fn execute_all(
             {
                 let source: &HostFunctionError = err.source().unwrap().downcast_ref().unwrap();
                 match source {
-                    HostFunctionError::Persist(event) => {
-                        // handle the event
+                    HostFunctionError::Handle(event) => {
                         println!("Handling {event:?}");
                         match event {
                             Event::Sleep(duration) => tokio::time::sleep(*duration).await,
