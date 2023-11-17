@@ -14,7 +14,7 @@ wasmtime::component::bindgen!({
 });
 
 pub async fn execute<S, T>(
-    mut store: impl wasmtime::AsContextMut<Data = T>,
+    mut store: S,
     instance_pre: &wasmtime::component::InstancePre<T>,
     name: &str,
 ) -> wasmtime::Result<String>
@@ -91,7 +91,7 @@ async fn execute_next_step(
             idx: 0,
         },
     );
-    execute::<&mut Store<_>, _>(&mut store, &instance_pre, execution_config.function_name).await
+    execute(&mut store, &instance_pre, execution_config.function_name).await
 }
 
 async fn execute_all(
