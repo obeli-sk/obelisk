@@ -6,6 +6,7 @@ use wasmtime::{
     Config, Engine, Store,
 };
 
+// generate my_org::my_workflow::host_activities::Host trait
 wasmtime::component::bindgen!({
     world: "keep-wasmtime-bindgen-happy",
     path: "../wit/host-world.wit",
@@ -36,7 +37,7 @@ where
     Ok(ret0)
 }
 
-struct Imports<'a> {
+struct HostImports<'a> {
     event_history: &'a [Event],
     idx: usize,
 }
@@ -55,7 +56,7 @@ enum HostFunctionError {
 }
 
 #[async_trait::async_trait]
-impl my_org::my_workflow::host_activities::Host for Imports<'_> {
+impl my_org::my_workflow::host_activities::Host for HostImports<'_> {
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
         let event = Event::Sleep(Duration::from_millis(millis));
         match self.event_history.get(self.idx) {
@@ -80,12 +81,12 @@ impl my_org::my_workflow::host_activities::Host for Imports<'_> {
 async fn execute_next_step(
     execution_config: &mut ExecutionConfig<'_>,
     engine: &Engine,
-    instance_pre: &InstancePre<Imports<'_>>,
+    instance_pre: &InstancePre<HostImports<'_>>,
 ) -> wasmtime::Result<String> {
     // Instantiate the component
     let mut store = Store::new(
         &engine,
-        Imports {
+        HostImports {
             event_history: execution_config.event_history,
             idx: 0,
         },
@@ -97,7 +98,7 @@ async fn execute_all(
     execution_config: &mut ExecutionConfig<'_>,
     engine: &Engine,
     component: &Component,
-    linker: &Linker<Imports<'_>>,
+    linker: &Linker<HostImports<'_>>,
 ) -> wasmtime::Result<String> {
     let instance_pre = linker.instantiate_pre(component)?;
     loop {
@@ -146,7 +147,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::new(&config)?;
     let mut linker = Linker::new(&engine);
     // add host functions
-    my_org::my_workflow::host_activities::add_to_linker(&mut linker, |state: &mut Imports| state)?;
+    my_org::my_workflow::host_activities::add_to_linker(&mut linker, |state: &mut HostImports| {
+        state
+    })?;
     // Read and compile the wasm component
     let component = Component::from_file(&engine, wasm)?;
     // Prepare ExecutionConfig
