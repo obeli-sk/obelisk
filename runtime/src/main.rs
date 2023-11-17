@@ -117,13 +117,13 @@ async fn execute_next_step(
 ) -> Result<String, ExecutionError> {
     // Instantiate the component
     let mut store = Store::new(
-        &engine,
+        engine,
         HostImports {
             event_history: execution_config.event_history,
             idx: 0,
         },
     );
-    execute(&mut store, &instance_pre, execution_config.function_name)
+    execute(&mut store, instance_pre, execution_config.function_name)
         .await
         .map_err(|err| {
             match err
