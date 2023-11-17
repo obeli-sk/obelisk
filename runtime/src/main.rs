@@ -51,7 +51,7 @@ enum Event {
 enum HostFunctionError {
     #[error("Non deterministic execution: {0}")]
     NonDeterminismDetected(String),
-    #[error("Persisting {0:?}")]
+    #[error("Handle {0:?}")]
     Handle(Event),
 }
 
@@ -78,11 +78,21 @@ impl my_org::my_workflow::host_activities::Host for HostImports<'_> {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+enum ExecutionError {
+    #[error("Non deterministic execution: {0}")]
+    NonDeterminismDetected(String),
+    #[error("Handle {0:?}")]
+    Handle(Event),
+    #[error("Unknown error: {0:?}")]
+    UnknownError(anyhow::Error),
+}
+
 async fn execute_next_step(
     execution_config: &mut ExecutionConfig<'_>,
     engine: &Engine,
     instance_pre: &InstancePre<HostImports<'_>>,
-) -> wasmtime::Result<String> {
+) -> Result<String, ExecutionError> {
     // Instantiate the component
     let mut store = Store::new(
         &engine,
@@ -91,7 +101,20 @@ async fn execute_next_step(
             idx: 0,
         },
     );
-    execute(&mut store, &instance_pre, execution_config.function_name).await
+    execute(&mut store, &instance_pre, execution_config.function_name)
+        .await
+        .map_err(|err| {
+            match err
+                .source()
+                .and_then(|source| source.downcast_ref::<HostFunctionError>())
+            {
+                Some(HostFunctionError::NonDeterminismDetected(reason)) => {
+                    ExecutionError::NonDeterminismDetected(reason.to_string())
+                }
+                Some(HostFunctionError::Handle(event)) => ExecutionError::Handle(event.clone()),
+                None => ExecutionError::UnknownError(err),
+            }
+        })
 }
 
 async fn execute_all(
@@ -105,26 +128,18 @@ async fn execute_all(
         let res = execute_next_step(execution_config, engine, &instance_pre).await;
         match res {
             Ok(output) => return Ok(output),
-            Err(err)
-                if err
-                    .source()
-                    .is_some_and(|src| src.downcast_ref::<HostFunctionError>().is_some()) =>
-            {
-                let source: &HostFunctionError = err.source().unwrap().downcast_ref().unwrap();
-                match source {
-                    HostFunctionError::Handle(event) => {
-                        println!("Handling {event:?}");
-                        match event {
-                            Event::Sleep(duration) => tokio::time::sleep(*duration).await,
-                        }
-                        execution_config.event_history.push(event.to_owned());
-                    }
-                    HostFunctionError::NonDeterminismDetected(err) => {
-                        panic!("Non determinism detected: {err}")
-                    }
+            Err(ExecutionError::Handle(event)) => {
+                println!("Handling {event:?}");
+                match event {
+                    Event::Sleep(duration) => tokio::time::sleep(duration).await,
                 }
+                execution_config.event_history.push(event.to_owned());
             }
-            Err(err) => panic!("Unknown error {err:?}"),
+
+            Err(ExecutionError::NonDeterminismDetected(reason)) => {
+                panic!("Non determinism detected: {reason}")
+            }
+            Err(ExecutionError::UnknownError(err)) => panic!("Unknown error {err:?}"),
         }
     }
 }
