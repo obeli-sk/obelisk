@@ -24,14 +24,14 @@ where
 {
     let instance = instance_pre.instantiate_async(&mut store).await?;
     // new
-    let execute = {
+    let func = {
         let mut store = store.as_context_mut();
         let mut exports = instance.exports(&mut store);
-        let mut __exports = exports.root();
-        *__exports.typed_func::<(), (String,)>(name)?.func()
+        let mut exports = exports.root();
+        exports.typed_func::<(), (String,)>(name)?.func().clone()
     };
     // call_execute
-    let callee = unsafe { wasmtime::component::TypedFunc::<(), (String,)>::new_unchecked(execute) };
+    let callee = unsafe { wasmtime::component::TypedFunc::<(), (String,)>::new_unchecked(func) };
     let (ret0,) = callee.call_async(&mut store, ()).await?;
     callee.post_return_async(&mut store).await?;
     Ok(ret0)
