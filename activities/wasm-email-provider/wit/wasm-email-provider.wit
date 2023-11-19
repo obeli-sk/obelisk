@@ -1,0 +1,16 @@
+package component:wasm-email-provider
+
+interface email-sender {
+    record email {
+        to: string,
+        subject: string,
+        body: string,
+    }
+    send: func(idempotency-id: string, email: email) -> result<string, string>
+}
+
+world mock-email-sender {
+    import wasi:http/types@0.2.0-rc-2023-11-10;
+    import wasi:http/outgoing-handler@0.2.0-rc-2023-11-10;
+    export email-sender
+}
