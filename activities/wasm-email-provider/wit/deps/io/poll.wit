@@ -1,23 +1,10 @@
-package wasi:io@0.2.0-rc-2023-11-10;
+package wasi:io@0.2.0-rc-2023-10-18;
 
 /// A poll API intended to let users wait for I/O events on multiple handles
 /// at once.
 interface poll {
-    /// `pollable` epresents a single I/O event which may be ready, or not.
-    resource pollable {
-
-      /// Return the readiness of a pollable. This function never blocks.
-      ///
-      /// Returns `true` when the pollable is ready, and `false` otherwise.
-      ready: func() -> bool;
-
-      /// `block` returns immediately if the pollable is ready, and otherwise
-      /// blocks until ready.
-      ///
-      /// This function is equivalent to calling `poll.poll` on a list
-      /// containing only this pollable.
-      block: func();
-    }
+    /// A "pollable" handle.
+    resource pollable;
 
     /// Poll for completion on a set of pollables.
     ///
@@ -37,5 +24,11 @@ interface poll {
     /// do any I/O so it doesn't fail. If any of the I/O sources identified by
     /// the pollables has an error, it is indicated by marking the source as
     /// being reaedy for I/O.
-    poll: func(in: list<borrow<pollable>>) -> list<u32>;
+    poll-list: func(in: list<borrow<pollable>>) -> list<u32>;
+
+    /// Poll for completion on a single pollable.
+    ///
+    /// This function is similar to `poll-list`, but operates on only a single
+    /// pollable. When it returns, the handle is ready for I/O.
+    poll-one: func(in: borrow<pollable>);
 }

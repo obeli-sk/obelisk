@@ -1,4 +1,3 @@
-package wasi:random@0.2.0-rc-2023-11-10;
 /// WASI Random is a random data API.
 ///
 /// It is intended to be portable at least between Unix-family platforms and
