@@ -103,10 +103,7 @@ where
         let mut store = store.as_context_mut();
         let mut exports = instance.exports(&mut store);
         let mut exports = exports.root();
-        exports
-            .typed_func::<(), (String,)>(function_name)?
-            .func()
-            .clone()
+        *exports.typed_func::<(), (String,)>(function_name)?.func()
     };
     // call func
     let callee = unsafe { wasmtime::component::TypedFunc::<(), (String,)>::new_unchecked(func) };
@@ -200,7 +197,7 @@ pub(crate) async fn workflow_example(
     let mut event_history = Vec::new();
     let mut execution_config = ExecutionConfig {
         event_history: &mut event_history,
-        function_name: &function_name,
+        function_name,
     };
     // Execute once recording the events
     let output = execute_all(&mut execution_config, &engine, &component, &linker).await?;

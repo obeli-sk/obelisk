@@ -77,7 +77,7 @@ fn store(engine: &Engine) -> Store<Ctx> {
         send_request: None,
     };
 
-    Store::new(&engine, ctx)
+    Store::new(engine, ctx)
 }
 
 impl Drop for Ctx {
@@ -116,10 +116,9 @@ pub(crate) async fn activity_example(
         let mut store = &mut store;
         let mut exports = instance.exports(&mut store);
         let mut exports = exports.root();
-        exports
+        *exports
             .typed_func::<(), (Result<String, String>,)>(function_name)?
             .func()
-            .clone()
     };
     // call func
     let callee = unsafe {

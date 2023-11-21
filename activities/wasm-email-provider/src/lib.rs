@@ -15,7 +15,7 @@ impl Guest for Component {
         // _email: Email,
     ) -> Result<String, String> {
         let addr = "api.ipify.org";
-        let res = crate::http::request(Method::Get, Scheme::Http, &addr, "", None, None).unwrap();
+        let res = crate::http::request(Method::Get, Scheme::Http, addr, "", None, None).unwrap();
         let body = String::from_utf8_lossy(&res.body);
         Ok(format!("hello {body} from wasm-email-provider"))
     }
