@@ -8,7 +8,7 @@ use wasmtime::{
 // generate my_org::my_workflow::host_activities::Host trait
 wasmtime::component::bindgen!({
     world: "keep-wasmtime-bindgen-happy",
-    path: "../wit/host-world.wit",
+    path: "wit/host-world.wit",
     async: true,
 });
 
