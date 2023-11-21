@@ -1,6 +1,7 @@
-use std::sync::Arc;
+use anyhow::{bail, Context};
+use std::{collections::HashMap, sync::Arc};
 use wasmtime::{
-    component::{Component, Linker, Resource},
+    component::{Component, InstancePre, Linker, Resource},
     Config, Engine, Store,
 };
 use wasmtime_wasi::preview2::{pipe::MemoryOutputPipe, Table, WasiCtx, WasiCtxBuilder, WasiView};
@@ -8,6 +9,7 @@ use wasmtime_wasi_http::{
     types::{self, HostFutureIncomingResponse, OutgoingRequest},
     WasiHttpCtx, WasiHttpView,
 };
+use wit_component::DecodedWasm;
 
 type RequestSender = Arc<
     dyn Fn(&mut Ctx, OutgoingRequest) -> wasmtime::Result<Resource<HostFutureIncomingResponse>>
@@ -15,7 +17,7 @@ type RequestSender = Arc<
         + Sync,
 >;
 
-struct Ctx {
+pub(crate) struct Ctx {
     table: Table,
     wasi: WasiCtx,
     http: WasiHttpCtx,
@@ -93,39 +95,76 @@ impl Drop for Ctx {
     }
 }
 
-pub(crate) async fn activity_example(
-    wasm_path: &str,
-    function_name: &str,
-) -> Result<(), anyhow::Error> {
-    let mut config = Config::new();
-    // TODO: limit execution with epoch_interruption
-    config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
-    config.wasm_component_model(true);
-    config.async_support(true);
-    let engine = Engine::new(&config)?;
-    let component = Component::from_file(&engine, wasm_path)?;
-    let mut store = store(&engine);
-    let mut linker = Linker::new(&engine);
+pub(crate) struct Activities {
+    activity_functions: HashMap<String, wit_parser::Function>,
+    instance_pre: wasmtime::component::InstancePre<Ctx>,
+}
 
-    wasmtime_wasi::preview2::command::add_to_linker(&mut linker)?;
-    wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(&mut linker, |t| t)?;
-    wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t)?;
+impl Activities {
+    pub(crate) async fn new(wasm_path: &str, engine: &Engine) -> Result<Self, anyhow::Error> {
+        let activity_wasm_contents = std::fs::read(wasm_path).context("cannot open {wasm_path}")?;
+        let decoded = wit_component::decode(&activity_wasm_contents)
+            .context("cannot decode {activity_wasm_path}")?;
 
-    let instance = linker.instantiate_async(&mut store, &component).await?;
-    let func = {
-        let mut store = &mut store;
-        let mut exports = instance.exports(&mut store);
-        let mut exports = exports.root();
-        *exports
-            .typed_func::<(), (Result<String, String>,)>(function_name)?
-            .func()
-    };
-    // call func
-    let callee = unsafe {
-        wasmtime::component::TypedFunc::<(), (Result<String, String>,)>::new_unchecked(func)
-    };
-    let (ret,) = callee.call_async(&mut store, ()).await?;
-    callee.post_return_async(&mut store).await?;
-    println!("activity returned {ret:?}");
-    Ok(())
+        let (resolve, world_id) = match decoded {
+            DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
+            _ => bail!("cannot parse component"),
+        };
+
+        let functions = {
+            let world = resolve.worlds.get(world_id).expect("world must exist");
+            world.exports.iter().filter_map(|(_, item)| match item {
+                wit_parser::WorldItem::Function(f) => Some(f.clone()),
+                _ => None,
+            })
+        };
+        let activity_functions = functions
+            .map(|function| (function.name.clone(), function))
+            .collect::<HashMap<_, _>>();
+        let instance_pre: wasmtime::component::InstancePre<Ctx> = {
+            let mut linker = wasmtime::component::Linker::new(&engine);
+            wasmtime_wasi::preview2::command::add_to_linker(&mut linker)?;
+            wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(
+                &mut linker,
+                |t| t,
+            )?;
+            wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t)?;
+            // Read and compile the wasm component
+            let component =
+                wasmtime::component::Component::from_binary(&engine, &activity_wasm_contents)?;
+            linker.instantiate_pre(&component)?
+        };
+        Ok(Self {
+            activity_functions,
+            instance_pre,
+        })
+    }
+
+    pub(crate) async fn run(
+        &self,
+        engine: &Engine,
+        function_name: &str,
+    ) -> Result<String, anyhow::Error> {
+        let mut store = store(engine);
+        let instance = self.instance_pre.instantiate_async(&mut store).await?;
+        let func = {
+            let mut store = &mut store;
+            let mut exports = instance.exports(&mut store);
+            let mut exports = exports.root();
+            *exports
+                .typed_func::<(), (Result<String, String>,)>(function_name)?
+                .func()
+        };
+        // call func
+        let callee = unsafe {
+            wasmtime::component::TypedFunc::<(), (Result<String, String>,)>::new_unchecked(func)
+        };
+        let (ret,) = callee.call_async(&mut store, ()).await?;
+        callee.post_return_async(&mut store).await?;
+        ret.map_err(|str| anyhow::anyhow!(str))
+    }
+
+    pub(crate) fn function_names(&self) -> impl Iterator<Item = &str> {
+        self.activity_functions.keys().map(String::as_str)
+    }
 }
