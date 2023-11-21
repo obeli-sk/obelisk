@@ -7,7 +7,8 @@ struct Component;
 impl Guest for Component {
     fn execute() -> String {
         sleep(1000);
-        "Hello, World!".to_string()
+        let res = crate::bindings::my_org::my_workflow::my_activity::send().unwrap();
+        format!("Hello, {res}")
     }
 
     fn second() -> String {

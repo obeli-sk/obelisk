@@ -1,15 +1,23 @@
 use anyhow::{bail, Context};
 use std::{collections::HashMap, sync::Arc};
-use wasmtime::{
-    component::{Component, InstancePre, Linker, Resource},
-    Config, Engine, Store,
-};
+use wasmtime::{component::Resource, Config, Engine, Store};
 use wasmtime_wasi::preview2::{pipe::MemoryOutputPipe, Table, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::{
     types::{self, HostFutureIncomingResponse, OutgoingRequest},
     WasiHttpCtx, WasiHttpView,
 };
 use wit_component::DecodedWasm;
+
+lazy_static::lazy_static! {
+    static ref ENGINE: Engine = {
+        let mut config = Config::new();
+        // TODO: limit execution with epoch_interruption
+        config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+        config.wasm_component_model(true);
+        config.async_support(true);
+        Engine::new(&config).unwrap()
+    };
+}
 
 type RequestSender = Arc<
     dyn Fn(&mut Ctx, OutgoingRequest) -> wasmtime::Result<Resource<HostFutureIncomingResponse>>
@@ -101,10 +109,11 @@ pub(crate) struct Activities {
 }
 
 impl Activities {
-    pub(crate) async fn new(wasm_path: &str, engine: &Engine) -> Result<Self, anyhow::Error> {
-        let activity_wasm_contents = std::fs::read(wasm_path).context("cannot open {wasm_path}")?;
+    pub(crate) async fn new(wasm_path: &str) -> Result<Self, anyhow::Error> {
+        let activity_wasm_contents =
+            std::fs::read(wasm_path).with_context(|| format!("cannot open {wasm_path}"))?;
         let decoded = wit_component::decode(&activity_wasm_contents)
-            .context("cannot decode {activity_wasm_path}")?;
+            .with_context(|| format!("cannot decode {wasm_path}"))?;
 
         let (resolve, world_id) = match decoded {
             DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
@@ -122,7 +131,7 @@ impl Activities {
             .map(|function| (function.name.clone(), function))
             .collect::<HashMap<_, _>>();
         let instance_pre: wasmtime::component::InstancePre<Ctx> = {
-            let mut linker = wasmtime::component::Linker::new(&engine);
+            let mut linker = wasmtime::component::Linker::new(&ENGINE);
             wasmtime_wasi::preview2::command::add_to_linker(&mut linker)?;
             wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(
                 &mut linker,
@@ -131,7 +140,7 @@ impl Activities {
             wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t)?;
             // Read and compile the wasm component
             let component =
-                wasmtime::component::Component::from_binary(&engine, &activity_wasm_contents)?;
+                wasmtime::component::Component::from_binary(&ENGINE, &activity_wasm_contents)?;
             linker.instantiate_pre(&component)?
         };
         Ok(Self {
@@ -142,10 +151,9 @@ impl Activities {
 
     pub(crate) async fn run(
         &self,
-        engine: &Engine,
         function_name: &str,
-    ) -> Result<String, anyhow::Error> {
-        let mut store = store(engine);
+    ) -> Result<Result<String, String>, anyhow::Error> {
+        let mut store = store(&ENGINE);
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         let func = {
             let mut store = &mut store;
@@ -161,7 +169,7 @@ impl Activities {
         };
         let (ret,) = callee.call_async(&mut store, ()).await?;
         callee.post_return_async(&mut store).await?;
-        ret.map_err(|str| anyhow::anyhow!(str))
+        Ok(ret)
     }
 
     pub(crate) fn function_names(&self) -> impl Iterator<Item = &str> {

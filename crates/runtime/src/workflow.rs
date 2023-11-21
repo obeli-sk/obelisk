@@ -5,7 +5,20 @@ use wasmtime::{
     Config, Engine, Store,
 };
 
-// generate my_org::my_workflow::host_activities::Host trait
+use crate::activity::Activities;
+
+lazy_static::lazy_static! {
+    static ref ENGINE: Engine = {
+        let mut config = Config::new();
+        // TODO: limit execution with fuel
+        config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+        config.wasm_component_model(true);
+        config.async_support(true);
+        Engine::new(&config).unwrap()
+    };
+}
+
+// generate Host trait
 wasmtime::component::bindgen!({
     world: "keep-wasmtime-bindgen-happy",
     path: "wit/host-world.wit",
@@ -28,6 +41,7 @@ enum HostFunctionError {
 struct HostImports<'a, E: AsRef<Event>> {
     event_history: &'a [E],
     idx: usize,
+    activities: &'a Activities,
 }
 
 impl<E: AsRef<Event>> HostImports<'_, E> {
@@ -114,15 +128,16 @@ where
 
 async fn execute_next_step(
     execution_config: &mut ExecutionConfig<'_, EventWrapper>,
-    engine: &Engine,
     instance_pre: &InstancePre<HostImports<'_, EventWrapper>>,
+    activities: &Activities,
 ) -> Result<String, ExecutionError> {
     // Instantiate the component
     let mut store = Store::new(
-        engine,
+        &ENGINE,
         HostImports {
             event_history: execution_config.event_history,
             idx: 0,
+            activities,
         },
     );
     execute(&mut store, instance_pre, execution_config.function_name)
@@ -143,11 +158,11 @@ async fn execute_next_step(
 
 async fn execute_all(
     execution_config: &mut ExecutionConfig<'_, EventWrapper>,
-    engine: &Engine,
     instance_pre: &InstancePre<HostImports<'_, EventWrapper>>,
+    activities: &Activities,
 ) -> wasmtime::Result<String> {
     loop {
-        let res = execute_next_step(execution_config, engine, &instance_pre).await;
+        let res = execute_next_step(execution_config, &instance_pre, activities).await;
         match res {
             Ok(output) => return Ok(output),
             Err(ExecutionError::Handle(event)) => {
@@ -175,23 +190,32 @@ struct ExecutionConfig<'a, E: AsRef<Event>> {
 pub(crate) async fn workflow_example(
     wasm: &[u8],
     function_name: &str,
+    activities: &Activities,
 ) -> Result<(), anyhow::Error> {
-    let mut config = Config::new();
-    // TODO: limit execution with fuel
-    config.async_support(true);
-    config.wasm_component_model(true);
-    config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
-    // Create a wasmtime execution context
-    let engine = Engine::new(&config)?;
     let instance_pre = {
-        let mut linker = Linker::new(&engine);
+        let mut linker = Linker::new(&ENGINE);
         // Add workflow host functions
         my_org::my_workflow::host_activities::add_to_linker(
             &mut linker,
             |state: &mut HostImports<_>| state,
         )?;
+        // add activities
+        {
+            let mut inst = linker.instance("my-org:my-workflow/my-activity")?;
+            inst.func_wrap_async(
+                "send",
+                move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports<_>>, (): ()| {
+                    Box::new(async move {
+                        let host_imports = store_ctx.data_mut();
+                        let r2 = host_imports.activities.run("send").await?;
+                        Ok((r2,))
+                    })
+                },
+            )?;
+        }
+
         // Read and compile the wasm component
-        let component = Component::from_binary(&engine, wasm)?;
+        let component = Component::from_binary(&ENGINE, wasm)?;
         linker.instantiate_pre(&component)?
     };
     // Prepare ExecutionConfig
@@ -201,11 +225,11 @@ pub(crate) async fn workflow_example(
         function_name,
     };
     // Execute once recording the events
-    let output = execute_all(&mut execution_config, &engine, &instance_pre).await?;
+    let output = execute_all(&mut execution_config, &instance_pre, activities).await?;
     println!("Finished: {output}, {execution_config:?}");
     println!();
     // Execute by replaying the event history
-    let output = execute_all(&mut execution_config, &engine, &instance_pre).await?;
+    let output = execute_all(&mut execution_config, &instance_pre, activities).await?;
     println!("Finished: {output}, {execution_config:?}");
     Ok(())
 }
