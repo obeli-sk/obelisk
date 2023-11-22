@@ -1,5 +1,5 @@
 use anyhow::{bail, Context};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use wasmtime::{component::Resource, Config, Engine, Store};
 use wasmtime_wasi::preview2::{pipe::MemoryOutputPipe, Table, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::{
@@ -104,7 +104,13 @@ impl Drop for Ctx {
 }
 
 pub(crate) struct Activities {
-    activity_functions: HashMap<String, wit_parser::Function>,
+    activity_functions: HashMap<
+        (
+            String, /* interface FQN: package_name/interface_name */
+            String, /* function name */
+        ),
+        wit_parser::Function,
+    >,
     instance_pre: wasmtime::component::InstancePre<Ctx>,
 }
 
@@ -119,17 +125,32 @@ impl Activities {
             DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
             _ => bail!("cannot parse component"),
         };
+        let world = resolve.worlds.get(world_id).expect("world must exist");
+        let exported_interfaces = world.exports.iter().filter_map(|(_, item)| match item {
+            wit_parser::WorldItem::Interface(ifc) => {
+                let ifc = resolve.interfaces.get(*ifc).expect("interface must exist");
+                let package_name = ifc
+                    .package
+                    .and_then(|pkg| resolve.packages.get(pkg))
+                    .map(|p| &p.name)
+                    .expect("empty packages are not supported");
+                let ifc_name = ifc
+                    .name
+                    .clone()
+                    .expect("empty interfaces are not supported");
+                Some((package_name, ifc_name, &ifc.functions))
+            }
+            _ => None,
+        });
 
-        let functions = {
-            let world = resolve.worlds.get(world_id).expect("world must exist");
-            world.exports.iter().filter_map(|(_, item)| match item {
-                wit_parser::WorldItem::Function(f) => Some(f.clone()),
-                _ => None,
-            })
-        };
-        let activity_functions = functions
-            .map(|function| (function.name.clone(), function))
-            .collect::<HashMap<_, _>>();
+        let mut activity_functions = HashMap::new();
+        for (package_name, ifc_name, functions) in exported_interfaces {
+            let prefix = format!("{package_name}/{ifc_name}");
+            for (fun_name, fun) in functions {
+                activity_functions.insert((prefix.clone(), fun_name.clone()), fun.clone());
+            }
+        }
+
         let instance_pre: wasmtime::component::InstancePre<Ctx> = {
             let mut linker = wasmtime::component::Linker::new(&ENGINE);
             wasmtime_wasi::preview2::command::add_to_linker(&mut linker)?;
@@ -151,6 +172,7 @@ impl Activities {
 
     pub(crate) async fn run(
         &self,
+        interface_fqn: &str,
         function_name: &str,
     ) -> Result<Result<String, String>, anyhow::Error> {
         let mut store = store(&ENGINE);
@@ -158,8 +180,11 @@ impl Activities {
         let func = {
             let mut store = &mut store;
             let mut exports = instance.exports(&mut store);
-            let mut exports = exports.root();
-            *exports
+            let mut exports_instance = exports.root();
+            let mut exports_instance = exports_instance
+                .instance(interface_fqn)
+                .unwrap_or_else(|| panic!("instance must exist:{interface_fqn}"));
+            *exports_instance
                 .typed_func::<(), (Result<String, String>,)>(function_name)?
                 .func()
         };
@@ -172,7 +197,17 @@ impl Activities {
         Ok(ret)
     }
 
-    pub(crate) fn function_names(&self) -> impl Iterator<Item = &str> {
-        self.activity_functions.keys().map(String::as_str)
+    pub(crate) fn activity_functions(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.activity_functions
+            .keys()
+            .map(|(ifc_fqn, function_name)| (ifc_fqn.as_str(), function_name.as_str()))
+    }
+}
+
+impl Debug for Activities {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("Activities");
+        s.field("activity_functions", &self.activity_functions.keys());
+        s.finish()
     }
 }
