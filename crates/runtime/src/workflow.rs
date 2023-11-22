@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use wasmtime::{
     self,
@@ -161,7 +162,7 @@ async fn execute_all(
     instance_pre: &InstancePre<HostImports<EventWrapper>>,
 ) -> wasmtime::Result<String> {
     loop {
-        let res = execute_next_step(execution_config, &instance_pre).await;
+        let res = execute_next_step(execution_config, instance_pre).await;
         match res {
             Ok(output) => return Ok(output),
             Err(ExecutionError::Handle(event)) => {
@@ -191,9 +192,10 @@ pub(crate) struct Workflow {
 }
 impl Workflow {
     pub(crate) async fn new(
-        wasm: &[u8],
+        wasm_path: &str,
         activities: Arc<Activities>,
     ) -> Result<Self, anyhow::Error> {
+        let wasm = std::fs::read(wasm_path).with_context(|| format!("cannot open {wasm_path}"))?;
         let instance_pre = {
             let mut linker = Linker::new(&ENGINE);
             // Add workflow host functions
@@ -223,9 +225,8 @@ impl Workflow {
                     },
                 )?;
             }
-
             // Read and compile the wasm component
-            let component = Component::from_binary(&ENGINE, wasm)?;
+            let component = Component::from_binary(&ENGINE, &wasm)?;
             linker.instantiate_pre(&component)?
         };
         Ok(Self { instance_pre })

@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use anyhow::Context;
+use std::{sync::Arc, time::Instant};
 
 mod activity;
 mod workflow;
@@ -8,22 +6,31 @@ mod workflow;
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let activity_wasm_path = "target/wasm32-unknown-unknown/debug/wasm_email_provider.wasm";
-    let activities = Arc::new(activity::Activities::new(activity_wasm_path).await?);
-    dbg!(&activities);
+    let activities = Arc::new(dbg!(activity::Activities::new(activity_wasm_path).await?));
 
     let workflow_wasm_path = "target/wasm32-unknown-unknown/debug/hello_world.wasm";
     let workflow_function = "execute";
-    let workflow_wasm_contents = std::fs::read(workflow_wasm_path)
-        .with_context(|| format!("cannot open {workflow_wasm_path}"))?;
-    let workflow = workflow::Workflow::new(&workflow_wasm_contents, activities.clone()).await?;
+    let workflow = workflow::Workflow::new(workflow_wasm_path, activities.clone()).await?;
 
-    println!("Starting first workflow execution");
     let mut event_history = Vec::new();
-    let res = workflow.run(&mut event_history, workflow_function).await;
-    println!("Finished: {res:?}, {event_history:?}");
+    {
+        println!("Starting first workflow execution");
+        let timer = Instant::now();
+        let res = workflow.run(&mut event_history, workflow_function).await;
+        println!(
+            "Finished: in {ms}ms {res:?}, {event_history:?}",
+            ms = timer.elapsed().as_millis()
+        );
+    }
     println!();
-    println!("Replaying");
-    let res = workflow.run(&mut event_history, workflow_function).await;
-    println!("Finished: {res:?}, {event_history:?}");
+    {
+        println!("Replaying");
+        let timer = Instant::now();
+        let res = workflow.run(&mut event_history, workflow_function).await;
+        println!(
+            "Finished: in {us}us {res:?}, {event_history:?}",
+            us = timer.elapsed().as_micros()
+        );
+    }
     Ok(())
 }
