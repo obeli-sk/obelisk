@@ -20,3 +20,4 @@ package = "component:wasm-email-provider"
 "wasi:clocks" = { path = "wit/deps/clocks" }
 "wasi:io" = { path = "wit/deps/io" }
 "wasi:random" = { path = "wit/deps/random" }
+"component:wasm-email-provider" = { path = "wit/deps/email-provider" }
