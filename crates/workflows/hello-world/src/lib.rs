@@ -7,7 +7,7 @@ struct Component;
 impl Guest for Component {
     fn execute() -> String {
         sleep(1000);
-        let res = crate::bindings::my_org::my_workflow::my_activity::send().unwrap();
+        let res = crate::bindings::component::wasm_email_provider::email_sender::send().unwrap();
         format!("Hello, {res}")
     }
 

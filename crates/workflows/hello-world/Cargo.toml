@@ -15,3 +15,6 @@ crate-type = ["cdylib"]
 package = "my-org:my-workflow"
 
 [package.metadata.component.dependencies]
+
+[package.metadata.component.target.dependencies]
+"component:wasm-email-provider" = { path = "wit/deps/email-provider" }

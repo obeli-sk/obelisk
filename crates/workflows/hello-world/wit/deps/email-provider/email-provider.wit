@@ -1,0 +1,5 @@
+package component:wasm-email-provider
+
+interface email-sender {
+    send: func() -> result<string, string>
+}

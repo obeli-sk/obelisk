@@ -4,13 +4,9 @@ interface host-activities {
     sleep: func(millis: u64)
 }
 
-interface my-activity {
-    send: func(/* idempotency-id: string, email: email */) -> result<string, string>
-}
-
 world sleepy-workflow {
     import host-activities
-    import my-activity
+    import component:wasm-email-provider/email-sender
     export execute: func() -> string
     export second: func() -> string
 }
