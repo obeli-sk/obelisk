@@ -2,7 +2,7 @@ package my-org:my-workflow
 
 world sleepy-workflow {
     import my-org:workflow-engine/host-activities
-    import component:wasm-email-provider/email-sender
+    import my-org:wasm-email-provider/email-sender
     export execute: func() -> string
     export second: func() -> string
 }

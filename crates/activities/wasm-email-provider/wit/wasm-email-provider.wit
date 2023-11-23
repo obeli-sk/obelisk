@@ -3,5 +3,5 @@ package any:any
 world mock-email-sender {
     import wasi:http/types@0.2.0-rc-2023-10-18;
     import wasi:http/outgoing-handler@0.2.0-rc-2023-10-18;
-    export component:wasm-email-provider/email-sender
+    export my-org:wasm-email-provider/email-sender
 }

@@ -7,7 +7,7 @@ use crate::bindings::wasi::http::types::Scheme;
 
 struct Component;
 
-impl crate::bindings::exports::component::wasm_email_provider::email_sender::Guest for Component {
+impl crate::bindings::exports::my_org::wasm_email_provider::email_sender::Guest for Component {
     fn send() -> Result<String, String> {
         let addr = "api.ipify.org";
         let res = crate::http::request(Method::Get, Scheme::Http, addr, "", None, None).unwrap();
