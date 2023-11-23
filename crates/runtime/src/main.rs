@@ -1,6 +1,9 @@
 use std::{sync::Arc, time::Instant};
 
+use crate::event_history::EventHistory;
+
 mod activity;
+mod event_history;
 mod workflow;
 
 #[tokio::main]
@@ -12,13 +15,13 @@ async fn main() -> Result<(), anyhow::Error> {
     let workflow_function = "execute";
     let workflow = workflow::Workflow::new(workflow_wasm_path, activities.clone()).await?;
 
-    let mut event_history = Vec::new();
+    let mut event_history = EventHistory::default();
     {
         println!("Starting first workflow execution");
         let timer = Instant::now();
         let res = workflow.run(&mut event_history, workflow_function).await;
         println!(
-            "Finished: in {ms}ms {res:?}, {event_history:?}",
+            "Finished: in {ms}ms {res:?}",
             ms = timer.elapsed().as_millis()
         );
     }
@@ -28,7 +31,7 @@ async fn main() -> Result<(), anyhow::Error> {
         let timer = Instant::now();
         let res = workflow.run(&mut event_history, workflow_function).await;
         println!(
-            "Finished: in {us}us {res:?}, {event_history:?}",
+            "Finished: in {us}us {res:?}",
             us = timer.elapsed().as_micros()
         );
     }

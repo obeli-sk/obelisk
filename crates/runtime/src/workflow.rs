@@ -1,3 +1,8 @@
+use crate::activity::Activities;
+use crate::event_history::{
+    CurrentEventHistory, Event, EventHistory, EventWrapper, HostActivity, HostFunctionError,
+    WasmActivity,
+};
 use anyhow::Context;
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use wasmtime::{
@@ -5,8 +10,6 @@ use wasmtime::{
     component::{Component, InstancePre, Linker},
     Config, Engine, Store,
 };
-
-use crate::activity::Activities;
 
 lazy_static::lazy_static! {
     static ref ENGINE: Engine = {
@@ -23,53 +26,20 @@ lazy_static::lazy_static! {
 wasmtime::component::bindgen!({
     path: "../../wit/workflow-engine/",
     async: true,
-    interfaces: "
-        import my-org:workflow-engine/host-activities;
-    ",
+    interfaces: "import my-org:workflow-engine/host-activities;",
 });
 
-#[derive(Clone, Debug, PartialEq)]
-enum Event {
-    Sleep(Duration),
-}
-
-#[derive(thiserror::Error, Debug)]
-enum HostFunctionError {
-    #[error("non deterministic execution: {0}")]
-    NonDeterminismDetected(String),
-    #[error("handle: {0:?}")]
-    Handle(Event),
-}
-
-struct HostImports<E: AsRef<Event>> {
-    event_history: Vec<E>,
-    idx: usize,
-}
-
-impl<E: AsRef<Event>> HostImports<E> {
-    fn handle(&mut self, event: Event) -> Result<(), HostFunctionError> {
-        match self.event_history.get(self.idx).map(AsRef::as_ref) {
-            None => {
-                // new event needs to be handled by the runtime
-                Err(HostFunctionError::Handle(event))
-            }
-            Some(current) if *current == event => {
-                println!("Skipping {current:?}");
-                self.idx += 1;
-                Ok(())
-            }
-            Some(other) => Err(HostFunctionError::NonDeterminismDetected(format!(
-                "Expected {event:?}, got {other:?}"
-            ))),
-        }
-    }
+struct HostImports {
+    current_event_history: CurrentEventHistory,
 }
 
 #[async_trait::async_trait]
-impl my_org::workflow_engine::host_activities::Host for HostImports<EventWrapper> {
+impl my_org::workflow_engine::host_activities::Host for HostImports {
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
-        let event = Event::Sleep(Duration::from_millis(millis));
-        Ok(self.handle(event)?)
+        let event = Event::HostActivity(HostActivity::Sleep(Duration::from_millis(millis)));
+        let replay_result = self.current_event_history.exit_early_or_replay(event)?;
+        assert!(replay_result.is_none());
+        Ok(())
     }
 }
 
@@ -81,29 +51,6 @@ enum ExecutionError {
     Handle(EventWrapper),
     #[error("unknown error: {0:?}")]
     UnknownError(anyhow::Error),
-}
-
-// Holds the wasmtime error in order to avoid cloning the event
-#[derive(Clone)]
-pub(crate) struct EventWrapper(Arc<anyhow::Error>);
-impl AsRef<Event> for EventWrapper {
-    fn as_ref(&self) -> &Event {
-        match self
-            .0
-            .source()
-            .expect("source must be present")
-            .downcast_ref::<HostFunctionError>()
-            .expect("source must be HostFunctionError")
-        {
-            HostFunctionError::Handle(event) => event,
-            other => panic!("HostFunctionError::Handle expected, got {other:?}"),
-        }
-    }
-}
-impl Debug for EventWrapper {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.as_ref().fmt(f)
-    }
 }
 
 async fn execute<S, T>(
@@ -129,16 +76,15 @@ where
     Ok(ret0)
 }
 
-async fn execute_next_step(
-    execution_config: &mut ExecutionConfig<'_, EventWrapper>,
-    instance_pre: &InstancePre<HostImports<EventWrapper>>,
+async fn replay_execute_next_step(
+    execution_config: &mut ExecutionConfig<'_>,
+    instance_pre: &InstancePre<HostImports>,
 ) -> Result<String, ExecutionError> {
     // Instantiate the component
     let mut store = Store::new(
         &ENGINE,
         HostImports {
-            event_history: execution_config.event_history.clone(),
-            idx: 0,
+            current_event_history: CurrentEventHistory::new(execution_config.event_history),
         },
     );
     execute(&mut store, instance_pre, execution_config.function_name)
@@ -160,21 +106,19 @@ async fn execute_next_step(
 }
 
 async fn execute_all(
-    execution_config: &mut ExecutionConfig<'_, EventWrapper>,
-    instance_pre: &InstancePre<HostImports<EventWrapper>>,
+    execution_config: &mut ExecutionConfig<'_>,
+    instance_pre: &InstancePre<HostImports>,
+    activities: Arc<Activities>,
 ) -> wasmtime::Result<String> {
     loop {
-        let res = execute_next_step(execution_config, instance_pre).await;
+        let res = replay_execute_next_step(execution_config, instance_pre).await;
         match res {
             Ok(output) => return Ok(output),
             Err(ExecutionError::Handle(event)) => {
-                println!("Handling {event:?}");
-                match event.as_ref() {
-                    Event::Sleep(duration) => tokio::time::sleep(*duration).await,
-                }
-                execution_config.event_history.push(event);
+                event
+                    .handle(execution_config.event_history, activities.clone())
+                    .await?;
             }
-
             Err(ExecutionError::NonDeterminismDetected(reason)) => {
                 panic!("Non determinism detected: {reason}")
             }
@@ -184,13 +128,14 @@ async fn execute_all(
 }
 
 #[derive(Debug)]
-struct ExecutionConfig<'a, E: AsRef<Event>> {
-    event_history: &'a mut Vec<E>,
+struct ExecutionConfig<'a> {
+    event_history: &'a mut EventHistory,
     function_name: &'a str,
 }
 
 pub(crate) struct Workflow {
-    instance_pre: InstancePre<HostImports<EventWrapper>>,
+    instance_pre: InstancePre<HostImports>,
+    activities: Arc<Activities>,
 }
 impl Workflow {
     pub(crate) async fn new(
@@ -203,27 +148,27 @@ impl Workflow {
             // Add workflow host functions
             my_org::workflow_engine::host_activities::add_to_linker(
                 &mut linker,
-                |state: &mut HostImports<_>| state,
+                |state: &mut HostImports| state,
             )?;
             // add activities
             for (ifc_fqn, function_name) in activities.activity_functions() {
                 let mut inst = linker.instance(ifc_fqn)?;
                 let ifc_fqn = Arc::new(ifc_fqn.to_string());
                 let function_name = Arc::new(function_name.to_string());
-                let activities = activities.clone();
-                inst.func_wrap_async(
+                inst.func_wrap(
                     &function_name.clone(),
-                    move |_store_ctx: wasmtime::StoreContextMut<'_, HostImports<_>>, (): ()| {
-                        let activities = activities.clone();
+                    move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>, (): ()| {
                         let ifc_fqn = ifc_fqn.clone();
                         let function_name = function_name.clone();
-                        Box::new(async move {
-                            println!("Before activity {ifc_fqn}.{function_name}");
-                            let r2 = activities.run(&ifc_fqn, &function_name).await?;
-                            println!("After activity {ifc_fqn}.{function_name}");
-                            Ok((r2,))
-                            //Ok((Ok::<_, String>("".to_string()),))
-                        })
+                        let event = Event::WasmActivity(WasmActivity {
+                            ifc_fqn,
+                            function_name,
+                        });
+                        let store = store_ctx.data_mut();
+                        let replay_result =
+                            store.current_event_history.exit_early_or_replay(event)?;
+                        let replay_result = replay_result.expect("currently hardcoded");
+                        Ok((replay_result,))
                     },
                 )?;
             }
@@ -231,18 +176,26 @@ impl Workflow {
             let component = Component::from_binary(&ENGINE, &wasm)?;
             linker.instantiate_pre(&component)?
         };
-        Ok(Self { instance_pre })
+        Ok(Self {
+            instance_pre,
+            activities,
+        })
     }
 
     pub(crate) async fn run(
         &self,
-        event_history: &mut Vec<EventWrapper>,
+        event_history: &mut EventHistory,
         function_name: &str,
     ) -> Result<String, anyhow::Error> {
         let mut execution_config = ExecutionConfig {
             event_history,
             function_name,
         };
-        execute_all(&mut execution_config, &self.instance_pre).await
+        execute_all(
+            &mut execution_config,
+            &self.instance_pre,
+            self.activities.clone(),
+        )
+        .await
     }
 }
