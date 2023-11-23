@@ -22,6 +22,7 @@ impl Event {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum HostActivity {
     Sleep(Duration),
+    Noop,
 }
 
 impl HostActivity {
@@ -31,6 +32,7 @@ impl HostActivity {
                 tokio::time::sleep(*duration).await;
                 Ok(None)
             }
+            Self::Noop => Ok(None),
         }
     }
 }
@@ -96,7 +98,6 @@ impl EventWrapper {
         activities: Arc<Activities>,
     ) -> Result<Option<Result<String, String>>, anyhow::Error> {
         let event = self.as_ref();
-        println!("Handling {event:?}");
         //event_history.persist_start(self.clone());
         let res = event.handle(activities).await?;
         event_history.persist_end(self, res.clone());
@@ -128,10 +129,11 @@ impl CurrentEventHistory {
         {
             None => {
                 // new event needs to be handled by the runtime
+                // println!("Handling {event:?}");
                 Err(HostFunctionError::Handle(event))
             }
             Some((current, res)) if *current == event => {
-                println!("Replaying {current:?}");
+                //println!("Replaying {current:?}");
                 self.idx += 1;
                 Ok(res.map(Clone::clone))
             }

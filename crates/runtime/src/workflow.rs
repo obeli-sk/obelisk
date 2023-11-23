@@ -41,6 +41,13 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
         assert!(replay_result.is_none());
         Ok(())
     }
+
+    async fn noop(&mut self) -> wasmtime::Result<()> {
+        let event = Event::HostActivity(HostActivity::Noop);
+        let replay_result = self.current_event_history.exit_early_or_replay(event)?;
+        assert!(replay_result.is_none());
+        Ok(())
+    }
 }
 
 #[derive(thiserror::Error, Debug)]

@@ -1,5 +1,5 @@
 cargo_component_bindings::generate!();
-use crate::bindings::my_org::workflow_engine::host_activities::sleep;
+use crate::bindings::my_org::workflow_engine::host_activities::{noop, sleep};
 use bindings::Guest;
 
 struct Component;
@@ -11,7 +11,10 @@ impl Guest for Component {
         format!("Hello from workflow, {res}")
     }
 
-    fn second() -> String {
-        "second".to_string()
+    fn noop() -> String {
+        for _ in 0..1000 {
+            noop();
+        }
+        "done".to_string()
     }
 }

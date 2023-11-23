@@ -4,5 +4,5 @@ world sleepy-workflow {
     import my-org:workflow-engine/host-activities
     import my-org:wasm-email-provider/email-sender
     export execute: func() -> string
-    export second: func() -> string
+    export noop: func() -> string
 }
