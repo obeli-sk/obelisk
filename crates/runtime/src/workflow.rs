@@ -21,9 +21,11 @@ lazy_static::lazy_static! {
 
 // generate Host trait
 wasmtime::component::bindgen!({
-    world: "keep-wasmtime-bindgen-happy",
-    path: "wit/host-world.wit",
+    path: "../../wit/workflow-engine/",
     async: true,
+    interfaces: "
+        import my-org:workflow-engine/host-activities;
+    ",
 });
 
 #[derive(Clone, Debug, PartialEq)]
@@ -64,7 +66,7 @@ impl<E: AsRef<Event>> HostImports<E> {
 }
 
 #[async_trait::async_trait]
-impl my_org::my_workflow::host_activities::Host for HostImports<EventWrapper> {
+impl my_org::workflow_engine::host_activities::Host for HostImports<EventWrapper> {
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
         let event = Event::Sleep(Duration::from_millis(millis));
         Ok(self.handle(event)?)
@@ -199,7 +201,7 @@ impl Workflow {
         let instance_pre = {
             let mut linker = Linker::new(&ENGINE);
             // Add workflow host functions
-            my_org::my_workflow::host_activities::add_to_linker(
+            my_org::workflow_engine::host_activities::add_to_linker(
                 &mut linker,
                 |state: &mut HostImports<_>| state,
             )?;

@@ -1,9 +1,0 @@
-package my-org:my-workflow
-
-interface host-activities {
-    sleep: func(millis: u64)
-}
-
-world keep-wasmtime-bindgen-happy {
-    import host-activities
-}

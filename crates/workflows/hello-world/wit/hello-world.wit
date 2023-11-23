@@ -1,11 +1,7 @@
 package my-org:my-workflow
 
-interface host-activities {
-    sleep: func(millis: u64)
-}
-
 world sleepy-workflow {
-    import host-activities
+    import my-org:workflow-engine/host-activities
     import component:wasm-email-provider/email-sender
     export execute: func() -> string
     export second: func() -> string
