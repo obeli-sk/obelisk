@@ -19,3 +19,5 @@ package = "my-org:my-workflow"
 [package.metadata.component.target.dependencies]
 "component:wasm-email-provider" = { path = "wit/deps/email-provider" }
 "my-org:workflow-engine" = { path = "wit/deps/workflow-engine" }
+
+[workspace]
