@@ -21,14 +21,15 @@ async fn main() -> Result<(), anyhow::Error> {
     );
     let workflow = workflow::Workflow::new(&workflow_wasm_path, activities.clone()).await?;
 
-    let mut event_history = EventHistory::default();
+    let mut event_history = EventHistory(Vec::new());
     {
         println!("Starting first workflow execution");
         let timer = Instant::now();
         let res = workflow.run(&mut event_history, &workflow_function).await;
         println!(
-            "Finished: in {ms}ms {res:?}",
-            ms = timer.elapsed().as_millis()
+            "Finished: in {duration:?} {res:?}, event history size: {len}",
+            duration = timer.elapsed(),
+            len = event_history.len()
         );
     }
     println!();
@@ -37,8 +38,8 @@ async fn main() -> Result<(), anyhow::Error> {
         let timer = Instant::now();
         let res = workflow.run(&mut event_history, &workflow_function).await;
         println!(
-            "Finished: in {us}us {res:?}",
-            us = timer.elapsed().as_micros()
+            "Finished: in {duration:?} {res:?}",
+            duration = timer.elapsed()
         );
     }
     Ok(())

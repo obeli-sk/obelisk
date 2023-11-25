@@ -12,7 +12,7 @@ impl Guest for Component {
     }
 
     fn noop() -> String {
-        for _ in 0..1000 {
+        for _ in 0..1_000_000 {
             noop();
         }
         "done".to_string()

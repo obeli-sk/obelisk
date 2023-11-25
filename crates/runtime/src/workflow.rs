@@ -1,10 +1,9 @@
 use crate::activity::Activities;
 use crate::event_history::{
-    CurrentEventHistory, Event, EventHistory, EventWrapper, HostActivity, HostFunctionError,
-    WasmActivity,
+    CurrentEventHistory, EventHistory, EventWrapper, HostFunctionError, HostImports, WasmActivity,
 };
 use anyhow::Context;
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc};
 use wasmtime::{
     self,
     component::{Component, InstancePre, Linker},
@@ -22,40 +21,12 @@ lazy_static::lazy_static! {
     };
 }
 
-// generate Host trait
-wasmtime::component::bindgen!({
-    path: "../../wit/workflow-engine/",
-    async: true,
-    interfaces: "import my-org:workflow-engine/host-activities;",
-});
-
-struct HostImports {
-    current_event_history: CurrentEventHistory,
-}
-
-#[async_trait::async_trait]
-impl my_org::workflow_engine::host_activities::Host for HostImports {
-    async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
-        let event = Event::HostActivity(HostActivity::Sleep(Duration::from_millis(millis)));
-        let replay_result = self.current_event_history.exit_early_or_replay(event)?;
-        assert!(replay_result.is_none());
-        Ok(())
-    }
-
-    async fn noop(&mut self) -> wasmtime::Result<()> {
-        let event = Event::HostActivity(HostActivity::Noop);
-        let replay_result = self.current_event_history.exit_early_or_replay(event)?;
-        assert!(replay_result.is_none());
-        Ok(())
-    }
-}
-
 #[derive(thiserror::Error, Debug)]
 enum ExecutionError {
     #[error("non deterministic execution: {0}")]
     NonDeterminismDetected(String),
     #[error("handle: {0:?}")]
-    Handle(EventWrapper),
+    HandleInterrupt(EventWrapper),
     #[error("unknown error: {0:?}")]
     UnknownError(anyhow::Error),
 }
@@ -83,18 +54,18 @@ where
     Ok(ret0)
 }
 
-async fn replay_execute_next_step(
+// Execute the workflow until it is finished or interrupted.
+async fn execute_translate_error(
     execution_config: &mut ExecutionConfig<'_>,
     instance_pre: &InstancePre<HostImports>,
 ) -> Result<String, ExecutionError> {
-    // Instantiate the component
     let mut store = Store::new(
         &ENGINE,
         HostImports {
             current_event_history: CurrentEventHistory::new(execution_config.event_history),
         },
     );
-    execute(&mut store, instance_pre, execution_config.function_name)
+    let res = execute(&mut store, instance_pre, execution_config.function_name)
         .await
         .map_err(|err| {
             match err
@@ -104,12 +75,25 @@ async fn replay_execute_next_step(
                 Some(HostFunctionError::NonDeterminismDetected(reason)) => {
                     ExecutionError::NonDeterminismDetected(reason.clone())
                 }
-                Some(HostFunctionError::Handle(_)) => {
-                    ExecutionError::Handle(EventWrapper(Arc::new(err)))
+                Some(HostFunctionError::Interrupt(_)) => {
+                    ExecutionError::HandleInterrupt(EventWrapper::new_from_err(err))
                 }
                 None => ExecutionError::UnknownError(err),
             }
-        })
+        });
+    // Persist new_sync_events
+    store
+        .data_mut()
+        .current_event_history
+        .new_sync_events
+        .drain(..)
+        .for_each(|(event, res)| {
+            let event = EventWrapper::new_from_host_activity_sync(event);
+            execution_config.event_history.persist_start(event.clone());
+            execution_config.event_history.persist_end(event, res);
+        });
+
+    res
 }
 
 async fn execute_all(
@@ -118,13 +102,19 @@ async fn execute_all(
     activities: Arc<Activities>,
 ) -> wasmtime::Result<String> {
     loop {
-        let res = replay_execute_next_step(execution_config, instance_pre).await;
+        let res = execute_translate_error(execution_config, instance_pre).await;
         match res {
-            Ok(output) => return Ok(output),
-            Err(ExecutionError::Handle(event)) => {
-                event
-                    .handle(execution_config.event_history, activities.clone())
-                    .await?;
+            Ok(output) => return Ok(output), // TODO Persist result to the history
+            Err(ExecutionError::HandleInterrupt(event_wrapper)) => {
+                // Persist and execute the event
+                execution_config
+                    .event_history
+                    .persist_start(event_wrapper.clone());
+                let event = event_wrapper.as_ref();
+                let res = event.handle(activities.clone()).await?;
+                execution_config
+                    .event_history
+                    .persist_end(event_wrapper, res.clone());
             }
             Err(ExecutionError::NonDeterminismDetected(reason)) => {
                 panic!("Non determinism detected: {reason}")
@@ -153,10 +143,7 @@ impl Workflow {
         let instance_pre = {
             let mut linker = Linker::new(&ENGINE);
             // Add workflow host functions
-            my_org::workflow_engine::host_activities::add_to_linker(
-                &mut linker,
-                |state: &mut HostImports| state,
-            )?;
+            HostImports::add_to_linker(&mut linker)?;
             // add activities
             for (ifc_fqn, function_name) in activities.activity_functions() {
                 let mut inst = linker.instance(ifc_fqn)?;
@@ -167,13 +154,14 @@ impl Workflow {
                     move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>, (): ()| {
                         let ifc_fqn = ifc_fqn.clone();
                         let function_name = function_name.clone();
-                        let event = Event::WasmActivity(WasmActivity {
+                        let wasm_activity = WasmActivity {
                             ifc_fqn,
                             function_name,
-                        });
+                        };
                         let store = store_ctx.data_mut();
-                        let replay_result =
-                            store.current_event_history.exit_early_or_replay(event)?;
+                        let replay_result = store
+                            .current_event_history
+                            .handle_or_interrupt_wasm_activity(wasm_activity)?;
                         let replay_result = replay_result.expect("currently hardcoded");
                         Ok((replay_result,))
                     },
