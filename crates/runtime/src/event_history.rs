@@ -25,7 +25,7 @@ impl HostImports {
     }
 }
 
-// When calling host functions, create events and use `exit_early_or_replay` to continue or break the execution.
+// When calling host functions, create events and continue or interrupt the execution.
 #[async_trait::async_trait]
 impl my_org::workflow_engine::host_activities::Host for HostImports {
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
@@ -115,14 +115,11 @@ impl WasmActivity {
         &self,
         activities: Arc<Activities>,
     ) -> Result<SupportedActivityResult, anyhow::Error> {
-        println!(
-            "Running activity {ifc_fqn}.{function_name}",
-            ifc_fqn = self.ifc_fqn,
-            function_name = self.function_name
-        );
+        // dbg!(("Running activity ", &self.ifc_fqn, &self.function_name));
         let res = activities
             .run(self.ifc_fqn.as_str(), self.function_name.as_str())
             .await?;
+        // dbg!(&res);
         Ok(Some(res))
     }
 }
@@ -175,15 +172,15 @@ impl Debug for EventWrapper {
 }
 
 pub(crate) struct CurrentEventHistory {
-    event_history: Vec<(EventWrapper, SupportedActivityResult)>,
+    pub(crate) event_history: EventHistory,
     idx: usize,
     pub(crate) new_sync_events: Vec<(HostActivitySync, SupportedActivityResult)>,
 }
 
 impl CurrentEventHistory {
-    pub(crate) fn new(event_history: &EventHistory) -> Self {
+    pub(crate) fn new(event_history: EventHistory) -> Self {
         Self {
-            event_history: event_history.copy_vec(),
+            event_history,
             idx: 0,
             new_sync_events: Vec::new(),
         }
@@ -203,6 +200,7 @@ impl CurrentEventHistory {
         match (
             event,
             self.event_history
+                .0
                 .get(self.idx)
                 .map(|(event, res)| (event.as_ref(), res.as_ref())),
         ) {
@@ -233,16 +231,12 @@ impl CurrentEventHistory {
 #[derive(Debug, Default)]
 pub(crate) struct EventHistory(pub(crate) Vec<(EventWrapper, SupportedActivityResult)>);
 impl EventHistory {
-    pub(crate) fn persist_start(&mut self, _key: EventWrapper) {
+    pub(crate) fn persist_start(&mut self, _key: &EventWrapper) {
         // TODO
     }
 
     pub(crate) fn persist_end(&mut self, key: EventWrapper, val: SupportedActivityResult) {
         self.0.push((key, val))
-    }
-
-    fn copy_vec(&self) -> Vec<(EventWrapper, SupportedActivityResult)> {
-        self.0.clone()
     }
 
     pub(crate) fn len(&self) -> usize {

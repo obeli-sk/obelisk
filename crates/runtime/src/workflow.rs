@@ -3,6 +3,7 @@ use crate::event_history::{
     CurrentEventHistory, EventHistory, EventWrapper, HostFunctionError, HostImports, WasmActivity,
 };
 use anyhow::Context;
+use std::mem;
 use std::{fmt::Debug, sync::Arc};
 use wasmtime::{
     self,
@@ -56,16 +57,20 @@ where
 
 // Execute the workflow until it is finished or interrupted.
 async fn execute_translate_error(
-    execution_config: &mut ExecutionConfig<'_>,
+    execution_config: &mut ExecutionConfig,
     instance_pre: &InstancePre<HostImports>,
-) -> Result<String, ExecutionError> {
+) -> (Result<String, ExecutionError>, ExecutionConfig) {
+    let ExecutionConfig {
+        event_history,
+        function_name,
+    } = execution_config;
     let mut store = Store::new(
         &ENGINE,
         HostImports {
-            current_event_history: CurrentEventHistory::new(execution_config.event_history),
+            current_event_history: CurrentEventHistory::new(mem::take(event_history)),
         },
     );
-    let res = execute(&mut store, instance_pre, execution_config.function_name)
+    let res = execute(&mut store, instance_pre, function_name)
         .await
         .map_err(|err| {
             match err
@@ -81,37 +86,44 @@ async fn execute_translate_error(
                 None => ExecutionError::UnknownError(err),
             }
         });
-    // Persist new_sync_events
-    store
-        .data_mut()
-        .current_event_history
-        .new_sync_events
-        .drain(..)
+    // dbg!(("after execute", &res));
+    let host_imports = store.data_mut();
+    let mut event_history = mem::take(&mut host_imports.current_event_history.event_history);
+    mem::take(&mut host_imports.current_event_history.new_sync_events)
+        .into_iter()
         .for_each(|(event, res)| {
             let event = EventWrapper::new_from_host_activity_sync(event);
-            execution_config.event_history.persist_start(event.clone());
-            execution_config.event_history.persist_end(event, res);
+            event_history.persist_start(&event);
+            event_history.persist_end(event, res);
         });
-
-    res
+    (
+        res,
+        ExecutionConfig {
+            event_history,
+            function_name: mem::take(function_name),
+        },
+    )
 }
 
 async fn execute_all(
-    execution_config: &mut ExecutionConfig<'_>,
+    mut execution_config: ExecutionConfig,
     instance_pre: &InstancePre<HostImports>,
     activities: Arc<Activities>,
-) -> wasmtime::Result<String> {
+) -> (wasmtime::Result<String>, EventHistory) {
     loop {
-        let res = execute_translate_error(execution_config, instance_pre).await;
+        let (res, mut execution_config) =
+            execute_translate_error(&mut execution_config, instance_pre).await;
+        // dbg!(&res);
         match res {
-            Ok(output) => return Ok(output), // TODO Persist result to the history
+            Ok(output) => return (Ok(output), execution_config.event_history), // TODO Persist result to the history
             Err(ExecutionError::HandleInterrupt(event_wrapper)) => {
                 // Persist and execute the event
-                execution_config
-                    .event_history
-                    .persist_start(event_wrapper.clone());
+                execution_config.event_history.persist_start(&event_wrapper);
                 let event = event_wrapper.as_ref();
-                let res = event.handle(activities.clone()).await?;
+                let res = match event.handle(activities.clone()).await {
+                    Ok(res) => res,
+                    Err(err) => return (Err(err), execution_config.event_history),
+                };
                 execution_config
                     .event_history
                     .persist_end(event_wrapper, res.clone());
@@ -125,9 +137,9 @@ async fn execute_all(
 }
 
 #[derive(Debug)]
-struct ExecutionConfig<'a> {
-    event_history: &'a mut EventHistory,
-    function_name: &'a str,
+struct ExecutionConfig {
+    event_history: EventHistory,
+    function_name: String,
 }
 
 pub(crate) struct Workflow {
@@ -179,15 +191,15 @@ impl Workflow {
 
     pub(crate) async fn run(
         &self,
-        event_history: &mut EventHistory,
-        function_name: &str,
-    ) -> Result<String, anyhow::Error> {
-        let mut execution_config = ExecutionConfig {
+        event_history: EventHistory,
+        function_name: String,
+    ) -> (Result<String, anyhow::Error>, EventHistory) {
+        let execution_config = ExecutionConfig {
             event_history,
             function_name,
         };
         execute_all(
-            &mut execution_config,
+            execution_config,
             &self.instance_pre,
             self.activities.clone(),
         )

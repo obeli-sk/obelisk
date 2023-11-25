@@ -175,6 +175,7 @@ impl Activities {
         interface_fqn: &str,
         function_name: &str,
     ) -> Result<Result<String, String>, anyhow::Error> {
+        // dbg!((interface_fqn, function_name));
         let mut store = store(&ENGINE);
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         let func = {
