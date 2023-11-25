@@ -86,20 +86,10 @@ async fn execute_translate_error(
                 None => ExecutionError::UnknownError(err),
             }
         });
-    // dbg!(("after execute", &res));
-    let host_imports = store.data_mut();
-    let mut event_history = mem::take(&mut host_imports.current_event_history.event_history);
-    mem::take(&mut host_imports.current_event_history.new_sync_events)
-        .into_iter()
-        .for_each(|(event, res)| {
-            let event = EventWrapper::new_from_host_activity_sync(event);
-            event_history.persist_start(&event);
-            event_history.persist_end(event, res);
-        });
     (
         res,
         ExecutionConfig {
-            event_history,
+            event_history: mem::take(&mut store.data_mut().current_event_history.event_history),
             function_name: mem::take(function_name),
         },
     )

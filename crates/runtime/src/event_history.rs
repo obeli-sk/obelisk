@@ -142,7 +142,7 @@ impl EventWrapper {
     pub(crate) fn new_from_err(err: anyhow::Error) -> Self {
         Self::FromErr(Arc::new(err))
     }
-    pub(crate) fn new_from_host_activity_sync(host_activity_sync: HostActivitySync) -> Self {
+    fn new_from_host_activity_sync(host_activity_sync: HostActivitySync) -> Self {
         Self::HostActivitySync(Event::HostActivity(HostActivity::HostActivitySync(
             host_activity_sync,
         )))
@@ -174,7 +174,6 @@ impl Debug for EventWrapper {
 pub(crate) struct CurrentEventHistory {
     pub(crate) event_history: EventHistory,
     idx: usize,
-    pub(crate) new_sync_events: Vec<(HostActivitySync, SupportedActivityResult)>,
 }
 
 impl CurrentEventHistory {
@@ -182,7 +181,6 @@ impl CurrentEventHistory {
         Self {
             event_history,
             idx: 0,
-            new_sync_events: Vec::new(),
         }
     }
 
@@ -202,24 +200,29 @@ impl CurrentEventHistory {
             self.event_history
                 .0
                 .get(self.idx)
-                .map(|(event, res)| (event.as_ref(), res.as_ref())),
+                .map(|(replay_event, replay_result)| {
+                    (replay_event.as_ref(), replay_result.as_ref())
+                }),
         ) {
             // Continue running on HostActivitySync
             (Event::HostActivity(HostActivity::HostActivitySync(host_activity)), None) => {
                 // handle the event and continue
+                // println!("Handling {host_activity:?}");
                 let res = host_activity.handle();
-                self.new_sync_events.push((host_activity, res.clone()));
+                let event = EventWrapper::new_from_host_activity_sync(host_activity);
+                self.event_history.persist_start(&event);
+                self.event_history.persist_end(event, res.clone());
                 Ok(res)
+            }
+            (event, Some((current, replay_result))) if *current == event => {
+                // println!("Replaying {current:?}");
+                self.idx += 1;
+                Ok(replay_result.map(Clone::clone))
             }
             (event, None) => {
                 // new event needs to be handled by the runtime
                 // println!("Handling {event:?}");
                 Err(HostFunctionError::Interrupt(event))
-            }
-            (event, Some((current, res))) if *current == event => {
-                //println!("Replaying {current:?}");
-                self.idx += 1;
-                Ok(res.map(Clone::clone))
             }
             (event, Some(other)) => Err(HostFunctionError::NonDeterminismDetected(format!(
                 "Expected {event:?}, got {other:?}"
@@ -236,6 +239,7 @@ impl EventHistory {
     }
 
     pub(crate) fn persist_end(&mut self, key: EventWrapper, val: SupportedActivityResult) {
+        // dbg!(("persisting", &key, &val));
         self.0.push((key, val))
     }
 
