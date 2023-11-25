@@ -111,8 +111,9 @@ async fn execute_all(
     activities: Arc<Activities>,
 ) -> (wasmtime::Result<String>, EventHistory) {
     loop {
-        let (res, mut execution_config) =
+        let (res, execution_config2) =
             execute_translate_error(&mut execution_config, instance_pre).await;
+        execution_config = execution_config2;
         // dbg!(&res);
         match res {
             Ok(output) => return (Ok(output), execution_config.event_history), // TODO Persist result to the history
