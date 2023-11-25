@@ -212,6 +212,7 @@ impl CurrentEventHistory {
                 let event = EventWrapper::new_from_host_activity_sync(host_activity);
                 self.event_history.persist_start(&event);
                 self.event_history.persist_end(event, res.clone());
+                self.idx += 1;
                 Ok(res)
             }
             (event, Some((current, replay_result))) if *current == event => {
