@@ -57,67 +57,60 @@ where
 
 // Execute the workflow until it is finished or interrupted.
 async fn execute_translate_error(
-    execution_config: &mut ExecutionConfig,
+    event_history: &mut EventHistory,
+    function_name: &str,
     instance_pre: &InstancePre<HostImports>,
-) -> (Result<String, ExecutionError>, ExecutionConfig) {
-    let ExecutionConfig {
-        event_history,
-        function_name,
-    } = execution_config;
+) -> Result<String, ExecutionError> {
     let mut store = Store::new(
         &ENGINE,
         HostImports {
             current_event_history: CurrentEventHistory::new(mem::take(event_history)),
         },
     );
-    let res = execute(&mut store, instance_pre, function_name)
-        .await
-        .map_err(|err| {
-            match err
-                .source()
-                .and_then(|source| source.downcast_ref::<HostFunctionError>())
-            {
-                Some(HostFunctionError::NonDeterminismDetected(reason)) => {
-                    ExecutionError::NonDeterminismDetected(reason.clone())
+    // try
+    let res = {
+        execute(&mut store, instance_pre, function_name)
+            .await
+            .map_err(|err| {
+                match err
+                    .source()
+                    .and_then(|source| source.downcast_ref::<HostFunctionError>())
+                {
+                    Some(HostFunctionError::NonDeterminismDetected(reason)) => {
+                        ExecutionError::NonDeterminismDetected(reason.clone())
+                    }
+                    Some(HostFunctionError::Interrupt(_)) => {
+                        ExecutionError::HandleInterrupt(EventWrapper::new_from_err(err))
+                    }
+                    None => ExecutionError::UnknownError(err),
                 }
-                Some(HostFunctionError::Interrupt(_)) => {
-                    ExecutionError::HandleInterrupt(EventWrapper::new_from_err(err))
-                }
-                None => ExecutionError::UnknownError(err),
-            }
-        });
-    (
-        res,
-        ExecutionConfig {
-            event_history: mem::take(&mut store.data_mut().current_event_history.event_history),
-            function_name: mem::take(function_name),
-        },
-    )
+            })
+    };
+    // finally
+    mem::swap(
+        event_history,
+        &mut store.data_mut().current_event_history.event_history,
+    );
+    res
 }
 
 async fn execute_all(
-    mut execution_config: ExecutionConfig,
+    event_history: &mut EventHistory,
+    function_name: &str,
     instance_pre: &InstancePre<HostImports>,
     activities: Arc<Activities>,
-) -> (wasmtime::Result<String>, EventHistory) {
+) -> wasmtime::Result<String> {
     loop {
-        let (res, execution_config2) =
-            execute_translate_error(&mut execution_config, instance_pre).await;
-        execution_config = execution_config2;
+        let res = execute_translate_error(event_history, function_name, instance_pre).await;
         // dbg!(&res);
         match res {
-            Ok(output) => return (Ok(output), execution_config.event_history), // TODO Persist result to the history
+            Ok(output) => return Ok(output), // TODO Persist result to the history
             Err(ExecutionError::HandleInterrupt(event_wrapper)) => {
                 // Persist and execute the event
-                execution_config.event_history.persist_start(&event_wrapper);
+                event_history.persist_start(&event_wrapper);
                 let event = event_wrapper.as_ref();
-                let res = match event.handle(activities.clone()).await {
-                    Ok(res) => res,
-                    Err(err) => return (Err(err), execution_config.event_history),
-                };
-                execution_config
-                    .event_history
-                    .persist_end(event_wrapper, res.clone());
+                let res = event.handle(activities.clone()).await?;
+                event_history.persist_end(event_wrapper, res.clone());
             }
             Err(ExecutionError::NonDeterminismDetected(reason)) => {
                 panic!("Non determinism detected: {reason}")
@@ -125,12 +118,6 @@ async fn execute_all(
             Err(ExecutionError::UnknownError(err)) => panic!("Unknown error: {err:?}"),
         }
     }
-}
-
-#[derive(Debug)]
-struct ExecutionConfig {
-    event_history: EventHistory,
-    function_name: String,
 }
 
 pub(crate) struct Workflow {
@@ -182,15 +169,12 @@ impl Workflow {
 
     pub(crate) async fn run(
         &self,
-        event_history: EventHistory,
-        function_name: String,
-    ) -> (Result<String, anyhow::Error>, EventHistory) {
-        let execution_config = ExecutionConfig {
+        event_history: &mut EventHistory,
+        function_name: &str,
+    ) -> Result<String, anyhow::Error> {
+        execute_all(
             event_history,
             function_name,
-        };
-        execute_all(
-            execution_config,
             &self.instance_pre,
             self.activities.clone(),
         )

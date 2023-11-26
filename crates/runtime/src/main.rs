@@ -21,23 +21,22 @@ async fn main() -> Result<(), anyhow::Error> {
     );
     let workflow = workflow::Workflow::new(&workflow_wasm_path, activities.clone()).await?;
 
-    let event_history = EventHistory(Vec::new());
-    let event_history = {
+    let mut event_history = EventHistory(Vec::new());
+    {
         println!("Starting first workflow execution");
         let timer = Instant::now();
-        let (res, event_history) = workflow.run(event_history, workflow_function.clone()).await;
+        let res = workflow.run(&mut event_history, &workflow_function).await;
         println!(
             "Finished: in {duration:?} {res:?}, event history size: {len}",
             duration = timer.elapsed(),
             len = event_history.len()
         );
-        event_history
-    };
+    }
     println!();
     {
         println!("Replaying");
         let timer = Instant::now();
-        let (res, _event_history) = workflow.run(event_history, workflow_function).await;
+        let res = workflow.run(&mut event_history, &workflow_function).await;
         println!(
             "Finished: in {duration:?} {res:?}",
             duration = timer.elapsed()
