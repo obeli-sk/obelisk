@@ -5,4 +5,8 @@ world sleepy-workflow {
     import my-org:wasm-email-provider/email-sender
     export execute: func() -> string
     export noop: func() -> string
+    export fibo10: func() -> string
+    export fibo10x40: func() -> string
+    export fibo40: func() -> string
+    export fibo40x10: func() -> string
 }

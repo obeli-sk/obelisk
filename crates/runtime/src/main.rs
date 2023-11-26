@@ -8,6 +8,7 @@ mod workflow;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    let timer = Instant::now();
     let mut args = std::env::args().skip(1);
     let workflow_function = args.next().expect("workflow function missing");
 
@@ -20,6 +21,8 @@ async fn main() -> Result<(), anyhow::Error> {
             .to_string(),
     );
     let workflow = workflow::Workflow::new(&workflow_wasm_path, activities.clone()).await?;
+    println!("Initialized in {duration:?}", duration = timer.elapsed());
+    println!();
 
     let mut event_history = EventHistory(Vec::new());
     {
