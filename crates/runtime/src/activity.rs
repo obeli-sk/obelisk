@@ -1,11 +1,8 @@
 use anyhow::{bail, Context};
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
-use wasmtime::{component::Resource, Config, Engine, Store};
-use wasmtime_wasi::preview2::{pipe::MemoryOutputPipe, Table, WasiCtx, WasiCtxBuilder, WasiView};
-use wasmtime_wasi_http::{
-    types::{self, HostFutureIncomingResponse, OutgoingRequest},
-    WasiHttpCtx, WasiHttpView,
-};
+use std::{collections::HashMap, fmt::Debug};
+use wasmtime::{Config, Engine};
+
+
 use wit_component::DecodedWasm;
 
 lazy_static::lazy_static! {
@@ -18,100 +15,107 @@ lazy_static::lazy_static! {
         Engine::new(&config).unwrap()
     };
 }
-
-type RequestSender = Arc<
-    dyn Fn(&mut Ctx, OutgoingRequest) -> wasmtime::Result<Resource<HostFutureIncomingResponse>>
-        + Send
-        + Sync,
->;
-
-pub(crate) struct Ctx {
-    table: Table,
-    wasi: WasiCtx,
-    http: WasiHttpCtx,
-    stdout: MemoryOutputPipe,
-    stderr: MemoryOutputPipe,
-    send_request: Option<RequestSender>,
-}
-
-impl WasiView for Ctx {
-    fn table(&self) -> &Table {
-        &self.table
-    }
-    fn table_mut(&mut self) -> &mut Table {
-        &mut self.table
-    }
-    fn ctx(&self) -> &WasiCtx {
-        &self.wasi
-    }
-    fn ctx_mut(&mut self) -> &mut WasiCtx {
-        &mut self.wasi
-    }
-}
-
-impl WasiHttpView for Ctx {
-    fn ctx(&mut self) -> &mut WasiHttpCtx {
-        &mut self.http
-    }
-
-    fn table(&mut self) -> &mut Table {
-        &mut self.table
-    }
-
-    fn send_request(
-        &mut self,
-        request: OutgoingRequest,
-    ) -> wasmtime::Result<Resource<HostFutureIncomingResponse>> {
-        if let Some(send_request) = self.send_request.clone() {
-            send_request(self, request)
-        } else {
-            types::default_send_request(self, request)
-        }
-    }
-}
-
-fn store(engine: &Engine) -> Store<Ctx> {
-    let stdout = MemoryOutputPipe::new(4096);
-    let stderr = MemoryOutputPipe::new(4096);
-
-    // Create our wasi context.
-    let mut builder = WasiCtxBuilder::new();
-    builder.stdout(stdout.clone());
-    builder.stderr(stderr.clone());
-    let ctx = Ctx {
-        table: Table::new(),
-        wasi: builder.build(),
-        http: WasiHttpCtx {},
-        stderr,
-        stdout,
-        send_request: None,
+mod http {
+    use std::{sync::Arc};
+    use wasmtime::{component::Resource, Engine, Store};
+    use wasmtime_wasi::preview2::{
+        pipe::MemoryOutputPipe, Table, WasiCtx, WasiCtxBuilder, WasiView,
     };
+    use wasmtime_wasi_http::{
+        types::{self, HostFutureIncomingResponse, OutgoingRequest},
+        WasiHttpCtx, WasiHttpView,
+    };
+    
+    type RequestSender = Arc<
+        dyn Fn(&mut Ctx, OutgoingRequest) -> wasmtime::Result<Resource<HostFutureIncomingResponse>>
+            + Send
+            + Sync,
+    >;
 
-    Store::new(engine, ctx)
-}
+    pub(crate) struct Ctx {
+        table: Table,
+        wasi: WasiCtx,
+        http: WasiHttpCtx,
+        stdout: MemoryOutputPipe,
+        stderr: MemoryOutputPipe,
+        send_request: Option<RequestSender>,
+    }
 
-impl Drop for Ctx {
-    fn drop(&mut self) {
-        let stdout = self.stdout.contents();
-        if !stdout.is_empty() {
-            println!("[guest] stdout:\n{}\n===", String::from_utf8_lossy(&stdout));
+    impl WasiView for Ctx {
+        fn table(&self) -> &Table {
+            &self.table
         }
-        let stderr = self.stderr.contents();
-        if !stderr.is_empty() {
-            println!("[guest] stderr:\n{}\n===", String::from_utf8_lossy(&stderr));
+        fn table_mut(&mut self) -> &mut Table {
+            &mut self.table
+        }
+        fn ctx(&self) -> &WasiCtx {
+            &self.wasi
+        }
+        fn ctx_mut(&mut self) -> &mut WasiCtx {
+            &mut self.wasi
+        }
+    }
+
+    impl WasiHttpView for Ctx {
+        fn ctx(&mut self) -> &mut WasiHttpCtx {
+            &mut self.http
+        }
+
+        fn table(&mut self) -> &mut Table {
+            &mut self.table
+        }
+
+        fn send_request(
+            &mut self,
+            request: OutgoingRequest,
+        ) -> wasmtime::Result<Resource<HostFutureIncomingResponse>> {
+            if let Some(send_request) = self.send_request.clone() {
+                send_request(self, request)
+            } else {
+                types::default_send_request(self, request)
+            }
+        }
+    }
+
+    pub(crate) fn store(engine: &Engine) -> Store<Ctx> {
+        let stdout = MemoryOutputPipe::new(4096);
+        let stderr = MemoryOutputPipe::new(4096);
+
+        // Create our wasi context.
+        let mut builder = WasiCtxBuilder::new();
+        builder.stdout(stdout.clone());
+        builder.stderr(stderr.clone());
+        let ctx = Ctx {
+            table: Table::new(),
+            wasi: builder.build(),
+            http: WasiHttpCtx {},
+            stderr,
+            stdout,
+            send_request: None,
+        };
+
+        Store::new(engine, ctx)
+    }
+
+    impl Drop for Ctx {
+        fn drop(&mut self) {
+            let stdout = self.stdout.contents();
+            if !stdout.is_empty() {
+                println!("[guest] stdout:\n{}\n===", String::from_utf8_lossy(&stdout));
+            }
+            let stderr = self.stderr.contents();
+            if !stderr.is_empty() {
+                println!("[guest] stderr:\n{}\n===", String::from_utf8_lossy(&stderr));
+            }
         }
     }
 }
-
 pub(crate) struct Activities {
-    activity_functions: HashMap<
-        (
-            String, /* interface FQN: package_name/interface_name */
-            String, /* function name */
-        ),
-        wit_parser::Function,
+    interfaces_functions: HashMap<
+        String,      /* interface FQN: package_name/interface_name */
+        Vec<String>, /* function names */
     >,
-    instance_pre: wasmtime::component::InstancePre<Ctx>,
+    instance_pre: wasmtime::component::InstancePre<http::Ctx>, // pre-started instance
 }
 
 impl Activities {
@@ -143,15 +147,16 @@ impl Activities {
             _ => None,
         });
 
-        let mut activity_functions = HashMap::new();
+        let mut interfaces_functions = HashMap::new();
         for (package_name, ifc_name, functions) in exported_interfaces {
-            let prefix = format!("{package_name}/{ifc_name}");
-            for (fun_name, fun) in functions {
-                activity_functions.insert((prefix.clone(), fun_name.clone()), fun.clone());
-            }
+            let interface_fqn = format!("{package_name}/{ifc_name}");
+            interfaces_functions.insert(
+                interface_fqn,
+                functions.keys().map(String::to_owned).collect(),
+            );
         }
 
-        let instance_pre: wasmtime::component::InstancePre<Ctx> = {
+        let instance_pre: wasmtime::component::InstancePre<http::Ctx> = {
             let mut linker = wasmtime::component::Linker::new(&ENGINE);
             wasmtime_wasi::preview2::command::add_to_linker(&mut linker)?;
             wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(
@@ -165,18 +170,19 @@ impl Activities {
             linker.instantiate_pre(&component)?
         };
         Ok(Self {
-            activity_functions,
+            interfaces_functions,
             instance_pre,
         })
     }
 
+    // TODO: typecheck runtime with the parsed function signature?
     pub(crate) async fn run(
         &self,
         interface_fqn: &str,
         function_name: &str,
     ) -> Result<Result<String, String>, anyhow::Error> {
         // dbg!((interface_fqn, function_name));
-        let mut store = store(&ENGINE);
+        let mut store = http::store(&ENGINE);
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         let func = {
             let mut store = &mut store;
@@ -198,17 +204,22 @@ impl Activities {
         Ok(ret)
     }
 
-    pub(crate) fn activity_functions(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.activity_functions
-            .keys()
-            .map(|(ifc_fqn, function_name)| (ifc_fqn.as_str(), function_name.as_str()))
+    pub(crate) fn interfaces(&self) -> impl Iterator<Item = &str> {
+        self.interfaces_functions.keys().map(String::as_str)
+    }
+
+    pub(crate) fn functions(&self, interface: &str) -> impl Iterator<Item = &str> {
+        self.interfaces_functions
+            .get(interface)
+            .map(|vec| vec.iter().map(String::as_str))
+            .unwrap()
     }
 }
 
 impl Debug for Activities {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Activities");
-        s.field("activity_functions", &self.activity_functions.keys());
+        s.field("interfaces_functions", &self.interfaces_functions);
         s.finish()
     }
 }

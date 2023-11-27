@@ -135,27 +135,29 @@ impl Workflow {
             // Add workflow host functions
             HostImports::add_to_linker(&mut linker)?;
             // add activities
-            for (ifc_fqn, function_name) in activities.activity_functions() {
-                let mut inst = linker.instance(ifc_fqn)?;
-                let ifc_fqn = Arc::new(ifc_fqn.to_string());
-                let function_name = Arc::new(function_name.to_string());
-                inst.func_wrap(
-                    &function_name.clone(),
-                    move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>, (): ()| {
-                        let ifc_fqn = ifc_fqn.clone();
-                        let function_name = function_name.clone();
-                        let wasm_activity = WasmActivity {
-                            ifc_fqn,
-                            function_name,
-                        };
-                        let store = store_ctx.data_mut();
-                        let replay_result = store
-                            .current_event_history
-                            .handle_or_interrupt_wasm_activity(wasm_activity)?;
-                        let replay_result = replay_result.expect("currently hardcoded");
-                        Ok((replay_result,))
-                    },
-                )?;
+            for interface in activities.interfaces() {
+                let mut inst = linker.instance(interface)?;
+                for function_name in activities.functions(interface) {
+                    let ifc_fqn = Arc::new(interface.to_string());
+                    let function_name = Arc::new(function_name.to_string());
+                    inst.func_wrap(
+                        &function_name.clone(),
+                        move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>, (): ()| {
+                            let ifc_fqn = ifc_fqn.clone();
+                            let function_name = function_name.clone();
+                            let wasm_activity = WasmActivity {
+                                ifc_fqn,
+                                function_name,
+                            };
+                            let store = store_ctx.data_mut();
+                            let replay_result = store
+                                .current_event_history
+                                .handle_or_interrupt_wasm_activity(wasm_activity)?;
+                            let replay_result = replay_result.expect("currently hardcoded");
+                            Ok((replay_result,))
+                        },
+                    )?;
+                }
             }
             // Read and compile the wasm component
             let component = Component::from_binary(&ENGINE, &wasm)?;
