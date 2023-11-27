@@ -2,4 +2,6 @@ package my-org:wasm-email-provider
 
 interface email-sender {
     send: func() -> result<string, string>
+    fibo10: func() -> result<string, string>
+    fibo40: func() -> result<string, string>
 }
