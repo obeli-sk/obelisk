@@ -2,7 +2,6 @@ use anyhow::{bail, Context};
 use std::{collections::HashMap, fmt::Debug};
 use wasmtime::{Config, Engine};
 
-
 use wit_component::DecodedWasm;
 
 lazy_static::lazy_static! {
@@ -16,21 +15,12 @@ lazy_static::lazy_static! {
     };
 }
 mod http {
-    use std::{sync::Arc};
-    use wasmtime::{component::Resource, Engine, Store};
+    // wasmtime/crates/wasi-http/tests/all/main.rs
+    use wasmtime::{Engine, Store};
     use wasmtime_wasi::preview2::{
         pipe::MemoryOutputPipe, Table, WasiCtx, WasiCtxBuilder, WasiView,
     };
-    use wasmtime_wasi_http::{
-        types::{self, HostFutureIncomingResponse, OutgoingRequest},
-        WasiHttpCtx, WasiHttpView,
-    };
-    
-    type RequestSender = Arc<
-        dyn Fn(&mut Ctx, OutgoingRequest) -> wasmtime::Result<Resource<HostFutureIncomingResponse>>
-            + Send
-            + Sync,
-    >;
+    use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
     pub(crate) struct Ctx {
         table: Table,
@@ -38,7 +28,6 @@ mod http {
         http: WasiHttpCtx,
         stdout: MemoryOutputPipe,
         stderr: MemoryOutputPipe,
-        send_request: Option<RequestSender>,
     }
 
     impl WasiView for Ctx {
@@ -64,17 +53,6 @@ mod http {
         fn table(&mut self) -> &mut Table {
             &mut self.table
         }
-
-        fn send_request(
-            &mut self,
-            request: OutgoingRequest,
-        ) -> wasmtime::Result<Resource<HostFutureIncomingResponse>> {
-            if let Some(send_request) = self.send_request.clone() {
-                send_request(self, request)
-            } else {
-                types::default_send_request(self, request)
-            }
-        }
     }
 
     pub(crate) fn store(engine: &Engine) -> Store<Ctx> {
@@ -91,7 +69,6 @@ mod http {
             http: WasiHttpCtx {},
             stderr,
             stdout,
-            send_request: None,
         };
 
         Store::new(engine, ctx)
@@ -110,6 +87,7 @@ mod http {
         }
     }
 }
+
 pub(crate) struct Activities {
     interfaces_functions: HashMap<
         String,      /* interface FQN: package_name/interface_name */

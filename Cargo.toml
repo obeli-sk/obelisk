@@ -7,4 +7,8 @@ members = [
 ]
 
 [workspace.dependencies]
+anyhow = "1.0"
 cargo-component-bindings = "0.5"
+wasmtime = { version = "15.0", features = ["component-model"] }
+wasmtime-wasi = "15.0"
+wasmtime-wasi-http = "15.0"

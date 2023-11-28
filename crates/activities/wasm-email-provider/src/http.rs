@@ -1,5 +1,5 @@
+// wasmtime/crates/test-programs/src/http.rs
 use crate::bindings::wasi::http::{outgoing_handler, types as http_types};
-use crate::bindings::wasi::io::poll;
 use crate::bindings::wasi::io::streams;
 use anyhow::{anyhow, Result};
 use std::fmt;
@@ -42,7 +42,7 @@ pub fn request(
     fn header_val(v: &str) -> Vec<u8> {
         v.to_string().into_bytes()
     }
-    let headers = http_types::Headers::new(
+    let headers = http_types::Headers::from_list(
         &[
             &[
                 ("User-agent".to_string(), header_val("WASI-HTTP/0.0.1")),
@@ -51,18 +51,25 @@ pub fn request(
             additional_headers.unwrap_or(&[]),
         ]
         .concat(),
-    );
+    )?;
 
-    let request = http_types::OutgoingRequest::new(
-        &method,
-        Some(path_with_query),
-        Some(&scheme),
-        Some(authority),
-        &headers,
-    );
+    let request = http_types::OutgoingRequest::new(headers);
+
+    request
+        .set_method(&method)
+        .map_err(|()| anyhow!("failed to set method"))?;
+    request
+        .set_scheme(Some(&scheme))
+        .map_err(|()| anyhow!("failed to set scheme"))?;
+    request
+        .set_authority(Some(authority))
+        .map_err(|()| anyhow!("failed to set authority"))?;
+    request
+        .set_path_with_query(Some(&path_with_query))
+        .map_err(|()| anyhow!("failed to set path_with_query"))?;
 
     let outgoing_body = request
-        .write()
+        .body()
         .map_err(|_| anyhow!("outgoing request write failed"))?;
 
     if let Some(mut buf) = body {
@@ -72,7 +79,7 @@ pub fn request(
 
         let pollable = request_body.subscribe();
         while !buf.is_empty() {
-            poll::poll_list(&[&pollable]);
+            pollable.block();
 
             let permit = match request_body.check_write() {
                 Ok(n) => n,
@@ -94,7 +101,7 @@ pub fn request(
             _ => {}
         }
 
-        poll::poll_list(&[&pollable]);
+        pollable.block();
 
         match request_body.check_write() {
             Ok(_) => {}
@@ -104,22 +111,19 @@ pub fn request(
 
     let future_response = outgoing_handler::handle(request, None)?;
 
-    http_types::OutgoingBody::finish(outgoing_body, None);
+    http_types::OutgoingBody::finish(outgoing_body, None)?;
 
     let incoming_response = match future_response.get() {
-        Some(result) => result.map_err(|_| anyhow!("incoming response errored"))?,
+        Some(result) => result.map_err(|()| anyhow!("response already taken"))?,
         None => {
             let pollable = future_response.subscribe();
-            let _ = poll::poll_list(&[&pollable]);
+            pollable.block();
             future_response
                 .get()
                 .expect("incoming response available")
-                .map_err(|_| anyhow!("incoming response errored"))?
+                .map_err(|()| anyhow!("response already taken"))?
         }
-    }
-    // TODO: maybe anything that appears in the Result<_, E> position should impl
-    // Error? anyway, just use its Debug here:
-    .map_err(|e| anyhow!("{e:?}"))?;
+    }?;
 
     drop(future_response);
 
@@ -140,7 +144,7 @@ pub fn request(
 
     let mut body = Vec::new();
     loop {
-        poll::poll_list(&[&input_stream_pollable]);
+        input_stream_pollable.block();
 
         let mut body_chunk = match input_stream.read(1024 * 1024) {
             Ok(c) => c,
