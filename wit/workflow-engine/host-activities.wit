@@ -1,6 +1,6 @@
-package my-org:workflow-engine
+package my-org:workflow-engine;
 
 interface host-activities {
-    sleep: func(millis: u64)
-    noop: func()
+    sleep: func(millis: u64);
+    noop: func();
 }

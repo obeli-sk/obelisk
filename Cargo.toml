@@ -5,3 +5,6 @@ members = [
     "crates/workflows/hello-world",
     "crates/activities/wasm-email-provider",
 ]
+
+[workspace.dependencies]
+cargo-component-bindings = "0.5"
