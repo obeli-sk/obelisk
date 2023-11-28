@@ -14,7 +14,22 @@
     flake-utils.lib.eachDefaultSystem
       (system:
         let
-          overlays = [ (import rust-overlay) ];
+          overlays = [ (import rust-overlay) (final: prev: { 
+              cargo-component = prev.cargo-component.overrideAttrs (old: rec {
+                version = "0.5.0";
+                src = prev.fetchFromGitHub { 
+                      owner = "bytecodealliance";
+                      repo = "cargo-component";
+                      rev = "v0.5.0";
+                      sha256 = "sha256-P7gXfACPK63f38KzV6UVQa8MZmxEaMNxl1GZYCDM54M=";
+                };
+                cargoDeps = old.cargoDeps.overrideAttrs (pkgs.lib.const {
+                  inherit src;
+                  outputHash = "sha256-GDQbzuOcP2Ce5MuKvsiarzFeaF+AtiZ2Vp2h1GMZMR0=";
+                });
+              }); 
+            })
+          ];
           pkgs = import nixpkgs {
             inherit system overlays;
           };
@@ -30,14 +45,6 @@
               rustToolchain
               wasm-tools
             ];
-            buildInputs = with pkgs; [ openssl ];
-            # shellHook = ''
-              # project_root="$(git rev-parse --show-toplevel 2>/dev/null)"
-              # export CARGO_INSTALL_ROOT="$project_root/.cargo"
-              # export PATH="$CARGO_INSTALL_ROOT/bin:$PATH"
-              # cargo_packages="cargo-component@0.4.1"
-              # cargo install --offline $cargo_packages 2>/dev/null || cargo install $cargo_packages
-            # '';
           };
         }
       );
