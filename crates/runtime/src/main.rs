@@ -12,14 +12,14 @@ async fn main() -> Result<(), anyhow::Error> {
     let mut args = std::env::args().skip(1);
     let workflow_function = args.next().expect("workflow function missing");
 
-    let activity_wasm_path = args.next().unwrap_or(
-        "crates/activities/wasm-email-provider/target/wasm32-unknown-unknown/release/wasm_email_provider.wasm".to_string());
+    let activity_wasm_path = args
+        .next()
+        .unwrap_or("target/wasm32-unknown-unknown/release/wasm_email_provider.wasm".to_string());
     let activities = Arc::new(dbg!(activity::Activities::new(&activity_wasm_path).await?));
 
-    let workflow_wasm_path = args.next().unwrap_or(
-        "crates/workflows/hello-world/target/wasm32-unknown-unknown/release/hello_world.wasm"
-            .to_string(),
-    );
+    let workflow_wasm_path = args
+        .next()
+        .unwrap_or("target/wasm32-unknown-unknown/release/hello_world.wasm".to_string());
     let workflow = workflow::Workflow::new(&workflow_wasm_path, activities.clone()).await?;
     println!("Initialized in {duration:?}", duration = timer.elapsed());
     println!();

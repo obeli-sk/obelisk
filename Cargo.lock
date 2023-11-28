@@ -212,6 +212,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "cargo-component-bindings"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d78a19c0ed1121924409696c56baeb0f86e7f6162be2e6f1bd0831f963cd388"
+dependencies = [
+ "cargo-component-macro",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "cargo-component-macro"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f34296f29578ed60c4db818cd1bfdb3e17ed47dc31da9f2c94ca240bdb9b92a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "cc"
 version = "1.0.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -697,6 +718,13 @@ name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
+
+[[package]]
+name = "hello-world"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-bindings",
+]
 
 [[package]]
 name = "hermit-abi"
@@ -1693,6 +1721,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-email-provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo-component-bindings",
+]
+
+[[package]]
 name = "wasm-encoder"
 version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2311,6 +2347,15 @@ checksum = "357bb8e2932df531f83b052264b050b81ba0df90ee5a59b2d1d3949f344f81e5"
 dependencies = [
  "bitflags 2.4.1",
  "windows-sys",
+]
+
+[[package]]
+name = "wit-bindgen"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38726c54a5d7c03cac28a2a8de1006cfe40397ddf6def3f836189033a413bc08"
+dependencies = [
+ "bitflags 2.4.1",
 ]
 
 [[package]]

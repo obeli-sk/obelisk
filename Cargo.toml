@@ -1,3 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/runtime"]
+members = [
+    "crates/runtime",
+    "crates/workflows/hello-world",
+    "crates/activities/wasm-email-provider",
+]
