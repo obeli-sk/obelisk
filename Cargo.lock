@@ -767,6 +767,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-get-activity"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo-component-bindings",
+]
+
+[[package]]
+name = "http-get-workflow"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-bindings",
+]
+
+[[package]]
 name = "httparse"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

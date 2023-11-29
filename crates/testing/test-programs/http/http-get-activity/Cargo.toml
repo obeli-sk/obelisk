@@ -1,0 +1,20 @@
+[package]
+name = "http-get-activity"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+cargo-component-bindings = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component.dependencies]
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = { path = "wit/deps/http" }
+"wasi:clocks" = { path = "wit/deps/clocks" }
+"wasi:io" = { path = "wit/deps/io" }
+"wasi:random" = { path = "wit/deps/random" }
+"testing:http" = { path = "../http-get-wit" }

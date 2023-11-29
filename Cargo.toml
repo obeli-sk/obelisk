@@ -4,6 +4,8 @@ members = [
     "crates/runtime",
     "crates/workflows/hello-world",
     "crates/activities/wasm-email-provider",
+    "crates/testing/test-programs/http/http-get-activity",
+    "crates/testing/test-programs/http/http-get-workflow",
 ]
 
 [workspace.dependencies]

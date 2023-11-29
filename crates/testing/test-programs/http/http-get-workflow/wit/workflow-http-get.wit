@@ -1,0 +1,10 @@
+package testing:http-workflow;
+
+interface workflow {
+    execute: func() -> string;
+}
+
+world any {
+    import testing:http/http-get;
+    export workflow;
+}

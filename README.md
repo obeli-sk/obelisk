@@ -6,4 +6,3 @@ cargo run -p runtime --release -- \
   target/wasm32-unknown-unknown/release/hello_world.wasm \
   noop
 ```
-
