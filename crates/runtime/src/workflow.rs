@@ -5,6 +5,7 @@ use crate::event_history::{
 use anyhow::Context;
 use std::mem;
 use std::{fmt::Debug, sync::Arc};
+use wasmtime::AsContextMut;
 use wasmtime::{
     self,
     component::{Component, InstancePre, Linker},
@@ -30,94 +31,6 @@ enum ExecutionError {
     HandleInterrupt(EventWrapper),
     #[error("unknown error: {0:?}")]
     UnknownError(anyhow::Error),
-}
-
-async fn execute<S, T>(
-    mut store: S,
-    instance_pre: &wasmtime::component::InstancePre<T>,
-    function_name: &str,
-) -> wasmtime::Result<String>
-where
-    S: wasmtime::AsContextMut<Data = T>,
-    T: Send,
-{
-    let instance = instance_pre.instantiate_async(&mut store).await?;
-    let func = {
-        let mut store = store.as_context_mut();
-        let mut exports = instance.exports(&mut store);
-        let mut exports = exports.root();
-        *exports.typed_func::<(), (String,)>(function_name)?.func()
-    };
-    // call func
-    let callee = unsafe { wasmtime::component::TypedFunc::<(), (String,)>::new_unchecked(func) };
-    let (ret0,) = callee.call_async(&mut store, ()).await?;
-    callee.post_return_async(&mut store).await?;
-    Ok(ret0)
-}
-
-// Execute the workflow until it is finished or interrupted.
-async fn execute_translate_error(
-    event_history: &mut EventHistory,
-    function_name: &str,
-    instance_pre: &InstancePre<HostImports>,
-) -> Result<String, ExecutionError> {
-    let mut store = Store::new(
-        &ENGINE,
-        HostImports {
-            current_event_history: CurrentEventHistory::new(mem::take(event_history)),
-        },
-    );
-    // try
-    let res = {
-        execute(&mut store, instance_pre, function_name)
-            .await
-            .map_err(|err| {
-                match err
-                    .source()
-                    .and_then(|source| source.downcast_ref::<HostFunctionError>())
-                {
-                    Some(HostFunctionError::NonDeterminismDetected(reason)) => {
-                        ExecutionError::NonDeterminismDetected(reason.clone())
-                    }
-                    Some(HostFunctionError::Interrupt(_)) => {
-                        ExecutionError::HandleInterrupt(EventWrapper::new_from_err(err))
-                    }
-                    None => ExecutionError::UnknownError(err),
-                }
-            })
-    };
-    // finally
-    mem::swap(
-        event_history,
-        &mut store.data_mut().current_event_history.event_history,
-    );
-    res
-}
-
-async fn execute_all(
-    event_history: &mut EventHistory,
-    function_name: &str,
-    instance_pre: &InstancePre<HostImports>,
-    activities: Arc<Activities>,
-) -> wasmtime::Result<String> {
-    loop {
-        let res = execute_translate_error(event_history, function_name, instance_pre).await;
-        // dbg!(&res);
-        match res {
-            Ok(output) => return Ok(output), // TODO Persist result to the history
-            Err(ExecutionError::HandleInterrupt(event_wrapper)) => {
-                // Persist and execute the event
-                event_history.persist_start(&event_wrapper);
-                let event = event_wrapper.as_ref();
-                let res = event.handle(activities.clone()).await?;
-                event_history.persist_end(event_wrapper, res.clone());
-            }
-            Err(ExecutionError::NonDeterminismDetected(reason)) => {
-                panic!("Non determinism detected: {reason}")
-            }
-            Err(ExecutionError::UnknownError(err)) => panic!("Unknown error: {err:?}"),
-        }
-    }
 }
 
 pub(crate) struct Workflow {
@@ -169,17 +82,101 @@ impl Workflow {
         })
     }
 
-    pub(crate) async fn run(
+    pub(crate) async fn execute_all(
         &self,
         event_history: &mut EventHistory,
+        ifc_fqn: Option<&str>,
         function_name: &str,
-    ) -> Result<String, anyhow::Error> {
-        execute_all(
+    ) -> wasmtime::Result<String> {
+        loop {
+            let res = self
+                .execute_translate_error(event_history, ifc_fqn, function_name)
+                .await;
+            // dbg!(&res);
+            match res {
+                Ok(output) => return Ok(output), // TODO Persist result to the history
+                Err(ExecutionError::HandleInterrupt(event_wrapper)) => {
+                    // Persist and execute the event
+                    event_history.persist_start(&event_wrapper);
+                    let event = event_wrapper.as_ref();
+                    let res = event.handle(self.activities.clone()).await?;
+                    event_history.persist_end(event_wrapper, res.clone());
+                }
+                Err(ExecutionError::NonDeterminismDetected(reason)) => {
+                    panic!("Non determinism detected: {reason}")
+                }
+                Err(ExecutionError::UnknownError(err)) => panic!("Unknown error: {err:?}"),
+            }
+        }
+    }
+
+    // Execute the workflow until it is finished or interrupted.
+    async fn execute_translate_error(
+        &self,
+        event_history: &mut EventHistory,
+        ifc_fqn: Option<&str>,
+        function_name: &str,
+    ) -> Result<String, ExecutionError> {
+        let mut store = Store::new(
+            &ENGINE,
+            HostImports {
+                current_event_history: CurrentEventHistory::new(mem::take(event_history)),
+            },
+        );
+        // try
+        let res: Result<String, ExecutionError> = {
+            self.execute(&mut store, ifc_fqn, function_name)
+                .await
+                .map_err(|err| {
+                    match err
+                        .source()
+                        .and_then(|source| source.downcast_ref::<HostFunctionError>())
+                    {
+                        Some(HostFunctionError::NonDeterminismDetected(reason)) => {
+                            ExecutionError::NonDeterminismDetected(reason.clone())
+                        }
+                        Some(HostFunctionError::Interrupt(_)) => {
+                            ExecutionError::HandleInterrupt(EventWrapper::new_from_err(err))
+                        }
+                        None => ExecutionError::UnknownError(err),
+                    }
+                })
+        };
+        // finally
+        mem::swap(
             event_history,
-            function_name,
-            &self.instance_pre,
-            self.activities.clone(),
-        )
-        .await
+            &mut store.data_mut().current_event_history.event_history,
+        );
+        res
+    }
+
+    async fn execute(
+        &self,
+        mut store: &mut Store<HostImports>,
+        ifc_fqn: Option<&str>,
+        function_name: &str,
+    ) -> wasmtime::Result<String> {
+        let instance = self.instance_pre.instantiate_async(&mut store).await?;
+        let func = {
+            let mut store = store.as_context_mut();
+            let mut exports = instance.exports(&mut store);
+            let mut exports_instance = exports.root();
+            let mut exports_instance = if let Some(ifc_fqn) = ifc_fqn {
+                exports_instance
+                    .instance(ifc_fqn)
+                    .unwrap_or_else(|| panic!("instance must exist:{ifc_fqn}"))
+            } else {
+                exports_instance
+            };
+            *exports_instance
+                .typed_func::<(), (String,)>(function_name)?
+                .func()
+        };
+        // call func
+        let callee =
+            unsafe { wasmtime::component::TypedFunc::<(), (String,)>::new_unchecked(func) };
+        let (ret0,) = callee.call_async(&mut store, ()).await?;
+        callee.post_return_async(&mut store).await?;
+        Ok(ret0)
     }
 }

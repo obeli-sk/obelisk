@@ -70,7 +70,6 @@ mod http {
             stderr,
             stdout,
         };
-
         Store::new(engine, ctx)
     }
 
@@ -142,7 +141,7 @@ impl Activities {
                 |t| t,
             )?;
             wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t)?;
-            // Read and compile the wasm component
+            // Compile the wasm component
             let component =
                 wasmtime::component::Component::from_binary(&ENGINE, &activity_wasm_contents)?;
             linker.instantiate_pre(&component)?
