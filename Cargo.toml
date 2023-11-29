@@ -14,3 +14,9 @@ cargo-component-bindings = "0.5"
 wasmtime = { version = "15.0", features = ["component-model"] }
 wasmtime-wasi = "15.0"
 wasmtime-wasi-http = "15.0"
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Project Developers"]
+edition = "2021"
+rust-version = "1.73.0"
