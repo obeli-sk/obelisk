@@ -8,9 +8,9 @@ use wiremock::{
 
 #[tokio::test]
 async fn test() -> Result<(), anyhow::Error> {
-    let activities = Arc::new(dbg!(
-        Activities::new(test_programs_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY.to_string()).await?
-    ));
+    let activities = Arc::new(
+        Activities::new(test_programs_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY.to_string()).await?,
+    );
     let workflow = Workflow::new(
         test_programs_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW.to_string(),
         activities.clone(),

@@ -3,13 +3,13 @@ package testing:fibo-workflow;
 interface workflow {
     fibo10w: func() -> string;
     fibo10a: func() -> string;
-    fibo10a-times40: func() -> string;
     fibo10w-times40: func() -> string;
+    fibo10a-times40: func() -> string;
 
     fibo40w: func() -> string;
     fibo40a: func() -> string;
-    fibo40a-times10: func() -> string;
     fibo40w-times10: func() -> string;
+    fibo40a-times10: func() -> string;
 }
 
 world any {

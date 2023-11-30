@@ -27,6 +27,7 @@ resolver = "2"
 members = [
     "crates/activities/wasm-email-provider",
     "crates/runtime",
+    "crates/testing/benches",
     "crates/testing/test-programs-builder",
     "crates/testing/test-programs/fibo/activity",
     "crates/testing/test-programs/fibo/workflow",
@@ -50,6 +51,7 @@ anyhow = { version = "1.0", features = ["backtrace"] }
 async-trait = "0.1"
 cargo_metadata = "0.18.1"
 cargo-component-bindings = "0.5"
+criterion = "0.5.1"
 lazy_static = "1.4.0"
 thiserror = "1.0"
 tokio = { version = "1.34" }

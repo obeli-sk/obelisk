@@ -12,18 +12,18 @@ impl Guest for Component {
         crate::bindings::testing::fibo::fibo::fibo10().unwrap()
     }
 
-    fn fibo10a_times40() -> String {
-        let mut last = String::new();
-        for _ in 0..40 {
-            last = Self::fibo10a();
-        }
-        last
-    }
-
     fn fibo10w_times40() -> String {
         let mut last = String::new();
         for _ in 0..40 {
             last = Self::fibo10w();
+        }
+        last
+    }
+
+    fn fibo10a_times40() -> String {
+        let mut last = String::new();
+        for _ in 0..40 {
+            last = Self::fibo10a();
         }
         last
     }
@@ -36,18 +36,18 @@ impl Guest for Component {
         crate::bindings::testing::fibo::fibo::fibo40().unwrap()
     }
 
-    fn fibo40a_times10() -> String {
-        let mut last = String::new();
-        for _ in 0..10 {
-            last = Self::fibo40a();
-        }
-        last
-    }
-
     fn fibo40w_times10() -> String {
         let mut last = String::new();
         for _ in 0..10 {
             last = Self::fibo40w();
+        }
+        last
+    }
+
+    fn fibo40a_times10() -> String {
+        let mut last = String::new();
+        for _ in 0..10 {
+            last = Self::fibo40a();
         }
         last
     }

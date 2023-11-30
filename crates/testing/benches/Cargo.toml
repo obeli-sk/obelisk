@@ -1,0 +1,15 @@
+[package]
+name = "benches"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+runtime.workspace = true
+test-programs-builder.workspace = true
+
+[[bench]]
+name = "fibo"
+harness = false
