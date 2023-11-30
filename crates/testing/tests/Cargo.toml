@@ -10,3 +10,4 @@ anyhow.workspace = true
 test-programs-builder.workspace = true
 runtime.workspace = true
 tokio = { workspace = true, features = ["full"] }
+wiremock.workspace = true
