@@ -1,0 +1,6 @@
+[package]
+name = "test-programs-builder"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true

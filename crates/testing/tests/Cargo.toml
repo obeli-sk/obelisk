@@ -1,0 +1,12 @@
+[package]
+name = "tests"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+test-programs-builder.workspace = true
+runtime.workspace = true
+tokio = { workspace = true, features = ["full"] }
