@@ -1,3 +1,27 @@
+[package]
+name = "workflow-cli"
+version.workspace = true
+authors.workspace = true
+categories = ["wasm"]
+keywords = ["webassembly", "wasm"]
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+runtime.workspace = true
+
+anyhow.workspace = true
+async-trait.workspace = true
+lazy_static.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+wasmtime-wasi-http.workspace = true
+wit-component.workspace = true
+wit-parser.workspace = true
+
 [workspace]
 resolver = "2"
 members = [
@@ -8,15 +32,24 @@ members = [
     "crates/testing/test-programs/http/http-get-workflow",
 ]
 
-[workspace.dependencies]
-anyhow = "1.0"
-cargo-component-bindings = "0.5"
-wasmtime = { version = "15.0", features = ["component-model"] }
-wasmtime-wasi = "15.0"
-wasmtime-wasi-http = "15.0"
-
 [workspace.package]
 version = "0.1.0"
 authors = ["Project Developers"]
 edition = "2021"
 rust-version = "1.73.0"
+
+[workspace.dependencies]
+runtime.path = "crates/runtime"
+test-programs-builder.path = "crates/testing/test-programs-builder"
+
+anyhow = { version = "1.0", features = ["backtrace"] }
+async-trait = "0.1"
+cargo-component-bindings = "0.5"
+lazy_static = "1.4.0"
+thiserror = "1.0"
+tokio = { version = "1.34" }
+wasmtime = { version = "15.0", features = ["component-model"] }
+wasmtime-wasi = "15.0"
+wasmtime-wasi-http = "15.0"
+wit-component = "0.18.2"
+wit-parser = "0.13.0"

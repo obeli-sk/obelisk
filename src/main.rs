@@ -1,10 +1,7 @@
+use runtime::activity::Activities;
+use runtime::event_history::EventHistory;
+use runtime::workflow::Workflow;
 use std::{sync::Arc, time::Instant};
-
-use crate::event_history::EventHistory;
-
-mod activity;
-mod event_history;
-mod workflow;
 
 const IFC_FQN_FUNCTION_NAME_SEPARATOR: &str = ".";
 
@@ -14,7 +11,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let mut args: std::iter::Skip<std::env::Args> = std::env::args().skip(1);
 
     let activity_wasm_path = args.next().expect("activity wasm missing");
-    let activities = Arc::new(dbg!(activity::Activities::new(&activity_wasm_path).await?));
+    let activities = Arc::new(Activities::new(&activity_wasm_path).await?);
 
     let workflow_wasm_path = args.next().expect("workflow wasm missing");
     let workflow_function = args.next().expect("workflow function missing");
@@ -24,11 +21,11 @@ async fn main() -> Result<(), anyhow::Error> {
             Some((ifc_fqn, workflow_function)) => (Some(ifc_fqn), workflow_function),
         };
 
-    let workflow = workflow::Workflow::new(&workflow_wasm_path, activities.clone()).await?;
+    let workflow = Workflow::new(&workflow_wasm_path, activities.clone()).await?;
     println!("Initialized in {duration:?}", duration = timer.elapsed());
     println!();
 
-    let mut event_history = EventHistory(Vec::new());
+    let mut event_history = EventHistory::new();
     {
         println!(
             "Starting workflow {function}",

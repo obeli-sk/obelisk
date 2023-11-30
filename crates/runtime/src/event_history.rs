@@ -233,8 +233,12 @@ impl CurrentEventHistory {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct EventHistory(pub(crate) Vec<(EventWrapper, SupportedActivityResult)>);
+pub struct EventHistory(pub(crate) Vec<(EventWrapper, SupportedActivityResult)>);
 impl EventHistory {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
     pub(crate) fn persist_start(&mut self, _key: &EventWrapper) {
         // TODO
     }
@@ -244,7 +248,11 @@ impl EventHistory {
         self.0.push((key, val))
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }

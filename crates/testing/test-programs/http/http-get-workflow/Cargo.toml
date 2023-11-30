@@ -1,7 +1,9 @@
 [package]
-name = "http-get-workflow"
+name = "test_programs_http_get_workflow"
 version.workspace = true
+authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 cargo-component-bindings = { workspace = true }

@@ -33,15 +33,12 @@ enum ExecutionError {
     UnknownError(anyhow::Error),
 }
 
-pub(crate) struct Workflow {
+pub struct Workflow {
     instance_pre: InstancePre<HostImports>,
     activities: Arc<Activities>,
 }
 impl Workflow {
-    pub(crate) async fn new(
-        wasm_path: &str,
-        activities: Arc<Activities>,
-    ) -> Result<Self, anyhow::Error> {
+    pub async fn new(wasm_path: &str, activities: Arc<Activities>) -> Result<Self, anyhow::Error> {
         let wasm = std::fs::read(wasm_path).with_context(|| format!("cannot open {wasm_path}"))?;
         let instance_pre = {
             let mut linker = Linker::new(&ENGINE);
@@ -82,7 +79,7 @@ impl Workflow {
         })
     }
 
-    pub(crate) async fn execute_all(
+    pub async fn execute_all(
         &self,
         event_history: &mut EventHistory,
         ifc_fqn: Option<&str>,

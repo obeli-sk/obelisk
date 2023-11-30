@@ -87,7 +87,7 @@ mod http {
     }
 }
 
-pub(crate) struct Activities {
+pub struct Activities {
     interfaces_functions: HashMap<
         String,      /* interface FQN: package_name/interface_name */
         Vec<String>, /* function names */
@@ -96,7 +96,7 @@ pub(crate) struct Activities {
 }
 
 impl Activities {
-    pub(crate) async fn new(wasm_path: &str) -> Result<Self, anyhow::Error> {
+    pub async fn new(wasm_path: &str) -> Result<Self, anyhow::Error> {
         let activity_wasm_contents =
             std::fs::read(wasm_path).with_context(|| format!("cannot open {wasm_path}"))?;
         let decoded = wit_component::decode(&activity_wasm_contents)

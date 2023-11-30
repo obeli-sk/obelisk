@@ -767,21 +767,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "http-get-activity"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cargo-component-bindings",
-]
-
-[[package]]
-name = "http-get-workflow"
-version = "0.1.0"
-dependencies = [
- "cargo-component-bindings",
-]
-
-[[package]]
 name = "httparse"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1472,6 +1457,21 @@ name = "target-lexicon"
 version = "0.12.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c39fd04924ca3a864207c66fc2cd7d22d7c016007f9ce846cbb9326331930a"
+
+[[package]]
+name = "test_programs_http_get_activity"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo-component-bindings",
+]
+
+[[package]]
+name = "test_programs_http_get_workflow"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-bindings",
+]
 
 [[package]]
 name = "thiserror"
@@ -2486,6 +2486,23 @@ dependencies = [
  "log",
  "thiserror",
  "wast 35.0.2",
+]
+
+[[package]]
+name = "workflow-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "lazy_static",
+ "runtime",
+ "thiserror",
+ "tokio",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+ "wit-component",
+ "wit-parser",
 ]
 
 [[package]]

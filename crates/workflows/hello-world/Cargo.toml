@@ -1,7 +1,9 @@
 [package]
 name = "hello-world"
 version.workspace = true
+authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 cargo-component-bindings = { workspace = true }
