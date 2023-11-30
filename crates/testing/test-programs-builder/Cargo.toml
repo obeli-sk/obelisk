@@ -4,3 +4,6 @@ version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+
+[build-dependencies]
+cargo_metadata.workspace=true

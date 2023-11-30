@@ -1,0 +1,6 @@
+package testing:fibo;
+
+interface fibo {
+    fibo10: func() -> result<string, string>;
+    fibo40: func() -> result<string, string>;
+}

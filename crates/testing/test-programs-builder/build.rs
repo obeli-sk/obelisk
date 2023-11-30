@@ -8,19 +8,17 @@ const TARGET: &str = "wasm32-unknown-unknown";
 
 fn main() {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let meta = cargo_metadata::MetadataCommand::new().exec().unwrap();
+    let test_programs = meta
+        .packages
+        .iter()
+        .filter(|p| p.name.starts_with("test_programs_"))
+        .collect::<Vec<_>>();
     let mut generated_code = String::new();
-    build_and_add_line(
-        &out_dir,
-        "test_programs_http_get_activity",
-        &mut generated_code,
-    );
-    build_and_add_line(
-        &out_dir,
-        "test_programs_http_get_workflow",
-        &mut generated_code,
-    );
+    for test_program in test_programs {
+        build_and_add_line(&out_dir, &test_program.name, &mut generated_code);
+    }
     std::fs::write(out_dir.join("gen.rs"), generated_code).unwrap();
-    println!("cargo:warning={out_dir:?}");
 }
 
 fn build_and_add_line(out_dir: &Path, name: &str, generated_code: &mut String) {

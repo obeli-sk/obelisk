@@ -19,4 +19,4 @@ crate-type = ["cdylib"]
 "wasi:clocks" = { path = "wit/deps/clocks" }
 "wasi:io" = { path = "wit/deps/io" }
 "wasi:random" = { path = "wit/deps/random" }
-"testing:http" = { path = "../http-get-wit" }
+"testing:http" = { path = "../wit" }
