@@ -93,32 +93,38 @@ pub struct Activities {
         Vec<String>, /* function names */
     >,
     instance_pre: wasmtime::component::InstancePre<http::Ctx>, // pre-started instance
+    wasm_path: String,
 }
 
 impl Activities {
-    pub async fn new(wasm_path: &str) -> Result<Self, anyhow::Error> {
+    pub async fn new(wasm_path: String) -> Result<Self, anyhow::Error> {
         let activity_wasm_contents =
-            std::fs::read(wasm_path).with_context(|| format!("cannot open {wasm_path}"))?;
+            std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
         let decoded = wit_component::decode(&activity_wasm_contents)
-            .with_context(|| format!("cannot decode {wasm_path}"))?;
+            .with_context(|| format!("cannot decode `{wasm_path}`"))?;
 
         let (resolve, world_id) = match decoded {
             DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
-            _ => bail!("cannot parse component"),
+            _ => bail!("cannot parse component in `{wasm_path}`"),
         };
-        let world = resolve.worlds.get(world_id).expect("world must exist");
+        let world = resolve
+            .worlds
+            .get(world_id)
+            .unwrap_or_else(|| panic!("world must exist in `{wasm_path}`"));
         let exported_interfaces = world.exports.iter().filter_map(|(_, item)| match item {
             wit_parser::WorldItem::Interface(ifc) => {
-                let ifc = resolve.interfaces.get(*ifc).expect("interface must exist");
+                let ifc = resolve
+                    .interfaces
+                    .get(*ifc)
+                    .unwrap_or_else(|| panic!("interface must exist in `{wasm_path}`"));
                 let package_name = ifc
                     .package
                     .and_then(|pkg| resolve.packages.get(pkg))
                     .map(|p| &p.name)
-                    .expect("empty packages are not supported");
-                let ifc_name = ifc
-                    .name
-                    .clone()
-                    .expect("empty interfaces are not supported");
+                    .unwrap_or_else(|| panic!("empty packages are not supported in `{wasm_path}`"));
+                let ifc_name = ifc.name.clone().unwrap_or_else(|| {
+                    panic!("empty interfaces are not supported in `{wasm_path}`")
+                });
                 Some((package_name, ifc_name, &ifc.functions))
             }
             _ => None,
@@ -149,6 +155,7 @@ impl Activities {
         Ok(Self {
             interfaces_functions,
             instance_pre,
+            wasm_path,
         })
     }
 
@@ -165,9 +172,13 @@ impl Activities {
             let mut store = &mut store;
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
-            let mut exports_instance = exports_instance
-                .instance(interface_fqn)
-                .unwrap_or_else(|| panic!("instance must exist:{interface_fqn}"));
+            let mut exports_instance =
+                exports_instance.instance(interface_fqn).unwrap_or_else(|| {
+                    panic!(
+                        "cannot find exported interface: `{interface_fqn}` in `{wasm_path}`",
+                        wasm_path = self.wasm_path
+                    )
+                });
             *exports_instance
                 .typed_func::<(), (Result<String, String>,)>(function_name)?
                 .func()
@@ -197,6 +208,7 @@ impl Debug for Activities {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Activities");
         s.field("interfaces_functions", &self.interfaces_functions);
+        s.field("wasm_path", &self.wasm_path);
         s.finish()
     }
 }

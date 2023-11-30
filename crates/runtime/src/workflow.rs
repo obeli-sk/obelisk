@@ -34,12 +34,17 @@ enum ExecutionError {
 }
 
 pub struct Workflow {
+    wasm_path: String,
     instance_pre: InstancePre<HostImports>,
     activities: Arc<Activities>,
 }
 impl Workflow {
-    pub async fn new(wasm_path: &str, activities: Arc<Activities>) -> Result<Self, anyhow::Error> {
-        let wasm = std::fs::read(wasm_path).with_context(|| format!("cannot open {wasm_path}"))?;
+    pub async fn new(
+        wasm_path: String,
+        activities: Arc<Activities>,
+    ) -> Result<Self, anyhow::Error> {
+        let wasm =
+            std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
         let instance_pre = {
             let mut linker = Linker::new(&ENGINE);
             // Add workflow host functions
@@ -76,6 +81,7 @@ impl Workflow {
         Ok(Self {
             instance_pre,
             activities,
+            wasm_path,
         })
     }
 
@@ -89,7 +95,6 @@ impl Workflow {
             let res = self
                 .execute_translate_error(event_history, ifc_fqn, function_name)
                 .await;
-            // dbg!(&res);
             match res {
                 Ok(output) => return Ok(output), // TODO Persist result to the history
                 Err(ExecutionError::HandleInterrupt(event_wrapper)) => {
@@ -100,9 +105,15 @@ impl Workflow {
                     event_history.persist_end(event_wrapper, res.clone());
                 }
                 Err(ExecutionError::NonDeterminismDetected(reason)) => {
-                    panic!("Non determinism detected: {reason}")
+                    panic!(
+                        "Non determinism detected: {reason} while executing `{wasm_path}`",
+                        wasm_path = self.wasm_path
+                    )
                 }
-                Err(ExecutionError::UnknownError(err)) => panic!("Unknown error: {err:?}"),
+                Err(ExecutionError::UnknownError(err)) => panic!(
+                    "Unknown error: {err:?} while executing `{wasm_path}`",
+                    wasm_path = self.wasm_path
+                ),
             }
         }
     }
@@ -159,9 +170,12 @@ impl Workflow {
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
             let mut exports_instance = if let Some(ifc_fqn) = ifc_fqn {
-                exports_instance
-                    .instance(ifc_fqn)
-                    .unwrap_or_else(|| panic!("instance must exist:{ifc_fqn}"))
+                exports_instance.instance(ifc_fqn).unwrap_or_else(|| {
+                    panic!(
+                        "cannot find exported interface: `{ifc_fqn}` in `{wasm_path}`",
+                        wasm_path = self.wasm_path
+                    )
+                })
             } else {
                 exports_instance
             };

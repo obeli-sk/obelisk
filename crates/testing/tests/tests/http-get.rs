@@ -6,10 +6,10 @@ use runtime::{activity::Activities, event_history::EventHistory, workflow::Workf
 async fn test() -> Result<(), anyhow::Error> {
     println!("{}", test_programs_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY);
     let activities = Arc::new(dbg!(
-        Activities::new(test_programs_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY).await?
+        Activities::new(test_programs_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY.to_string()).await?
     ));
     let workflow = Workflow::new(
-        test_programs_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+        test_programs_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW.to_string(),
         activities.clone(),
     )
     .await?;
