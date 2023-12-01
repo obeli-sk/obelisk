@@ -195,6 +195,15 @@ impl CurrentEventHistory {
         self.handle_or_interrupt(Event::WasmActivity(wasm_activity))
     }
 
+    pub(crate) fn persist_start(&mut self, key: &EventWrapper) {
+        self.event_history.persist_start(key)
+    }
+
+    pub(crate) fn persist_end(&mut self, key: EventWrapper, val: SupportedFunctionResult) {
+        self.event_history.persist_end(key, val);
+        self.idx += 1;
+    }
+
     fn handle_or_interrupt(
         &mut self,
         event: Event,
@@ -217,9 +226,8 @@ impl CurrentEventHistory {
                 debug!("Handling {host_activity:?}");
                 let res = host_activity.handle();
                 let event = EventWrapper::new_from_host_activity_sync(host_activity);
-                self.event_history.persist_start(&event);
-                self.event_history.persist_end(event, res.clone());
-                self.idx += 1;
+                self.persist_start(&event);
+                self.persist_end(event, res.clone());
                 Ok(res)
             }
             (event, Some((current, replay_result))) if *current == event => {
@@ -240,19 +248,18 @@ impl CurrentEventHistory {
 }
 
 #[derive(Debug, Default)]
-pub struct EventHistory(pub(crate) Vec<(EventWrapper, SupportedFunctionResult)>);
+pub struct EventHistory(Vec<(EventWrapper, SupportedFunctionResult)>);
 impl EventHistory {
     pub fn new() -> Self {
         Self(Vec::new())
     }
 
-    pub(crate) fn persist_start(&mut self, _key: &EventWrapper) {
+    fn persist_start(&mut self, _key: &EventWrapper) {
         // TODO
     }
 
-    pub(crate) fn persist_end(&mut self, key: EventWrapper, val: SupportedFunctionResult) {
-        // dbg!(("persisting", &key, &val));
-        self.0.push((key, val))
+    fn persist_end(&mut self, key: EventWrapper, val: SupportedFunctionResult) {
+        self.0.push((key, val));
     }
 
     pub fn len(&self) -> usize {

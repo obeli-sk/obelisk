@@ -7,7 +7,7 @@ use wit_component::DecodedWasm;
 
 use crate::{
     event_history::SupportedFunctionResult,
-    workflow::{decode_wasm_function_metadata, FunctionMetadata, FQN},
+    workflow::{decode_wasm_function_metadata, Fqn, FunctionMetadata},
 };
 
 lazy_static::lazy_static! {
@@ -98,7 +98,7 @@ pub struct Activities {
         String,      /* interface FQN: package_name/interface_name */
         Vec<String>, /* function names */
     >,
-    functions_to_results: HashMap<FQN, FunctionMetadata>,
+    functions_to_results: HashMap<Fqn, FunctionMetadata>,
     instance_pre: wasmtime::component::InstancePre<http::Ctx>, // pre-started instance
     wasm_path: String,
 }
@@ -178,7 +178,7 @@ impl Activities {
         params: &[Val],
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
         debug!("`{ifc_fqn:?}`.`{function_name}` ");
-        let fqn = FQN {
+        let fqn = Fqn {
             ifc_fqn: Some(ifc_fqn.to_string()),
             function_name: function_name.to_string(),
         };

@@ -33,8 +33,10 @@ lazy_static::lazy_static! {
 enum ExecutionError {
     #[error("non deterministic execution: {0}")]
     NonDeterminismDetected(String),
-    #[error("handle: {0:?}")]
-    HandleInterrupt(EventWrapper),
+    #[error("interrupted")]
+    NewEventPersisted,
+    #[error("handling event failed")]
+    HandlingEventFailed(anyhow::Error),
     #[error("unknown error: {0:?}")]
     UnknownError(anyhow::Error),
 }
@@ -43,7 +45,7 @@ pub struct Workflow {
     wasm_path: String,
     instance_pre: InstancePre<HostImports>,
     activities: Arc<Activities>,
-    functions_to_results: HashMap<FQN, FunctionMetadata>,
+    functions_to_results: HashMap<Fqn, FunctionMetadata>,
 }
 
 impl Workflow {
@@ -113,7 +115,7 @@ impl Workflow {
         params: &[Val],
     ) -> wasmtime::Result<SupportedFunctionResult> {
         info!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`");
-        let fqn = FQN {
+        let fqn = Fqn {
             ifc_fqn: ifc_fqn.map(|ifc_fqn| ifc_fqn.to_string()),
             function_name: function_name.to_string(),
         };
@@ -131,17 +133,15 @@ impl Workflow {
         trace!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`({params:?}) -> results_len:{results_len}");
         loop {
             let res = self
-                .execute_translate_error(event_history, ifc_fqn, function_name, params, results_len)
+                .execute_persist_event(event_history, ifc_fqn, function_name, params, results_len)
                 .await;
             trace!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}` -> {res:?}");
             match res {
                 Ok(output) => return Ok(output), // TODO Persist result to the history
-                Err(ExecutionError::HandleInterrupt(event_wrapper)) => {
-                    // Persist and execute the event
-                    event_history.persist_start(&event_wrapper);
-                    let event = event_wrapper.as_ref();
-                    let res = event.handle(self.activities.clone()).await?;
-                    event_history.persist_end(event_wrapper, res.clone());
+                Err(ExecutionError::NewEventPersisted) => {} // loop again to get to the next step
+                Err(ExecutionError::HandlingEventFailed(reason)) => {
+                    // TODO: retry
+                    return Err(reason);
                 }
                 Err(ExecutionError::NonDeterminismDetected(reason)) => {
                     panic!(
@@ -158,7 +158,7 @@ impl Workflow {
     }
 
     // Execute the workflow until it is finished or interrupted.
-    async fn execute_translate_error(
+    async fn execute_persist_event(
         &self,
         event_history: &mut EventHistory,
         ifc_fqn: Option<&str>,
@@ -174,9 +174,12 @@ impl Workflow {
         );
         // try
         let res: Result<SupportedFunctionResult, ExecutionError> = {
-            self.execute(&mut store, ifc_fqn, function_name, params, results_len)
+            match self
+                .execute(&mut store, ifc_fqn, function_name, params, results_len)
                 .await
-                .map_err(|err| {
+            {
+                Ok(res) => Ok(res),
+                Err(err) => Err(
                     match err
                         .source()
                         .and_then(|source| source.downcast_ref::<HostFunctionError>())
@@ -185,11 +188,27 @@ impl Workflow {
                             ExecutionError::NonDeterminismDetected(reason.clone())
                         }
                         Some(HostFunctionError::Interrupt(_)) => {
-                            ExecutionError::HandleInterrupt(EventWrapper::new_from_err(err))
+                            let event_wrapper = EventWrapper::new_from_err(err);
+                            // Persist and execute the event
+                            store
+                                .data_mut()
+                                .current_event_history
+                                .persist_start(&event_wrapper);
+                            let event = event_wrapper.as_ref();
+                            let res = event
+                                .handle(self.activities.clone())
+                                .await
+                                .map_err(ExecutionError::HandlingEventFailed)?;
+                            store
+                                .data_mut()
+                                .current_event_history
+                                .persist_end(event_wrapper, res.clone());
+                            ExecutionError::NewEventPersisted
                         }
                         None => ExecutionError::UnknownError(err),
-                    }
-                })
+                    },
+                ),
+            }
         };
         // finally
         mem::swap(
@@ -239,12 +258,12 @@ impl Workflow {
 }
 
 #[derive(Hash, Clone, PartialEq, Eq)]
-pub(crate) struct FQN {
+pub(crate) struct Fqn {
     pub(crate) ifc_fqn: Option<String>,
     pub(crate) function_name: String,
 }
 
-impl Display for FQN {
+impl Display for Fqn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -266,7 +285,7 @@ pub(crate) struct FunctionMetadata {
 
 pub(crate) fn decode_wasm_function_metadata(
     wasm: &[u8],
-) -> Result<HashMap<FQN, FunctionMetadata>, anyhow::Error> {
+) -> Result<HashMap<Fqn, FunctionMetadata>, anyhow::Error> {
     let decoded = wit_component::decode(wasm)?;
     let (resolve, world_id) = match decoded {
         DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
@@ -300,7 +319,7 @@ pub(crate) fn decode_wasm_function_metadata(
     for (package_name, ifc_name, functions) in exported_interfaces.into_iter() {
         let ifc_fqn = format!("{package_name}/{ifc_name}");
         for (function_name, function) in functions.into_iter() {
-            let fqn = FQN {
+            let fqn = Fqn {
                 ifc_fqn: Some(ifc_fqn.clone()),
                 function_name: function_name.clone(),
             };
