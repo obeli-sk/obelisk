@@ -34,6 +34,8 @@ members = [
     "crates/testing/test-programs/fibo/workflow",
     "crates/testing/test-programs/http/activity",
     "crates/testing/test-programs/http/workflow",
+    "crates/testing/test-programs/types/activity",
+    "crates/testing/test-programs/types/workflow",
     "crates/testing/tests",
     "crates/workflows/hello-world",
 ]

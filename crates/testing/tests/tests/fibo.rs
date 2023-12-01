@@ -19,10 +19,10 @@ async fn test() -> Result<(), anyhow::Error> {
         activities.clone(),
     )
     .await?;
-    let mut event_history = EventHistory::new();
 
     let iterations = 10;
     for workflow_function in ["fibow", "fiboa"] {
+        let mut event_history = EventHistory::new();
         let params = vec![Val::U8(10), Val::U8(iterations)];
         let res = workflow
             .execute_all(

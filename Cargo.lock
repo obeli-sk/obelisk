@@ -2100,6 +2100,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "test_programs_types_activity"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-bindings",
+]
+
+[[package]]
+name = "test_programs_types_workflow"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-bindings",
+]
+
+[[package]]
 name = "tests"
 version = "0.1.0"
 dependencies = [

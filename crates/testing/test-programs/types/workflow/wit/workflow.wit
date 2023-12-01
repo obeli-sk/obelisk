@@ -1,0 +1,10 @@
+package testing:types-workflow;
+
+interface workflow {
+    noop: func(iterations: u8);
+}
+
+world any {
+    import testing:types/types;
+    export workflow;
+}

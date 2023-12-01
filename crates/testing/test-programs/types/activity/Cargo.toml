@@ -1,0 +1,17 @@
+[package]
+name = "test_programs_types_activity"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+cargo-component-bindings.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component.dependencies]
+
+[package.metadata.component.target.dependencies]
+"testing:types" = { path = "../wit" }
