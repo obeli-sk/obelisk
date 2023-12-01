@@ -4,56 +4,24 @@ use crate::bindings::exports::testing::fibo_workflow::workflow::Guest;
 struct Component;
 
 impl Guest for Component {
-    fn fibo10w() -> String {
-        fibo(10).to_string()
-    }
-
-    fn fibo10a() -> String {
-        crate::bindings::testing::fibo::fibo::fibo10().unwrap()
-    }
-
-    fn fibo10w_times40() -> String {
-        let mut last = String::new();
-        for _ in 0..40 {
-            last = Self::fibo10w();
+    fn fibow(n: u8, iterations: u8) -> String {
+        let mut last = 0;
+        for _ in 0..iterations {
+            last = fibo(n);
         }
-        last
+        last.to_string()
     }
 
-    fn fibo10a_times40() -> String {
-        let mut last = String::new();
-        for _ in 0..40 {
-            last = Self::fibo10a();
+    fn fiboa(n: u8, iterations: u8) -> String {
+        let mut last = 0;
+        for _ in 0..iterations {
+            last = crate::bindings::testing::fibo::fibo::fibo(n);
         }
-        last
-    }
-
-    fn fibo40w() -> String {
-        fibo(40).to_string()
-    }
-
-    fn fibo40a() -> String {
-        crate::bindings::testing::fibo::fibo::fibo40().unwrap()
-    }
-
-    fn fibo40w_times10() -> String {
-        let mut last = String::new();
-        for _ in 0..10 {
-            last = Self::fibo40w();
-        }
-        last
-    }
-
-    fn fibo40a_times10() -> String {
-        let mut last = String::new();
-        for _ in 0..10 {
-            last = Self::fibo40a();
-        }
-        last
+        last.to_string()
     }
 }
 
-pub fn fibo(n: usize) -> usize {
+pub fn fibo(n: u8) -> u64 {
     if n <= 1 {
         1
     } else {

@@ -7,7 +7,10 @@ rust-version.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
-test-programs-builder.workspace = true
 runtime.workspace = true
+test-programs-builder.workspace = true
 tokio = { workspace = true, features = ["full"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+wasmtime.workspace = true
 wiremock.workspace = true

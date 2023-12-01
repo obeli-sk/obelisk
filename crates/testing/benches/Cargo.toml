@@ -9,6 +9,7 @@ rust-version.workspace = true
 criterion.workspace = true
 runtime.workspace = true
 test-programs-builder.workspace = true
+wasmtime.workspace = true
 
 [[bench]]
 name = "fibo"

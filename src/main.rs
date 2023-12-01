@@ -2,11 +2,17 @@ use runtime::activity::Activities;
 use runtime::event_history::EventHistory;
 use runtime::workflow::Workflow;
 use std::{sync::Arc, time::Instant};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 const IFC_FQN_FUNCTION_NAME_SEPARATOR: &str = ".";
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
+
     let timer = Instant::now();
     let mut args: std::iter::Skip<std::env::Args> = std::env::args().skip(1);
 
@@ -26,6 +32,7 @@ async fn main() -> Result<(), anyhow::Error> {
     println!();
 
     let mut event_history = EventHistory::new();
+    let params = Vec::new();
     {
         println!(
             "Starting workflow {function}",
@@ -37,7 +44,7 @@ async fn main() -> Result<(), anyhow::Error> {
         );
         let timer = Instant::now();
         let res = workflow
-            .execute_all(&mut event_history, ifc_fqn, workflow_function)
+            .execute_all(&mut event_history, ifc_fqn, workflow_function, &params)
             .await;
         println!(
             "Finished: in {duration:?} {res:?}, event history size: {len}",
@@ -50,7 +57,7 @@ async fn main() -> Result<(), anyhow::Error> {
         println!("Replaying");
         let timer = Instant::now();
         let res = workflow
-            .execute_all(&mut event_history, ifc_fqn, workflow_function)
+            .execute_all(&mut event_history, ifc_fqn, workflow_function, &params)
             .await;
         println!(
             "Finished: in {duration:?} {res:?}",

@@ -1,8 +1,11 @@
 use anyhow::{bail, Context};
 use std::{collections::HashMap, fmt::Debug};
-use wasmtime::{Config, Engine};
+use tracing::{debug, info, trace};
+use wasmtime::{component::Val, Config, Engine};
 
 use wit_component::DecodedWasm;
+
+use crate::event_history::SupportedActivityResult;
 
 lazy_static::lazy_static! {
     static ref ENGINE: Engine = {
@@ -77,11 +80,11 @@ mod http {
         fn drop(&mut self) {
             let stdout = self.stdout.contents();
             if !stdout.is_empty() {
-                println!("[guest] stdout:\n{}\n===", String::from_utf8_lossy(&stdout));
+                // println!("[guest] stdout:\n{}\n===", String::from_utf8_lossy(&stdout));
             }
             let stderr = self.stderr.contents();
             if !stderr.is_empty() {
-                println!("[guest] stderr:\n{}\n===", String::from_utf8_lossy(&stderr));
+                // println!("[guest] stderr:\n{}\n===", String::from_utf8_lossy(&stderr));
             }
         }
     }
@@ -152,6 +155,7 @@ impl Activities {
                 wasmtime::component::Component::from_binary(&ENGINE, &activity_wasm_contents)?;
             linker.instantiate_pre(&component)?
         };
+        info!("Loaded {interfaces_functions:?}");
         Ok(Self {
             interfaces_functions,
             instance_pre,
@@ -159,37 +163,36 @@ impl Activities {
         })
     }
 
-    // TODO: typecheck runtime with the parsed function signature?
     pub(crate) async fn run(
         &self,
-        interface_fqn: &str,
+        ifc_fqn: &str,
         function_name: &str,
-    ) -> Result<Result<String, String>, anyhow::Error> {
-        // dbg!((interface_fqn, function_name));
+        params: &[Val],
+    ) -> Result<SupportedActivityResult, anyhow::Error> {
+        debug!("`{ifc_fqn:?}`.`{function_name}`");
+        trace!("`{ifc_fqn:?}`.`{function_name}`({params:?})");
         let mut store = http::store(&ENGINE);
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         let func = {
             let mut store = &mut store;
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
-            let mut exports_instance =
-                exports_instance.instance(interface_fqn).unwrap_or_else(|| {
-                    panic!(
-                        "cannot find exported interface: `{interface_fqn}` in `{wasm_path}`",
-                        wasm_path = self.wasm_path
-                    )
-                });
-            *exports_instance
-                .typed_func::<(), (Result<String, String>,)>(function_name)?
-                .func()
+            let mut exports_instance = exports_instance.instance(ifc_fqn).unwrap_or_else(|| {
+                panic!(
+                    "cannot find exported interface: `{ifc_fqn}` in `{wasm_path}`",
+                    wasm_path = self.wasm_path
+                )
+            });
+            exports_instance.func(function_name).ok_or(anyhow::anyhow!(
+                "function `{ifc_fqn:?}`.`{function_name}` not found"
+            ))?
         };
         // call func
-        let callee = unsafe {
-            wasmtime::component::TypedFunc::<(), (Result<String, String>,)>::new_unchecked(func)
-        };
-        let (ret,) = callee.call_async(&mut store, ()).await?;
-        callee.post_return_async(&mut store).await?;
-        Ok(ret)
+        let mut results = vec![Val::Bool(false)];
+        func.call_async(&mut store, params, &mut results).await?;
+        func.post_return_async(&mut store).await?;
+        trace!("`{ifc_fqn:?}`.`{function_name}` -> {results:?}");
+        Ok(results.pop())
     }
 
     pub(crate) fn interfaces(&self) -> impl Iterator<Item = &str> {

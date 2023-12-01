@@ -7,6 +7,7 @@ use std::{
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use runtime::{activity::Activities, event_history::EventHistory, workflow::Workflow};
+use wasmtime::component::Val;
 
 fn fibonacci(n: u64) -> u64 {
     match n {
@@ -31,25 +32,25 @@ fn workflow() -> Workflow {
 }
 
 fn benchmark_fast_functions(criterion: &mut Criterion) {
-    criterion.bench_function("fibo10", |b| b.iter(|| fibonacci(black_box(10))));
-    criterion.bench_function("fibo40", |b| b.iter(|| fibonacci(black_box(40))));
+    criterion.bench_function("fibo(10)", |b| b.iter(|| fibonacci(black_box(10))));
+    criterion.bench_function("fibo(40)", |b| b.iter(|| fibonacci(black_box(40))));
     let workflow = workflow();
     let functions = vec![
-        "fibo10w",
-        "fibo10a",
-        "fibo10w-times40",
-        "fibo10a-times40",
-        "fibo40w",
-        "fibo40a",
+        ("fibow", 10, 1),
+        ("fiboa", 10, 1),
+        ("fibow", 10, 40),
+        ("fiboa", 10, 40),
     ];
-    for function in functions {
-        criterion.bench_function(function, |b| {
+    for (function, n, iterations) in functions {
+        criterion.bench_function(&format!("{function}({n})*{iterations}"), |b| {
             b.iter(|| {
+                let params = vec![Val::U8(n), Val::U8(iterations)];
                 let mut event_history = EventHistory::new();
                 run_await(workflow.execute_all(
                     &mut event_history,
                     Some("testing:fibo-workflow/workflow"),
                     function,
+                    &params,
                 ))
             })
         });
@@ -58,15 +59,22 @@ fn benchmark_fast_functions(criterion: &mut Criterion) {
 
 fn benchmark_slow_functions(criterion: &mut Criterion) {
     let workflow = workflow();
-    let functions = vec!["fibo40w-times10", "fibo40a-times10"];
-    for function in functions {
-        criterion.bench_function(function, |b| {
+    let functions = vec![
+        ("fibow", 40, 1),
+        ("fiboa", 40, 1),
+        ("fibow", 40, 10),
+        ("fiboa", 40, 10),
+    ];
+    for (function, n, iterations) in functions {
+        criterion.bench_function(&format!("{function}({n})*{iterations}"), |b| {
             b.iter(|| {
+                let params = vec![Val::U8(n), Val::U8(iterations)];
                 let mut event_history = EventHistory::new();
                 run_await(workflow.execute_all(
                     &mut event_history,
                     Some("testing:fibo-workflow/workflow"),
                     function,
+                    &params,
                 ))
             })
         });

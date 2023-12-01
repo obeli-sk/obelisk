@@ -3,15 +3,12 @@ cargo_component_bindings::generate!();
 struct Component;
 
 impl crate::bindings::exports::testing::fibo::fibo::Guest for Component {
-    fn fibo10() -> Result<String, String> {
-        Ok(fibo(10).to_string())
-    }
-    fn fibo40() -> Result<String, String> {
-        Ok(fibo(40).to_string())
+    fn fibo(n: u8) -> u64 {
+        fibo(n)
     }
 }
 
-fn fibo(n: usize) -> usize {
+fn fibo(n: u8) -> u64 {
     if n <= 1 {
         1
     } else {

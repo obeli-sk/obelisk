@@ -1,4 +1,5 @@
-use wasmtime::component::Linker;
+use tracing::{debug, error};
+use wasmtime::component::{Linker, Val};
 
 use crate::activity::Activities;
 use std::{fmt::Debug, sync::Arc, time::Duration};
@@ -10,7 +11,7 @@ wasmtime::component::bindgen!({
     interfaces: "import my-org:workflow-engine/host-activities;",
 });
 
-type SupportedActivityResult = Option<Result<String, String>>;
+pub(crate) type SupportedActivityResult = Option<Val>;
 
 pub(crate) struct HostImports {
     pub(crate) current_event_history: CurrentEventHistory,
@@ -108,6 +109,7 @@ impl HostActivitySync {
 pub(crate) struct WasmActivity {
     pub(crate) ifc_fqn: Arc<String>,
     pub(crate) function_name: Arc<String>,
+    pub(crate) params: Vec<Val>,
 }
 
 impl WasmActivity {
@@ -115,12 +117,14 @@ impl WasmActivity {
         &self,
         activities: Arc<Activities>,
     ) -> Result<SupportedActivityResult, anyhow::Error> {
-        // dbg!(("Running activity ", &self.ifc_fqn, &self.function_name));
         let res = activities
-            .run(self.ifc_fqn.as_str(), self.function_name.as_str())
+            .run(
+                self.ifc_fqn.as_str(),
+                self.function_name.as_str(),
+                &self.params,
+            )
             .await?;
-        // dbg!(&res);
-        Ok(Some(res))
+        Ok(res)
     }
 }
 
@@ -207,7 +211,7 @@ impl CurrentEventHistory {
             // Continue running on HostActivitySync
             (Event::HostActivity(HostActivity::HostActivitySync(host_activity)), None) => {
                 // handle the event and continue
-                // println!("Handling {host_activity:?}");
+                debug!("Handling {host_activity:?}");
                 let res = host_activity.handle();
                 let event = EventWrapper::new_from_host_activity_sync(host_activity);
                 self.event_history.persist_start(&event);
@@ -216,13 +220,13 @@ impl CurrentEventHistory {
                 Ok(res)
             }
             (event, Some((current, replay_result))) if *current == event => {
-                // println!("Replaying {current:?}");
+                debug!("Replaying {current:?}");
                 self.idx += 1;
                 Ok(replay_result.map(Clone::clone))
             }
             (event, None) => {
                 // new event needs to be handled by the runtime
-                // println!("Handling {event:?}");
+                debug!("Handling {event:?}");
                 Err(HostFunctionError::Interrupt(event))
             }
             (event, Some(other)) => Err(HostFunctionError::NonDeterminismDetected(format!(

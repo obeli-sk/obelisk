@@ -11,6 +11,7 @@ async-trait.workspace = true
 lazy_static.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime-wasi-http.workspace = true

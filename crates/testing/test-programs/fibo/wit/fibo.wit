@@ -1,6 +1,5 @@
 package testing:fibo;
 
 interface fibo {
-    fibo10: func() -> result<string, string>;
-    fibo40: func() -> result<string, string>;
+    fibo: func(n: u8) -> u64;
 }

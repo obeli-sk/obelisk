@@ -5,6 +5,8 @@ use crate::event_history::{
 use anyhow::Context;
 use std::mem;
 use std::{fmt::Debug, sync::Arc};
+use tracing::{debug, info, trace};
+use wasmtime::component::Val;
 use wasmtime::AsContextMut;
 use wasmtime::{
     self,
@@ -43,39 +45,48 @@ impl Workflow {
         wasm_path: String,
         activities: Arc<Activities>,
     ) -> Result<Self, anyhow::Error> {
+        info!("workflow.new {wasm_path}");
         let wasm =
             std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
         let instance_pre = {
             let mut linker = Linker::new(&ENGINE);
+            let component = Component::from_binary(&ENGINE, &wasm)?;
             // Add workflow host functions
             HostImports::add_to_linker(&mut linker)?;
             // add activities
             for interface in activities.interfaces() {
-                let mut inst = linker.instance(interface)?;
+                let mut linker_instance = linker.instance(interface)?;
                 for function_name in activities.functions(interface) {
                     let ifc_fqn = Arc::new(interface.to_string());
+                    let ifc_fqn2 = ifc_fqn.clone();
                     let function_name = Arc::new(function_name.to_string());
-                    inst.func_wrap(
-                        &function_name.clone(),
-                        move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>, (): ()| {
-                            let ifc_fqn = ifc_fqn.clone();
-                            let function_name = function_name.clone();
-                            let wasm_activity = WasmActivity {
-                                ifc_fqn,
-                                function_name,
-                            };
-                            let store = store_ctx.data_mut();
-                            let replay_result = store
-                                .current_event_history
-                                .handle_or_interrupt_wasm_activity(wasm_activity)?;
-                            let replay_result = replay_result.expect("currently hardcoded");
-                            Ok((replay_result,))
-                        },
-                    )?;
+                    let function_name2 = function_name.clone();
+                    linker_instance
+                        .func_new(
+                            &component,
+                            &function_name.clone(),
+                            move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
+                                  params: &[Val],
+                                  results: &mut [Val]| {
+                                let wasm_activity = WasmActivity {
+                                    ifc_fqn: ifc_fqn.clone(),
+                                    function_name: function_name.clone(),
+                                    params: Vec::from(params),
+                                };
+                                let store = store_ctx.data_mut();
+                                let replay_result = store
+                                    .current_event_history
+                                    .handle_or_interrupt_wasm_activity(wasm_activity)?;
+                                if let Some(replay_result) = replay_result {
+                                    results[0] = replay_result;
+                                }
+                                Ok(())
+                            },
+                        )
+                        .with_context(|| format!(" `{ifc_fqn2:?}`.`{function_name2}`"))?;
                 }
             }
-            // Read and compile the wasm component
-            let component = Component::from_binary(&ENGINE, &wasm)?;
+
             linker.instantiate_pre(&component)?
         };
         Ok(Self {
@@ -90,11 +101,15 @@ impl Workflow {
         event_history: &mut EventHistory,
         ifc_fqn: Option<&str>,
         function_name: &str,
+        params: &[Val],
     ) -> wasmtime::Result<String> {
+        info!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`");
+        trace!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`({params:?})");
         loop {
             let res = self
-                .execute_translate_error(event_history, ifc_fqn, function_name)
+                .execute_translate_error(event_history, ifc_fqn, function_name, params)
                 .await;
+            trace!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}` -> {res:?}");
             match res {
                 Ok(output) => return Ok(output), // TODO Persist result to the history
                 Err(ExecutionError::HandleInterrupt(event_wrapper)) => {
@@ -124,6 +139,7 @@ impl Workflow {
         event_history: &mut EventHistory,
         ifc_fqn: Option<&str>,
         function_name: &str,
+        params: &[Val],
     ) -> Result<String, ExecutionError> {
         let mut store = Store::new(
             &ENGINE,
@@ -133,7 +149,7 @@ impl Workflow {
         );
         // try
         let res: Result<String, ExecutionError> = {
-            self.execute(&mut store, ifc_fqn, function_name)
+            self.execute(&mut store, ifc_fqn, function_name, params)
                 .await
                 .map_err(|err| {
                     match err
@@ -163,7 +179,10 @@ impl Workflow {
         mut store: &mut Store<HostImports>,
         ifc_fqn: Option<&str>,
         function_name: &str,
+        params: &[Val],
     ) -> wasmtime::Result<String> {
+        debug!("`{ifc_fqn:?}`.`{function_name}`");
+        trace!("`{ifc_fqn:?}`.`{function_name}`({params:?})");
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         let func = {
             let mut store = store.as_context_mut();
@@ -179,15 +198,21 @@ impl Workflow {
             } else {
                 exports_instance
             };
-            *exports_instance
-                .typed_func::<(), (String,)>(function_name)?
-                .func()
+            exports_instance.func(function_name).ok_or(anyhow::anyhow!(
+                "function `{ifc_fqn:?}`.`{function_name}` not found"
+            ))?
         };
         // call func
-        let callee =
-            unsafe { wasmtime::component::TypedFunc::<(), (String,)>::new_unchecked(func) };
-        let (ret0,) = callee.call_async(&mut store, ()).await?;
-        callee.post_return_async(&mut store).await?;
-        Ok(ret0)
+        let mut results = vec![Val::Bool(false)];
+        func.call_async(&mut store, params, &mut results).await?;
+        func.post_return_async(&mut store).await?;
+        trace!("`{ifc_fqn:?}`.`{function_name}` -> {results:?}");
+        let ret = if let Some(Val::String(ret)) = results.pop() {
+            ret
+        } else {
+            //TODO
+            anyhow::bail!("function `{ifc_fqn:?}`.`{function_name}` returned no result");
+        };
+        Ok(ret.into_string())
     }
 }

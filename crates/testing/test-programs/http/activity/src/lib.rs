@@ -8,9 +8,16 @@ use crate::bindings::wasi::http::types::Scheme;
 struct Component;
 
 impl crate::bindings::exports::testing::http::http_get::Guest for Component {
-    fn get() -> Result<String, String> {
-        let addr = "127.0.0.1:8080";
-        let res = crate::http::request(Method::Get, Scheme::Http, addr, "/", None, None).unwrap();
-        Ok(String::from_utf8_lossy(&res.body).to_string())
+    fn get(authority: String, path_with_query: String) -> Result<String, String> {
+        crate::http::request(
+            Method::Get,
+            Scheme::Http,
+            &authority,
+            &path_with_query,
+            None,
+            None,
+        )
+        .map(|resp| String::from_utf8_lossy(&resp.body).to_string())
+        .map_err(|err| format!("{err:?}"))
     }
 }

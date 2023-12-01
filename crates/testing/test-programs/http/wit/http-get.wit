@@ -1,5 +1,5 @@
 package testing:http;
 
 interface http-get {
-    get: func() -> result<string, string>;
+    get: func(authority: string, path: string) -> result<string, string>;
 }
