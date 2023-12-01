@@ -32,7 +32,7 @@ async fn test() -> Result<(), anyhow::Error> {
                 &params,
             )
             .await;
-        assert_eq!(res.unwrap(), Val::U64(89));
+        assert_eq!(res.unwrap(), Some(Val::U64(89)));
         assert_eq!(
             event_history.len(),
             if workflow_function.ends_with("a") {

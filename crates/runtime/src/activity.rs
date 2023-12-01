@@ -1,11 +1,14 @@
-use anyhow::{bail, Context};
+use anyhow::{anyhow, bail, Context};
 use std::{collections::HashMap, fmt::Debug};
 use tracing::{debug, info, trace};
 use wasmtime::{component::Val, Config, Engine};
 
 use wit_component::DecodedWasm;
 
-use crate::event_history::SupportedActivityResult;
+use crate::{
+    event_history::SupportedFunctionResult,
+    workflow::{decode_wasm_function_metadata, FunctionMetadata, FQN},
+};
 
 lazy_static::lazy_static! {
     static ref ENGINE: Engine = {
@@ -95,16 +98,17 @@ pub struct Activities {
         String,      /* interface FQN: package_name/interface_name */
         Vec<String>, /* function names */
     >,
+    functions_to_results: HashMap<FQN, FunctionMetadata>,
     instance_pre: wasmtime::component::InstancePre<http::Ctx>, // pre-started instance
     wasm_path: String,
 }
 
 impl Activities {
     pub async fn new(wasm_path: String) -> Result<Self, anyhow::Error> {
-        let activity_wasm_contents =
+        let wasm =
             std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
-        let decoded = wit_component::decode(&activity_wasm_contents)
-            .with_context(|| format!("cannot decode `{wasm_path}`"))?;
+        let decoded =
+            wit_component::decode(&wasm).with_context(|| format!("cannot decode `{wasm_path}`"))?;
 
         let (resolve, world_id) = match decoded {
             DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
@@ -113,7 +117,7 @@ impl Activities {
         let world = resolve
             .worlds
             .get(world_id)
-            .unwrap_or_else(|| panic!("world must exist in `{wasm_path}`"));
+            .ok_or_else(|| anyhow!("world must exist in `{wasm_path}`"))?;
         let exported_interfaces = world.exports.iter().filter_map(|(_, item)| match item {
             wit_parser::WorldItem::Interface(ifc) => {
                 let ifc = resolve
@@ -151,15 +155,19 @@ impl Activities {
             )?;
             wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t)?;
             // Compile the wasm component
-            let component =
-                wasmtime::component::Component::from_binary(&ENGINE, &activity_wasm_contents)?;
+            let component = wasmtime::component::Component::from_binary(&ENGINE, &wasm)?;
             linker.instantiate_pre(&component)?
         };
+        // TODO: optimize
+        let functions_to_results = decode_wasm_function_metadata(&wasm)
+            .with_context(|| format!("error parsing `{wasm_path}`"))?;
+
         info!("Loaded {interfaces_functions:?}");
         Ok(Self {
             interfaces_functions,
             instance_pre,
             wasm_path,
+            functions_to_results,
         })
     }
 
@@ -168,9 +176,14 @@ impl Activities {
         ifc_fqn: &str,
         function_name: &str,
         params: &[Val],
-    ) -> Result<SupportedActivityResult, anyhow::Error> {
-        debug!("`{ifc_fqn:?}`.`{function_name}`");
-        trace!("`{ifc_fqn:?}`.`{function_name}`({params:?})");
+    ) -> Result<SupportedFunctionResult, anyhow::Error> {
+        debug!("`{ifc_fqn:?}`.`{function_name}` ");
+        let fqn = FQN {
+            ifc_fqn: Some(ifc_fqn.to_string()),
+            function_name: function_name.to_string(),
+        };
+        let results_len = self.functions_to_results.get(&fqn).unwrap().results_len;
+        trace!("`{ifc_fqn:?}`.`{function_name}`({params:?}) -> results_len:{results_len}");
         let mut store = http::store(&ENGINE);
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         let func = {
@@ -188,7 +201,7 @@ impl Activities {
             ))?
         };
         // call func
-        let mut results = vec![Val::Bool(false)];
+        let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
         func.call_async(&mut store, params, &mut results).await?;
         func.post_return_async(&mut store).await?;
         trace!("`{ifc_fqn:?}`.`{function_name}` -> {results:?}");

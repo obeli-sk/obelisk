@@ -1,4 +1,4 @@
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 use wasmtime::component::{Linker, Val};
 
 use crate::activity::Activities;
@@ -11,7 +11,7 @@ wasmtime::component::bindgen!({
     interfaces: "import my-org:workflow-engine/host-activities;",
 });
 
-pub(crate) type SupportedActivityResult = Option<Val>;
+pub(crate) type SupportedFunctionResult = Option<Val>;
 
 pub(crate) struct HostImports {
     pub(crate) current_event_history: CurrentEventHistory,
@@ -56,7 +56,7 @@ impl Event {
     pub(crate) async fn handle(
         &self,
         activities: Arc<Activities>,
-    ) -> Result<SupportedActivityResult, anyhow::Error> {
+    ) -> Result<SupportedFunctionResult, anyhow::Error> {
         match self {
             Self::HostActivity(host_activity) => Ok(host_activity.handle().await),
             Self::WasmActivity(wasm_activity) => wasm_activity.handle(activities).await,
@@ -71,7 +71,7 @@ pub(crate) enum HostActivity {
 }
 
 impl HostActivity {
-    async fn handle(&self) -> SupportedActivityResult {
+    async fn handle(&self) -> SupportedFunctionResult {
         match self {
             Self::HostActivityAsync(host_activity_async) => host_activity_async.handle().await,
             Self::HostActivitySync(host_activity_sync) => host_activity_sync.handle(),
@@ -84,7 +84,7 @@ pub(crate) enum HostActivityAsync {
     Sleep(Duration),
 }
 impl HostActivityAsync {
-    async fn handle(&self) -> SupportedActivityResult {
+    async fn handle(&self) -> SupportedFunctionResult {
         match self {
             Self::Sleep(duration) => {
                 tokio::time::sleep(*duration).await;
@@ -98,7 +98,7 @@ pub(crate) enum HostActivitySync {
     Noop,
 }
 impl HostActivitySync {
-    fn handle(&self) -> SupportedActivityResult {
+    fn handle(&self) -> SupportedFunctionResult {
         match self {
             Self::Noop => None,
         }
@@ -116,7 +116,7 @@ impl WasmActivity {
     async fn handle(
         &self,
         activities: Arc<Activities>,
-    ) -> Result<SupportedActivityResult, anyhow::Error> {
+    ) -> Result<SupportedFunctionResult, anyhow::Error> {
         let res = activities
             .run(
                 self.ifc_fqn.as_str(),
@@ -191,22 +191,25 @@ impl CurrentEventHistory {
     pub(crate) fn handle_or_interrupt_wasm_activity(
         &mut self,
         wasm_activity: WasmActivity,
-    ) -> Result<SupportedActivityResult, HostFunctionError> {
+    ) -> Result<SupportedFunctionResult, HostFunctionError> {
         self.handle_or_interrupt(Event::WasmActivity(wasm_activity))
     }
 
     fn handle_or_interrupt(
         &mut self,
         event: Event,
-    ) -> Result<SupportedActivityResult, HostFunctionError> {
+    ) -> Result<SupportedFunctionResult, HostFunctionError> {
+        let found = self.event_history.0.get(self.idx);
+        trace!(
+            "handle_or_interrupt {event:?}, found: {found:?}, idx: {idx}, history.len: {len}",
+            idx = self.idx,
+            len = self.event_history.len()
+        );
         match (
             event,
-            self.event_history
-                .0
-                .get(self.idx)
-                .map(|(replay_event, replay_result)| {
-                    (replay_event.as_ref(), replay_result.as_ref())
-                }),
+            found.map(|(replay_event, replay_result)| {
+                (replay_event.as_ref(), replay_result.as_ref())
+            }),
         ) {
             // Continue running on HostActivitySync
             (Event::HostActivity(HostActivity::HostActivitySync(host_activity)), None) => {
@@ -237,7 +240,7 @@ impl CurrentEventHistory {
 }
 
 #[derive(Debug, Default)]
-pub struct EventHistory(pub(crate) Vec<(EventWrapper, SupportedActivityResult)>);
+pub struct EventHistory(pub(crate) Vec<(EventWrapper, SupportedFunctionResult)>);
 impl EventHistory {
     pub fn new() -> Self {
         Self(Vec::new())
@@ -247,7 +250,7 @@ impl EventHistory {
         // TODO
     }
 
-    pub(crate) fn persist_end(&mut self, key: EventWrapper, val: SupportedActivityResult) {
+    pub(crate) fn persist_end(&mut self, key: EventWrapper, val: SupportedFunctionResult) {
         // dbg!(("persisting", &key, &val));
         self.0.push((key, val))
     }

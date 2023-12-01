@@ -47,7 +47,7 @@ async fn test() -> Result<(), anyhow::Error> {
         )
         .await;
     info!("Finished: in {duration:?}", duration = timer.elapsed());
-    assert_eq!(res.unwrap(), Val::String(BODY.into()));
+    assert_eq!(res.unwrap(), Some(Val::String(BODY.into())));
     assert_eq!(event_history.len(), 1);
     server.verify().await;
     Ok(())

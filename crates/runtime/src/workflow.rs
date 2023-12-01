@@ -1,8 +1,11 @@
 use crate::activity::Activities;
 use crate::event_history::{
-    CurrentEventHistory, EventHistory, EventWrapper, HostFunctionError, HostImports, WasmActivity,
+    CurrentEventHistory, EventHistory, EventWrapper, HostFunctionError, HostImports,
+    SupportedFunctionResult, WasmActivity,
 };
-use anyhow::Context;
+use anyhow::{anyhow, bail, Context};
+use std::collections::HashMap;
+use std::fmt::Display;
 use std::mem;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
@@ -13,6 +16,7 @@ use wasmtime::{
     component::{Component, InstancePre, Linker},
     Config, Engine, Store,
 };
+use wit_component::DecodedWasm;
 
 lazy_static::lazy_static! {
     static ref ENGINE: Engine = {
@@ -39,7 +43,9 @@ pub struct Workflow {
     wasm_path: String,
     instance_pre: InstancePre<HostImports>,
     activities: Arc<Activities>,
+    functions_to_results: HashMap<FQN, FunctionMetadata>,
 }
+
 impl Workflow {
     pub async fn new(
         wasm_path: String,
@@ -51,9 +57,9 @@ impl Workflow {
         let instance_pre = {
             let mut linker = Linker::new(&ENGINE);
             let component = Component::from_binary(&ENGINE, &wasm)?;
-            // Add workflow host functions
+            // Add workflow host activities
             HostImports::add_to_linker(&mut linker)?;
-            // add activities
+            // Add wasm activities
             for interface in activities.interfaces() {
                 let mut linker_instance = linker.instance(interface)?;
                 for function_name in activities.functions(interface) {
@@ -89,10 +95,13 @@ impl Workflow {
 
             linker.instantiate_pre(&component)?
         };
+        let functions_to_results = decode_wasm_function_metadata(&wasm)
+            .with_context(|| format!("error parsing `{wasm_path}`"))?;
         Ok(Self {
             instance_pre,
             activities,
             wasm_path,
+            functions_to_results,
         })
     }
 
@@ -102,12 +111,27 @@ impl Workflow {
         ifc_fqn: Option<&str>,
         function_name: &str,
         params: &[Val],
-    ) -> wasmtime::Result<Val> {
+    ) -> wasmtime::Result<SupportedFunctionResult> {
         info!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`");
-        trace!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`({params:?})");
+        let fqn = FQN {
+            ifc_fqn: ifc_fqn.map(|ifc_fqn| ifc_fqn.to_string()),
+            function_name: function_name.to_string(),
+        };
+
+        let results_len = self
+            .functions_to_results
+            .get(&fqn)
+            .ok_or_else(|| {
+                anyhow!(
+                    "function {fqn} not found in {wasm_path}",
+                    wasm_path = self.wasm_path
+                )
+            })?
+            .results_len;
+        trace!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`({params:?}) -> results_len:{results_len}");
         loop {
             let res = self
-                .execute_translate_error(event_history, ifc_fqn, function_name, params)
+                .execute_translate_error(event_history, ifc_fqn, function_name, params, results_len)
                 .await;
             trace!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}` -> {res:?}");
             match res {
@@ -121,12 +145,12 @@ impl Workflow {
                 }
                 Err(ExecutionError::NonDeterminismDetected(reason)) => {
                     panic!(
-                        "Non determinism detected: {reason} while executing `{wasm_path}`",
+                        "non determinism detected: {reason} while executing `{wasm_path}`",
                         wasm_path = self.wasm_path
                     )
                 }
                 Err(ExecutionError::UnknownError(err)) => panic!(
-                    "Unknown error: {err:?} while executing `{wasm_path}`",
+                    "unknown error: {err:?} while executing `{wasm_path}`",
                     wasm_path = self.wasm_path
                 ),
             }
@@ -140,7 +164,8 @@ impl Workflow {
         ifc_fqn: Option<&str>,
         function_name: &str,
         params: &[Val],
-    ) -> Result<Val, ExecutionError> {
+        results_len: usize,
+    ) -> Result<SupportedFunctionResult, ExecutionError> {
         let mut store = Store::new(
             &ENGINE,
             HostImports {
@@ -148,8 +173,8 @@ impl Workflow {
             },
         );
         // try
-        let res: Result<Val, ExecutionError> = {
-            self.execute(&mut store, ifc_fqn, function_name, params)
+        let res: Result<SupportedFunctionResult, ExecutionError> = {
+            self.execute(&mut store, ifc_fqn, function_name, params, results_len)
                 .await
                 .map_err(|err| {
                     match err
@@ -180,7 +205,8 @@ impl Workflow {
         ifc_fqn: Option<&str>,
         function_name: &str,
         params: &[Val],
-    ) -> wasmtime::Result<Val> {
+        results_len: usize,
+    ) -> Result<SupportedFunctionResult, anyhow::Error> {
         debug!("`{ifc_fqn:?}`.`{function_name}`");
         trace!("`{ifc_fqn:?}`.`{function_name}`({params:?})");
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
@@ -202,16 +228,89 @@ impl Workflow {
                 "function `{ifc_fqn:?}`.`{function_name}` not found"
             ))?
         };
+        assert!(results_len <= 1, "Max 1 result supported");
         // call func
-        let mut results = vec![Val::Bool(false)];
+        let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
         func.call_async(&mut store, params, &mut results).await?;
         func.post_return_async(&mut store).await?;
         trace!("`{ifc_fqn:?}`.`{function_name}` -> {results:?}");
-        assert_eq!(
-            results.len(),
-            1,
-            "only one result supported, got {results:?}"
-        );
-        Ok(results.pop().unwrap())
+        Ok(results.pop())
     }
+}
+
+#[derive(Hash, Clone, PartialEq, Eq)]
+pub(crate) struct FQN {
+    pub(crate) ifc_fqn: Option<String>,
+    pub(crate) function_name: String,
+}
+
+impl Display for FQN {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{prefix}{function_name}",
+            prefix = if let Some(ifc_fqn) = &self.ifc_fqn {
+                ifc_fqn
+            } else {
+                ""
+            },
+            function_name = self.function_name
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FunctionMetadata {
+    pub(crate) results_len: usize,
+}
+
+pub(crate) fn decode_wasm_function_metadata(
+    wasm: &[u8],
+) -> Result<HashMap<FQN, FunctionMetadata>, anyhow::Error> {
+    let decoded = wit_component::decode(wasm)?;
+    let (resolve, world_id) = match decoded {
+        DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
+        _ => bail!("cannot parse component"),
+    };
+    let world = resolve
+        .worlds
+        .get(world_id)
+        .ok_or_else(|| anyhow!("world must exist"))?;
+
+    let exported_interfaces = world.exports.iter().filter_map(|(_, item)| match item {
+        wit_parser::WorldItem::Interface(ifc) => {
+            let ifc = resolve
+                .interfaces
+                .get(*ifc)
+                .unwrap_or_else(|| panic!("interface must exist"));
+            let package_name = ifc
+                .package
+                .and_then(|pkg| resolve.packages.get(pkg))
+                .map(|p| &p.name)
+                .unwrap_or_else(|| panic!("empty packages are not supported"));
+            let ifc_name = ifc
+                .name
+                .clone()
+                .unwrap_or_else(|| panic!("empty interfaces are not supported"));
+            Some((package_name, ifc_name, &ifc.functions))
+        }
+        _ => None,
+    });
+    let mut functions_to_results = HashMap::new();
+    for (package_name, ifc_name, functions) in exported_interfaces.into_iter() {
+        let ifc_fqn = format!("{package_name}/{ifc_name}");
+        for (function_name, function) in functions.into_iter() {
+            let fqn = FQN {
+                ifc_fqn: Some(ifc_fqn.clone()),
+                function_name: function_name.clone(),
+            };
+            functions_to_results.insert(
+                fqn,
+                FunctionMetadata {
+                    results_len: function.results.len(),
+                },
+            );
+        }
+    }
+    Ok(functions_to_results)
 }
