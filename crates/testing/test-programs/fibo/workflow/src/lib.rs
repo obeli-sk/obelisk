@@ -4,20 +4,20 @@ use crate::bindings::exports::testing::fibo_workflow::workflow::Guest;
 struct Component;
 
 impl Guest for Component {
-    fn fibow(n: u8, iterations: u8) -> String {
+    fn fibow(n: u8, iterations: u8) -> u64 {
         let mut last = 0;
         for _ in 0..iterations {
             last = fibo(n);
         }
-        last.to_string()
+        last
     }
 
-    fn fiboa(n: u8, iterations: u8) -> String {
+    fn fiboa(n: u8, iterations: u8) -> u64 {
         let mut last = 0;
         for _ in 0..iterations {
             last = crate::bindings::testing::fibo::fibo::fibo(n);
         }
-        last.to_string()
+        last
     }
 }
 

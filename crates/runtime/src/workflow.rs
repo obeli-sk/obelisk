@@ -102,7 +102,7 @@ impl Workflow {
         ifc_fqn: Option<&str>,
         function_name: &str,
         params: &[Val],
-    ) -> wasmtime::Result<String> {
+    ) -> wasmtime::Result<Val> {
         info!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`");
         trace!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`({params:?})");
         loop {
@@ -140,7 +140,7 @@ impl Workflow {
         ifc_fqn: Option<&str>,
         function_name: &str,
         params: &[Val],
-    ) -> Result<String, ExecutionError> {
+    ) -> Result<Val, ExecutionError> {
         let mut store = Store::new(
             &ENGINE,
             HostImports {
@@ -148,7 +148,7 @@ impl Workflow {
             },
         );
         // try
-        let res: Result<String, ExecutionError> = {
+        let res: Result<Val, ExecutionError> = {
             self.execute(&mut store, ifc_fqn, function_name, params)
                 .await
                 .map_err(|err| {
@@ -180,7 +180,7 @@ impl Workflow {
         ifc_fqn: Option<&str>,
         function_name: &str,
         params: &[Val],
-    ) -> wasmtime::Result<String> {
+    ) -> wasmtime::Result<Val> {
         debug!("`{ifc_fqn:?}`.`{function_name}`");
         trace!("`{ifc_fqn:?}`.`{function_name}`({params:?})");
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
@@ -207,12 +207,11 @@ impl Workflow {
         func.call_async(&mut store, params, &mut results).await?;
         func.post_return_async(&mut store).await?;
         trace!("`{ifc_fqn:?}`.`{function_name}` -> {results:?}");
-        let ret = if let Some(Val::String(ret)) = results.pop() {
-            ret
-        } else {
-            //TODO
-            anyhow::bail!("function `{ifc_fqn:?}`.`{function_name}` returned no result");
-        };
-        Ok(ret.into_string())
+        assert_eq!(
+            results.len(),
+            1,
+            "only one result supported, got {results:?}"
+        );
+        Ok(results.pop().unwrap())
     }
 }
