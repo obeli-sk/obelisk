@@ -1778,6 +1778,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "indexmap",
  "itertools 0.12.0",
  "lazy_static",
  "thiserror",

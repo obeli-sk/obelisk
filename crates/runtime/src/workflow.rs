@@ -3,7 +3,8 @@ use crate::event_history::{
     CurrentEventHistory, EventHistory, EventWrapper, HostFunctionError, HostImports,
     SupportedFunctionResult, WasmActivity,
 };
-use anyhow::{anyhow, bail, Context};
+use crate::wasm_tools::{exported_interfaces, functions_to_metadata};
+use anyhow::{anyhow, Context};
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::mem;
@@ -16,7 +17,6 @@ use wasmtime::{
     component::{Component, InstancePre, Linker},
     Config, Engine, Store,
 };
-use wit_component::DecodedWasm;
 
 lazy_static::lazy_static! {
     static ref ENGINE: Engine = {
@@ -45,7 +45,7 @@ pub struct Workflow {
     wasm_path: String,
     instance_pre: InstancePre<HostImports>,
     activities: Arc<Activities>,
-    functions_to_results: HashMap<Fqn, FunctionMetadata>,
+    functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
 }
 
 impl Workflow {
@@ -53,7 +53,7 @@ impl Workflow {
         wasm_path: String,
         activities: Arc<Activities>,
     ) -> Result<Self, anyhow::Error> {
-        info!("workflow.new {wasm_path}");
+        info!("workflow::new {wasm_path}");
         let wasm =
             std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
         let instance_pre = {
@@ -102,13 +102,13 @@ impl Workflow {
 
             linker.instantiate_pre(&component)?
         };
-        let functions_to_results = decode_wasm_function_metadata(&wasm)
+        let functions_to_metadata = decode_wasm_function_metadata(&wasm)
             .with_context(|| format!("error parsing `{wasm_path}`"))?;
         Ok(Self {
             instance_pre,
             activities,
             wasm_path,
-            functions_to_results,
+            functions_to_metadata,
         })
     }
 
@@ -120,13 +120,13 @@ impl Workflow {
         params: &[Val],
     ) -> wasmtime::Result<SupportedFunctionResult> {
         info!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`");
-        let fqn = Fqn {
+        let fqn = FunctionFqn {
             ifc_fqn: ifc_fqn.map(|ifc_fqn| ifc_fqn.to_string()),
             function_name: function_name.to_string(),
         };
 
         let results_len = self
-            .functions_to_results
+            .functions_to_metadata
             .get(&fqn)
             .ok_or_else(|| {
                 anyhow!(
@@ -263,12 +263,12 @@ impl Workflow {
 }
 
 #[derive(Hash, Clone, PartialEq, Eq)]
-pub(crate) struct Fqn {
+pub(crate) struct FunctionFqn {
     pub(crate) ifc_fqn: Option<String>,
     pub(crate) function_name: String,
 }
 
-impl Display for Fqn {
+impl Display for FunctionFqn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -288,53 +288,10 @@ pub(crate) struct FunctionMetadata {
     pub(crate) results_len: usize,
 }
 
-pub(crate) fn decode_wasm_function_metadata(
+fn decode_wasm_function_metadata(
     wasm: &[u8],
-) -> Result<HashMap<Fqn, FunctionMetadata>, anyhow::Error> {
+) -> Result<HashMap<FunctionFqn, FunctionMetadata>, anyhow::Error> {
     let decoded = wit_component::decode(wasm)?;
-    let (resolve, world_id) = match decoded {
-        DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
-        _ => bail!("cannot parse component"),
-    };
-    let world = resolve
-        .worlds
-        .get(world_id)
-        .ok_or_else(|| anyhow!("world must exist"))?;
-
-    let exported_interfaces = world.exports.iter().filter_map(|(_, item)| match item {
-        wit_parser::WorldItem::Interface(ifc) => {
-            let ifc = resolve
-                .interfaces
-                .get(*ifc)
-                .unwrap_or_else(|| panic!("interface must exist"));
-            let package_name = ifc
-                .package
-                .and_then(|pkg| resolve.packages.get(pkg))
-                .map(|p| &p.name)
-                .unwrap_or_else(|| panic!("empty packages are not supported"));
-            let ifc_name = ifc
-                .name
-                .clone()
-                .unwrap_or_else(|| panic!("empty interfaces are not supported"));
-            Some((package_name, ifc_name, &ifc.functions))
-        }
-        _ => None,
-    });
-    let mut functions_to_results = HashMap::new();
-    for (package_name, ifc_name, functions) in exported_interfaces.into_iter() {
-        let ifc_fqn = format!("{package_name}/{ifc_name}");
-        for (function_name, function) in functions.into_iter() {
-            let fqn = Fqn {
-                ifc_fqn: Some(ifc_fqn.clone()),
-                function_name: function_name.clone(),
-            };
-            functions_to_results.insert(
-                fqn,
-                FunctionMetadata {
-                    results_len: function.results.len(),
-                },
-            );
-        }
-    }
-    Ok(functions_to_results)
+    let exported_interfaces = exported_interfaces(&decoded)?;
+    Ok(functions_to_metadata(exported_interfaces))
 }

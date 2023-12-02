@@ -1,13 +1,12 @@
-use anyhow::{anyhow, bail, Context};
+use anyhow::Context;
 use std::{collections::HashMap, fmt::Debug};
 use tracing::{debug, info, trace};
 use wasmtime::{component::Val, Config, Engine};
 
-use wit_component::DecodedWasm;
-
 use crate::{
     event_history::SupportedFunctionResult,
-    workflow::{decode_wasm_function_metadata, Fqn, FunctionMetadata},
+    wasm_tools::{exported_interfaces, functions_to_metadata},
+    workflow::{FunctionFqn, FunctionMetadata},
 };
 
 lazy_static::lazy_static! {
@@ -79,6 +78,7 @@ mod http {
         Store::new(engine, ctx)
     }
 
+    // TODO: delete
     impl Drop for Ctx {
         fn drop(&mut self) {
             let stdout = self.stdout.contents();
@@ -94,11 +94,11 @@ mod http {
 }
 
 pub struct Activities {
-    interfaces_functions: HashMap<
+    ifc_fqns_to_function_names: HashMap<
         String,      /* interface FQN: package_name/interface_name */
         Vec<String>, /* function names */
     >,
-    functions_to_results: HashMap<Fqn, FunctionMetadata>,
+    functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
     instance_pre: wasmtime::component::InstancePre<http::Ctx>, // pre-started instance
     wasm_path: String,
 }
@@ -110,41 +110,18 @@ impl Activities {
         let decoded =
             wit_component::decode(&wasm).with_context(|| format!("cannot decode `{wasm_path}`"))?;
 
-        let (resolve, world_id) = match decoded {
-            DecodedWasm::Component(resolve, world_id) => (resolve, world_id),
-            _ => bail!("cannot parse component in `{wasm_path}`"),
-        };
-        let world = resolve
-            .worlds
-            .get(world_id)
-            .ok_or_else(|| anyhow!("world must exist in `{wasm_path}`"))?;
-        let exported_interfaces = world.exports.iter().filter_map(|(_, item)| match item {
-            wit_parser::WorldItem::Interface(ifc) => {
-                let ifc = resolve
-                    .interfaces
-                    .get(*ifc)
-                    .unwrap_or_else(|| panic!("interface must exist in `{wasm_path}`"));
-                let package_name = ifc
-                    .package
-                    .and_then(|pkg| resolve.packages.get(pkg))
-                    .map(|p| &p.name)
-                    .unwrap_or_else(|| panic!("empty packages are not supported in `{wasm_path}`"));
-                let ifc_name = ifc.name.clone().unwrap_or_else(|| {
-                    panic!("empty interfaces are not supported in `{wasm_path}`")
-                });
-                Some((package_name, ifc_name, &ifc.functions))
-            }
-            _ => None,
-        });
+        let exported_interfaces = exported_interfaces(&decoded)
+            .with_context(|| format!("error parsing `{wasm_path}`"))?;
 
-        let mut interfaces_functions = HashMap::new();
-        for (package_name, ifc_name, functions) in exported_interfaces {
+        let mut ifc_fqns_to_function_names = HashMap::new();
+        for (package_name, ifc_name, functions) in exported_interfaces.clone() {
             let interface_fqn = format!("{package_name}/{ifc_name}");
-            interfaces_functions.insert(
+            ifc_fqns_to_function_names.insert(
                 interface_fqn,
                 functions.keys().map(String::to_owned).collect(),
             );
         }
+        let functions_to_metadata = functions_to_metadata(exported_interfaces);
 
         let instance_pre: wasmtime::component::InstancePre<http::Ctx> = {
             let mut linker = wasmtime::component::Linker::new(&ENGINE);
@@ -158,16 +135,13 @@ impl Activities {
             let component = wasmtime::component::Component::from_binary(&ENGINE, &wasm)?;
             linker.instantiate_pre(&component)?
         };
-        // TODO: optimize
-        let functions_to_results = decode_wasm_function_metadata(&wasm)
-            .with_context(|| format!("error parsing `{wasm_path}`"))?;
 
-        info!("Loaded {interfaces_functions:?}");
+        info!("Loaded {ifc_fqns_to_function_names:?}");
         Ok(Self {
-            interfaces_functions,
+            ifc_fqns_to_function_names,
             instance_pre,
             wasm_path,
-            functions_to_results,
+            functions_to_metadata,
         })
     }
 
@@ -178,11 +152,11 @@ impl Activities {
         params: &[Val],
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
         debug!("`{ifc_fqn:?}`.`{function_name}` ");
-        let fqn = Fqn {
+        let fqn = FunctionFqn {
             ifc_fqn: Some(ifc_fqn.to_string()),
             function_name: function_name.to_string(),
         };
-        let results_len = self.functions_to_results.get(&fqn).unwrap().results_len;
+        let results_len = self.functions_to_metadata.get(&fqn).unwrap().results_len;
         trace!("`{ifc_fqn:?}`.`{function_name}`({params:?}) -> results_len:{results_len}");
         let mut store = http::store(&ENGINE);
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
@@ -210,11 +184,11 @@ impl Activities {
     }
 
     pub(crate) fn interfaces(&self) -> impl Iterator<Item = &str> {
-        self.interfaces_functions.keys().map(String::as_str)
+        self.ifc_fqns_to_function_names.keys().map(String::as_str)
     }
 
     pub(crate) fn functions(&self, interface: &str) -> impl Iterator<Item = &str> {
-        self.interfaces_functions
+        self.ifc_fqns_to_function_names
             .get(interface)
             .map(|vec| vec.iter().map(String::as_str))
             .unwrap()
@@ -224,7 +198,7 @@ impl Activities {
 impl Debug for Activities {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Activities");
-        s.field("interfaces_functions", &self.interfaces_functions);
+        s.field("interfaces_functions", &self.ifc_fqns_to_function_names);
         s.field("wasm_path", &self.wasm_path);
         s.finish()
     }
