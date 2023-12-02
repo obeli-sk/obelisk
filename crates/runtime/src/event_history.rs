@@ -1,3 +1,4 @@
+use itertools::Either;
 use tracing::{debug, error, trace};
 use wasmtime::component::{Linker, Val};
 
@@ -11,7 +12,44 @@ wasmtime::component::bindgen!({
     interfaces: "import my-org:workflow-engine/host-activities;",
 });
 
-pub(crate) type SupportedFunctionResult = Option<Val>;
+#[derive(Clone, Debug, PartialEq)]
+pub enum SupportedFunctionResult {
+    None,
+    Single(Val),
+    Multiple(Vec<Val>),
+}
+
+impl SupportedFunctionResult {
+    pub fn new(mut vec: Vec<Val>) -> Self {
+        if vec.is_empty() {
+            Self::None
+        } else if vec.len() == 1 {
+            Self::Single(vec.pop().unwrap())
+        } else {
+            Self::Multiple(vec)
+        }
+    }
+
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Single(_) => 1,
+            Self::Multiple(vec) => vec.len(),
+        }
+    }
+
+    pub fn into_iter(self) -> impl Iterator<Item = Val> {
+        match self {
+            Self::None => Either::Left(None.into_iter()),
+            Self::Single(item) => Either::Left(Some(item).into_iter()),
+            Self::Multiple(vec) => Either::Right(vec.into_iter()),
+        }
+    }
+}
 
 pub(crate) struct HostImports {
     pub(crate) current_event_history: CurrentEventHistory,
@@ -88,7 +126,7 @@ impl HostActivityAsync {
         match self {
             Self::Sleep(duration) => {
                 tokio::time::sleep(*duration).await;
-                None
+                SupportedFunctionResult::None
             }
         }
     }
@@ -100,7 +138,7 @@ pub(crate) enum HostActivitySync {
 impl HostActivitySync {
     fn handle(&self) -> SupportedFunctionResult {
         match self {
-            Self::Noop => None,
+            Self::Noop => SupportedFunctionResult::None,
         }
     }
 }
@@ -216,9 +254,7 @@ impl CurrentEventHistory {
         );
         match (
             event,
-            found.map(|(replay_event, replay_result)| {
-                (replay_event.as_ref(), replay_result.as_ref())
-            }),
+            found.map(|(replay_event, replay_result)| (replay_event.as_ref(), replay_result)),
         ) {
             // Continue running on HostActivitySync
             (Event::HostActivity(HostActivity::HostActivitySync(host_activity)), None) => {
@@ -233,7 +269,7 @@ impl CurrentEventHistory {
             (event, Some((current, replay_result))) if *current == event => {
                 debug!("Replaying {current:?}");
                 self.idx += 1;
-                Ok(replay_result.map(Clone::clone))
+                Ok(replay_result.clone())
             }
             (event, None) => {
                 // new event needs to be handled by the runtime

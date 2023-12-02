@@ -1,6 +1,10 @@
 use std::{sync::Arc, time::Instant};
 
-use runtime::{activity::Activities, event_history::EventHistory, workflow::Workflow};
+use runtime::{
+    activity::Activities,
+    event_history::{EventHistory, SupportedFunctionResult},
+    workflow::Workflow,
+};
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
@@ -47,7 +51,10 @@ async fn test() -> Result<(), anyhow::Error> {
         )
         .await;
     info!("Finished: in {duration:?}", duration = timer.elapsed());
-    assert_eq!(res.unwrap(), Some(Val::String(BODY.into())));
+    assert_eq!(
+        res.unwrap(),
+        SupportedFunctionResult::Single(Val::String(BODY.into()))
+    );
     assert_eq!(event_history.len(), 1);
     server.verify().await;
     Ok(())

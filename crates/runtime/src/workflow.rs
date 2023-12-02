@@ -85,8 +85,13 @@ impl Workflow {
                                 let replay_result = store
                                     .current_event_history
                                     .handle_or_interrupt_wasm_activity(wasm_activity)?;
-                                if let Some(replay_result) = replay_result {
-                                    results[0] = replay_result;
+                                assert_eq!(
+                                    results.len(),
+                                    replay_result.len(),
+                                    "unexpected results length"
+                                );
+                                for (idx, item) in replay_result.into_iter().enumerate() {
+                                    results[idx] = item;
                                 }
                                 Ok(())
                             },
@@ -247,13 +252,13 @@ impl Workflow {
                 "function `{ifc_fqn:?}`.`{function_name}` not found"
             ))?
         };
-        assert!(results_len <= 1, "Max 1 result supported");
         // call func
         let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
         func.call_async(&mut store, params, &mut results).await?;
         func.post_return_async(&mut store).await?;
+        let results = SupportedFunctionResult::new(results);
         trace!("`{ifc_fqn:?}`.`{function_name}` -> {results:?}");
-        Ok(results.pop())
+        Ok(results)
     }
 }
 

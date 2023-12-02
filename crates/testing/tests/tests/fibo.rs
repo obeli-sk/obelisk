@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use runtime::{activity::Activities, event_history::EventHistory, workflow::Workflow};
+use runtime::{
+    activity::Activities,
+    event_history::{EventHistory, SupportedFunctionResult},
+    workflow::Workflow,
+};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
 
@@ -32,7 +36,7 @@ async fn test() -> Result<(), anyhow::Error> {
                 &params,
             )
             .await;
-        assert_eq!(res.unwrap(), Some(Val::U64(89)));
+        assert_eq!(res.unwrap(), SupportedFunctionResult::Single(Val::U64(89)));
         assert_eq!(
             event_history.len(),
             if workflow_function.ends_with("a") {

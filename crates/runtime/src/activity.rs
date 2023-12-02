@@ -204,8 +204,9 @@ impl Activities {
         let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
         func.call_async(&mut store, params, &mut results).await?;
         func.post_return_async(&mut store).await?;
+        let results = SupportedFunctionResult::new(results);
         trace!("`{ifc_fqn:?}`.`{function_name}` -> {results:?}");
-        Ok(results.pop())
+        Ok(results)
     }
 
     pub(crate) fn interfaces(&self) -> impl Iterator<Item = &str> {
