@@ -30,10 +30,6 @@ impl SupportedFunctionResult {
         }
     }
 
-    pub fn is_none(&self) -> bool {
-        matches!(self, Self::None)
-    }
-
     pub fn len(&self) -> usize {
         match self {
             Self::None => 0,
@@ -42,11 +38,24 @@ impl SupportedFunctionResult {
         }
     }
 
-    pub fn into_iter(self) -> impl Iterator<Item = Val> {
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::None)
+    }
+}
+
+impl IntoIterator for SupportedFunctionResult {
+    type Item = Val;
+    type IntoIter = Either<std::option::IntoIter<Val>, std::vec::IntoIter<Val>>;
+
+    fn into_iter(self) -> Self::IntoIter {
         match self {
-            Self::None => Either::Left(None.into_iter()),
-            Self::Single(item) => Either::Left(Some(item).into_iter()),
-            Self::Multiple(vec) => Either::Right(vec.into_iter()),
+            Self::None => Either::Left::<_, std::vec::IntoIter<Val>>(None.into_iter()).into_iter(),
+            Self::Single(item) => {
+                Either::Left::<_, std::vec::IntoIter<Val>>(Some(item).into_iter()).into_iter()
+            }
+            Self::Multiple(vec) => {
+                Either::Right::<std::option::IntoIter<Val>, _>(vec.into_iter()).into_iter()
+            }
         }
     }
 }
@@ -72,14 +81,14 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
             Duration::from_millis(millis),
         )));
         let replay_result = self.current_event_history.handle_or_interrupt(event)?;
-        assert!(replay_result.is_none());
+        assert!(replay_result.is_empty());
         Ok(())
     }
 
     async fn noop(&mut self) -> wasmtime::Result<()> {
         let event = Event::HostActivity(HostActivity::HostActivitySync(HostActivitySync::Noop));
         let replay_result = self.current_event_history.handle_or_interrupt(event)?;
-        assert!(replay_result.is_none());
+        assert!(replay_result.is_empty());
         Ok(())
     }
 }

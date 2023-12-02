@@ -4,9 +4,9 @@ use crate::event_history::{
     SupportedFunctionResult, WasmActivity,
 };
 use crate::wasm_tools::{exported_interfaces, functions_to_metadata};
+use crate::{FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, Context};
 use std::collections::HashMap;
-use std::fmt::Display;
 use std::mem;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
@@ -260,32 +260,6 @@ impl Workflow {
         trace!("`{ifc_fqn:?}`.`{function_name}` -> {results:?}");
         Ok(results)
     }
-}
-
-#[derive(Hash, Clone, PartialEq, Eq)]
-pub(crate) struct FunctionFqn {
-    pub(crate) ifc_fqn: Option<String>,
-    pub(crate) function_name: String,
-}
-
-impl Display for FunctionFqn {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{prefix}{function_name}",
-            prefix = if let Some(ifc_fqn) = &self.ifc_fqn {
-                ifc_fqn
-            } else {
-                ""
-            },
-            function_name = self.function_name
-        )
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct FunctionMetadata {
-    pub(crate) results_len: usize,
 }
 
 fn decode_wasm_function_metadata(

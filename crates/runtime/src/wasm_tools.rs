@@ -1,17 +1,17 @@
-use crate::workflow::{FunctionFqn, FunctionMetadata};
+use crate::{FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, bail};
 use std::collections::HashMap;
 
 use wit_component::DecodedWasm;
 
-pub(crate) fn exported_interfaces<'a>(
-    decoded: &'a DecodedWasm,
+pub(crate) fn exported_interfaces(
+    decoded: &'_ DecodedWasm,
 ) -> Result<
     impl Iterator<
             Item = (
-                &'a wit_parser::PackageName,
-                &'a str,
-                &'a indexmap::IndexMap<String, wit_parser::Function>,
+                &'_ wit_parser::PackageName,
+                &'_ str,
+                &'_ indexmap::IndexMap<String, wit_parser::Function>,
             ),
         > + Clone,
     anyhow::Error,

@@ -6,7 +6,7 @@ use wasmtime::{component::Val, Config, Engine};
 use crate::{
     event_history::SupportedFunctionResult,
     wasm_tools::{exported_interfaces, functions_to_metadata},
-    workflow::{FunctionFqn, FunctionMetadata},
+    {FunctionFqn, FunctionMetadata},
 };
 
 lazy_static::lazy_static! {
