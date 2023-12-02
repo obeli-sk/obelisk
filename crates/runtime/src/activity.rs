@@ -22,17 +22,13 @@ lazy_static::lazy_static! {
 mod http {
     // wasmtime/crates/wasi-http/tests/all/main.rs
     use wasmtime::{Engine, Store};
-    use wasmtime_wasi::preview2::{
-        pipe::MemoryOutputPipe, Table, WasiCtx, WasiCtxBuilder, WasiView,
-    };
+    use wasmtime_wasi::preview2::{Table, WasiCtx, WasiCtxBuilder, WasiView};
     use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
     pub(crate) struct Ctx {
         table: Table,
         wasi: WasiCtx,
         http: WasiHttpCtx,
-        stdout: MemoryOutputPipe,
-        stderr: MemoryOutputPipe,
     }
 
     impl WasiView for Ctx {
@@ -61,35 +57,14 @@ mod http {
     }
 
     pub(crate) fn store(engine: &Engine) -> Store<Ctx> {
-        let stdout = MemoryOutputPipe::new(4096);
-        let stderr = MemoryOutputPipe::new(4096);
-
         // Create our wasi context.
         let mut builder = WasiCtxBuilder::new();
-        builder.stdout(stdout.clone());
-        builder.stderr(stderr.clone());
         let ctx = Ctx {
             table: Table::new(),
             wasi: builder.build(),
             http: WasiHttpCtx {},
-            stderr,
-            stdout,
         };
         Store::new(engine, ctx)
-    }
-
-    // TODO: delete
-    impl Drop for Ctx {
-        fn drop(&mut self) {
-            let stdout = self.stdout.contents();
-            if !stdout.is_empty() {
-                // println!("[guest] stdout:\n{}\n===", String::from_utf8_lossy(&stdout));
-            }
-            let stderr = self.stderr.contents();
-            if !stderr.is_empty() {
-                // println!("[guest] stderr:\n{}\n===", String::from_utf8_lossy(&stderr));
-            }
-        }
     }
 }
 
