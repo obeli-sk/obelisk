@@ -1013,13 +1013,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 
 [[package]]
-name = "hello-world"
-version = "0.1.0"
-dependencies = [
- "cargo-component-bindings",
-]
-
-[[package]]
 name = "hermit-abi"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2538,14 +2531,6 @@ name = "wasm-bindgen-shared"
 version = "0.2.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab9b36309365056cd639da3134bf87fa8f3d86008abf99e612384a6eecd459f"
-
-[[package]]
-name = "wasm-email-provider"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cargo-component-bindings",
-]
 
 [[package]]
 name = "wasm-encoder"

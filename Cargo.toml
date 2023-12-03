@@ -26,8 +26,7 @@ wit-parser.workspace = true
 [workspace]
 resolver = "2"
 members = [
-    "crates/activities/wasm-email-provider",
-    "crates/runtime",
+        "crates/runtime",
     "crates/testing/benches",
     "crates/testing/test-programs-builder",
     "crates/testing/test-programs/fibo/activity",
@@ -37,7 +36,6 @@ members = [
     "crates/testing/test-programs/types/activity",
     "crates/testing/test-programs/types/workflow",
     "crates/testing/tests",
-    "crates/workflows/hello-world",
 ]
 
 [workspace.package]
