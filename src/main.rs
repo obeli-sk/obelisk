@@ -21,11 +21,11 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let workflow_wasm_path = args.next().expect("workflow wasm missing");
     let workflow_function = args.next().expect("workflow function missing");
-    let (ifc_fqn, workflow_function) =
-        match workflow_function.split_once(IFC_FQN_FUNCTION_NAME_SEPARATOR) {
-            None => (None, workflow_function.as_str()),
-            Some((ifc_fqn, workflow_function)) => (Some(ifc_fqn), workflow_function),
-        };
+    let Some((ifc_fqn, workflow_function)) =
+        workflow_function.split_once(IFC_FQN_FUNCTION_NAME_SEPARATOR)
+    else {
+        panic!("workflow function must be a fully qualified name in format `package/interface.function`")
+    };
 
     let workflow = Workflow::new(workflow_wasm_path, activities.clone()).await?;
     println!("Initialized in {duration:?}", duration = timer.elapsed());
@@ -33,36 +33,14 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let mut event_history = EventHistory::new();
     let params = Vec::new();
-    {
-        println!(
-            "Starting workflow {function}",
-            function = if let Some(ifc_fqn) = &ifc_fqn {
-                format!("{ifc_fqn}{IFC_FQN_FUNCTION_NAME_SEPARATOR}{workflow_function}")
-            } else {
-                workflow_function.to_string()
-            }
-        );
-        let timer = Instant::now();
-        let res = workflow
-            .execute_all(&mut event_history, ifc_fqn, workflow_function, &params)
-            .await;
-        println!(
-            "Finished: in {duration:?} {res:?}, event history size: {len}",
-            duration = timer.elapsed(),
-            len = event_history.len()
-        );
-    }
-    println!();
-    {
-        println!("Replaying");
-        let timer = Instant::now();
-        let res = workflow
-            .execute_all(&mut event_history, ifc_fqn, workflow_function, &params)
-            .await;
-        println!(
-            "Finished: in {duration:?} {res:?}",
-            duration = timer.elapsed()
-        );
-    }
+    let timer = Instant::now();
+    let res = workflow
+        .execute_all(&mut event_history, ifc_fqn, workflow_function, &params)
+        .await;
+    println!(
+        "Finished: in {duration:?} {res:?}, event history size: {len}",
+        duration = timer.elapsed(),
+        len = event_history.len()
+    );
     Ok(())
 }

@@ -48,7 +48,7 @@ fn benchmark_fast_functions(criterion: &mut Criterion) {
                 let mut event_history = EventHistory::new();
                 run_await(workflow.execute_all(
                     &mut event_history,
-                    Some("testing:fibo-workflow/workflow"),
+                    "testing:fibo-workflow/workflow",
                     function,
                     &params,
                 ))
@@ -72,7 +72,7 @@ fn benchmark_slow_functions(criterion: &mut Criterion) {
                 let mut event_history = EventHistory::new();
                 run_await(workflow.execute_all(
                     &mut event_history,
-                    Some("testing:fibo-workflow/workflow"),
+                    "testing:fibo-workflow/workflow",
                     function,
                     &params,
                 ))

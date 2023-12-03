@@ -45,7 +45,7 @@ async fn test() -> Result<(), anyhow::Error> {
     let res = workflow
         .execute_all(
             &mut event_history,
-            Some("testing:http-workflow/workflow"),
+            "testing:http-workflow/workflow",
             "execute",
             &params,
         )

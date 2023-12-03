@@ -59,7 +59,7 @@ pub(crate) fn functions_to_metadata<'a>(
         let ifc_fqn = format!("{package_name}/{ifc_name}");
         for (function_name, function) in functions.into_iter() {
             let fqn = FunctionFqn {
-                ifc_fqn: Some(ifc_fqn.clone()),
+                ifc_fqn: ifc_fqn.clone(),
                 function_name: function_name.clone(),
             };
             functions_to_results.insert(

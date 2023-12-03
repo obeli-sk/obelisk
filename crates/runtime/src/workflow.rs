@@ -115,13 +115,14 @@ impl Workflow {
     pub async fn execute_all(
         &self,
         event_history: &mut EventHistory,
-        ifc_fqn: Option<&str>,
+        ifc_fqn: &str,
         function_name: &str,
         params: &[Val],
     ) -> wasmtime::Result<SupportedFunctionResult> {
         info!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`");
         let fqn = FunctionFqn {
-            ifc_fqn: ifc_fqn.map(|ifc_fqn| ifc_fqn.to_string()),
+            // TODO: implement deref
+            ifc_fqn: ifc_fqn.to_string(),
             function_name: function_name.to_string(),
         };
 
@@ -166,7 +167,7 @@ impl Workflow {
     async fn execute_persist_event(
         &self,
         event_history: &mut EventHistory,
-        ifc_fqn: Option<&str>,
+        ifc_fqn: &str,
         function_name: &str,
         params: &[Val],
         results_len: usize,
@@ -226,7 +227,7 @@ impl Workflow {
     async fn execute(
         &self,
         mut store: &mut Store<HostImports>,
-        ifc_fqn: Option<&str>,
+        ifc_fqn: &str,
         function_name: &str,
         params: &[Val],
         results_len: usize,
@@ -238,16 +239,9 @@ impl Workflow {
             let mut store = store.as_context_mut();
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
-            let mut exports_instance = if let Some(ifc_fqn) = ifc_fqn {
-                exports_instance.instance(ifc_fqn).unwrap_or_else(|| {
-                    panic!(
-                        "cannot find exported interface: `{ifc_fqn}` in `{wasm_path}`",
-                        wasm_path = self.wasm_path
-                    )
-                })
-            } else {
-                exports_instance
-            };
+            let mut exports_instance = exports_instance
+                .instance(ifc_fqn)
+                .ok_or_else(|| anyhow!("cannot find exported interface: `{ifc_fqn}`"))?;
             exports_instance.func(function_name).ok_or(anyhow::anyhow!(
                 "function `{ifc_fqn:?}`.`{function_name}` not found"
             ))?

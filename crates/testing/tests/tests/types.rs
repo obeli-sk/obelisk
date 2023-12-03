@@ -29,7 +29,7 @@ async fn test() -> Result<(), anyhow::Error> {
     let res = workflow
         .execute_all(
             &mut event_history,
-            Some("testing:types-workflow/workflow"),
+            "testing:types-workflow/workflow",
             "noop",
             &params,
         )

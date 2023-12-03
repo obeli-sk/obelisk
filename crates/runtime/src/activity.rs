@@ -126,13 +126,14 @@ impl Activities {
         function_name: &str,
         params: &[Val],
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
-        debug!("`{ifc_fqn:?}`.`{function_name}` ");
         let fqn = FunctionFqn {
-            ifc_fqn: Some(ifc_fqn.to_string()),
+            // TODO: implement deref
+            ifc_fqn: ifc_fqn.to_string(),
             function_name: function_name.to_string(),
         };
+        debug!("Running `{fqn}`");
         let results_len = self.functions_to_metadata.get(&fqn).unwrap().results_len;
-        trace!("`{ifc_fqn:?}`.`{function_name}`({params:?}) -> results_len:{results_len}");
+        trace!("Running `{fqn}`({params:?}) -> results_len:{results_len}");
         let mut store = http::store(&ENGINE);
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         let func = {
@@ -145,16 +146,16 @@ impl Activities {
                     wasm_path = self.wasm_path
                 )
             });
-            exports_instance.func(function_name).ok_or(anyhow::anyhow!(
-                "function `{ifc_fqn:?}`.`{function_name}` not found"
-            ))?
+            exports_instance
+                .func(function_name)
+                .ok_or(anyhow::anyhow!("function `{fqn}` not found"))?
         };
         // call func
         let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
         func.call_async(&mut store, params, &mut results).await?;
         func.post_return_async(&mut store).await?;
         let results = SupportedFunctionResult::new(results);
-        trace!("`{ifc_fqn:?}`.`{function_name}` -> {results:?}");
+        trace!("Finished `{fqn}` -> {results:?}");
         Ok(results)
     }
 
@@ -174,6 +175,7 @@ impl Debug for Activities {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Activities");
         s.field("interfaces_functions", &self.ifc_fqns_to_function_names);
+        s.field("functions_to_metadata", &self.functions_to_metadata);
         s.field("wasm_path", &self.wasm_path);
         s.finish()
     }

@@ -31,7 +31,7 @@ async fn test() -> Result<(), anyhow::Error> {
         let res = workflow
             .execute_all(
                 &mut event_history,
-                Some("testing:fibo-workflow/workflow"),
+                "testing:fibo-workflow/workflow",
                 workflow_function,
                 &params,
             )

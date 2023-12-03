@@ -5,9 +5,9 @@ pub mod event_history;
 mod wasm_tools;
 pub mod workflow;
 
-#[derive(Hash, Clone, PartialEq, Eq)]
+#[derive(Hash, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FunctionFqn {
-    pub(crate) ifc_fqn: Option<String>,
+    pub(crate) ifc_fqn: String,
     pub(crate) function_name: String,
 }
 
@@ -15,12 +15,8 @@ impl Display for FunctionFqn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{prefix}{function_name}",
-            prefix = if let Some(ifc_fqn) = &self.ifc_fqn {
-                ifc_fqn
-            } else {
-                ""
-            },
+            "{ifc_fqn}.{function_name}",
+            ifc_fqn = self.ifc_fqn,
             function_name = self.function_name
         )
     }
