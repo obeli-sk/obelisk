@@ -1,3 +1,4 @@
+#![allow(unused, clippy::needless_borrow, clippy::single_match)]
 // wasmtime/crates/test-programs/src/http.rs
 use crate::bindings::wasi::http::{outgoing_handler, types as http_types};
 use crate::bindings::wasi::io::streams;

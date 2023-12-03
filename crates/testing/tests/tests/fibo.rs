@@ -39,7 +39,7 @@ async fn test() -> Result<(), anyhow::Error> {
         assert_eq!(res.unwrap(), SupportedFunctionResult::Single(Val::U64(89)));
         assert_eq!(
             event_history.len(),
-            if workflow_function.ends_with("a") {
+            if workflow_function.ends_with('a') {
                 iterations as usize
             } else {
                 0
