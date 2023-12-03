@@ -139,12 +139,12 @@ impl Activities {
             let mut store = &mut store;
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
-            let mut exports_instance = exports_instance.instance(ifc_fqn).unwrap_or_else(|| {
-                panic!(
+            let mut exports_instance = exports_instance.instance(ifc_fqn).ok_or_else(|| {
+                anyhow::anyhow!(
                     "cannot find exported interface: `{ifc_fqn}` in `{wasm_path}`",
                     wasm_path = self.wasm_path
                 )
-            });
+            })?;
             exports_instance
                 .func(function_name)
                 .ok_or(anyhow::anyhow!("function `{fqn}` not found"))?
