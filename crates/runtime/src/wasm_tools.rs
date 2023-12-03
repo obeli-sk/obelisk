@@ -1,6 +1,6 @@
 use crate::{FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, bail};
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use wit_component::DecodedWasm;
 
@@ -53,14 +53,14 @@ pub(crate) fn functions_to_metadata<'a>(
             &'a indexmap::IndexMap<String, wit_parser::Function>,
         ),
     >,
-) -> HashMap<FunctionFqn, FunctionMetadata> {
+) -> HashMap<FunctionFqn<'static>, FunctionMetadata> {
     let mut functions_to_results = HashMap::new();
     for (package_name, ifc_name, functions) in exported_interfaces.into_iter() {
         let ifc_fqn = format!("{package_name}/{ifc_name}");
         for (function_name, function) in functions.into_iter() {
             let fqn = FunctionFqn {
-                ifc_fqn: ifc_fqn.clone(),
-                function_name: function_name.clone(),
+                ifc_fqn: Cow::Owned(ifc_fqn.clone()),
+                function_name: Cow::Owned(function_name.clone()),
             };
             functions_to_results.insert(
                 fqn,

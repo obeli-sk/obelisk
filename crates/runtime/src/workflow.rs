@@ -6,6 +6,7 @@ use crate::event_history::{
 use crate::wasm_tools::{exported_interfaces, functions_to_metadata};
 use crate::{FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, Context};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::mem;
 use std::{fmt::Debug, sync::Arc};
@@ -45,7 +46,7 @@ pub struct Workflow {
     wasm_path: String,
     instance_pre: InstancePre<HostImports>,
     activities: Arc<Activities>,
-    functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
+    functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
 }
 
 impl Workflow {
@@ -121,9 +122,8 @@ impl Workflow {
     ) -> wasmtime::Result<SupportedFunctionResult> {
         info!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`");
         let fqn = FunctionFqn {
-            // TODO: implement deref
-            ifc_fqn: ifc_fqn.to_string(),
-            function_name: function_name.to_string(),
+            ifc_fqn: Cow::Borrowed(ifc_fqn),
+            function_name: Cow::Borrowed(function_name),
         };
 
         let results_len = self
@@ -258,7 +258,7 @@ impl Workflow {
 
 fn decode_wasm_function_metadata(
     wasm: &[u8],
-) -> Result<HashMap<FunctionFqn, FunctionMetadata>, anyhow::Error> {
+) -> Result<HashMap<FunctionFqn<'static>, FunctionMetadata>, anyhow::Error> {
     let decoded = wit_component::decode(wasm)?;
     let exported_interfaces = exported_interfaces(&decoded)?;
     Ok(functions_to_metadata(exported_interfaces))

@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{borrow::Cow, fmt::Display};
 
 pub mod activity;
 pub mod event_history;
@@ -6,12 +6,12 @@ mod wasm_tools;
 pub mod workflow;
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct FunctionFqn {
-    pub(crate) ifc_fqn: String,
-    pub(crate) function_name: String,
+pub struct FunctionFqn<'a> {
+    pub ifc_fqn: Cow<'a, str>,
+    pub function_name: Cow<'a, str>,
 }
 
-impl Display for FunctionFqn {
+impl Display for FunctionFqn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,

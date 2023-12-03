@@ -1,5 +1,5 @@
 use anyhow::Context;
-use std::{collections::HashMap, fmt::Debug};
+use std::{borrow::Cow, collections::HashMap, fmt::Debug};
 use tracing::{debug, info, trace};
 use wasmtime::{component::Val, Config, Engine};
 
@@ -73,7 +73,7 @@ pub struct Activities {
         String,      /* interface FQN: package_name/interface_name */
         Vec<String>, /* function names */
     >,
-    functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
+    functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
     instance_pre: wasmtime::component::InstancePre<http::Ctx>, // pre-started instance
     wasm_path: String,
 }
@@ -127,9 +127,8 @@ impl Activities {
         params: &[Val],
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
         let fqn = FunctionFqn {
-            // TODO: implement deref
-            ifc_fqn: ifc_fqn.to_string(),
-            function_name: function_name.to_string(),
+            ifc_fqn: Cow::Borrowed(ifc_fqn),
+            function_name: Cow::Borrowed(function_name),
         };
         debug!("Running `{fqn}`");
         let results_len = self.functions_to_metadata.get(&fqn).unwrap().results_len;
