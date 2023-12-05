@@ -6,6 +6,9 @@ use std::{
 
 const TARGET: &str = "wasm32-unknown-unknown";
 
+// TODO: idea from wasmtime/crates/component-macro/src/bindgen.rs:
+// Include a dummy `include_str!` for any files we read so rustc knows that
+// we depend on the contents of those files.
 fn main() {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let meta = cargo_metadata::MetadataCommand::new().exec().unwrap();
