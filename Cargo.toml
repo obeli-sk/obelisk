@@ -26,7 +26,7 @@ wit-parser.workspace = true
 [workspace]
 resolver = "2"
 members = [
-        "crates/runtime",
+    "crates/runtime",
     "crates/testing/benches",
     "crates/testing/test-programs-builder",
     "crates/testing/test-programs/fibo/activity",
@@ -36,6 +36,7 @@ members = [
     "crates/testing/test-programs/types/activity",
     "crates/testing/test-programs/types/workflow",
     "crates/testing/tests",
+    "crates/val-json",
 ]
 
 [workspace.package]
@@ -47,6 +48,8 @@ rust-version = "1.73.0"
 [workspace.dependencies]
 runtime.path = "crates/runtime"
 test-programs-builder.path = "crates/testing/test-programs-builder"
+val-json.path = "crates/val-json"
+
 
 anyhow = { version = "1.0", features = ["backtrace"] }
 async-trait = "0.1"
@@ -56,6 +59,8 @@ criterion = "0.5"
 indexmap = "2.1"
 itertools = "0.12"
 lazy_static = "1.4"
+serde = { version = "1.0.193", features = ["derive"] }
+serde_json = "1.0.108"
 thiserror = "1.0"
 tokio = { version = "1.34" }
 tracing = { version = "0.1", features = ["log"] }

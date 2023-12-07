@@ -6,8 +6,11 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dev-dependencies]
-anyhow.workspace = true
 runtime.workspace = true
+val-json.workspace = true
+
+anyhow.workspace = true
+serde_json.workspace = true
 test-programs-builder.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing-subscriber.workspace = true

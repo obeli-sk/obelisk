@@ -1,0 +1,11 @@
+[package]
+name = "val-json"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+serde.workspace = true
+wasmtime.workspace = true
