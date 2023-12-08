@@ -4,6 +4,7 @@ use runtime::{
     activity::Activities,
     event_history::{EventHistory, SupportedFunctionResult},
     workflow::Workflow,
+    FunctionFqn,
 };
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use val_json::TypeWrapper;
@@ -33,8 +34,7 @@ async fn test() -> Result<(), anyhow::Error> {
     let res = workflow
         .execute_all(
             &mut event_history,
-            "testing:types-workflow/workflow",
-            "noop",
+            &FunctionFqn::new("testing:types-workflow/workflow", "noop"),
             &param_vals,
         )
         .await;

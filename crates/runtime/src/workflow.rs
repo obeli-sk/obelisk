@@ -6,7 +6,6 @@ use crate::event_history::{
 use crate::wasm_tools::{exported_interfaces, functions_to_metadata};
 use crate::{FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, Context};
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::mem;
 use std::{fmt::Debug, sync::Arc};
@@ -119,19 +118,14 @@ impl Workflow {
     pub async fn execute_all(
         &self,
         event_history: &mut EventHistory,
-        ifc_fqn: &str, //TODO fqn
-        function_name: &str,
+        fqn: &FunctionFqn<'_>,
         params: &[Val],
     ) -> wasmtime::Result<SupportedFunctionResult> {
-        info!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`");
-        let fqn = FunctionFqn {
-            ifc_fqn: Cow::Borrowed(ifc_fqn),
-            function_name: Cow::Borrowed(function_name),
-        };
+        info!("workflow.execute_all `{fqn}`");
 
         let results_len = self
             .functions_to_metadata
-            .get(&fqn)
+            .get(fqn)
             .ok_or_else(|| {
                 anyhow!(
                     "function {fqn} not found in {wasm_path}",
@@ -139,12 +133,12 @@ impl Workflow {
                 )
             })?
             .results_len;
-        trace!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}`({params:?}) -> results_len:{results_len}");
+        trace!("workflow.execute_all `{fqn}`({params:?}) -> results_len:{results_len}");
         loop {
             let res = self
-                .execute_persist_event(event_history, ifc_fqn, function_name, params, results_len)
+                .execute_persist_event(event_history, fqn, params, results_len)
                 .await;
-            trace!("workflow.execute_all `{ifc_fqn:?}`.`{function_name}` -> {res:?}");
+            trace!("workflow.execute_all `{fqn}` -> {res:?}");
             match res {
                 Ok(output) => return Ok(output), // TODO Persist result to the history
                 Err(ExecutionError::NewEventPersisted) => {} // loop again to get to the next step
@@ -170,8 +164,7 @@ impl Workflow {
     async fn execute_persist_event(
         &self,
         event_history: &mut EventHistory,
-        ifc_fqn: &str,
-        function_name: &str,
+        fqn: &FunctionFqn<'_>,
         params: &[Val],
         results_len: usize,
     ) -> Result<SupportedFunctionResult, ExecutionError> {
@@ -183,10 +176,7 @@ impl Workflow {
         );
         // try
         let res: Result<SupportedFunctionResult, ExecutionError> = {
-            match self
-                .execute(&mut store, ifc_fqn, function_name, params, results_len)
-                .await
-            {
+            match self.execute(&mut store, fqn, params, results_len).await {
                 Ok(res) => Ok(res),
                 Err(err) => Err(
                     match err
@@ -230,31 +220,30 @@ impl Workflow {
     async fn execute(
         &self,
         mut store: &mut Store<HostImports>,
-        ifc_fqn: &str,
-        function_name: &str,
+        fqn: &FunctionFqn<'_>,
         params: &[Val],
         results_len: usize,
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
-        debug!("`{ifc_fqn:?}`.`{function_name}`");
-        trace!("`{ifc_fqn:?}`.`{function_name}`({params:?})");
+        debug!("execute `{fqn}`");
+        trace!("execute `{fqn}`({params:?})");
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         let func = {
             let mut store = store.as_context_mut();
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
             let mut exports_instance = exports_instance
-                .instance(ifc_fqn)
-                .ok_or_else(|| anyhow!("cannot find exported interface: `{ifc_fqn}`"))?;
-            exports_instance.func(function_name).ok_or(anyhow::anyhow!(
-                "function `{ifc_fqn:?}`.`{function_name}` not found"
-            ))?
+                .instance(&fqn.ifc_fqn)
+                .ok_or_else(|| anyhow!("cannot find exported interface: `{}`", fqn.ifc_fqn))?;
+            exports_instance
+                .func(&fqn.function_name)
+                .ok_or(anyhow::anyhow!("function `{fqn}` not found"))?
         };
         // call func
         let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
         func.call_async(&mut store, params, &mut results).await?;
         func.post_return_async(&mut store).await?;
         let results = SupportedFunctionResult::new(results);
-        trace!("`{ifc_fqn:?}`.`{function_name}` -> {results:?}");
+        trace!("execution result `{fqn}` -> {results:?}");
         Ok(results)
     }
 }

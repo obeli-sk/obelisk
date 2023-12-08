@@ -4,6 +4,7 @@ use runtime::{
     activity::Activities,
     event_history::{EventHistory, SupportedFunctionResult},
     workflow::Workflow,
+    FunctionFqn,
 };
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
@@ -25,14 +26,14 @@ async fn test() -> Result<(), anyhow::Error> {
     .await?;
 
     let iterations = 10;
+
     for workflow_function in ["fibow", "fiboa"] {
         let mut event_history = EventHistory::new();
         let params = vec![Val::U8(10), Val::U8(iterations)];
         let res = workflow
             .execute_all(
                 &mut event_history,
-                "testing:fibo-workflow/workflow",
-                workflow_function,
+                &FunctionFqn::new("testing:fibo-workflow/workflow", workflow_function),
                 &params,
             )
             .await;

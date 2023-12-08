@@ -4,6 +4,7 @@ use runtime::{
     activity::Activities,
     event_history::{EventHistory, SupportedFunctionResult},
     workflow::Workflow,
+    FunctionFqn,
 };
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -45,8 +46,7 @@ async fn test() -> Result<(), anyhow::Error> {
     let res = workflow
         .execute_all(
             &mut event_history,
-            "testing:http-workflow/workflow",
-            "execute",
+            &FunctionFqn::new("testing:http-workflow/workflow", "execute"),
             &params,
         )
         .await;

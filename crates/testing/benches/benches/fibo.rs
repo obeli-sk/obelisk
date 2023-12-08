@@ -6,7 +6,7 @@ use std::{
 };
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use runtime::{activity::Activities, event_history::EventHistory, workflow::Workflow};
+use runtime::{activity::Activities, event_history::EventHistory, workflow::Workflow, FunctionFqn};
 use wasmtime::component::Val;
 
 fn fibonacci(n: u64) -> u64 {
@@ -41,17 +41,13 @@ fn benchmark_fast_functions(criterion: &mut Criterion) {
         ("fibow", 10, 40),
         ("fiboa", 10, 40),
     ];
-    for (function, n, iterations) in functions {
-        criterion.bench_function(&format!("{function}({n})*{iterations}"), |b| {
+    for (workflow_function, n, iterations) in functions {
+        criterion.bench_function(&format!("{workflow_function}({n})*{iterations}"), |b| {
+            let fqn = FunctionFqn::new("testing:fibo-workflow/workflow", workflow_function);
             b.iter(|| {
                 let params = vec![Val::U8(n), Val::U8(iterations)];
                 let mut event_history = EventHistory::new();
-                run_await(workflow.execute_all(
-                    &mut event_history,
-                    "testing:fibo-workflow/workflow",
-                    function,
-                    &params,
-                ))
+                run_await(workflow.execute_all(&mut event_history, &fqn, &params))
             })
         });
     }
@@ -65,17 +61,13 @@ fn benchmark_slow_functions(criterion: &mut Criterion) {
         ("fibow", 40, 10),
         ("fiboa", 40, 10),
     ];
-    for (function, n, iterations) in functions {
-        criterion.bench_function(&format!("{function}({n})*{iterations}"), |b| {
+    for (workflow_function, n, iterations) in functions {
+        criterion.bench_function(&format!("{workflow_function}({n})*{iterations}"), |b| {
+            let fqn = FunctionFqn::new("testing:fibo-workflow/workflow", workflow_function);
             b.iter(|| {
                 let params = vec![Val::U8(n), Val::U8(iterations)];
                 let mut event_history = EventHistory::new();
-                run_await(workflow.execute_all(
-                    &mut event_history,
-                    "testing:fibo-workflow/workflow",
-                    function,
-                    &params,
-                ))
+                run_await(workflow.execute_all(&mut event_history, &fqn, &params))
             })
         });
     }

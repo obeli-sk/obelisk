@@ -1,5 +1,5 @@
 use anyhow::Context;
-use std::{borrow::Cow, collections::HashMap, fmt::Debug};
+use std::{collections::HashMap, fmt::Debug};
 use tracing::{debug, info, trace};
 use wasmtime::{component::Val, Config, Engine};
 
@@ -122,16 +122,11 @@ impl Activities {
 
     pub(crate) async fn run(
         &self,
-        ifc_fqn: &str,
-        function_name: &str,
+        fqn: &FunctionFqn<'_>,
         params: &[Val],
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
-        let fqn = FunctionFqn {
-            ifc_fqn: Cow::Borrowed(ifc_fqn),
-            function_name: Cow::Borrowed(function_name),
-        };
         debug!("Running `{fqn}`");
-        let results_len = self.functions_to_metadata.get(&fqn).unwrap().results_len;
+        let results_len = self.functions_to_metadata.get(fqn).unwrap().results_len;
         trace!("Running `{fqn}`({params:?}) -> results_len:{results_len}");
         let mut store = http::store(&ENGINE);
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
@@ -139,14 +134,16 @@ impl Activities {
             let mut store = &mut store;
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
-            let mut exports_instance = exports_instance.instance(ifc_fqn).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "cannot find exported interface: `{ifc_fqn}` in `{wasm_path}`",
-                    wasm_path = self.wasm_path
-                )
-            })?;
+            let mut exports_instance =
+                exports_instance.instance(&fqn.ifc_fqn).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "cannot find exported interface: `{ifc_fqn}` in `{wasm_path}`",
+                        ifc_fqn = fqn.ifc_fqn,
+                        wasm_path = self.wasm_path
+                    )
+                })?;
             exports_instance
-                .func(function_name)
+                .func(&fqn.function_name)
                 .ok_or(anyhow::anyhow!("function `{fqn}` not found"))?
         };
         // call func

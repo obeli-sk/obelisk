@@ -52,7 +52,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap_or_default();
 
     let res = workflow
-        .execute_all(&mut event_history, ifc_fqn, function_name, &param_vals)
+        .execute_all(&mut event_history, &fqn, &param_vals)
         .await;
     println!(
         "Finished: in {duration:?} {res:?}, event history size: {len}",

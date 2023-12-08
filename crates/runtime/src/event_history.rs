@@ -158,8 +158,7 @@ impl WasmActivity {
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
         let res = activities
             .run(
-                self.ifc_fqn.as_str(),
-                self.function_name.as_str(),
+                &crate::FunctionFqn::new(self.ifc_fqn.as_str(), self.function_name.as_str()),
                 &self.params,
             )
             .await?;
