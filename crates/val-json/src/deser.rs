@@ -210,26 +210,42 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
 }
 
 // Visitor implementation that deserializes a JSON array into `Vec<V: From<ValWrapper>>`.
-struct SequenceVisitor<'a, V>(&'a [TypeWrapper], PhantomData<V>);
+struct SequenceVisitor<'a, V, I: ExactSizeIterator<Item = &'a TypeWrapper>> {
+    iterator: I,
+    len: usize,
+    phantom_data: PhantomData<V>,
+}
 
-impl<'a, 'de, V: From<ValWrapper>> Visitor<'de> for SequenceVisitor<'a, V> {
+impl<'a, V, I: ExactSizeIterator<Item = &'a TypeWrapper>> SequenceVisitor<'a, V, I> {
+    fn new(iterator: I) -> Self {
+        let len = iterator.len();
+        Self {
+            iterator,
+            len,
+            phantom_data: PhantomData,
+        }
+    }
+}
+impl<'a, 'de, V: From<ValWrapper>, I: ExactSizeIterator<Item = &'a TypeWrapper>> Visitor<'de>
+    for SequenceVisitor<'a, V, I>
+{
     type Value = Vec<V>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "an array of length {}", self.0.len())
+        write!(formatter, "an array of length {}", self.len)
     }
 
-    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    fn visit_seq<A>(mut self, mut seq: A) -> Result<Self::Value, A::Error>
     where
         A: SeqAccess<'de>,
     {
         use serde::de::Error;
         let mut vec = Vec::new();
-        for (idx, ty) in self.0.iter().enumerate() {
+        while let Some(ty) = self.iterator.next() {
             if let Some(val) = seq.next_element_seed(ValDeserialize(ty))? {
                 vec.push(V::from(val));
             } else {
-                Err(Error::invalid_length(idx, &self))?;
+                Err(Error::invalid_length(vec.len(), &self))?;
             }
         }
         // Check if there are more values available than the number of types provided.
@@ -243,12 +259,16 @@ impl<'a, 'de, V: From<ValWrapper>> Visitor<'de> for SequenceVisitor<'a, V> {
     }
 }
 
-pub fn deserialize_sequence<V: From<ValWrapper>>(
-    params: &str,
-    param_types: &[TypeWrapper],
+pub fn deserialize_sequence<
+    'a,
+    V: From<ValWrapper>,
+    I: ExactSizeIterator<Item = &'a TypeWrapper>,
+>(
+    param_vals: &str,
+    param_types: I,
 ) -> Result<Vec<V>, serde_json::Error> {
-    let mut deserializer = serde_json::Deserializer::from_str(params);
-    let visitor = SequenceVisitor(param_types, PhantomData);
+    let mut deserializer = serde_json::Deserializer::from_str(param_vals);
+    let visitor = SequenceVisitor::new(param_types);
     deserializer.deserialize_seq(visitor)
 }
 
@@ -368,7 +388,7 @@ mod tests {
         let param_types = r#"["Bool", "U8", "S16"]"#;
         let param_vals = "[true, 8, -16]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-        let actual = crate::deserialize_sequence(param_vals, &param_types).unwrap();
+        let actual = crate::deserialize_sequence(param_vals, param_types.iter()).unwrap();
         assert_eq!(expected, actual);
     }
 
@@ -377,7 +397,8 @@ mod tests {
         let param_types = r#"["Bool", "U8", "S16"]"#;
         let param_vals = "[true, 8]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-        let err = crate::deserialize_sequence::<Val>(param_vals, &param_types).unwrap_err();
+        let err =
+            crate::deserialize_sequence::<Val, _>(param_vals, param_types.iter()).unwrap_err();
         assert_starts_with(&err, "invalid length 2, expected an array of length 3");
     }
 
@@ -386,7 +407,8 @@ mod tests {
         let param_types = r#"["Bool", "U8"]"#;
         let param_vals = "[true, 8, false]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-        let err = crate::deserialize_sequence::<Val>(param_vals, &param_types).unwrap_err();
+        let err =
+            crate::deserialize_sequence::<Val, _>(param_vals, param_types.iter()).unwrap_err();
         assert_starts_with(
             &err,
             "invalid length that is too big, at element `Bool(false)`, expected an array of length 2",
@@ -397,7 +419,7 @@ mod tests {
         let actual = err.to_string();
         assert!(
             actual.starts_with(starts_with),
-            "Unexpected error\nGot:\n{actual}\nExpected to start with:\n{starts_with}"
+            "assert_starts_with failed.Got:\n{actual}\nExpected to start with:\n{starts_with}"
         );
     }
 }

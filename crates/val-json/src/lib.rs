@@ -180,6 +180,27 @@ impl From<TypeWrapper> for wasmtime::component::Type {
 }
 */
 
+impl From<wit_parser::Type> for TypeWrapper {
+    fn from(value: wit_parser::Type) -> Self {
+        match value {
+            wit_parser::Type::Bool => Self::Bool,
+            wit_parser::Type::U8 => Self::U8,
+            wit_parser::Type::U16 => Self::U16,
+            wit_parser::Type::U32 => Self::U32,
+            wit_parser::Type::U64 => Self::U64,
+            wit_parser::Type::S8 => Self::S8,
+            wit_parser::Type::S16 => Self::S16,
+            wit_parser::Type::S32 => Self::S32,
+            wit_parser::Type::S64 => Self::S64,
+            wit_parser::Type::Float32 => Self::Float32,
+            wit_parser::Type::Float64 => Self::Float64,
+            wit_parser::Type::Char => Self::Char,
+            wit_parser::Type::String => Self::String,
+            wit_parser::Type::Id(_) => unimplemented!(),
+        }
+    }
+}
+
 impl From<wasmtime::component::Type> for TypeWrapper {
     fn from(value: wasmtime::component::Type) -> Self {
         match value {
@@ -196,16 +217,16 @@ impl From<wasmtime::component::Type> for TypeWrapper {
             wasmtime::component::Type::Float64 => Self::Float64,
             wasmtime::component::Type::Char => Self::Char,
             wasmtime::component::Type::String => Self::String,
-            wasmtime::component::Type::List(_) => todo!(),
-            wasmtime::component::Type::Record(_) => todo!(),
-            wasmtime::component::Type::Tuple(_) => todo!(),
-            wasmtime::component::Type::Variant(_) => todo!(),
-            wasmtime::component::Type::Enum(_) => todo!(),
-            wasmtime::component::Type::Option(_) => todo!(),
-            wasmtime::component::Type::Result(_) => todo!(),
-            wasmtime::component::Type::Flags(_) => todo!(),
-            wasmtime::component::Type::Own(_) => todo!(),
-            wasmtime::component::Type::Borrow(_) => todo!(),
+            wasmtime::component::Type::List(_) => unimplemented!(),
+            wasmtime::component::Type::Record(_) => unimplemented!(),
+            wasmtime::component::Type::Tuple(_) => unimplemented!(),
+            wasmtime::component::Type::Variant(_) => unimplemented!(),
+            wasmtime::component::Type::Enum(_) => unimplemented!(),
+            wasmtime::component::Type::Option(_) => unimplemented!(),
+            wasmtime::component::Type::Result(_) => unimplemented!(),
+            wasmtime::component::Type::Flags(_) => unimplemented!(),
+            wasmtime::component::Type::Own(_) => unimplemented!(),
+            wasmtime::component::Type::Borrow(_) => unimplemented!(),
         }
     }
 }

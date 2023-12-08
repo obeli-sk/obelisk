@@ -1777,6 +1777,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "val-json",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
@@ -2395,6 +2396,7 @@ dependencies = [
  "serde",
  "serde_json",
  "wasmtime",
+ "wit-parser",
 ]
 
 [[package]]
@@ -3340,6 +3342,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing-subscriber",
+ "val-json",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",

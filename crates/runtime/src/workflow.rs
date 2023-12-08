@@ -54,6 +54,7 @@ impl Workflow {
         wasm_path: String,
         activities: Arc<Activities>,
     ) -> Result<Self, anyhow::Error> {
+        // TODO: check if types are supported
         info!("workflow::new {wasm_path}");
         let wasm =
             std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
@@ -113,10 +114,14 @@ impl Workflow {
         })
     }
 
+    pub fn function_metadata<'a>(&'a self, fqn: &FunctionFqn<'a>) -> Option<&'a FunctionMetadata> {
+        self.functions_to_metadata.get(fqn)
+    }
+
     pub async fn execute_all(
         &self,
         event_history: &mut EventHistory,
-        ifc_fqn: &str,
+        ifc_fqn: &str, //TODO fqn
         function_name: &str,
         params: &[Val],
     ) -> wasmtime::Result<SupportedFunctionResult> {

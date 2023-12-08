@@ -1,6 +1,7 @@
 use crate::{FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, bail};
 use std::{borrow::Cow, collections::HashMap};
+use val_json::TypeWrapper;
 
 use wit_component::DecodedWasm;
 
@@ -62,10 +63,16 @@ pub(crate) fn functions_to_metadata<'a>(
                 ifc_fqn: Cow::Owned(ifc_fqn.clone()),
                 function_name: Cow::Owned(function_name.clone()),
             };
+            let params = function
+                .params
+                .iter()
+                .map(|(name, ty)| (name.clone(), TypeWrapper::from(*ty)))
+                .collect();
             functions_to_results.insert(
                 fqn,
                 FunctionMetadata {
                     results_len: function.results.len(),
+                    params,
                 },
             );
         }

@@ -1,8 +1,10 @@
-use runtime::activity::Activities;
 use runtime::event_history::EventHistory;
 use runtime::workflow::Workflow;
+use runtime::{activity::Activities, FunctionFqn};
 use std::{sync::Arc, time::Instant};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use val_json::deserialize_sequence;
+use wasmtime::component::Val;
 
 const IFC_FQN_FUNCTION_NAME_SEPARATOR: &str = ".";
 
@@ -21,7 +23,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let workflow_wasm_path = args.next().expect("workflow wasm missing");
     let workflow_function = args.next().expect("workflow function missing");
-    let Some((ifc_fqn, workflow_function)) =
+    let Some((ifc_fqn, function_name)) =
         workflow_function.split_once(IFC_FQN_FUNCTION_NAME_SEPARATOR)
     else {
         panic!("workflow function must be a fully qualified name in format `package/interface.function`")
@@ -32,10 +34,25 @@ async fn main() -> Result<(), anyhow::Error> {
     println!();
 
     let mut event_history = EventHistory::new();
-    let params = Vec::new();
     let timer = Instant::now();
+    let fqn = FunctionFqn::new(ifc_fqn, function_name);
+    let param_types = workflow
+        .function_metadata(&fqn)
+        .expect("function must exist")
+        .params
+        .iter()
+        .map(|(_, ty)| ty);
+
+    let param_vals = args
+        .next()
+        .map(|param_vals| {
+            deserialize_sequence::<Val, _>(&param_vals, param_types)
+                .expect("deserialization of params failed")
+        })
+        .unwrap_or_default();
+
     let res = workflow
-        .execute_all(&mut event_history, ifc_fqn, workflow_function, &params)
+        .execute_all(&mut event_history, ifc_fqn, function_name, &param_vals)
         .await;
     println!(
         "Finished: in {duration:?} {res:?}, event history size: {len}",
