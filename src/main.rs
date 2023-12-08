@@ -46,7 +46,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let param_vals = args
         .next()
         .map(|param_vals| {
-            deserialize_sequence::<Val, _>(&param_vals, param_types)
+            deserialize_sequence::<Val>(&param_vals, param_types)
                 .expect("deserialization of params failed")
         })
         .unwrap_or_default();

@@ -259,16 +259,15 @@ impl<'a, 'de, V: From<ValWrapper>, I: ExactSizeIterator<Item = &'a TypeWrapper>>
     }
 }
 
-pub fn deserialize_sequence<
-    'a,
-    V: From<ValWrapper>,
-    I: ExactSizeIterator<Item = &'a TypeWrapper>,
->(
+pub fn deserialize_sequence<'a, V: From<ValWrapper>>(
     param_vals: &str,
-    param_types: I,
+    param_types: impl IntoIterator<
+        Item = &'a TypeWrapper,
+        IntoIter = impl ExactSizeIterator<Item = &'a TypeWrapper>,
+    >,
 ) -> Result<Vec<V>, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_str(param_vals);
-    let visitor = SequenceVisitor::new(param_types);
+    let visitor = SequenceVisitor::new(param_types.into_iter());
     deserializer.deserialize_seq(visitor)
 }
 
@@ -397,8 +396,7 @@ mod tests {
         let param_types = r#"["Bool", "U8", "S16"]"#;
         let param_vals = "[true, 8]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-        let err =
-            crate::deserialize_sequence::<Val, _>(param_vals, param_types.iter()).unwrap_err();
+        let err = crate::deserialize_sequence::<Val>(param_vals, &param_types).unwrap_err();
         assert_starts_with(&err, "invalid length 2, expected an array of length 3");
     }
 
@@ -407,8 +405,7 @@ mod tests {
         let param_types = r#"["Bool", "U8"]"#;
         let param_vals = "[true, 8, false]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-        let err =
-            crate::deserialize_sequence::<Val, _>(param_vals, param_types.iter()).unwrap_err();
+        let err = crate::deserialize_sequence::<Val>(param_vals, &param_types).unwrap_err();
         assert_starts_with(
             &err,
             "invalid length that is too big, at element `Bool(false)`, expected an array of length 2",

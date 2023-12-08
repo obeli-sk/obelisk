@@ -29,8 +29,7 @@ async fn test() -> Result<(), anyhow::Error> {
     let param_types = r#"["U8"]"#;
     let param_vals = format!("[{iterations}]");
     let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-    let param_vals =
-        val_json::deserialize_sequence::<Val, _>(&param_vals, param_types.iter()).unwrap();
+    let param_vals = val_json::deserialize_sequence::<Val>(&param_vals, &param_types).unwrap();
     let res = workflow
         .execute_all(
             &mut event_history,
