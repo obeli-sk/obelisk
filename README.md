@@ -8,7 +8,12 @@ nix develop # or direnv allow
 cargo bench -p benches
 ```
 
-## Integration tests
+## Tests
+```sh
+cargo test --workspace  --tests
+```
+
+### Integration tests
 ```sh
 RUST_LOG=info,runtime=debug RUST_BACKTRACE=1 cargo test -p tests --tests -- --nocapture
 ```
