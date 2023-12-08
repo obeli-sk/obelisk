@@ -14,22 +14,7 @@
     flake-utils.lib.eachDefaultSystem
       (system:
         let
-          overlays = [ (import rust-overlay) (final: prev: { 
-              cargo-component = prev.cargo-component.overrideAttrs (old: rec {
-                version = "0.5.0";
-                src = prev.fetchFromGitHub { 
-                      owner = "bytecodealliance";
-                      repo = "cargo-component";
-                      rev = "v0.5.0";
-                      sha256 = "sha256-P7gXfACPK63f38KzV6UVQa8MZmxEaMNxl1GZYCDM54M=";
-                };
-                cargoDeps = old.cargoDeps.overrideAttrs (pkgs.lib.const {
-                  inherit src;
-                  outputHash = "sha256-GDQbzuOcP2Ce5MuKvsiarzFeaF+AtiZ2Vp2h1GMZMR0=";
-                });
-              }); 
-            })
-          ];
+          overlays = [ (import rust-overlay) ];
           pkgs = import nixpkgs {
             inherit system overlays;
           };
