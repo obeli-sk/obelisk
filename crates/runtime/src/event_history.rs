@@ -1,4 +1,3 @@
-use itertools::Either;
 use tracing::{debug, error, trace};
 use wasmtime::component::{Linker, Val};
 
@@ -16,7 +15,6 @@ wasmtime::component::bindgen!({
 pub enum SupportedFunctionResult {
     None,
     Single(Val),
-    Multiple(Vec<Val>),
 }
 
 impl SupportedFunctionResult {
@@ -26,7 +24,7 @@ impl SupportedFunctionResult {
         } else if vec.len() == 1 {
             Self::Single(vec.pop().unwrap())
         } else {
-            Self::Multiple(vec)
+            unimplemented!("multi-value return types are not supported")
         }
     }
 
@@ -34,7 +32,6 @@ impl SupportedFunctionResult {
         match self {
             Self::None => 0,
             Self::Single(_) => 1,
-            Self::Multiple(vec) => vec.len(),
         }
     }
 
@@ -45,17 +42,12 @@ impl SupportedFunctionResult {
 
 impl IntoIterator for SupportedFunctionResult {
     type Item = Val;
-    type IntoIter = Either<std::option::IntoIter<Val>, std::vec::IntoIter<Val>>;
+    type IntoIter = std::option::IntoIter<Val>;
 
     fn into_iter(self) -> Self::IntoIter {
         match self {
-            Self::None => Either::Left::<_, std::vec::IntoIter<Val>>(None.into_iter()).into_iter(),
-            Self::Single(item) => {
-                Either::Left::<_, std::vec::IntoIter<Val>>(Some(item).into_iter()).into_iter()
-            }
-            Self::Multiple(vec) => {
-                Either::Right::<std::option::IntoIter<Val>, _>(vec.into_iter()).into_iter()
-            }
+            Self::None => None.into_iter(),
+            Self::Single(item) => Some(item).into_iter(),
         }
     }
 }

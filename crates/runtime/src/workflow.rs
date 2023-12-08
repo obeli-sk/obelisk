@@ -54,7 +54,6 @@ impl Workflow {
         wasm_path: String,
         activities: Arc<Activities>,
     ) -> Result<Self, anyhow::Error> {
-        // TODO: check if types are supported
         info!("workflow::new {wasm_path}");
         let wasm =
             std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
@@ -101,7 +100,6 @@ impl Workflow {
                         .with_context(|| format!(" `{ifc_fqn2:?}`.`{function_name2}`"))?;
                 }
             }
-
             linker.instantiate_pre(&component)?
         };
         let functions_to_metadata = decode_wasm_function_metadata(&wasm)
@@ -266,5 +264,5 @@ fn decode_wasm_function_metadata(
 ) -> Result<HashMap<FunctionFqn<'static>, FunctionMetadata>, anyhow::Error> {
     let decoded = wit_component::decode(wasm)?;
     let exported_interfaces = exported_interfaces(&decoded)?;
-    Ok(functions_to_metadata(exported_interfaces))
+    Ok(functions_to_metadata(exported_interfaces)?)
 }

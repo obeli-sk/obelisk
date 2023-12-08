@@ -33,9 +33,14 @@ impl Display for FunctionFqn<'_> {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum FunctionMetadataError {
+    #[error("unsupported return type in `{fqn}`, got type {ty}")]
+    UnsupportedReturnType { fqn: String, ty: String },
+}
+
 #[derive(Clone, Debug)]
 pub struct FunctionMetadata {
     pub results_len: usize,
-    // TODO pub results: Vec<TypeWrapper>,
     pub params: Vec<(String /*name*/, TypeWrapper)>,
 }

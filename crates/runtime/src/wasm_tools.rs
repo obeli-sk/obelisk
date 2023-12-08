@@ -1,4 +1,4 @@
-use crate::{FunctionFqn, FunctionMetadata};
+use crate::{FunctionFqn, FunctionMetadata, FunctionMetadataError};
 use anyhow::{anyhow, bail};
 use std::{borrow::Cow, collections::HashMap};
 use val_json::TypeWrapper;
@@ -54,7 +54,7 @@ pub(crate) fn functions_to_metadata<'a>(
             &'a indexmap::IndexMap<String, wit_parser::Function>,
         ),
     >,
-) -> HashMap<FunctionFqn<'static>, FunctionMetadata> {
+) -> Result<HashMap<FunctionFqn<'static>, FunctionMetadata>, FunctionMetadataError> {
     let mut functions_to_results = HashMap::new();
     for (package_name, ifc_name, functions) in exported_interfaces.into_iter() {
         let ifc_fqn = format!("{package_name}/{ifc_name}");
@@ -68,6 +68,14 @@ pub(crate) fn functions_to_metadata<'a>(
                 .iter()
                 .map(|(name, ty)| (name.clone(), TypeWrapper::from(*ty)))
                 .collect();
+            match &function.results {
+                wit_parser::Results::Anon(_) => Ok(()),
+                wit_parser::Results::Named(named) if named.is_empty() => Ok(()),
+                other => Err(FunctionMetadataError::UnsupportedReturnType {
+                    fqn: fqn.to_string(),
+                    ty: format!("{other:?}"),
+                }),
+            }?;
             functions_to_results.insert(
                 fqn,
                 FunctionMetadata {
@@ -77,5 +85,5 @@ pub(crate) fn functions_to_metadata<'a>(
             );
         }
     }
-    functions_to_results
+    Ok(functions_to_results)
 }

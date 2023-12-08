@@ -96,7 +96,7 @@ impl Activities {
                 functions.keys().map(String::to_owned).collect(),
             );
         }
-        let functions_to_metadata = functions_to_metadata(exported_interfaces);
+        let functions_to_metadata = functions_to_metadata(exported_interfaces)?;
 
         let instance_pre: wasmtime::component::InstancePre<http::Ctx> = {
             let mut linker = wasmtime::component::Linker::new(&ENGINE);
