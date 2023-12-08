@@ -1,7 +1,7 @@
 use tracing::{debug, error, trace};
 use wasmtime::component::{Linker, Val};
 
-use crate::activity::Activities;
+use crate::{activity::Activities, FunctionFqn};
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
 // generate Host trait
@@ -146,8 +146,7 @@ impl HostActivitySync {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WasmActivity {
-    pub(crate) ifc_fqn: Arc<String>,
-    pub(crate) function_name: Arc<String>,
+    pub(crate) fqn: Arc<FunctionFqn<'static>>,
     pub(crate) params: Vec<Val>,
 }
 
@@ -156,12 +155,7 @@ impl WasmActivity {
         &self,
         activities: Arc<Activities>,
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
-        let res = activities
-            .run(
-                &crate::FunctionFqn::new(self.ifc_fqn.as_str(), self.function_name.as_str()),
-                &self.params,
-            )
-            .await?;
+        let res = activities.run(&self.fqn, &self.params).await?;
         Ok(res)
     }
 }

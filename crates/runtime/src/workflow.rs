@@ -65,20 +65,20 @@ impl Workflow {
             for interface in activities.interfaces() {
                 let mut linker_instance = linker.instance(interface)?;
                 for function_name in activities.functions(interface) {
-                    let ifc_fqn = Arc::new(interface.to_string());
-                    let ifc_fqn2 = ifc_fqn.clone();
-                    let function_name = Arc::new(function_name.to_string());
-                    let function_name2 = function_name.clone();
+                    let fqn = Arc::new(FunctionFqn::new_owned(
+                        interface.to_string(),
+                        function_name.to_string(),
+                    ));
+                    let fqn_inner = fqn.clone();
                     linker_instance
                         .func_new(
                             &component,
-                            &function_name.clone(),
+                            &fqn.function_name,
                             move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
                                   params: &[Val],
                                   results: &mut [Val]| {
                                 let wasm_activity = WasmActivity {
-                                    ifc_fqn: ifc_fqn.clone(),
-                                    function_name: function_name.clone(),
+                                    fqn: fqn_inner.clone(),
                                     params: Vec::from(params),
                                 };
                                 let store = store_ctx.data_mut();
@@ -96,7 +96,7 @@ impl Workflow {
                                 Ok(())
                             },
                         )
-                        .with_context(|| format!(" `{ifc_fqn2:?}`.`{function_name2}`"))?;
+                        .with_context(|| format!(" `{fqn}`"))?;
                 }
             }
             linker.instantiate_pre(&component)?

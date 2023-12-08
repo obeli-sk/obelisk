@@ -20,6 +20,13 @@ impl FunctionFqn<'_> {
             function_name: Cow::Borrowed(function_name),
         }
     }
+
+    pub fn new_owned(ifc_fqn: String, function_name: String) -> FunctionFqn<'static> {
+        FunctionFqn {
+            ifc_fqn: Cow::Owned(ifc_fqn),
+            function_name: Cow::Owned(function_name),
+        }
+    }
 }
 
 impl Display for FunctionFqn<'_> {
