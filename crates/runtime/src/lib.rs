@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt::Display};
 
-use val_json::TypeWrapper;
+use val_json::{TypeWrapper, UnsupportedTypeError};
 
 pub mod activity;
 pub mod event_history;
@@ -35,6 +35,9 @@ impl Display for FunctionFqn<'_> {
 
 #[derive(thiserror::Error, Debug)]
 pub enum FunctionMetadataError {
+    #[error("{0}")]
+    UnsupportedType(#[from] UnsupportedTypeError),
+
     #[error("unsupported return type in `{fqn}`, got type {ty}")]
     UnsupportedReturnType { fqn: String, ty: String },
 }

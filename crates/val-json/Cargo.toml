@@ -8,5 +8,6 @@ rust-version.workspace = true
 [dependencies]
 serde_json.workspace = true
 serde.workspace = true
+thiserror.workspace = true
 wasmtime.workspace = true
 wit-parser.workspace = true

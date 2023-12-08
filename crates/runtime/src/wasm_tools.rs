@@ -1,7 +1,7 @@
 use crate::{FunctionFqn, FunctionMetadata, FunctionMetadataError};
 use anyhow::{anyhow, bail};
 use std::{borrow::Cow, collections::HashMap};
-use val_json::TypeWrapper;
+use val_json::{TypeWrapper, UnsupportedTypeError};
 
 use wit_component::DecodedWasm;
 
@@ -66,8 +66,8 @@ pub(crate) fn functions_to_metadata<'a>(
             let params = function
                 .params
                 .iter()
-                .map(|(name, ty)| (name.clone(), TypeWrapper::from(*ty)))
-                .collect();
+                .map(|(name, ty)| TypeWrapper::try_from(*ty).map(|ty| (name.clone(), ty)))
+                .collect::<Result<_, UnsupportedTypeError>>()?;
             match &function.results {
                 wit_parser::Results::Anon(_) => Ok(()),
                 wit_parser::Results::Named(named) if named.is_empty() => Ok(()),
