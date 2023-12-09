@@ -1,4 +1,5 @@
 use std::{
+    fmt::Display,
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -6,7 +7,12 @@ use std::{
 };
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use runtime::{activity::Activities, event_history::EventHistory, workflow::Workflow, FunctionFqn};
+use runtime::{
+    activity::Activities,
+    event_history::EventHistory,
+    workflow::{ExecutionConfig, Workflow},
+    FunctionFqn,
+};
 use wasmtime::component::Val;
 
 fn fibonacci(n: u64) -> u64 {
@@ -17,34 +23,78 @@ fn fibonacci(n: u64) -> u64 {
     }
 }
 
-fn workflow() -> Workflow {
+fn workflow(fibo_config: &FiboConfig) -> Workflow {
     let activities = Arc::new(
         run_await(Activities::new(
             test_programs_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),
         ))
         .unwrap(),
     );
-    run_await(Workflow::new(
+    run_await(Workflow::new_with_config(
         test_programs_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
         activities.clone(),
+        ExecutionConfig {
+            interrupt_on_activities: fibo_config.interrupt_on_activities,
+        },
     ))
     .unwrap()
 }
 
+#[derive(Debug)]
+struct FiboConfig {
+    workflow_function: &'static str,
+    n: u8,
+    iterations: u16,
+    interrupt_on_activities: bool,
+}
+impl FiboConfig {
+    fn new(
+        workflow_function: &'static str,
+        n: u8,
+        iterations: u16,
+        interrupt_on_activities: bool,
+    ) -> Self {
+        Self {
+            workflow_function,
+            n,
+            iterations,
+            interrupt_on_activities,
+        }
+    }
+}
+
+impl Display for FiboConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{workflow_function}({n})*{iterations}{hot}",
+            workflow_function = self.workflow_function,
+            n = self.n,
+            iterations = self.iterations,
+            hot = if self.interrupt_on_activities {
+                ""
+            } else {
+                "*hot*"
+            },
+        )
+    }
+}
+
 fn benchmark_fast_functions(criterion: &mut Criterion) {
-    criterion.bench_function("fibo(10)", |b| b.iter(|| fibonacci(black_box(10))));
-    let workflow = workflow();
     let functions = vec![
-        ("fibow", 10, 1),
-        ("fiboa", 10, 1),
-        ("fibow", 10, 4000),
-        ("fiboa", 10, 400),
+        FiboConfig::new("fibow", 10, 10000, true),
+        FiboConfig::new("fiboa", 10, 400, true),
+        FiboConfig::new("fiboa", 10, 400, false),
     ];
-    for (workflow_function, n, iterations) in functions {
-        criterion.bench_function(&format!("{workflow_function}({n})*{iterations}"), |b| {
-            let fqn = FunctionFqn::new("testing:fibo-workflow/workflow", workflow_function);
+    for fibo_config in functions {
+        criterion.bench_function(&fibo_config.to_string(), |b| {
+            let fqn = FunctionFqn::new(
+                "testing:fibo-workflow/workflow",
+                fibo_config.workflow_function,
+            );
+            let workflow = workflow(&fibo_config);
             b.iter(|| {
-                let params = vec![Val::U8(n), Val::U16(iterations)];
+                let params = vec![Val::U8(fibo_config.n), Val::U16(fibo_config.iterations)];
                 let mut event_history = EventHistory::new();
                 run_await(workflow.execute_all(&mut event_history, &fqn, &params))
             })
@@ -54,18 +104,22 @@ fn benchmark_fast_functions(criterion: &mut Criterion) {
 
 fn benchmark_slow_functions(criterion: &mut Criterion) {
     criterion.bench_function("fibo(40)", |b| b.iter(|| fibonacci(black_box(40))));
-    let workflow = workflow();
     let functions = vec![
-        ("fibow", 40, 1),
-        ("fiboa", 40, 1),
-        ("fibow", 40, 10),
-        ("fiboa", 40, 10),
+        FiboConfig::new("fibow", 40, 1, true),
+        FiboConfig::new("fiboa", 40, 1, true),
+        FiboConfig::new("fibow", 40, 10, true),
+        FiboConfig::new("fiboa", 40, 10, true),
+        FiboConfig::new("fiboa", 40, 10, false),
     ];
-    for (workflow_function, n, iterations) in functions {
-        criterion.bench_function(&format!("{workflow_function}({n})*{iterations}"), |b| {
-            let fqn = FunctionFqn::new("testing:fibo-workflow/workflow", workflow_function);
+    for fibo_config in functions {
+        criterion.bench_function(&fibo_config.to_string(), |b| {
+            let fqn = FunctionFqn::new(
+                "testing:fibo-workflow/workflow",
+                fibo_config.workflow_function,
+            );
+            let workflow = workflow(&fibo_config);
             b.iter(|| {
-                let params = vec![Val::U8(n), Val::U16(iterations)];
+                let params = vec![Val::U8(fibo_config.n), Val::U16(fibo_config.iterations)];
                 let mut event_history = EventHistory::new();
                 run_await(workflow.execute_all(&mut event_history, &fqn, &params))
             })

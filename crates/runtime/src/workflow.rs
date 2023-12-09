@@ -29,6 +29,18 @@ lazy_static::lazy_static! {
     };
 }
 
+pub struct ExecutionConfig {
+    pub interrupt_on_activities: bool,
+}
+
+impl Default for ExecutionConfig {
+    fn default() -> Self {
+        Self {
+            interrupt_on_activities: true,
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum ExecutionError {
     #[error("workflow `{0}` not found")]
@@ -64,12 +76,21 @@ pub struct Workflow {
     instance_pre: InstancePre<HostImports>,
     activities: Arc<Activities>,
     functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
+    config: ExecutionConfig,
 }
 
 impl Workflow {
     pub async fn new(
         wasm_path: String,
         activities: Arc<Activities>,
+    ) -> Result<Self, anyhow::Error> {
+        Self::new_with_config(wasm_path, activities, ExecutionConfig::default()).await
+    }
+
+    pub async fn new_with_config(
+        wasm_path: String,
+        activities: Arc<Activities>,
+        config: ExecutionConfig,
     ) -> Result<Self, anyhow::Error> {
         info!("workflow::new {wasm_path}");
         let wasm =
@@ -89,28 +110,33 @@ impl Workflow {
                     ));
                     let fqn_inner = fqn.clone();
                     linker_instance
-                        .func_new(
+                        .func_new_async(
                             &component,
                             &fqn.function_name,
                             move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
                                   params: &[Val],
                                   results: &mut [Val]| {
-                                let event = Event::new_from_wasm_activity(
-                                    fqn_inner.clone(),
-                                    Arc::new(Vec::from(params)),
-                                );
-                                let store = store_ctx.data_mut();
-                                let replay_result =
-                                    store.current_event_history.replay_handle_interrupt(event)?;
-                                assert_eq!(
-                                    results.len(),
-                                    replay_result.len(),
-                                    "unexpected results length"
-                                );
-                                for (idx, item) in replay_result.into_iter().enumerate() {
-                                    results[idx] = item;
-                                }
-                                Ok(())
+                                let fqn_inner = fqn_inner.clone();
+                                Box::new(async move {
+                                    let event = Event::new_from_wasm_activity(
+                                        fqn_inner,
+                                        Arc::new(Vec::from(params)),
+                                    );
+                                    let store = store_ctx.data_mut();
+                                    let activity_result = store
+                                        .current_event_history
+                                        .replay_handle_interrupt(event)
+                                        .await?;
+                                    assert_eq!(
+                                        results.len(),
+                                        activity_result.len(),
+                                        "unexpected results length"
+                                    );
+                                    for (idx, item) in activity_result.into_iter().enumerate() {
+                                        results[idx] = item;
+                                    }
+                                    Ok(())
+                                })
                             },
                         )
                         .with_context(|| format!(" `{fqn}`"))?;
@@ -124,6 +150,7 @@ impl Workflow {
             instance_pre,
             activities,
             functions_to_metadata,
+            config,
         })
     }
 
@@ -187,7 +214,11 @@ impl Workflow {
         let mut store = Store::new(
             &ENGINE,
             HostImports {
-                current_event_history: CurrentEventHistory::new(mem::take(event_history)),
+                current_event_history: CurrentEventHistory::new(
+                    mem::take(event_history),
+                    self.activities.clone(),
+                    self.config.interrupt_on_activities,
+                ),
             },
         );
         // try

@@ -77,7 +77,10 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
                 HostActivityAsync::Sleep(Duration::from_millis(millis)),
             )),
         };
-        let replay_result = self.current_event_history.replay_handle_interrupt(event)?;
+        let replay_result = self
+            .current_event_history
+            .replay_handle_interrupt(event)
+            .await?;
         assert!(replay_result.is_empty());
         Ok(())
     }
@@ -90,7 +93,10 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
             params: Arc::new(vec![]),
             kind: EventKind::HostActivitySync(HostActivitySync::Noop),
         };
-        let replay_result = self.current_event_history.replay_handle_interrupt(event)?;
+        let replay_result = self
+            .current_event_history
+            .replay_handle_interrupt(event)
+            .await?;
         assert!(replay_result.is_empty());
         Ok(())
     }
@@ -178,9 +184,8 @@ impl HostActivitySync {
 }
 
 #[derive(thiserror::Error, Debug)]
-#[error("host activity `{fqn}` failed: {source:?}`")]
+#[error("host activity failed: {source:?}`")]
 struct HostActivitySyncError {
-    fqn: FunctionFqn<'static>,
     source: anyhow::Error,
 }
 
@@ -202,15 +207,23 @@ pub(crate) enum HostFunctionError {
 }
 
 pub(crate) struct CurrentEventHistory {
+    activities: Arc<Activities>,
     pub(crate) event_history: EventHistory,
     idx: usize,
+    interrupt_on_activities: bool,
 }
 
 impl CurrentEventHistory {
-    pub(crate) fn new(event_history: EventHistory) -> Self {
+    pub(crate) fn new(
+        event_history: EventHistory,
+        activities: Arc<Activities>,
+        interrupt_on_activities: bool,
+    ) -> Self {
         Self {
+            activities,
             event_history,
             idx: 0,
+            interrupt_on_activities,
         }
     }
 
@@ -228,7 +241,7 @@ impl CurrentEventHistory {
         self.idx += 1;
     }
 
-    pub(crate) fn replay_handle_interrupt(
+    pub(crate) async fn replay_handle_interrupt(
         &mut self,
         event: Event,
     ) -> Result<SupportedFunctionResult, HostFunctionError> {
@@ -252,7 +265,6 @@ impl CurrentEventHistory {
                 _,
                 None,
             ) => {
-                // handle the event and continue
                 debug!("Running {host_activity:?}");
                 self.persist_start(&fqn, &params);
                 let res =
@@ -265,11 +277,13 @@ impl CurrentEventHistory {
                 self.persist_end(fqn.clone(), params.clone(), res.clone());
                 Ok(res)
             }
+            // Replay if found
             (event, true, Some((_, _, replay_result))) => {
                 debug!("Replaying [{idx}] {fqn}", idx = self.idx, fqn = event.fqn);
                 self.idx += 1;
                 Ok(replay_result.clone())
             }
+            // New event needs to be handled by the runtime, interrupt or execute it.
             (
                 Event {
                     fqn,
@@ -279,14 +293,28 @@ impl CurrentEventHistory {
                 _,
                 None,
             ) => {
-                // new event needs to be handled by the runtime
-                debug!("Interrupting {fqn}");
-                Err(HostFunctionError::Interrupt {
-                    fqn,
-                    params,
-                    activity_async,
-                })
+                if self.interrupt_on_activities {
+                    debug!("Interrupting {fqn}");
+                    Err(HostFunctionError::Interrupt {
+                        fqn,
+                        params,
+                        activity_async,
+                    })
+                } else {
+                    debug!("Executing {fqn}");
+                    self.persist_start(&fqn, &params);
+                    let res = activity_async
+                        .handle(&fqn, &params, &self.activities)
+                        .await
+                        .map_err(|source| HostFunctionError::ActivityFailed {
+                            activity_fqn: fqn.clone(),
+                            source,
+                        })?;
+                    self.persist_end(fqn.clone(), params.clone(), res.clone());
+                    Ok(res)
+                }
             }
+            // Non determinism
             (event, false, Some(found)) => Err(HostFunctionError::NonDeterminismDetected(format!(
                 "Expected {found:?}, got {event:?}"
             ))),
