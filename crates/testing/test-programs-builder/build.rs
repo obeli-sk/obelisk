@@ -35,17 +35,17 @@ fn build_and_add_line(out_dir: &Path, name: &str, generated_code: &mut String) {
 fn build_component(out_dir: &Path, name: &str) -> PathBuf {
     let mut cmd = cargo_component();
     cmd.arg("build")
+        .arg("--release")
         .arg(format!("--target={TARGET}"))
         .arg(format!("--package={name}"))
         .env("CARGO_TARGET_DIR", out_dir)
-        .env("CARGO_PROFILE_DEV_DEBUG", "1")
         .env_remove("CARGO_ENCODED_RUSTFLAGS");
     eprintln!("running: {cmd:?}");
     let status = cmd.status().unwrap();
     assert!(status.success());
     let target = out_dir
         .join(TARGET)
-        .join("debug")
+        .join("release")
         .join(format!("{name}.wasm",));
     assert!(target.exists(), "Target path must exist: {target:?}");
     target
