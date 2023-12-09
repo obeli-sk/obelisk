@@ -30,19 +30,37 @@ lazy_static::lazy_static! {
 }
 
 #[derive(thiserror::Error, Debug)]
-enum ExecutionError {
+pub enum ExecutionError {
+    #[error("workflow `{0}` not found")]
+    NotFound(FunctionFqn<'static>),
+    #[error("workflow `{0}` encountered non deterministic execution, reason: `{1}`")]
+    NonDeterminismDetected(FunctionFqn<'static>, String),
+    #[error("workflow `{workflow_fqn}`, activity `{activity_fqn}`  failed: `{reason}`")]
+    ActivityFailed {
+        workflow_fqn: FunctionFqn<'static>,
+        activity_fqn: Arc<FunctionFqn<'static>>,
+        reason: String,
+    },
+    #[error("workflow `{0}` encountered an unknown error: `{1:?}`")]
+    UnknownError(FunctionFqn<'static>, anyhow::Error),
+}
+
+#[derive(thiserror::Error, Debug)]
+enum ExecutionInterrupt {
     #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(String),
     #[error("interrupted")]
     NewEventPersisted,
-    #[error("activity `{0}` failed: `{0}`")]
-    ActivityFailed(Arc<FunctionFqn<'static>>, String),
+    #[error("activity `{activity_fqn}` failed: `{reason}`")]
+    ActivityFailed {
+        activity_fqn: Arc<FunctionFqn<'static>>,
+        reason: String,
+    },
     #[error("unknown error: `{0:?}`")]
     UnknownError(anyhow::Error),
 }
 
 pub struct Workflow {
-    wasm_path: String,
     instance_pre: InstancePre<HostImports>,
     activities: Arc<Activities>,
     functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
@@ -105,7 +123,6 @@ impl Workflow {
         Ok(Self {
             instance_pre,
             activities,
-            wasm_path,
             functions_to_metadata,
         })
     }
@@ -119,18 +136,13 @@ impl Workflow {
         event_history: &mut EventHistory,
         fqn: &FunctionFqn<'_>,
         params: &[Val],
-    ) -> wasmtime::Result<SupportedFunctionResult> {
+    ) -> Result<SupportedFunctionResult, ExecutionError> {
         info!("workflow.execute_all `{fqn}`");
 
         let results_len = self
             .functions_to_metadata
             .get(fqn)
-            .ok_or_else(|| {
-                anyhow!(
-                    "function {fqn} not found in {wasm_path}",
-                    wasm_path = self.wasm_path
-                )
-            })?
+            .ok_or_else(|| ExecutionError::NotFound(fqn.to_owned()))?
             .results_len;
         trace!("workflow.execute_all `{fqn}`({params:?}) -> results_len:{results_len}");
         loop {
@@ -140,21 +152,26 @@ impl Workflow {
             trace!("workflow.execute_all `{fqn}` -> {res:?}");
             match res {
                 Ok(output) => return Ok(output), // TODO Persist result to the history
-                Err(ExecutionError::NewEventPersisted) => {} // loop again to get to the next step
-                Err(ExecutionError::ActivityFailed(_fqn, reason)) => {
-                    // TODO: retry
-                    anyhow::bail!(reason)
+                Err(ExecutionInterrupt::NewEventPersisted) => {} // loop again to get to the next step
+                Err(ExecutionInterrupt::ActivityFailed {
+                    activity_fqn,
+                    reason,
+                }) => {
+                    return Err(ExecutionError::ActivityFailed {
+                        workflow_fqn: fqn.to_owned(),
+                        activity_fqn,
+                        reason,
+                    })
                 }
-                Err(ExecutionError::NonDeterminismDetected(reason)) => {
-                    anyhow::bail!(
-                        "non determinism detected: {reason} while executing `{wasm_path}`",
-                        wasm_path = self.wasm_path
-                    )
+                Err(ExecutionInterrupt::NonDeterminismDetected(reason)) => {
+                    return Err(ExecutionError::NonDeterminismDetected(
+                        fqn.to_owned(),
+                        reason,
+                    ))
                 }
-                Err(ExecutionError::UnknownError(err)) => anyhow::bail!(
-                    "unknown error: {err:?} while executing `{wasm_path}`",
-                    wasm_path = self.wasm_path
-                ),
+                Err(ExecutionInterrupt::UnknownError(err)) => {
+                    return Err(ExecutionError::UnknownError(fqn.to_owned(), err))
+                }
             }
         }
     }
@@ -166,7 +183,7 @@ impl Workflow {
         workflow_fqn: &FunctionFqn<'_>,
         params: &[Val],
         results_len: usize,
-    ) -> Result<SupportedFunctionResult, ExecutionError> {
+    ) -> Result<SupportedFunctionResult, ExecutionInterrupt> {
         let mut store = Store::new(
             &ENGINE,
             HostImports {
@@ -174,9 +191,9 @@ impl Workflow {
             },
         );
         // try
-        let res: Result<SupportedFunctionResult, ExecutionError> = {
+        let res: Result<SupportedFunctionResult, ExecutionInterrupt> = {
             match self
-                .execute(&mut store, workflow_fqn, params, results_len)
+                .execute_one_step(&mut store, workflow_fqn, params, results_len)
                 .await
             {
                 Ok(res) => Ok(res),
@@ -186,7 +203,7 @@ impl Workflow {
                         .and_then(|source| source.downcast_ref::<HostFunctionError>())
                     {
                         Some(HostFunctionError::NonDeterminismDetected(reason)) => {
-                            ExecutionError::NonDeterminismDetected(reason.clone())
+                            ExecutionInterrupt::NonDeterminismDetected(reason.clone())
                         }
                         Some(HostFunctionError::Interrupt {
                             fqn,
@@ -206,22 +223,28 @@ impl Workflow {
                             let res = activity_async
                                 .handle(fqn, params, &self.activities)
                                 .await
-                                .map_err(|err| {
-                                    ExecutionError::ActivityFailed(fqn.clone(), err.to_string())
+                                .map_err(|err| ExecutionInterrupt::ActivityFailed {
+                                    activity_fqn: fqn.clone(),
+                                    reason: err.to_string(),
                                 })?;
                             store.data_mut().current_event_history.persist_end(
                                 event.fqn.clone(),
                                 event.params.clone(),
                                 res,
                             );
-                            ExecutionError::NewEventPersisted
+                            ExecutionInterrupt::NewEventPersisted
                         }
-                        Some(HostFunctionError::ActivityFailed { fqn, source }) => {
+                        Some(HostFunctionError::ActivityFailed {
+                            activity_fqn: fqn,
+                            source,
+                        }) => {
                             error!("Activity `{fqn}` failed: {source:?}");
-                            // fqn of the host activity, not the workflow_fqn
-                            ExecutionError::ActivityFailed(fqn.clone(), err.to_string())
+                            ExecutionInterrupt::ActivityFailed {
+                                activity_fqn: fqn.clone(),
+                                reason: err.to_string(),
+                            }
                         }
-                        None => ExecutionError::UnknownError(err),
+                        None => ExecutionInterrupt::UnknownError(err),
                     },
                 ),
             }
@@ -234,7 +257,7 @@ impl Workflow {
         res
     }
 
-    async fn execute(
+    async fn execute_one_step(
         &self,
         mut store: &mut Store<HostImports>,
         fqn: &FunctionFqn<'_>,

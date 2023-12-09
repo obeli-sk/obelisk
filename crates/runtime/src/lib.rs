@@ -27,6 +27,10 @@ impl FunctionFqn<'_> {
             function_name: Cow::Owned(function_name),
         }
     }
+
+    pub fn to_owned(&self) -> FunctionFqn<'static> {
+        Self::new_owned(self.ifc_fqn.to_string(), self.function_name.to_string())
+    }
 }
 
 impl Display for FunctionFqn<'_> {

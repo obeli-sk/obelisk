@@ -194,9 +194,9 @@ pub(crate) enum HostFunctionError {
         params: Arc<Vec<Val>>,
         activity_async: ActivityAsync,
     },
-    #[error("activity `{fqn}` failed: `{source}`")]
+    #[error("activity `{activity_fqn}` failed: `{source}`")]
     ActivityFailed {
-        fqn: Arc<FunctionFqn<'static>>,
+        activity_fqn: Arc<FunctionFqn<'static>>,
         source: anyhow::Error,
     },
 }
@@ -259,7 +259,7 @@ impl CurrentEventHistory {
                     host_activity
                         .handle()
                         .map_err(|err| HostFunctionError::ActivityFailed {
-                            fqn: fqn.clone(),
+                            activity_fqn: fqn.clone(),
                             source: err.source,
                         })?;
                 self.persist_end(fqn.clone(), params.clone(), res.clone());
