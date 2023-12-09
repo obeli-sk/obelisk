@@ -1,7 +1,7 @@
 use crate::activity::Activities;
 use crate::event_history::{
-    CurrentEventHistory, EventHistory, EventWrapper, HostFunctionError, HostImports,
-    SupportedFunctionResult, WasmActivity,
+    CurrentEventHistory, Event, EventHistory, HostFunctionError, HostImports,
+    SupportedFunctionResult,
 };
 use crate::wasm_tools::{exported_interfaces, functions_to_metadata};
 use crate::{FunctionFqn, FunctionMetadata};
@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context};
 use std::collections::HashMap;
 use std::mem;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 use wasmtime::component::Val;
 use wasmtime::AsContextMut;
 use wasmtime::{
@@ -31,13 +31,13 @@ lazy_static::lazy_static! {
 
 #[derive(thiserror::Error, Debug)]
 enum ExecutionError {
-    #[error("non deterministic execution: {0}")]
+    #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(String),
     #[error("interrupted")]
     NewEventPersisted,
-    #[error("handling event failed")]
-    HandlingEventFailed(anyhow::Error),
-    #[error("unknown error: {0:?}")]
+    #[error("activity `{0}` failed: `{0}`")]
+    ActivityFailed(Arc<FunctionFqn<'static>>, String),
+    #[error("unknown error: `{0:?}`")]
     UnknownError(anyhow::Error),
 }
 
@@ -77,14 +77,13 @@ impl Workflow {
                             move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
                                   params: &[Val],
                                   results: &mut [Val]| {
-                                let wasm_activity = WasmActivity {
-                                    fqn: fqn_inner.clone(),
-                                    params: Vec::from(params),
-                                };
+                                let event = Event::new_from_wasm_activity(
+                                    fqn_inner.clone(),
+                                    Arc::new(Vec::from(params)),
+                                );
                                 let store = store_ctx.data_mut();
-                                let replay_result = store
-                                    .current_event_history
-                                    .handle_or_interrupt_wasm_activity(wasm_activity)?;
+                                let replay_result =
+                                    store.current_event_history.replay_handle_interrupt(event)?;
                                 assert_eq!(
                                     results.len(),
                                     replay_result.len(),
@@ -142,17 +141,17 @@ impl Workflow {
             match res {
                 Ok(output) => return Ok(output), // TODO Persist result to the history
                 Err(ExecutionError::NewEventPersisted) => {} // loop again to get to the next step
-                Err(ExecutionError::HandlingEventFailed(reason)) => {
+                Err(ExecutionError::ActivityFailed(_fqn, reason)) => {
                     // TODO: retry
-                    return Err(reason);
+                    anyhow::bail!(reason)
                 }
                 Err(ExecutionError::NonDeterminismDetected(reason)) => {
-                    panic!(
+                    anyhow::bail!(
                         "non determinism detected: {reason} while executing `{wasm_path}`",
                         wasm_path = self.wasm_path
                     )
                 }
-                Err(ExecutionError::UnknownError(err)) => panic!(
+                Err(ExecutionError::UnknownError(err)) => anyhow::bail!(
                     "unknown error: {err:?} while executing `{wasm_path}`",
                     wasm_path = self.wasm_path
                 ),
@@ -164,7 +163,7 @@ impl Workflow {
     async fn execute_persist_event(
         &self,
         event_history: &mut EventHistory,
-        fqn: &FunctionFqn<'_>,
+        workflow_fqn: &FunctionFqn<'_>,
         params: &[Val],
         results_len: usize,
     ) -> Result<SupportedFunctionResult, ExecutionError> {
@@ -176,7 +175,10 @@ impl Workflow {
         );
         // try
         let res: Result<SupportedFunctionResult, ExecutionError> = {
-            match self.execute(&mut store, fqn, params, results_len).await {
+            match self
+                .execute(&mut store, workflow_fqn, params, results_len)
+                .await
+            {
                 Ok(res) => Ok(res),
                 Err(err) => Err(
                     match err
@@ -186,23 +188,38 @@ impl Workflow {
                         Some(HostFunctionError::NonDeterminismDetected(reason)) => {
                             ExecutionError::NonDeterminismDetected(reason.clone())
                         }
-                        Some(HostFunctionError::Interrupt(_)) => {
-                            let event_wrapper = EventWrapper::new_from_err(err);
+                        Some(HostFunctionError::Interrupt {
+                            fqn,
+                            params,
+                            activity_async,
+                        }) => {
+                            let event = Event::new_from_interrupt(
+                                fqn.clone(),
+                                params.clone(),
+                                activity_async.clone(),
+                            );
                             // Persist and execute the event
                             store
                                 .data_mut()
                                 .current_event_history
-                                .persist_start(&event_wrapper);
-                            let event = event_wrapper.as_ref();
-                            let res = event
-                                .handle(self.activities.clone())
+                                .persist_start(&event.fqn, &event.params);
+                            let res = activity_async
+                                .handle(fqn, params, &self.activities)
                                 .await
-                                .map_err(ExecutionError::HandlingEventFailed)?;
-                            store
-                                .data_mut()
-                                .current_event_history
-                                .persist_end(event_wrapper, res.clone());
+                                .map_err(|err| {
+                                    ExecutionError::ActivityFailed(fqn.clone(), err.to_string())
+                                })?;
+                            store.data_mut().current_event_history.persist_end(
+                                event.fqn.clone(),
+                                event.params.clone(),
+                                res,
+                            );
                             ExecutionError::NewEventPersisted
+                        }
+                        Some(HostFunctionError::ActivityFailed { fqn, source }) => {
+                            error!("Activity `{fqn}` failed: {source:?}");
+                            // fqn of the host activity, not the workflow_fqn
+                            ExecutionError::ActivityFailed(fqn.clone(), err.to_string())
                         }
                         None => ExecutionError::UnknownError(err),
                     },

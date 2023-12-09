@@ -14,7 +14,7 @@ pub struct FunctionFqn<'a> {
 }
 
 impl FunctionFqn<'_> {
-    pub fn new<'a>(ifc_fqn: &'a str, function_name: &'a str) -> FunctionFqn<'a> {
+    pub const fn new<'a>(ifc_fqn: &'a str, function_name: &'a str) -> FunctionFqn<'a> {
         FunctionFqn {
             ifc_fqn: Cow::Borrowed(ifc_fqn),
             function_name: Cow::Borrowed(function_name),
