@@ -82,7 +82,7 @@ impl Display for FiboConfig {
 
 fn benchmark_fast_functions(criterion: &mut Criterion) {
     let functions = vec![
-        FiboConfig::new("fibow", 10, 10000, true),
+        FiboConfig::new("fibow", 10, 400, true),
         FiboConfig::new("fiboa", 10, 400, true),
         FiboConfig::new("fiboa", 10, 400, false),
     ];

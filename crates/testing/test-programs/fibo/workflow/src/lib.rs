@@ -3,11 +3,19 @@ use crate::bindings::exports::testing::fibo_workflow::workflow::Guest;
 
 struct Component;
 
+pub fn black_box<T>(dummy: T) -> T {
+    unsafe {
+        let ret = std::ptr::read_volatile(&dummy);
+        std::mem::forget(dummy);
+        ret
+    }
+}
+
 impl Guest for Component {
     fn fibow(n: u8, iterations: u16) -> u64 {
         let mut last = 0;
         for _ in 0..iterations {
-            last = fibo(n);
+            last = fibo(black_box(n));
         }
         last
     }
