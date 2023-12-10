@@ -17,6 +17,7 @@ lazy_static::lazy_static! {
         config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
         config.wasm_component_model(true);
         config.async_support(true);
+        config.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(wasmtime::PoolingAllocationConfig::default()));
         Engine::new(&config).unwrap()
     };
 }
