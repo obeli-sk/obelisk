@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt::Display};
 
-use val_json::{TypeWrapper, UnsupportedTypeError};
+use val_json::{TypeWrapper, UnsupportedTypeError, ValWrapper};
 
 pub mod activity;
 pub mod event_history;
@@ -57,4 +57,14 @@ pub enum FunctionMetadataError {
 pub struct FunctionMetadata {
     pub results_len: usize,
     pub params: Vec<(String /*name*/, TypeWrapper)>,
+}
+
+impl FunctionMetadata {
+    pub fn deserialize_params<V: From<ValWrapper>>(
+        &self,
+        param_vals: &str,
+    ) -> Result<Vec<V>, serde_json::error::Error> {
+        let param_types = self.params.iter().map(|(_, type_w)| type_w);
+        val_json::deserialize_sequence(param_vals, param_types)
+    }
 }

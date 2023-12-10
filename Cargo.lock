@@ -1764,6 +1764,7 @@ dependencies = [
  "async-trait",
  "indexmap",
  "lazy_static",
+ "serde_json",
  "thiserror",
  "tokio",
  "tracing",
