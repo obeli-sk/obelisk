@@ -8,42 +8,38 @@ use std::{
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use runtime::{
-    activity::Activities,
+    activity::{Activities, ActivityConfig, ActivityPreload},
     event_history::EventHistory,
-    workflow::{ExecutionConfig, Workflow},
+    workflow::{AsyncActivityBehavior, Workflow, WorkflowConfig},
     FunctionFqn,
 };
 use wasmtime::component::Val;
 
-#[derive(Debug)]
-enum WorkflowConfig {
-    Hot,
-    Cold,
-}
+const ACTIVITY_CONFIG_COLD: ActivityConfig = ActivityConfig {
+    preload: ActivityPreload::Preinstance,
+};
+const ACTIVITY_CONFIG_HOT: ActivityConfig = ActivityConfig {
+    preload: ActivityPreload::Instance,
+};
+const WORKFLOW_CONFIG_COLD: WorkflowConfig = WorkflowConfig {
+    async_activity_behavior: AsyncActivityBehavior::Restart,
+};
+const WORKFLOW_CONFIG_HOT: WorkflowConfig = WorkflowConfig {
+    async_activity_behavior: AsyncActivityBehavior::KeepWaiting,
+};
 
-impl Display for WorkflowConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if matches!(self, Self::Hot) {
-            write!(f, "*hot*")
-        } else {
-            Ok(())
-        }
-    }
-}
-
-fn noop_workflow(config: &WorkflowConfig) -> Workflow {
+fn noop_workflow(activity_config: &ActivityConfig, workflow_config: &WorkflowConfig) -> Workflow {
     let activities = Arc::new(
-        run_await(Activities::new(
+        run_await(Activities::new_with_config(
             test_programs_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
+            activity_config,
         ))
         .unwrap(),
     );
     run_await(Workflow::new_with_config(
         test_programs_builder::TEST_PROGRAMS_TYPES_WORKFLOW.to_string(),
         activities.clone(),
-        ExecutionConfig {
-            interrupt_on_activities: matches!(config, WorkflowConfig::Cold),
-        },
+        workflow_config,
     ))
     .unwrap()
 }
@@ -58,17 +54,16 @@ fn fibonacci(n: u64) -> u64 {
 
 fn fibo_workflow(fibo_config: &FiboConfig) -> Workflow {
     let activities = Arc::new(
-        run_await(Activities::new(
+        run_await(Activities::new_with_config(
             test_programs_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),
+            &fibo_config.activity_config,
         ))
         .unwrap(),
     );
     run_await(Workflow::new_with_config(
         test_programs_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
         activities.clone(),
-        ExecutionConfig {
-            interrupt_on_activities: matches!(fibo_config.workflow_config, WorkflowConfig::Cold),
-        },
+        &fibo_config.workflow_config,
     ))
     .unwrap()
 }
@@ -78,6 +73,7 @@ struct FiboConfig {
     workflow_function: &'static str,
     n: u8,
     iterations: u16,
+    activity_config: ActivityConfig,
     workflow_config: WorkflowConfig,
 }
 impl FiboConfig {
@@ -85,12 +81,14 @@ impl FiboConfig {
         workflow_function: &'static str,
         n: u8,
         iterations: u16,
+        activity_config: ActivityConfig,
         workflow_config: WorkflowConfig,
     ) -> Self {
         Self {
             workflow_function,
             n,
             iterations,
+            activity_config,
             workflow_config,
         }
     }
@@ -100,30 +98,45 @@ impl Display for FiboConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{workflow_function}({n})*{iterations}{workflow_config}",
+            "{workflow_function}({n})*{iterations}{hot_or_cold}",
             workflow_function = self.workflow_function,
             n = self.n,
             iterations = self.iterations,
-            workflow_config = self.workflow_config,
+            hot_or_cold = hot_or_cold(&self.activity_config, &self.workflow_config),
         )
     }
 }
 
+fn hot_or_cold(activity_config: &ActivityConfig, workflow_config: &WorkflowConfig) -> String {
+    let mut v = Vec::new();
+    if activity_config == &ACTIVITY_CONFIG_HOT {
+        v.push("activity_hot")
+    }
+    if workflow_config == &WORKFLOW_CONFIG_HOT {
+        v.push("workflow_hot")
+    }
+    v.join(",")
+}
+
 fn benchmark_noop_functions(criterion: &mut Criterion) {
     let functions = vec![
-        ("noopw", 1, WorkflowConfig::Cold),
-        ("noopw", 100, WorkflowConfig::Cold),
-        ("noopa", 1, WorkflowConfig::Hot),
-        ("noopa", 100, WorkflowConfig::Hot),
-        ("noopha", 1, WorkflowConfig::Cold),
-        ("noopha", 100, WorkflowConfig::Hot),
+        ("noopw", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        ("noopw", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        ("noopa", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
+        ("noopa", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
+        ("noopa", 100, ACTIVITY_CONFIG_HOT, WORKFLOW_CONFIG_HOT),
+        ("noopha", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        ("noopha", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
     ];
-    for (workflow_function, iterations, workflow_config) in functions {
+    for (workflow_function, iterations, activity_config, workflow_config) in functions {
         criterion.bench_function(
-            &format!("{workflow_function}*{iterations}{workflow_config}"),
+            &format!(
+                "{workflow_function}*{iterations}{hot_or_cold}",
+                hot_or_cold = hot_or_cold(&activity_config, &workflow_config)
+            ),
             |b| {
                 let fqn = FunctionFqn::new("testing:types-workflow/workflow", workflow_function);
-                let workflow = noop_workflow(&workflow_config);
+                let workflow = noop_workflow(&activity_config, &workflow_config);
                 b.iter(|| {
                     let params = vec![Val::U16(iterations)];
                     let mut event_history = EventHistory::new();
@@ -151,11 +164,12 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
         })
     });
     let functions = vec![
-        FiboConfig::new("fibow", 10, 1, WorkflowConfig::Cold),
-        FiboConfig::new("fibow", 10, 100, WorkflowConfig::Cold),
-        FiboConfig::new("fiboa", 10, 1, WorkflowConfig::Cold),
-        FiboConfig::new("fiboa", 10, 100, WorkflowConfig::Cold),
-        FiboConfig::new("fiboa", 10, 100, WorkflowConfig::Hot),
+        FiboConfig::new("fibow", 10, 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        FiboConfig::new("fibow", 10, 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        FiboConfig::new("fiboa", 10, 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        FiboConfig::new("fiboa", 10, 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        FiboConfig::new("fiboa", 10, 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
+        FiboConfig::new("fiboa", 10, 100, ACTIVITY_CONFIG_HOT, WORKFLOW_CONFIG_HOT),
     ];
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {
@@ -176,11 +190,10 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
 fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
     criterion.bench_function("fibo(40)", |b| b.iter(|| fibonacci(black_box(40))));
     let functions = vec![
-        FiboConfig::new("fibow", 40, 1, WorkflowConfig::Cold),
-        FiboConfig::new("fiboa", 40, 1, WorkflowConfig::Cold),
-        FiboConfig::new("fibow", 40, 10, WorkflowConfig::Cold),
-        FiboConfig::new("fiboa", 40, 10, WorkflowConfig::Cold),
-        FiboConfig::new("fiboa", 40, 10, WorkflowConfig::Hot),
+        FiboConfig::new("fibow", 40, 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        FiboConfig::new("fiboa", 40, 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        FiboConfig::new("fibow", 40, 10, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        FiboConfig::new("fiboa", 40, 10, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
     ];
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {

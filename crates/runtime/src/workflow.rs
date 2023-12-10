@@ -29,16 +29,22 @@ lazy_static::lazy_static! {
     };
 }
 
-pub struct ExecutionConfig {
-    pub interrupt_on_activities: bool,
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum AsyncActivityBehavior {
+    Restart,     // Shut down the instance and replay all events when the activity finishes.
+    KeepWaiting, // Keep the workflow instance running.
 }
 
-impl Default for ExecutionConfig {
+impl Default for AsyncActivityBehavior {
     fn default() -> Self {
-        Self {
-            interrupt_on_activities: true,
-        }
+        Self::Restart
     }
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+
+pub struct WorkflowConfig {
+    pub async_activity_behavior: AsyncActivityBehavior,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -76,7 +82,7 @@ pub struct Workflow {
     instance_pre: InstancePre<HostImports>,
     activities: Arc<Activities>,
     functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
-    config: ExecutionConfig,
+    async_activity_behavior: AsyncActivityBehavior,
 }
 
 impl Workflow {
@@ -84,13 +90,13 @@ impl Workflow {
         wasm_path: String,
         activities: Arc<Activities>,
     ) -> Result<Self, anyhow::Error> {
-        Self::new_with_config(wasm_path, activities, ExecutionConfig::default()).await
+        Self::new_with_config(wasm_path, activities, &WorkflowConfig::default()).await
     }
 
     pub async fn new_with_config(
         wasm_path: String,
         activities: Arc<Activities>,
-        config: ExecutionConfig,
+        config: &WorkflowConfig,
     ) -> Result<Self, anyhow::Error> {
         info!("workflow::new {wasm_path}");
         let wasm =
@@ -150,7 +156,7 @@ impl Workflow {
             instance_pre,
             activities,
             functions_to_metadata,
-            config,
+            async_activity_behavior: config.async_activity_behavior,
         })
     }
 
@@ -217,7 +223,7 @@ impl Workflow {
                 current_event_history: CurrentEventHistory::new(
                     mem::take(event_history),
                     self.activities.clone(),
-                    self.config.interrupt_on_activities,
+                    self.async_activity_behavior,
                 ),
             },
         );

@@ -1,4 +1,4 @@
-use crate::{activity::Activities, FunctionFqn};
+use crate::{activity::Activities, workflow::AsyncActivityBehavior, FunctionFqn};
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use tracing::{debug, error, trace};
 use wasmtime::component::{Linker, Val};
@@ -210,20 +210,20 @@ pub(crate) struct CurrentEventHistory {
     activities: Arc<Activities>,
     pub(crate) event_history: EventHistory,
     idx: usize,
-    interrupt_on_activities: bool,
+    async_activity_behavior: AsyncActivityBehavior,
 }
 
 impl CurrentEventHistory {
     pub(crate) fn new(
         event_history: EventHistory,
         activities: Arc<Activities>,
-        interrupt_on_activities: bool,
+        async_activity_behavior: AsyncActivityBehavior,
     ) -> Self {
         Self {
             activities,
             event_history,
             idx: 0,
-            interrupt_on_activities,
+            async_activity_behavior,
         }
     }
 
@@ -292,15 +292,16 @@ impl CurrentEventHistory {
                 },
                 _,
                 None,
-            ) => {
-                if self.interrupt_on_activities {
+            ) => match self.async_activity_behavior {
+                AsyncActivityBehavior::Restart => {
                     debug!("Interrupting {fqn}");
                     Err(HostFunctionError::Interrupt {
                         fqn,
                         params,
                         activity_async,
                     })
-                } else {
+                }
+                AsyncActivityBehavior::KeepWaiting => {
                     debug!("Executing {fqn}");
                     self.persist_start(&fqn, &params);
                     let res = activity_async
@@ -313,7 +314,7 @@ impl CurrentEventHistory {
                     self.persist_end(fqn.clone(), params.clone(), res.clone());
                     Ok(res)
                 }
-            }
+            },
             // Non determinism
             (event, false, Some(found)) => Err(HostFunctionError::NonDeterminismDetected(format!(
                 "Expected {found:?}, got {event:?}"

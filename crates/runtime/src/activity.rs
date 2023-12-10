@@ -1,5 +1,6 @@
 use anyhow::Context;
-use std::{collections::HashMap, fmt::Debug};
+use std::{collections::HashMap, fmt::Debug, ops::DerefMut};
+use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, trace};
 use wasmtime::{component::Val, Config, Engine};
 
@@ -68,18 +69,51 @@ mod http {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ActivityPreload {
+    Preinstance,
+    Instance,
+}
+
+impl Default for ActivityPreload {
+    fn default() -> Self {
+        Self::Preinstance
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ActivityConfig {
+    pub preload: ActivityPreload,
+}
+
+enum PreloadHolder {
+    Preinstance,
+    Instance(
+        wasmtime::component::Instance,
+        Mutex<wasmtime::Store<http::Ctx>>,
+    ),
+}
+
 pub struct Activities {
     ifc_fqns_to_function_names: HashMap<
         String,      /* interface FQN: package_name/interface_name */
         Vec<String>, /* function names */
     >,
     functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
-    instance_pre: wasmtime::component::InstancePre<http::Ctx>, // pre-started instance
+    instance_pre: wasmtime::component::InstancePre<http::Ctx>,
+    preload_holder: PreloadHolder,
     wasm_path: String,
 }
 
 impl Activities {
     pub async fn new(wasm_path: String) -> Result<Self, anyhow::Error> {
+        Self::new_with_config(wasm_path, &ActivityConfig::default()).await
+    }
+
+    pub async fn new_with_config(
+        wasm_path: String,
+        config: &ActivityConfig,
+    ) -> Result<Self, anyhow::Error> {
         let wasm =
             std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
         let decoded =
@@ -112,11 +146,21 @@ impl Activities {
         };
 
         info!("Loaded {ifc_fqns_to_function_names:?}");
+
+        let preload_holder = match config.preload {
+            ActivityPreload::Preinstance => PreloadHolder::Preinstance,
+            ActivityPreload::Instance => {
+                let mut store = http::store(&ENGINE);
+                let instance = instance_pre.instantiate_async(&mut store).await?;
+                PreloadHolder::Instance(instance, Mutex::new(store))
+            }
+        };
         Ok(Self {
             ifc_fqns_to_function_names,
             instance_pre,
             wasm_path,
             functions_to_metadata,
+            preload_holder,
         })
     }
 
@@ -128,8 +172,33 @@ impl Activities {
         debug!("Running `{fqn}`");
         let results_len = self.functions_to_metadata.get(fqn).unwrap().results_len;
         trace!("Running `{fqn}`({params:?}) -> results_len:{results_len}");
-        let mut store = http::store(&ENGINE);
-        let instance = self.instance_pre.instantiate_async(&mut store).await?;
+
+        fn try_lock(
+            preload_holder: &PreloadHolder,
+        ) -> Option<(
+            &wasmtime::component::Instance,
+            MutexGuard<wasmtime::Store<http::Ctx>>,
+        )> {
+            match preload_holder {
+                PreloadHolder::Instance(instance, mutex) => {
+                    mutex.try_lock().map(|guard| (instance, guard)).ok()
+                }
+                PreloadHolder::Preinstance => None,
+            }
+        }
+        let mut store;
+        let mut store_guard; // possibly uninitialized
+        let instance_owned; // possibly uninitialized
+        let (instance, mut store) =
+            if let Some((instance, store_guard2)) = try_lock(&self.preload_holder) {
+                store_guard = store_guard2;
+                (instance, store_guard.deref_mut())
+            } else {
+                store = http::store(&ENGINE);
+                instance_owned = self.instance_pre.instantiate_async(&mut store).await?;
+                (&instance_owned, &mut store)
+            };
+
         let func = {
             let mut store = &mut store;
             let mut exports = instance.exports(&mut store);
