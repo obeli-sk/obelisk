@@ -14,4 +14,5 @@ crate-type = ["cdylib"]
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]
-"testing:types" = { path = "../wit" }
+"testing:types".path = "../wit/"
+"my-org:workflow-engine".path = "../../../../../wit/workflow-engine/"
