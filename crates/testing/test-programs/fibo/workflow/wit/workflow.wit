@@ -1,8 +1,8 @@
 package testing:fibo-workflow;
 
 interface workflow {
-    fibow: func(n: u8, iterations: u16) -> u64;
-    fiboa: func(n: u8, iterations: u16) -> u64;
+    fibow: func(n: u8, iterations: u32) -> u64;
+    fiboa: func(n: u8, iterations: u32) -> u64;
 }
 
 world any {

@@ -72,7 +72,7 @@ fn fibo_workflow(fibo_config: &FiboConfig) -> Workflow {
 struct FiboConfig {
     workflow_function: &'static str,
     n: u8,
-    iterations: u16,
+    iterations: u32,
     activity_config: ActivityConfig,
     workflow_config: WorkflowConfig,
 }
@@ -80,7 +80,7 @@ impl FiboConfig {
     fn new(
         workflow_function: &'static str,
         n: u8,
-        iterations: u16,
+        iterations: u32,
         activity_config: ActivityConfig,
         workflow_config: WorkflowConfig,
     ) -> Self {
@@ -138,9 +138,9 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
                 let fqn = FunctionFqn::new("testing:types-workflow/workflow", workflow_function);
                 let workflow = noop_workflow(&activity_config, &workflow_config);
                 b.iter(|| {
-                    let params = vec![Val::U16(iterations)];
+                    let params = vec![Val::U32(iterations)];
                     let mut event_history = EventHistory::new();
-                    run_await(workflow.execute_all(&mut event_history, &fqn, &params))
+                    run_await(workflow.execute_all(&mut event_history, &fqn, &params)).unwrap()
                 })
             },
         );
@@ -179,9 +179,9 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
             );
             let workflow = fibo_workflow(&fibo_config);
             b.iter(|| {
-                let params = vec![Val::U8(fibo_config.n), Val::U16(fibo_config.iterations)];
+                let params = vec![Val::U8(fibo_config.n), Val::U32(fibo_config.iterations)];
                 let mut event_history = EventHistory::new();
-                run_await(workflow.execute_all(&mut event_history, &fqn, &params))
+                run_await(workflow.execute_all(&mut event_history, &fqn, &params)).unwrap()
             })
         });
     }
@@ -203,9 +203,9 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
             );
             let workflow = fibo_workflow(&fibo_config);
             b.iter(|| {
-                let params = vec![Val::U8(fibo_config.n), Val::U16(fibo_config.iterations)];
+                let params = vec![Val::U8(fibo_config.n), Val::U32(fibo_config.iterations)];
                 let mut event_history = EventHistory::new();
-                run_await(workflow.execute_all(&mut event_history, &fqn, &params))
+                run_await(workflow.execute_all(&mut event_history, &fqn, &params)).unwrap()
             })
         });
     }

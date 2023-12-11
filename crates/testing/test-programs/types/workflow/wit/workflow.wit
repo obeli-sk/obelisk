@@ -1,9 +1,9 @@
 package testing:types-workflow;
 
 interface workflow {
-    noopa: func(iterations: u16);
-    noopha: func(iterations: u16);
-    noopw: func(iterations: u16);
+    noopa: func(iterations: u32);
+    noopha: func(iterations: u32);
+    noopw: func(iterations: u32);
 }
 
 world any {

@@ -20,6 +20,6 @@ RUST_LOG=info,runtime=debug RUST_BACKTRACE=1 cargo test -p tests --tests -- --no
 
 Note: changes in `test-programs` are not always reflected in the built WASM files. Run
 ```sh
-cargo clean -p test-programs-builder
+cargo clean -p test-programs-builder # --release
 ```
 to regenerate them.

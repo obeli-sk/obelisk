@@ -4,26 +4,26 @@ use crate::bindings::exports::testing::types_workflow::workflow::Guest;
 struct Component;
 
 impl Guest for Component {
-    fn noopa(iterations: u16) {
+    fn noopa(iterations: u32) {
         for _ in 0..iterations {
             crate::bindings::testing::types::types::noop();
         }
     }
 
-    fn noopha(iterations: u16) {
+    fn noopha(iterations: u32) {
         for _ in 0..iterations {
             crate::bindings::my_org::workflow_engine::host_activities::noop();
         }
     }
 
-    fn noopw(iterations: u16) {
+    fn noopw(iterations: u32) {
         for i in 0..iterations {
             noop(black_box(i));
         }
     }
 }
 
-fn noop(i: u16) {
+fn noop(i: u32) {
     black_box(i);
 }
 
