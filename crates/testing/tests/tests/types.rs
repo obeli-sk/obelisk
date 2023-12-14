@@ -16,10 +16,13 @@ async fn test() -> Result<(), anyhow::Error> {
         .init();
 
     let activities = Arc::new(
-        Activities::new(test_programs_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string()).await?,
+        Activities::new(
+            test_programs_types_activity_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
+        )
+        .await?,
     );
     let workflow = Workflow::new(
-        test_programs_builder::TEST_PROGRAMS_TYPES_WORKFLOW.to_string(),
+        test_programs_types_workflow_builder::TEST_PROGRAMS_TYPES_WORKFLOW.to_string(),
         activities.clone(),
     )
     .await?;

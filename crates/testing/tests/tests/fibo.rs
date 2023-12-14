@@ -17,10 +17,13 @@ async fn test() -> Result<(), anyhow::Error> {
         .init();
 
     let activities = Arc::new(
-        Activities::new(test_programs_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string()).await?,
+        Activities::new(
+            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),
+        )
+        .await?,
     );
     let workflow = Workflow::new(
-        test_programs_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
+        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
         activities.clone(),
     )
     .await?;

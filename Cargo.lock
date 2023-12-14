@@ -142,7 +142,10 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "runtime",
- "test-programs-builder",
+ "test_programs_fibo_activity_builder",
+ "test_programs_fibo_workflow_builder",
+ "test_programs_types_activity_builder",
+ "test_programs_types_workflow_builder",
  "wasmtime",
 ]
 
@@ -2059,13 +2062,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c39fd04924ca3a864207c66fc2cd7d22d7c016007f9ce846cbb9326331930a"
 
 [[package]]
-name = "test-programs-builder"
-version = "0.1.0"
-dependencies = [
- "cargo_metadata",
-]
-
-[[package]]
 name = "test_programs_fibo_activity"
 version = "0.1.0"
 dependencies = [
@@ -2074,10 +2070,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "test_programs_fibo_activity_builder"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+]
+
+[[package]]
 name = "test_programs_fibo_workflow"
 version = "0.1.0"
 dependencies = [
  "cargo-component-bindings",
+]
+
+[[package]]
+name = "test_programs_fibo_workflow_builder"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
 ]
 
 [[package]]
@@ -2089,10 +2099,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "test_programs_http_get_activity_builder"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+]
+
+[[package]]
 name = "test_programs_http_get_workflow"
 version = "0.1.0"
 dependencies = [
  "cargo-component-bindings",
+]
+
+[[package]]
+name = "test_programs_http_get_workflow_builder"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
 ]
 
 [[package]]
@@ -2103,10 +2127,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "test_programs_types_activity_builder"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+]
+
+[[package]]
 name = "test_programs_types_workflow"
 version = "0.1.0"
 dependencies = [
  "cargo-component-bindings",
+]
+
+[[package]]
+name = "test_programs_types_workflow_builder"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
 ]
 
 [[package]]
@@ -2116,7 +2154,12 @@ dependencies = [
  "anyhow",
  "runtime",
  "serde_json",
- "test-programs-builder",
+ "test_programs_fibo_activity_builder",
+ "test_programs_fibo_workflow_builder",
+ "test_programs_http_get_activity_builder",
+ "test_programs_http_get_workflow_builder",
+ "test_programs_types_activity_builder",
+ "test_programs_types_workflow_builder",
  "tokio",
  "tracing",
  "tracing-subscriber",

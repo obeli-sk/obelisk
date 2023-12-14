@@ -7,11 +7,16 @@ rust-version.workspace = true
 
 [dev-dependencies]
 runtime.workspace = true
+test_programs_fibo_activity_builder.workspace = true
+test_programs_fibo_workflow_builder.workspace = true
+test_programs_http_get_activity_builder.workspace = true
+test_programs_http_get_workflow_builder.workspace = true
+test_programs_types_activity_builder.workspace = true
+test_programs_types_workflow_builder.workspace = true
 val-json.workspace = true
 
 anyhow.workspace = true
 serde_json.workspace = true
-test-programs-builder.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true

@@ -29,12 +29,17 @@ resolver = "2"
 members = [
     "crates/runtime",
     "crates/testing/benches",
-    "crates/testing/test-programs-builder",
+    "crates/testing/test-programs/fibo/activity-builder",
     "crates/testing/test-programs/fibo/activity",
+    "crates/testing/test-programs/fibo/workflow-builder",
     "crates/testing/test-programs/fibo/workflow",
+    "crates/testing/test-programs/http/activity-builder",
     "crates/testing/test-programs/http/activity",
+    "crates/testing/test-programs/http/workflow-builder",
     "crates/testing/test-programs/http/workflow",
+    "crates/testing/test-programs/types/activity-builder",
     "crates/testing/test-programs/types/activity",
+    "crates/testing/test-programs/types/workflow-builder",
     "crates/testing/test-programs/types/workflow",
     "crates/testing/tests",
     "crates/val-json",
@@ -48,8 +53,14 @@ rust-version = "1.73.0"
 
 [workspace.dependencies]
 runtime.path = "crates/runtime"
-test-programs-builder.path = "crates/testing/test-programs-builder"
+test_programs_fibo_activity_builder.path = "crates/testing/test-programs/fibo/activity-builder"
+test_programs_fibo_workflow_builder.path = "crates/testing/test-programs/fibo/workflow-builder"
+test_programs_http_get_activity_builder.path = "crates/testing/test-programs/http/activity-builder"
+test_programs_http_get_workflow_builder.path = "crates/testing/test-programs/http/workflow-builder"
+test_programs_types_activity_builder.path = "crates/testing/test-programs/types/activity-builder"
+test_programs_types_workflow_builder.path = "crates/testing/test-programs/types/workflow-builder"
 val-json.path = "crates/val-json"
+
 
 anyhow = { version = "1.0", features = ["backtrace"] }
 async-trait = "0.1"

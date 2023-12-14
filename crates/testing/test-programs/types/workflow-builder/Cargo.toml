@@ -1,9 +1,9 @@
 [package]
-name = "test-programs-builder"
+name = "test_programs_types_workflow_builder"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [build-dependencies]
-cargo_metadata.workspace=true
+cargo_metadata.workspace = true

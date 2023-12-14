@@ -1,0 +1,9 @@
+[package]
+name = "test_programs_http_get_workflow_builder"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[build-dependencies]
+cargo_metadata.workspace = true

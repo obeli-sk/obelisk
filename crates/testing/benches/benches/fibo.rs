@@ -31,13 +31,13 @@ const WORKFLOW_CONFIG_HOT: WorkflowConfig = WorkflowConfig {
 fn noop_workflow(activity_config: &ActivityConfig, workflow_config: &WorkflowConfig) -> Workflow {
     let activities = Arc::new(
         run_await(Activities::new_with_config(
-            test_programs_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
+            test_programs_types_activity_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
             activity_config,
         ))
         .unwrap(),
     );
     run_await(Workflow::new_with_config(
-        test_programs_builder::TEST_PROGRAMS_TYPES_WORKFLOW.to_string(),
+        test_programs_types_workflow_builder::TEST_PROGRAMS_TYPES_WORKFLOW.to_string(),
         activities.clone(),
         workflow_config,
     ))
@@ -55,13 +55,13 @@ fn fibonacci(n: u64) -> u64 {
 fn fibo_workflow(fibo_config: &FiboConfig) -> Workflow {
     let activities = Arc::new(
         run_await(Activities::new_with_config(
-            test_programs_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),
+            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),
             &fibo_config.activity_config,
         ))
         .unwrap(),
     );
     run_await(Workflow::new_with_config(
-        test_programs_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
+        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
         activities.clone(),
         &fibo_config.workflow_config,
     ))
