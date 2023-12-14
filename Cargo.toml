@@ -41,6 +41,7 @@ members = [
     "crates/testing/test-programs/types/activity",
     "crates/testing/test-programs/types/workflow-builder",
     "crates/testing/test-programs/types/workflow",
+    "crates/testing/test-programs/util",
     "crates/testing/tests",
     "crates/val-json",
 ]
@@ -59,6 +60,7 @@ test_programs_http_get_activity_builder.path = "crates/testing/test-programs/htt
 test_programs_http_get_workflow_builder.path = "crates/testing/test-programs/http/workflow-builder"
 test_programs_types_activity_builder.path = "crates/testing/test-programs/types/activity-builder"
 test_programs_types_workflow_builder.path = "crates/testing/test-programs/types/workflow-builder"
+test_programs_util.path = "crates/testing/test-programs/util"
 val-json.path = "crates/val-json"
 
 

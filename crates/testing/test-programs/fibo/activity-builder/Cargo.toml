@@ -6,4 +6,4 @@ edition.workspace = true
 rust-version.workspace = true
 
 [build-dependencies]
-cargo_metadata.workspace = true
+test_programs_util.workspace = true

@@ -2073,7 +2073,7 @@ dependencies = [
 name = "test_programs_fibo_activity_builder"
 version = "0.1.0"
 dependencies = [
- "cargo_metadata",
+ "test_programs_util",
 ]
 
 [[package]]
@@ -2087,7 +2087,7 @@ dependencies = [
 name = "test_programs_fibo_workflow_builder"
 version = "0.1.0"
 dependencies = [
- "cargo_metadata",
+ "test_programs_util",
 ]
 
 [[package]]
@@ -2102,7 +2102,7 @@ dependencies = [
 name = "test_programs_http_get_activity_builder"
 version = "0.1.0"
 dependencies = [
- "cargo_metadata",
+ "test_programs_util",
 ]
 
 [[package]]
@@ -2116,7 +2116,7 @@ dependencies = [
 name = "test_programs_http_get_workflow_builder"
 version = "0.1.0"
 dependencies = [
- "cargo_metadata",
+ "test_programs_util",
 ]
 
 [[package]]
@@ -2130,7 +2130,7 @@ dependencies = [
 name = "test_programs_types_activity_builder"
 version = "0.1.0"
 dependencies = [
- "cargo_metadata",
+ "test_programs_util",
 ]
 
 [[package]]
@@ -2142,6 +2142,13 @@ dependencies = [
 
 [[package]]
 name = "test_programs_types_workflow_builder"
+version = "0.1.0"
+dependencies = [
+ "test_programs_util",
+]
+
+[[package]]
+name = "test_programs_util"
 version = "0.1.0"
 dependencies = [
  "cargo_metadata",

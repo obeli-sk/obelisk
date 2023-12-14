@@ -1,10 +1,9 @@
 [package]
-name = "test_programs_http_get_workflow_builder"
+name = "test_programs_util"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[build-dependencies]
-test_programs_util.workspace = true
-
+[dependencies]
+cargo_metadata.workspace = true
