@@ -1,4 +1,4 @@
-#![cfg(target_arch = "wasm32")]
+#![cfg(feature = "wasm")]
 
 cargo_component_bindings::generate!();
 struct Component;

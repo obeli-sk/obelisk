@@ -11,6 +11,10 @@ cargo-component-bindings = { workspace = true }
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+wasm = []
+default = ["wasm"]
+
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]
