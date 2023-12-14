@@ -1,9 +1,10 @@
+#![cfg(target_arch = "wasm32")]
+
 cargo_component_bindings::generate!();
-use crate::bindings::exports::testing::types_workflow::workflow::Guest;
 
 struct Component;
 
-impl Guest for Component {
+impl crate::bindings::exports::testing::types_workflow::workflow::Guest for Component {
     fn noopa(iterations: u32) {
         for _ in 0..iterations {
             crate::bindings::testing::types::types::noop();

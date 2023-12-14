@@ -1,5 +1,6 @@
+#![cfg(target_arch = "wasm32")]
+
 cargo_component_bindings::generate!();
-use crate::bindings::exports::testing::fibo_workflow::workflow::Guest;
 
 struct Component;
 
@@ -11,7 +12,7 @@ pub fn black_box<T>(dummy: T) -> T {
     }
 }
 
-impl Guest for Component {
+impl crate::bindings::exports::testing::fibo_workflow::workflow::Guest for Component {
     fn fibow(n: u8, iterations: u32) -> u64 {
         let mut last = 0;
         for _ in 0..iterations {

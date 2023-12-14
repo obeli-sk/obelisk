@@ -1,3 +1,4 @@
+#![cfg(target_arch = "wasm32")]
 mod http;
 
 cargo_component_bindings::generate!();
