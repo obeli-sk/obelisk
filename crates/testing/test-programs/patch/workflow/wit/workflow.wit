@@ -1,0 +1,10 @@
+package testing:patch-workflow;
+
+interface workflow {
+    noopa: func(iterations: u32);
+}
+
+world any {
+    import testing:patch/patch;
+    export workflow;
+}
