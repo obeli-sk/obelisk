@@ -258,28 +258,32 @@ impl Workflow {
                                 .data_mut()
                                 .current_event_history
                                 .persist_start(&event.fqn, &event.params);
-                            let res = activity_async
-                                .handle(fqn, params, &self.activities)
-                                .await
-                                .map_err(|err| ExecutionInterrupt::ActivityFailed {
-                                    activity_fqn: fqn.clone(),
-                                    reason: err.to_string(),
-                                })?;
-                            store.data_mut().current_event_history.persist_end(
-                                event.fqn.clone(),
-                                event.params.clone(),
-                                res,
-                            );
-                            ExecutionInterrupt::NewEventPersisted
+                            match activity_async.handle(fqn, params, &self.activities).await {
+                                Ok(res) => {
+                                    store.data_mut().current_event_history.persist_end(
+                                        event.fqn.clone(),
+                                        event.params.clone(),
+                                        res,
+                                    );
+                                    ExecutionInterrupt::NewEventPersisted
+                                }
+                                Err(err) => {
+                                    // TODO: persist activity failure
+                                    ExecutionInterrupt::ActivityFailed {
+                                        activity_fqn: fqn.clone(),
+                                        reason: err.to_string(),
+                                    }
+                                }
+                            }
                         }
                         Some(HostFunctionError::ActivityFailed {
                             activity_fqn: fqn,
                             source,
                         }) => {
-                            error!("Activity `{fqn}` failed: {source:?}");
+                            // TODO: persist activity failure
                             ExecutionInterrupt::ActivityFailed {
                                 activity_fqn: fqn.clone(),
-                                reason: err.to_string(),
+                                reason: source.to_string(),
                             }
                         }
                         None => ExecutionInterrupt::UnknownError(err),

@@ -274,6 +274,7 @@ impl CurrentEventHistory {
                             activity_fqn: fqn.clone(),
                             source: err.source,
                         })?;
+                // TODO: persist activity failure
                 self.persist_end(fqn.clone(), params.clone(), res.clone());
                 Ok(res)
             }
@@ -311,6 +312,7 @@ impl CurrentEventHistory {
                             activity_fqn: fqn.clone(),
                             source,
                         })?;
+                    // TODO: persist activity failure
                     self.persist_end(fqn.clone(), params.clone(), res.clone());
                     Ok(res)
                 }
