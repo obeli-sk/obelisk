@@ -181,7 +181,7 @@ impl Workflow {
         trace!("workflow.execute_all `{fqn}`({params:?}) -> results_len:{results_len}");
         loop {
             let res = self
-                .execute_persist_event(event_history, fqn, params, results_len)
+                .execute_in_new_store(event_history, fqn, params, results_len)
                 .await;
             trace!("workflow.execute_all `{fqn}` -> {res:?}");
             match res {
@@ -211,7 +211,7 @@ impl Workflow {
     }
 
     // Execute the workflow until it is finished or interrupted.
-    async fn execute_persist_event(
+    async fn execute_in_new_store(
         &self,
         event_history: &mut EventHistory,
         workflow_fqn: &FunctionFqn<'_>,
@@ -229,74 +229,87 @@ impl Workflow {
             },
         );
         // try
-        let res: Result<SupportedFunctionResult, ExecutionInterrupt> = {
-            match self
-                .execute_one_step(&mut store, workflow_fqn, params, results_len)
-                .await
-            {
-                Ok(res) => Ok(res),
-                Err(err) => Err(
-                    match err
-                        .source()
-                        .and_then(|source| source.downcast_ref::<HostFunctionError>())
-                    {
-                        Some(HostFunctionError::NonDeterminismDetected(reason)) => {
-                            ExecutionInterrupt::NonDeterminismDetected(reason.clone())
-                        }
-                        Some(HostFunctionError::Interrupt {
-                            fqn,
-                            params,
-                            activity_async,
-                        }) => {
-                            let event = Event::new_from_interrupt(
-                                fqn.clone(),
-                                params.clone(),
-                                activity_async.clone(),
-                            );
-                            // Persist and execute the event
-                            store
-                                .data_mut()
-                                .current_event_history
-                                .persist_start(&event.fqn, &event.params);
-                            match activity_async.handle(fqn, params, &self.activities).await {
-                                Ok(res) => {
-                                    store.data_mut().current_event_history.persist_end(
-                                        event.fqn.clone(),
-                                        event.params.clone(),
-                                        res,
-                                    );
-                                    ExecutionInterrupt::NewEventPersisted
-                                }
-                                Err(err) => {
-                                    // TODO: persist activity failure
-                                    ExecutionInterrupt::ActivityFailed {
-                                        activity_fqn: fqn.clone(),
-                                        reason: err.to_string(),
-                                    }
-                                }
-                            }
-                        }
-                        Some(HostFunctionError::ActivityFailed {
-                            activity_fqn: fqn,
-                            source,
-                        }) => {
-                            // TODO: persist activity failure
-                            ExecutionInterrupt::ActivityFailed {
-                                activity_fqn: fqn.clone(),
-                                reason: source.to_string(),
-                            }
-                        }
-                        None => ExecutionInterrupt::UnknownError(err),
-                    },
-                ),
-            }
-        };
+        let res = self
+            .execute_one_step_interpret_errors(&mut store, workflow_fqn, params, results_len)
+            .await;
         // finally
         mem::swap(
             event_history,
             &mut store.data_mut().current_event_history.event_history,
         );
         res
+    }
+
+    async fn execute_one_step_interpret_errors(
+        &self,
+        store: &mut Store<HostImports>,
+        workflow_fqn: &FunctionFqn<'_>,
+        params: &[Val],
+        results_len: usize,
+    ) -> Result<SupportedFunctionResult, ExecutionInterrupt> {
+        match self
+            .execute_one_step(store, workflow_fqn, params, results_len)
+            .await
+        {
+            Ok(ok) => Ok(ok),
+            Err(err) => Err(self.interpret_errors(store, err).await),
+        }
+    }
+
+    async fn interpret_errors(
+        &self,
+        store: &mut Store<HostImports>,
+        err: anyhow::Error,
+    ) -> ExecutionInterrupt {
+        match err
+            .source()
+            .and_then(|source| source.downcast_ref::<HostFunctionError>())
+        {
+            Some(HostFunctionError::NonDeterminismDetected(reason)) => {
+                ExecutionInterrupt::NonDeterminismDetected(reason.clone())
+            }
+            Some(HostFunctionError::Interrupt {
+                fqn,
+                params,
+                activity_async,
+            }) => {
+                let event =
+                    Event::new_from_interrupt(fqn.clone(), params.clone(), activity_async.clone());
+                // Persist and execute the event
+                store
+                    .data_mut()
+                    .current_event_history
+                    .persist_start(&event.fqn, &event.params);
+                match activity_async.handle(fqn, params, &self.activities).await {
+                    Ok(res) => {
+                        store.data_mut().current_event_history.persist_end(
+                            event.fqn.clone(),
+                            event.params.clone(),
+                            res,
+                        );
+                        ExecutionInterrupt::NewEventPersisted
+                    }
+                    Err(err) => {
+                        // TODO: persist activity failure
+                        ExecutionInterrupt::ActivityFailed {
+                            activity_fqn: fqn.clone(),
+                            reason: err.to_string(),
+                        }
+                    }
+                }
+            }
+            Some(HostFunctionError::ActivityFailed {
+                activity_fqn: fqn,
+                source,
+            }) => {
+                // TODO: persist activity failure
+                ExecutionInterrupt::ActivityFailed {
+                    activity_fqn: fqn.clone(),
+                    reason: source.to_string(),
+                }
+            }
+            None => ExecutionInterrupt::UnknownError(err),
+        }
     }
 
     async fn execute_one_step(
