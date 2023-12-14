@@ -153,6 +153,8 @@ impl Workflow {
         };
         let functions_to_metadata = decode_wasm_function_metadata(&wasm)
             .with_context(|| format!("error parsing `{wasm_path}`"))?;
+        debug!("Loaded {:?}", functions_to_metadata.keys());
+        trace!("Loaded {:?}", functions_to_metadata);
         Ok(Self {
             instance_pre,
             activities,
