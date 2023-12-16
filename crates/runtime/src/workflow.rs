@@ -271,30 +271,27 @@ impl Workflow {
                 ExecutionInterrupt::NonDeterminismDetected(reason.clone())
             }
             Some(HostFunctionError::Interrupt {
-                fqn,
-                params,
+                request,
                 activity_async,
             }) => {
-                let event =
-                    Event::new_from_interrupt(fqn.clone(), params.clone(), activity_async.clone());
+                let event = Event::new_from_interrupt(request.clone(), activity_async.clone());
                 // Persist and execute the event
                 store
                     .data_mut()
                     .current_event_history
-                    .persist_start(&event.fqn, &event.params);
-                match activity_async.handle(fqn, params, &self.activities).await {
+                    .persist_start(&event.request);
+                match activity_async.handle(request, &self.activities).await {
                     Ok(res) => {
-                        store.data_mut().current_event_history.persist_end(
-                            event.fqn.clone(),
-                            event.params.clone(),
-                            res,
-                        );
+                        store
+                            .data_mut()
+                            .current_event_history
+                            .persist_end(event.request, res);
                         ExecutionInterrupt::NewEventPersisted
                     }
                     Err(err) => {
                         // TODO: persist activity failure
                         ExecutionInterrupt::ActivityFailed {
-                            activity_fqn: fqn.clone(),
+                            activity_fqn: request.fqn.clone(),
                             reason: err.to_string(),
                         }
                     }

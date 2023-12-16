@@ -1,4 +1,8 @@
-use crate::{activity::Activities, workflow::AsyncActivityBehavior, FunctionFqn};
+use crate::{
+    activity::{Activities, ActivityRequest},
+    workflow::AsyncActivityBehavior,
+    FunctionFqn,
+};
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use tracing::{debug, error, trace};
 use wasmtime::component::{Linker, Val};
@@ -71,8 +75,10 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
         const FQN: FunctionFqn<'static> =
             FunctionFqn::new("my-org:workflow-engine/host-activities", "sleep");
         let event = Event {
-            fqn: Arc::new(FQN),
-            params: Arc::new(vec![Val::U64(millis)]),
+            request: ActivityRequest {
+                fqn: Arc::new(FQN),
+                params: Arc::new(vec![Val::U64(millis)]),
+            },
             kind: EventKind::ActivityAsync(ActivityAsync::HostActivityAsync(
                 HostActivityAsync::Sleep(Duration::from_millis(millis)),
             )),
@@ -89,8 +95,10 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
         const FQN: FunctionFqn<'static> =
             FunctionFqn::new("my-org:workflow-engine/host-activities", "noop");
         let event = Event {
-            fqn: Arc::new(FQN),
-            params: Arc::new(vec![]),
+            request: ActivityRequest {
+                fqn: Arc::new(FQN),
+                params: Arc::new(vec![]),
+            },
             kind: EventKind::HostActivitySync(HostActivitySync::Noop),
         };
         let replay_result = self
@@ -102,42 +110,35 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 
 pub(crate) struct Event {
-    pub(crate) fqn: Arc<FunctionFqn<'static>>,
-    pub(crate) params: Arc<Vec<Val>>,
+    pub(crate) request: ActivityRequest,
     pub(crate) kind: EventKind,
 }
 
 impl Event {
-    pub fn new_from_interrupt(
-        fqn: Arc<FunctionFqn<'static>>,
-        params: Arc<Vec<Val>>,
-        activity_async: ActivityAsync,
-    ) -> Self {
+    pub fn new_from_interrupt(request: ActivityRequest, activity_async: ActivityAsync) -> Self {
         Self {
-            fqn,
-            params,
+            request,
             kind: EventKind::ActivityAsync(activity_async),
         }
     }
     pub fn new_from_wasm_activity(fqn: Arc<FunctionFqn<'static>>, params: Arc<Vec<Val>>) -> Self {
         Self {
-            fqn,
-            params,
+            request: ActivityRequest { fqn, params },
             kind: EventKind::ActivityAsync(ActivityAsync::WasmActivity),
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum EventKind {
     HostActivitySync(HostActivitySync),
     ActivityAsync(ActivityAsync),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ActivityAsync {
     WasmActivity,
     HostActivityAsync(HostActivityAsync),
@@ -146,23 +147,25 @@ pub(crate) enum ActivityAsync {
 impl ActivityAsync {
     pub(crate) async fn handle(
         &self,
-        fqn: &FunctionFqn<'static>,
-        params: &[Val],
+        request: &ActivityRequest,
         activities: &Activities,
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
         match self {
-            Self::WasmActivity => activities.run(fqn, params).await,
-            Self::HostActivityAsync(h) => h.handle().await,
+            Self::WasmActivity => activities.run(request).await,
+            Self::HostActivityAsync(h) => h.handle(request).await,
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum HostActivityAsync {
     Sleep(Duration),
 }
 impl HostActivityAsync {
-    async fn handle(&self) -> Result<SupportedFunctionResult, wasmtime::Error> {
+    async fn handle(
+        &self,
+        _request: &ActivityRequest,
+    ) -> Result<SupportedFunctionResult, wasmtime::Error> {
         match self {
             Self::Sleep(duration) => {
                 tokio::time::sleep(*duration).await;
@@ -171,7 +174,7 @@ impl HostActivityAsync {
         }
     }
 }
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum HostActivitySync {
     Noop,
 }
@@ -193,11 +196,10 @@ struct HostActivitySyncError {
 pub(crate) enum HostFunctionError {
     #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(String),
-    #[error("interrupt: `{fqn}`, `{activity_async:?}`")]
+    #[error("interrupt: `{fqn}`, `{activity_async:?}`", fqn = request.fqn)]
     Interrupt {
-        fqn: Arc<FunctionFqn<'static>>,
-        params: Arc<Vec<Val>>,
         activity_async: ActivityAsync,
+        request: ActivityRequest,
     },
     #[error("activity `{activity_fqn}` failed: `{source}`")]
     ActivityFailed {
@@ -227,17 +229,12 @@ impl CurrentEventHistory {
         }
     }
 
-    pub(crate) fn persist_start(&mut self, fqn: &FunctionFqn<'_>, params: &[Val]) {
-        self.event_history.persist_start(fqn, params)
+    pub(crate) fn persist_start(&mut self, request: &ActivityRequest) {
+        self.event_history.persist_start(request)
     }
 
-    pub(crate) fn persist_end(
-        &mut self,
-        fqn: Arc<FunctionFqn<'static>>,
-        params: Arc<Vec<Val>>,
-        val: SupportedFunctionResult,
-    ) {
-        self.event_history.persist_end(fqn, params, val);
+    pub(crate) fn persist_end(&mut self, request: ActivityRequest, val: SupportedFunctionResult) {
+        self.event_history.persist_end(request, val);
         self.idx += 1;
     }
 
@@ -247,10 +244,10 @@ impl CurrentEventHistory {
     ) -> Result<SupportedFunctionResult, HostFunctionError> {
         let found = self.event_history.0.get(self.idx);
         let found_matches = matches!(found,  Some((found_fqn, found_params, _replay_result))
-            if event.fqn == *found_fqn && event.params == *found_params);
+            if event.request.fqn == *found_fqn && event.request.params == *found_params);
         trace!(
             "replay_handle_interrupt {fqn}, found: {found_matches}, idx: {idx}, history.len: {len}",
-            fqn = event.fqn,
+            fqn = event.request.fqn,
             idx = self.idx,
             len = self.event_history.len()
         );
@@ -258,62 +255,63 @@ impl CurrentEventHistory {
             // Continue running on HostActivitySync
             (
                 Event {
-                    fqn,
-                    params,
+                    request,
                     kind: EventKind::HostActivitySync(host_activity),
                 },
                 _,
                 None,
             ) => {
                 debug!("Running {host_activity:?}");
-                self.persist_start(&fqn, &params);
+                self.persist_start(&request);
                 let res =
                     host_activity
                         .handle()
                         .map_err(|err| HostFunctionError::ActivityFailed {
-                            activity_fqn: fqn.clone(),
+                            activity_fqn: request.fqn.clone(),
                             source: err.source,
                         })?;
                 // TODO: persist activity failure
-                self.persist_end(fqn.clone(), params.clone(), res.clone());
+                self.persist_end(request, res.clone());
                 Ok(res)
             }
             // Replay if found
             (event, true, Some((_, _, replay_result))) => {
-                debug!("Replaying [{idx}] {fqn}", idx = self.idx, fqn = event.fqn);
+                debug!(
+                    "Replaying [{idx}] {fqn}",
+                    idx = self.idx,
+                    fqn = event.request.fqn
+                );
                 self.idx += 1;
                 Ok(replay_result.clone())
             }
             // New event needs to be handled by the runtime, interrupt or execute it.
             (
                 Event {
-                    fqn,
-                    params,
+                    request,
                     kind: EventKind::ActivityAsync(activity_async),
                 },
                 _,
                 None,
             ) => match self.async_activity_behavior {
                 AsyncActivityBehavior::Restart => {
-                    debug!("Interrupting {fqn}");
+                    debug!("Interrupting {fqn}", fqn = request.fqn);
                     Err(HostFunctionError::Interrupt {
-                        fqn,
-                        params,
                         activity_async,
+                        request,
                     })
                 }
                 AsyncActivityBehavior::KeepWaiting => {
-                    debug!("Executing {fqn}");
-                    self.persist_start(&fqn, &params);
+                    debug!("Executing {fqn}", fqn = request.fqn);
+                    self.persist_start(&request);
                     let res = activity_async
-                        .handle(&fqn, &params, &self.activities)
+                        .handle(&request, &self.activities)
                         .await
                         .map_err(|source| HostFunctionError::ActivityFailed {
-                            activity_fqn: fqn.clone(),
+                            activity_fqn: request.fqn.clone(),
                             source,
                         })?;
                     // TODO: persist activity failure
-                    self.persist_end(fqn.clone(), params.clone(), res.clone());
+                    self.persist_end(request, res.clone());
                     Ok(res)
                 }
             },
@@ -338,17 +336,12 @@ impl EventHistory {
         Self(Vec::new())
     }
 
-    pub(crate) fn persist_start(&mut self, _fqn: &FunctionFqn<'_>, _params: &[Val]) {
+    pub(crate) fn persist_start(&mut self, _request: &ActivityRequest) {
         // TODO
     }
 
-    fn persist_end(
-        &mut self,
-        fqn: Arc<FunctionFqn<'static>>,
-        params: Arc<Vec<Val>>,
-        val: SupportedFunctionResult,
-    ) {
-        self.0.push((fqn, params, val));
+    fn persist_end(&mut self, request: ActivityRequest, val: SupportedFunctionResult) {
+        self.0.push((request.fqn, request.params, val));
     }
 
     pub fn len(&self) -> usize {

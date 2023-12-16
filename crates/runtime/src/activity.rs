@@ -1,5 +1,5 @@
 use anyhow::Context;
-use std::{collections::HashMap, fmt::Debug, ops::DerefMut};
+use std::{collections::HashMap, fmt::Debug, ops::DerefMut, sync::Arc};
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, trace};
 use wasmtime::{component::Val, Config, Engine};
@@ -68,6 +68,12 @@ mod http {
         };
         Store::new(engine, ctx)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivityRequest {
+    pub(crate) fqn: Arc<FunctionFqn<'static>>,
+    pub(crate) params: Arc<Vec<Val>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -167,13 +173,19 @@ impl Activities {
 
     pub(crate) async fn run(
         &self,
-        fqn: &FunctionFqn<'_>,
-        params: &[Val],
+        request: &ActivityRequest,
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
-        debug!("Running `{fqn}`");
-        let results_len = self.functions_to_metadata.get(fqn).unwrap().results_len;
-        trace!("Running `{fqn}`({params:?}) -> results_len:{results_len}");
-
+        debug!("Running `{fqn}`", fqn = request.fqn);
+        let results_len = self
+            .functions_to_metadata
+            .get(&request.fqn)
+            .unwrap()
+            .results_len;
+        trace!(
+            "Running `{fqn}`({params:?}) -> results_len:{results_len}",
+            fqn = request.fqn,
+            params = request.params
+        );
         fn try_lock(
             preload_holder: &PreloadHolder,
         ) -> Option<(
@@ -190,6 +202,7 @@ impl Activities {
         let mut store;
         let mut store_guard; // possibly uninitialized
         let instance_owned; // possibly uninitialized
+                            // Get existing or create new store and instance.
         let (instance, mut store) =
             if let Some((instance, store_guard2)) = try_lock(&self.preload_holder) {
                 store_guard = store_guard2;
@@ -205,23 +218,29 @@ impl Activities {
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
             let mut exports_instance =
-                exports_instance.instance(&fqn.ifc_fqn).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "cannot find exported interface: `{ifc_fqn}` in `{wasm_path}`",
-                        ifc_fqn = fqn.ifc_fqn,
-                        wasm_path = self.wasm_path
-                    )
-                })?;
+                exports_instance
+                    .instance(&request.fqn.ifc_fqn)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "cannot find exported interface: `{ifc_fqn}` in `{wasm_path}`",
+                            ifc_fqn = request.fqn.ifc_fqn,
+                            wasm_path = self.wasm_path
+                        )
+                    })?;
             exports_instance
-                .func(&fqn.function_name)
-                .ok_or(anyhow::anyhow!("function `{fqn}` not found"))?
+                .func(&request.fqn.function_name)
+                .ok_or(anyhow::anyhow!(
+                    "function `{fqn}` not found",
+                    fqn = request.fqn
+                ))?
         };
         // call func
         let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
-        func.call_async(&mut store, params, &mut results).await?;
+        func.call_async(&mut store, &request.params, &mut results)
+            .await?;
         func.post_return_async(&mut store).await?;
         let results = SupportedFunctionResult::new(results);
-        trace!("Finished `{fqn}` -> {results:?}");
+        trace!("Finished `{fqn}` -> {results:?}", fqn = request.fqn);
         Ok(results)
     }
 
