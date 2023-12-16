@@ -6,12 +6,15 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dev-dependencies]
-criterion.workspace = true
 runtime.workspace = true
 test_programs_fibo_activity_builder.workspace = true
 test_programs_fibo_workflow_builder.workspace = true
 test_programs_types_activity_builder.workspace = true
 test_programs_types_workflow_builder.workspace = true
+
+criterion = { workspace = true, features = ["async_tokio"] }
+lazy_static.workspace = true
+tokio.workspace = true
 wasmtime.workspace = true
 
 [[bench]]
