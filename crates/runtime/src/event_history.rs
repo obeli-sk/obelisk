@@ -78,7 +78,7 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
                 fqn: Arc::new(HOST_ACTIVITY_SLEEP_FQN),
                 params: Arc::new(vec![Val::U64(millis)]),
             },
-            kind: EventKind::ActivityAsync(ActivityAsync::HostActivityAsync),
+            kind: EventKind::ActivityAsync,
         };
         let replay_result = self
             .current_event_history
@@ -115,35 +115,20 @@ pub(crate) struct Event {
 }
 
 impl Event {
-    pub fn new_from_interrupt(request: ActivityRequest, activity_async: ActivityAsync) -> Self {
+    pub fn new_from_interrupt(request: ActivityRequest) -> Self {
         Self {
             request,
-            kind: EventKind::ActivityAsync(activity_async),
+            kind: EventKind::ActivityAsync,
         }
     }
     pub fn new_from_wasm_activity(fqn: Arc<FunctionFqn<'static>>, params: Arc<Vec<Val>>) -> Self {
         Self {
             request: ActivityRequest { fqn, params },
-            kind: EventKind::ActivityAsync(ActivityAsync::WasmActivity),
+            kind: EventKind::ActivityAsync,
         }
     }
-}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum EventKind {
-    HostActivitySync(HostActivitySync),
-    ActivityAsync(ActivityAsync),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ActivityAsync {
-    WasmActivity,
-    HostActivityAsync,
-}
-
-impl ActivityAsync {
-    pub(crate) async fn handle(
-        &self,
+    pub(crate) async fn handle_activity_async(
         request: ActivityRequest,
         activity_queue_writer: &ActivityQueueSender,
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
@@ -153,6 +138,12 @@ impl ActivityAsync {
             .await
             .expect("sender should not be dropped")
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EventKind {
+    HostActivitySync(HostActivitySync),
+    ActivityAsync,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -177,11 +168,8 @@ struct HostActivitySyncError {
 pub(crate) enum HostFunctionError {
     #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(String),
-    #[error("interrupt: `{fqn}`, `{activity_async:?}`", fqn = request.fqn)]
-    Interrupt {
-        activity_async: ActivityAsync,
-        request: ActivityRequest,
-    },
+    #[error("interrupt: `{fqn}`", fqn = request.fqn)]
+    Interrupt { request: ActivityRequest },
     #[error("activity `{activity_fqn}` failed: `{source}`")]
     ActivityFailed {
         activity_fqn: Arc<FunctionFqn<'static>>,
@@ -268,28 +256,25 @@ impl CurrentEventHistory {
             (
                 Event {
                     request,
-                    kind: EventKind::ActivityAsync(activity_async),
+                    kind: EventKind::ActivityAsync,
                 },
                 _,
                 None,
             ) => match self.async_activity_behavior {
                 AsyncActivityBehavior::Restart => {
                     debug!("Interrupting {fqn}", fqn = request.fqn);
-                    Err(HostFunctionError::Interrupt {
-                        activity_async,
-                        request,
-                    })
+                    Err(HostFunctionError::Interrupt { request })
                 }
                 AsyncActivityBehavior::KeepWaiting => {
                     debug!("Executing {fqn}", fqn = request.fqn);
                     self.persist_start(&request);
-                    let res = activity_async
-                        .handle(request.clone(), &self.activity_queue_writer)
-                        .await
-                        .map_err(|source| HostFunctionError::ActivityFailed {
-                            activity_fqn: request.fqn.clone(),
-                            source,
-                        })?;
+                    let res =
+                        Event::handle_activity_async(request.clone(), &self.activity_queue_writer)
+                            .await
+                            .map_err(|source| HostFunctionError::ActivityFailed {
+                                activity_fqn: request.fqn.clone(),
+                                source,
+                            })?;
                     // TODO: persist activity failure
                     self.persist_end(request, res.clone());
                     Ok(res)

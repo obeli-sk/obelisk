@@ -271,18 +271,14 @@ impl Workflow {
             Some(HostFunctionError::NonDeterminismDetected(reason)) => {
                 ExecutionInterrupt::NonDeterminismDetected(reason.clone())
             }
-            Some(HostFunctionError::Interrupt {
-                request,
-                activity_async,
-            }) => {
-                let event = Event::new_from_interrupt(request.clone(), activity_async.clone());
+            Some(HostFunctionError::Interrupt { request }) => {
+                let event = Event::new_from_interrupt(request.clone());
                 // Persist and execute the event
                 store
                     .data_mut()
                     .current_event_history
                     .persist_start(&event.request);
-                match activity_async
-                    .handle(request.clone(), &self.activity_queue_writer)
+                match Event::handle_activity_async(request.clone(), &self.activity_queue_writer)
                     .await
                 {
                     Ok(res) => {
