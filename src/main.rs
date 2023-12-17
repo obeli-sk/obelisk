@@ -30,8 +30,8 @@ async fn main() -> Result<(), anyhow::Error> {
         panic!("workflow function must be a fully qualified name in format `package/interface.function`")
     };
 
-    let runtime = Runtime::new(activities);
-    let workflow = Workflow::new(workflow_wasm_path, &runtime).await?;
+    let runtime = Arc::new(Runtime::new(activities));
+    let workflow = Workflow::new(workflow_wasm_path, runtime).await?;
     println!("Initialized in {duration:?}", duration = timer.elapsed());
     println!();
 

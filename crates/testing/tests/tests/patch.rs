@@ -31,10 +31,10 @@ async fn test() -> Result<(), anyhow::Error> {
             )
             .await?,
         );
-        let runtime = Runtime::new(activities);
+        let runtime = Arc::new(Runtime::new(activities));
         let workflow = Workflow::new(
             test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
-            &runtime,
+            runtime,
         )
         .await?;
         let res = workflow
@@ -60,10 +60,10 @@ async fn test() -> Result<(), anyhow::Error> {
             )
             .await?,
         );
-        let runtime = Runtime::new(activities);
+        let runtime = Arc::new(Runtime::new(activities));
         let workflow = Workflow::new(
             test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
-            &runtime,
+            runtime,
         )
         .await?;
         workflow

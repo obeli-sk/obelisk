@@ -22,10 +22,10 @@ async fn test() -> Result<(), anyhow::Error> {
         )
         .await?,
     );
-    let runtime = Runtime::new(activities);
+    let runtime = Arc::new(Runtime::new(activities));
     let workflow = Workflow::new(
         test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
-        &runtime,
+        runtime,
     )
     .await?;
 

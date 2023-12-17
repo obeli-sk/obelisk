@@ -27,10 +27,10 @@ async fn test() -> Result<(), anyhow::Error> {
         )
         .await?,
     );
-    let runtime = Runtime::new(activities);
+    let runtime = Arc::new(Runtime::new(activities));
     let workflow = Workflow::new(
         test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW.to_string(),
-        &runtime,
+        runtime,
     )
     .await?;
     let mut event_history = EventHistory::new();

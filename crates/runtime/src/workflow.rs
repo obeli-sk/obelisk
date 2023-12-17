@@ -80,7 +80,8 @@ enum ExecutionInterrupt {
 }
 
 pub struct Workflow {
-    //TODO runtime: Arc<Runtime>,// avoid shutting down the activity queue task
+    #[allow(unused)] // avoid shutting down the activity queue task
+    runtime: Arc<Runtime>,
     instance_pre: InstancePre<HostImports>,
     activity_queue_writer: ActivityQueueSender,
     functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
@@ -88,13 +89,13 @@ pub struct Workflow {
 }
 
 impl Workflow {
-    pub async fn new(wasm_path: String, runtime: &Runtime) -> Result<Self, anyhow::Error> {
+    pub async fn new(wasm_path: String, runtime: Arc<Runtime>) -> Result<Self, anyhow::Error> {
         Self::new_with_config(wasm_path, runtime, &WorkflowConfig::default()).await
     }
 
     pub async fn new_with_config(
         wasm_path: String,
-        runtime: &Runtime,
+        runtime: Arc<Runtime>,
         config: &WorkflowConfig,
     ) -> Result<Self, anyhow::Error> {
         info!("workflow::new {wasm_path}");
@@ -157,6 +158,7 @@ impl Workflow {
         Ok(Self {
             instance_pre,
             activity_queue_writer: runtime.activity_queue_writer(),
+            runtime,
             functions_to_metadata,
             async_activity_behavior: config.async_activity_behavior,
         })
