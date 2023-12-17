@@ -1,9 +1,14 @@
-use std::{borrow::Cow, fmt::Display};
+use std::{borrow::Cow, fmt::Display, sync::Arc};
 
+use activity::Activities;
+use event_history::SupportedFunctionResult;
+use queue::activity_queue::{ActivityQueueReceiver, ActivityQueueSender, QueueItem};
+use tokio::{sync::mpsc, task::AbortHandle};
 use val_json::{TypeWrapper, UnsupportedTypeError, ValWrapper};
 
 pub mod activity;
 pub mod event_history;
+mod queue;
 mod wasm_tools;
 pub mod workflow;
 
@@ -66,5 +71,42 @@ impl FunctionMetadata {
     ) -> Result<Vec<V>, serde_json::error::Error> {
         let param_types = self.params.iter().map(|(_, type_w)| type_w);
         val_json::deserialize_sequence(param_vals, param_types)
+    }
+}
+
+pub type ActivityResponse = Result<SupportedFunctionResult, anyhow::Error>;
+
+pub struct Runtime {
+    activities: Arc<Activities>,
+    queue_sender: mpsc::Sender<QueueItem>,
+    queue_task: AbortHandle,
+}
+
+impl Runtime {
+    pub fn new(activities: Arc<Activities>) -> Self {
+        let (queue_sender, queue_receiver) = mpsc::channel(100); // FIXME
+        let mut activity_queue_receiver = ActivityQueueReceiver {
+            receiver: queue_receiver,
+            activities: activities.clone(),
+        };
+        let queue_task =
+            tokio::spawn(async move { activity_queue_receiver.process().await }).abort_handle();
+        Self {
+            activities,
+            queue_sender,
+            queue_task,
+        }
+    }
+
+    fn activity_queue_writer(&self) -> ActivityQueueSender {
+        ActivityQueueSender {
+            sender: self.queue_sender.clone(),
+        }
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        self.queue_task.abort();
     }
 }

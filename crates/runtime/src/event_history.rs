@@ -1,7 +1,6 @@
 use crate::{
-    activity::{Activities, ActivityRequest},
-    workflow::AsyncActivityBehavior,
-    FunctionFqn,
+    activity::ActivityRequest, queue::activity_queue::ActivityQueueSender,
+    workflow::AsyncActivityBehavior, FunctionFqn,
 };
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use tracing::{debug, error, trace};
@@ -147,11 +146,15 @@ pub(crate) enum ActivityAsync {
 impl ActivityAsync {
     pub(crate) async fn handle(
         &self,
-        request: &ActivityRequest,
-        activities: &Activities,
+        request: ActivityRequest,
+        activity_queue_writer: &ActivityQueueSender,
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
         match self {
-            Self::WasmActivity => activities.run(request).await,
+            Self::WasmActivity => activity_queue_writer
+                .push(request)
+                .await
+                .await
+                .expect("sender should not be dropped"),
             Self::HostActivityAsync(h) => h.handle(request).await,
         }
     }
@@ -164,7 +167,7 @@ pub(crate) enum HostActivityAsync {
 impl HostActivityAsync {
     async fn handle(
         &self,
-        _request: &ActivityRequest,
+        _request: ActivityRequest,
     ) -> Result<SupportedFunctionResult, wasmtime::Error> {
         match self {
             Self::Sleep(duration) => {
@@ -209,7 +212,7 @@ pub(crate) enum HostFunctionError {
 }
 
 pub(crate) struct CurrentEventHistory {
-    activities: Arc<Activities>,
+    activity_queue_writer: ActivityQueueSender,
     pub(crate) event_history: EventHistory,
     idx: usize,
     async_activity_behavior: AsyncActivityBehavior,
@@ -218,11 +221,11 @@ pub(crate) struct CurrentEventHistory {
 impl CurrentEventHistory {
     pub(crate) fn new(
         event_history: EventHistory,
-        activities: Arc<Activities>,
+        activity_queue_writer: ActivityQueueSender,
         async_activity_behavior: AsyncActivityBehavior,
     ) -> Self {
         Self {
-            activities,
+            activity_queue_writer,
             event_history,
             idx: 0,
             async_activity_behavior,
@@ -304,7 +307,7 @@ impl CurrentEventHistory {
                     debug!("Executing {fqn}", fqn = request.fqn);
                     self.persist_start(&request);
                     let res = activity_async
-                        .handle(&request, &self.activities)
+                        .handle(request.clone(), &self.activity_queue_writer)
                         .await
                         .map_err(|source| HostFunctionError::ActivityFailed {
                             activity_fqn: request.fqn.clone(),

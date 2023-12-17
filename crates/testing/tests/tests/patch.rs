@@ -5,7 +5,7 @@ use runtime::{
     activity::Activities,
     event_history::EventHistory,
     workflow::{ExecutionError, Workflow},
-    FunctionFqn,
+    FunctionFqn, Runtime,
 };
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
@@ -31,9 +31,10 @@ async fn test() -> Result<(), anyhow::Error> {
             )
             .await?,
         );
+        let runtime = Runtime::new(activities);
         let workflow = Workflow::new(
             test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
-            activities,
+            &runtime,
         )
         .await?;
         let res = workflow
@@ -59,9 +60,10 @@ async fn test() -> Result<(), anyhow::Error> {
             )
             .await?,
         );
+        let runtime = Runtime::new(activities);
         let workflow = Workflow::new(
             test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
-            activities,
+            &runtime,
         )
         .await?;
         workflow

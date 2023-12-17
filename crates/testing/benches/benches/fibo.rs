@@ -6,7 +6,7 @@ use runtime::{
     activity::{Activities, ActivityConfig, ActivityPreload},
     event_history::EventHistory,
     workflow::{AsyncActivityBehavior, Workflow, WorkflowConfig},
-    FunctionFqn,
+    FunctionFqn, Runtime,
 };
 use wasmtime::component::Val;
 
@@ -29,20 +29,33 @@ lazy_static! {
         .expect("Should create a tokio runtime");
 }
 
-fn noop_workflow(activity_config: &ActivityConfig, workflow_config: &WorkflowConfig) -> Workflow {
-    let activities = Arc::new(
-        RT.block_on(Activities::new_with_config(
-            test_programs_types_activity_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
-            activity_config,
-        ))
-        .unwrap(),
-    );
-    RT.block_on(Workflow::new_with_config(
-        test_programs_types_workflow_builder::TEST_PROGRAMS_TYPES_WORKFLOW.to_string(),
-        activities.clone(),
-        workflow_config,
-    ))
-    .unwrap()
+fn noop_workflow(
+    activity_config: &ActivityConfig,
+    workflow_config: &WorkflowConfig,
+) -> (Arc<Workflow>, Runtime) {
+    RT.block_on(async {
+        let activities = Arc::new(
+            Activities::new_with_config(
+                test_programs_types_activity_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
+                activity_config,
+            )
+            .await
+            .unwrap(),
+        );
+        let runtime = Runtime::new(activities);
+        (
+            Arc::new(
+                Workflow::new_with_config(
+                    test_programs_types_workflow_builder::TEST_PROGRAMS_TYPES_WORKFLOW.to_string(),
+                    &runtime,
+                    workflow_config,
+                )
+                .await
+                .unwrap(),
+            ),
+            runtime,
+        )
+    })
 }
 
 fn fibonacci(n: u64) -> u64 {
@@ -53,20 +66,30 @@ fn fibonacci(n: u64) -> u64 {
     }
 }
 
-fn fibo_workflow(fibo_config: &FiboConfig) -> Workflow {
-    let activities = Arc::new(
-        RT.block_on(Activities::new_with_config(
-            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),
-            &fibo_config.activity_config,
-        ))
-        .unwrap(),
-    );
-    RT.block_on(Workflow::new_with_config(
-        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
-        activities.clone(),
-        &fibo_config.workflow_config,
-    ))
-    .unwrap()
+fn fibo_workflow(fibo_config: &FiboConfig) -> (Arc<Workflow>, Runtime) {
+    RT.block_on(async {
+        let activities = Arc::new(
+            Activities::new_with_config(
+                test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),
+                &fibo_config.activity_config,
+            )
+            .await
+            .unwrap(),
+        );
+        let runtime = Runtime::new(activities);
+        (
+            Arc::new(
+                Workflow::new_with_config(
+                    test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
+                    &runtime,
+                    &fibo_config.workflow_config,
+                )
+                .await
+                .unwrap(),
+            ),
+            runtime,
+        )
+    })
 }
 
 #[derive(Debug)]
@@ -137,7 +160,7 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
             ),
             |b| {
                 let fqn = FunctionFqn::new("testing:types-workflow/workflow", workflow_function);
-                let workflow = Arc::new(noop_workflow(&activity_config, &workflow_config));
+                let (workflow, _runtime) = noop_workflow(&activity_config, &workflow_config);
                 b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                     let params = vec![Val::U32(iterations)];
                     let mut event_history = EventHistory::new();
@@ -185,7 +208,7 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
                 "testing:fibo-workflow/workflow",
                 fibo_config.workflow_function,
             );
-            let workflow = Arc::new(fibo_workflow(&fibo_config));
+            let (workflow, _runtime) = fibo_workflow(&fibo_config);
             b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                 let params = vec![Val::U8(fibo_config.n), Val::U32(fibo_config.iterations)];
                 let mut event_history = EventHistory::new();
@@ -216,7 +239,7 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
                 "testing:fibo-workflow/workflow",
                 fibo_config.workflow_function,
             );
-            let workflow = Arc::new(fibo_workflow(&fibo_config));
+            let (workflow, _runtime) = fibo_workflow(&fibo_config);
             b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                 let params = vec![Val::U8(fibo_config.n), Val::U32(fibo_config.iterations)];
                 let mut event_history = EventHistory::new();

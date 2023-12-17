@@ -4,7 +4,7 @@ use runtime::{
     activity::Activities,
     event_history::{EventHistory, SupportedFunctionResult},
     workflow::Workflow,
-    FunctionFqn,
+    FunctionFqn, Runtime,
 };
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
@@ -22,9 +22,10 @@ async fn test() -> Result<(), anyhow::Error> {
         )
         .await?,
     );
+    let runtime = Runtime::new(activities);
     let workflow = Workflow::new(
         test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
-        activities.clone(),
+        &runtime,
     )
     .await?;
 

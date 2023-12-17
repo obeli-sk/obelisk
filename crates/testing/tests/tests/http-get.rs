@@ -4,7 +4,7 @@ use runtime::{
     activity::Activities,
     event_history::{EventHistory, SupportedFunctionResult},
     workflow::Workflow,
-    FunctionFqn,
+    FunctionFqn, Runtime,
 };
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -27,9 +27,10 @@ async fn test() -> Result<(), anyhow::Error> {
         )
         .await?,
     );
+    let runtime = Runtime::new(activities);
     let workflow = Workflow::new(
         test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW.to_string(),
-        activities.clone(),
+        &runtime,
     )
     .await?;
     let mut event_history = EventHistory::new();

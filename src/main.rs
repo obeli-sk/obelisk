@@ -1,5 +1,6 @@
 use runtime::event_history::EventHistory;
 use runtime::workflow::Workflow;
+use runtime::Runtime;
 use runtime::{activity::Activities, FunctionFqn};
 use std::{sync::Arc, time::Instant};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -29,7 +30,8 @@ async fn main() -> Result<(), anyhow::Error> {
         panic!("workflow function must be a fully qualified name in format `package/interface.function`")
     };
 
-    let workflow = Workflow::new(workflow_wasm_path, activities.clone()).await?;
+    let runtime = Runtime::new(activities);
+    let workflow = Workflow::new(workflow_wasm_path, &runtime).await?;
     println!("Initialized in {duration:?}", duration = timer.elapsed());
     println!();
 

@@ -1,10 +1,10 @@
-use crate::activity::Activities;
 use crate::event_history::{
     CurrentEventHistory, Event, EventHistory, HostFunctionError, HostImports,
     SupportedFunctionResult,
 };
+use crate::queue::activity_queue::ActivityQueueSender;
 use crate::wasm_tools::{exported_interfaces, functions_to_metadata};
-use crate::{FunctionFqn, FunctionMetadata};
+use crate::{FunctionFqn, FunctionMetadata, Runtime};
 use anyhow::{anyhow, Context};
 use std::collections::HashMap;
 use std::mem;
@@ -80,23 +80,21 @@ enum ExecutionInterrupt {
 }
 
 pub struct Workflow {
+    //TODO runtime: Arc<Runtime>,// avoid shutting down the activity queue task
     instance_pre: InstancePre<HostImports>,
-    activities: Arc<Activities>,
+    activity_queue_writer: ActivityQueueSender,
     functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
     async_activity_behavior: AsyncActivityBehavior,
 }
 
 impl Workflow {
-    pub async fn new(
-        wasm_path: String,
-        activities: Arc<Activities>,
-    ) -> Result<Self, anyhow::Error> {
-        Self::new_with_config(wasm_path, activities, &WorkflowConfig::default()).await
+    pub async fn new(wasm_path: String, runtime: &Runtime) -> Result<Self, anyhow::Error> {
+        Self::new_with_config(wasm_path, runtime, &WorkflowConfig::default()).await
     }
 
     pub async fn new_with_config(
         wasm_path: String,
-        activities: Arc<Activities>,
+        runtime: &Runtime,
         config: &WorkflowConfig,
     ) -> Result<Self, anyhow::Error> {
         info!("workflow::new {wasm_path}");
@@ -108,9 +106,9 @@ impl Workflow {
             // Add workflow host activities
             HostImports::add_to_linker(&mut linker)?;
             // Add wasm activities
-            for interface in activities.interfaces() {
+            for interface in runtime.activities.interfaces() {
                 let mut linker_instance = linker.instance(interface)?;
-                for function_name in activities.functions(interface) {
+                for function_name in runtime.activities.functions(interface) {
                     let fqn = Arc::new(FunctionFqn::new_owned(
                         interface.to_string(),
                         function_name.to_string(),
@@ -155,9 +153,10 @@ impl Workflow {
             .with_context(|| format!("error parsing `{wasm_path}`"))?;
         debug!("Loaded {:?}", functions_to_metadata.keys());
         trace!("Loaded {:?}", functions_to_metadata);
+
         Ok(Self {
             instance_pre,
-            activities,
+            activity_queue_writer: runtime.activity_queue_writer(),
             functions_to_metadata,
             async_activity_behavior: config.async_activity_behavior,
         })
@@ -225,7 +224,7 @@ impl Workflow {
             HostImports {
                 current_event_history: CurrentEventHistory::new(
                     mem::take(event_history),
-                    self.activities.clone(),
+                    self.activity_queue_writer.clone(),
                     self.async_activity_behavior,
                 ),
             },
@@ -280,7 +279,10 @@ impl Workflow {
                     .data_mut()
                     .current_event_history
                     .persist_start(&event.request);
-                match activity_async.handle(request, &self.activities).await {
+                match activity_async
+                    .handle(request.clone(), &self.activity_queue_writer)
+                    .await
+                {
                     Ok(res) => {
                         store
                             .data_mut()
