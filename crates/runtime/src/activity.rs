@@ -1,11 +1,12 @@
 use anyhow::Context;
-use std::{collections::HashMap, fmt::Debug, ops::DerefMut, sync::Arc};
+use assert_matches::assert_matches;
+use std::{collections::HashMap, fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, info, trace};
 use wasmtime::{component::Val, Config, Engine};
 
 use crate::{
-    event_history::SupportedFunctionResult,
+    event_history::{SupportedFunctionResult, HOST_ACTIVITY_SLEEP_FQN},
     wasm_tools::{exported_interfaces, functions_to_metadata},
     {FunctionFqn, FunctionMetadata},
 };
@@ -138,6 +139,12 @@ impl Activities {
             );
         }
         let functions_to_metadata = functions_to_metadata(exported_interfaces)?;
+        assert!(
+            functions_to_metadata
+                .get(&HOST_ACTIVITY_SLEEP_FQN)
+                .is_none(),
+            "host function `{HOST_ACTIVITY_SLEEP_FQN}` cannot overlap with wasm activity"
+        );
 
         let instance_pre: wasmtime::component::InstancePre<http::Ctx> = {
             let mut linker = wasmtime::component::Linker::new(&ENGINE);
@@ -186,6 +193,14 @@ impl Activities {
             fqn = request.fqn,
             params = request.params
         );
+        if *request.fqn == HOST_ACTIVITY_SLEEP_FQN {
+            // sleep
+            assert_eq!(request.params.len(), 1);
+            let duration = request.params.get(0).unwrap();
+            let duration = *assert_matches!(duration, Val::U64(v) => v);
+            tokio::time::sleep(Duration::from_millis(duration)).await;
+            return Ok(SupportedFunctionResult::None);
+        }
         fn try_lock(
             preload_holder: &PreloadHolder,
         ) -> Option<(

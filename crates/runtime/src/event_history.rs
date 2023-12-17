@@ -2,7 +2,7 @@ use crate::{
     activity::ActivityRequest, queue::activity_queue::ActivityQueueSender,
     workflow::AsyncActivityBehavior, FunctionFqn,
 };
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, error, trace};
 use wasmtime::component::{Linker, Val};
 
@@ -67,20 +67,18 @@ impl HostImports {
     }
 }
 
+pub(crate) const HOST_ACTIVITY_SLEEP_FQN: FunctionFqn<'static> =
+    FunctionFqn::new("my-org:workflow-engine/host-activities", "sleep");
 // When calling host functions, create events and continue or interrupt the execution.
 #[async_trait::async_trait]
 impl my_org::workflow_engine::host_activities::Host for HostImports {
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
-        const FQN: FunctionFqn<'static> =
-            FunctionFqn::new("my-org:workflow-engine/host-activities", "sleep");
         let event = Event {
             request: ActivityRequest {
-                fqn: Arc::new(FQN),
+                fqn: Arc::new(HOST_ACTIVITY_SLEEP_FQN),
                 params: Arc::new(vec![Val::U64(millis)]),
             },
-            kind: EventKind::ActivityAsync(ActivityAsync::HostActivityAsync(
-                HostActivityAsync::Sleep(Duration::from_millis(millis)),
-            )),
+            kind: EventKind::ActivityAsync(ActivityAsync::HostActivityAsync),
         };
         let replay_result = self
             .current_event_history
@@ -140,7 +138,7 @@ pub(crate) enum EventKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ActivityAsync {
     WasmActivity,
-    HostActivityAsync(HostActivityAsync),
+    HostActivityAsync,
 }
 
 impl ActivityAsync {
@@ -149,34 +147,14 @@ impl ActivityAsync {
         request: ActivityRequest,
         activity_queue_writer: &ActivityQueueSender,
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
-        match self {
-            Self::WasmActivity => activity_queue_writer
-                .push(request)
-                .await
-                .await
-                .expect("sender should not be dropped"),
-            Self::HostActivityAsync(h) => h.handle(request).await,
-        }
+        activity_queue_writer
+            .push(request)
+            .await
+            .await
+            .expect("sender should not be dropped")
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum HostActivityAsync {
-    Sleep(Duration),
-}
-impl HostActivityAsync {
-    async fn handle(
-        &self,
-        _request: ActivityRequest,
-    ) -> Result<SupportedFunctionResult, wasmtime::Error> {
-        match self {
-            Self::Sleep(duration) => {
-                tokio::time::sleep(*duration).await;
-                Ok(SupportedFunctionResult::None)
-            }
-        }
-    }
-}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum HostActivitySync {
     Noop,
@@ -259,20 +237,19 @@ impl CurrentEventHistory {
             (
                 Event {
                     request,
-                    kind: EventKind::HostActivitySync(host_activity),
+                    kind: EventKind::HostActivitySync(host_activity_sync),
                 },
                 _,
                 None,
             ) => {
-                debug!("Running {host_activity:?}");
+                debug!("Running {host_activity_sync:?}");
                 self.persist_start(&request);
-                let res =
-                    host_activity
-                        .handle()
-                        .map_err(|err| HostFunctionError::ActivityFailed {
-                            activity_fqn: request.fqn.clone(),
-                            source: err.source,
-                        })?;
+                let res = host_activity_sync.handle().map_err(|err| {
+                    HostFunctionError::ActivityFailed {
+                        activity_fqn: request.fqn.clone(),
+                        source: err.source,
+                    }
+                })?;
                 // TODO: persist activity failure
                 self.persist_end(request, res.clone());
                 Ok(res)
@@ -343,7 +320,7 @@ impl EventHistory {
         // TODO
     }
 
-    fn persist_end(&mut self, request: ActivityRequest, val: SupportedFunctionResult) {
+    pub(crate) fn persist_end(&mut self, request: ActivityRequest, val: SupportedFunctionResult) {
         self.0.push((request.fqn, request.params, val));
     }
 
