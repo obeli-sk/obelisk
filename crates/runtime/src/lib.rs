@@ -117,3 +117,76 @@ impl Drop for Runtime {
         self.queue_task.abort();
     }
 }
+
+mod workflow_id {
+    use std::{str::FromStr, sync::Arc};
+
+    #[derive(Debug, Clone, derive_more::Display)]
+    pub struct WorkflowId(Arc<String>);
+    impl WorkflowId {
+        pub(crate) fn generate() -> WorkflowId {
+            ulid::Ulid::new().to_string().parse().unwrap() // ulid is 26 chars long
+        }
+    }
+
+    const MIN_LEN: usize = 1;
+    const MAX_LEN: usize = 32;
+
+    impl FromStr for WorkflowId {
+        type Err = WorkflowIdParseError;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            if s.len() < MIN_LEN {
+                return Err(WorkflowIdParseError::TooShort);
+            }
+            if s.len() > MAX_LEN {
+                return Err(WorkflowIdParseError::TooLong);
+            }
+            if s.chars()
+                .all(|x| x.is_alphanumeric() || x == '_' || x == '-')
+            {
+                Ok(Self(Arc::new(s.to_string())))
+            } else {
+                Err(WorkflowIdParseError::IllegalCharacters)
+            }
+        }
+    }
+
+    #[derive(Debug, thiserror::Error, PartialEq, Eq)]
+    pub enum WorkflowIdParseError {
+        #[error("workflow id too long, maximal length: {MAX_LEN}")]
+        TooLong,
+        #[error("workflow id too short, minimal length: {MIN_LEN}")]
+        TooShort,
+        #[error("only alphanumeric characters, `_` and `-` are allowed in workflow id")]
+        IllegalCharacters,
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::workflow_id::MAX_LEN;
+
+        use super::{WorkflowId, WorkflowIdParseError};
+
+        #[test]
+        fn parse_workflow_id() {
+            assert_eq!("w1".parse::<WorkflowId>().unwrap().to_string(), "w1");
+            assert_eq!(
+                "w1-2_ID".parse::<WorkflowId>().unwrap().to_string(),
+                "w1-2_ID"
+            );
+            assert_eq!(
+                "w1\n".parse::<WorkflowId>().unwrap_err(),
+                WorkflowIdParseError::IllegalCharacters
+            );
+            assert_eq!(
+                "".parse::<WorkflowId>().unwrap_err(),
+                WorkflowIdParseError::TooShort
+            );
+            assert_eq!(
+                "x".repeat(MAX_LEN + 1).parse::<WorkflowId>().unwrap_err(),
+                WorkflowIdParseError::TooLong
+            );
+        }
+    }
+}

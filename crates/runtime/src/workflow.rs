@@ -4,6 +4,7 @@ use crate::event_history::{
 };
 use crate::queue::activity_queue::ActivityQueueSender;
 use crate::wasm_tools::{exported_interfaces, functions_to_metadata};
+use crate::workflow_id::WorkflowId;
 use crate::{ActivityFailed, FunctionFqn, FunctionMetadata, Runtime};
 use anyhow::{anyhow, Context};
 use std::collections::HashMap;
@@ -172,19 +173,33 @@ impl Workflow {
         fqn: &FunctionFqn<'_>,
         params: &[Val],
     ) -> Result<SupportedFunctionResult, ExecutionError> {
-        info!("workflow.execute_all `{fqn}`");
+        self.execute_all_with_workflow_id(&WorkflowId::generate(), event_history, fqn, params)
+            .await
+    }
+
+    pub async fn execute_all_with_workflow_id(
+        &self,
+        workflow_id: &WorkflowId,
+        event_history: &mut EventHistory,
+        fqn: &FunctionFqn<'_>,
+        params: &[Val],
+    ) -> Result<SupportedFunctionResult, ExecutionError> {
+        info!("[{workflow_id}] workflow.execute_all `{fqn}`");
 
         let results_len = self
             .functions_to_metadata
             .get(fqn)
             .ok_or_else(|| ExecutionError::NotFound(fqn.to_owned()))?
             .results_len;
-        trace!("workflow.execute_all `{fqn}`({params:?}) -> results_len:{results_len}");
-        loop {
+        trace!(
+            "[{workflow_id}] workflow.execute_all `{fqn}`({params:?}) -> results_len:{results_len}"
+        );
+
+        for run_id in 0.. {
             let res = self
-                .execute_in_new_store(event_history, fqn, params, results_len)
+                .execute_in_new_store(workflow_id, run_id, event_history, fqn, params, results_len)
                 .await;
-            trace!("workflow.execute_all `{fqn}` -> {res:?}");
+            trace!("[{workflow_id},{run_id}] workflow.execute_all `{fqn}` -> {res:?}");
             match res {
                 Ok(output) => return Ok(output), // TODO Persist the workflow result to the history
                 Err(ExecutionInterrupt::NewEventPersisted) => {} // loop again to get to the next step
@@ -209,11 +224,14 @@ impl Workflow {
                 }
             }
         }
+        unreachable!()
     }
 
     // Execute the workflow until it is finished or interrupted.
     async fn execute_in_new_store(
         &self,
+        workflow_id: &WorkflowId,
+        run_id: u64,
         event_history: &mut EventHistory,
         workflow_fqn: &FunctionFqn<'_>,
         params: &[Val],
@@ -223,6 +241,8 @@ impl Workflow {
             &ENGINE,
             HostImports {
                 current_event_history: CurrentEventHistory::new(
+                    workflow_id.clone(),
+                    run_id,
                     mem::take(event_history),
                     self.activity_queue_sender.clone(),
                     self.async_activity_behavior,
@@ -231,7 +251,14 @@ impl Workflow {
         );
         // try
         let res = self
-            .execute_one_step_interpret_errors(&mut store, workflow_fqn, params, results_len)
+            .execute_one_step_interpret_errors(
+                workflow_id,
+                run_id,
+                &mut store,
+                workflow_fqn,
+                params,
+                results_len,
+            )
             .await;
         // finally
         mem::swap(
@@ -243,13 +270,22 @@ impl Workflow {
 
     async fn execute_one_step_interpret_errors(
         &self,
+        workflow_id: &WorkflowId,
+        run_id: u64,
         store: &mut Store<HostImports>,
         workflow_fqn: &FunctionFqn<'_>,
         params: &[Val],
         results_len: usize,
     ) -> Result<SupportedFunctionResult, ExecutionInterrupt> {
         match self
-            .execute_one_step(store, workflow_fqn, params, results_len)
+            .execute_one_step(
+                workflow_id,
+                run_id,
+                store,
+                workflow_fqn,
+                params,
+                results_len,
+            )
             .await
         {
             Ok(ok) => Ok(ok),
@@ -305,13 +341,15 @@ impl Workflow {
 
     async fn execute_one_step(
         &self,
+        workflow_id: &WorkflowId,
+        run_id: u64,
         mut store: &mut Store<HostImports>,
         fqn: &FunctionFqn<'_>,
         params: &[Val],
         results_len: usize,
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
-        debug!("execute `{fqn}`");
-        trace!("execute `{fqn}`({params:?})");
+        debug!("[{workflow_id},{run_id}] execute `{fqn}`");
+        trace!("[{workflow_id},{run_id}] execute `{fqn}`({params:?})");
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         let func = {
             let mut store = store.as_context_mut();
@@ -329,7 +367,7 @@ impl Workflow {
         func.call_async(&mut store, params, &mut results).await?;
         func.post_return_async(&mut store).await?;
         let results = SupportedFunctionResult::new(results);
-        trace!("execution result `{fqn}` -> {results:?}");
+        trace!("[{workflow_id},{run_id}] execution result `{fqn}` -> {results:?}");
         Ok(results)
     }
 }

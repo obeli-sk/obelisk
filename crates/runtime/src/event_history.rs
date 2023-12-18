@@ -1,6 +1,7 @@
 use crate::{
     activity::ActivityRequest, queue::activity_queue::ActivityQueueSender,
-    workflow::AsyncActivityBehavior, ActivityFailed, ActivityResponse, FunctionFqn,
+    workflow::AsyncActivityBehavior, workflow_id::WorkflowId, ActivityFailed, ActivityResponse,
+    FunctionFqn,
 };
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, error, trace};
@@ -163,6 +164,8 @@ pub(crate) enum HostFunctionError {
 }
 
 pub(crate) struct CurrentEventHistory {
+    workflow_id: WorkflowId,
+    run_id: u64,
     activity_queue_writer: ActivityQueueSender,
     pub(crate) event_history: EventHistory,
     async_activity_behavior: AsyncActivityBehavior,
@@ -171,11 +174,15 @@ pub(crate) struct CurrentEventHistory {
 
 impl CurrentEventHistory {
     pub(crate) fn new(
+        workflow_id: WorkflowId,
+        run_id: u64,
         event_history: EventHistory,
         activity_queue_writer: ActivityQueueSender,
         async_activity_behavior: AsyncActivityBehavior,
     ) -> Self {
         Self {
+            workflow_id,
+            run_id,
             activity_queue_writer,
             event_history,
             async_activity_behavior,
@@ -218,11 +225,13 @@ impl CurrentEventHistory {
         &mut self,
         event: Event,
     ) -> Result<SupportedFunctionResult, HostFunctionError> {
+        let workflow_id = self.workflow_id.clone();
+        let run_id = self.run_id;
         let found = self.next();
         let found_matches = matches!(found,  Some((found_fqn, found_params, _replay_result))
             if event.request.fqn == *found_fqn && event.request.params == *found_params);
         trace!(
-            "replay_handle_interrupt {fqn}, found: {found_matches}",
+            "[{workflow_id},{run_id}] replay_handle_interrupt {fqn}, found: {found_matches}",
             fqn = event.request.fqn,
         );
         match (event, found_matches, found) {
@@ -235,7 +244,7 @@ impl CurrentEventHistory {
                 _,
                 None,
             ) => {
-                debug!("Running {host_activity_sync:?}");
+                debug!("[{workflow_id},{run_id}] Running {host_activity_sync:?}");
                 self.persist_start(&request);
                 let res = host_activity_sync.handle();
                 self.persist_end(request, res.clone());
@@ -243,7 +252,10 @@ impl CurrentEventHistory {
             }
             // Replay if found
             (event, true, Some((_, _, replay_result))) => {
-                debug!("Replaying {fqn}", fqn = event.request.fqn);
+                debug!(
+                    "[{workflow_id},{run_id}] Replaying {fqn}",
+                    fqn = event.request.fqn
+                );
                 Ok(replay_result.clone())
             }
             // New event needs to be handled by the runtime, interrupt or execute it.
@@ -256,11 +268,17 @@ impl CurrentEventHistory {
                 None,
             ) => match self.async_activity_behavior {
                 AsyncActivityBehavior::Restart => {
-                    debug!("Interrupting {fqn}", fqn = request.fqn);
+                    debug!(
+                        "[{workflow_id},{run_id}] Interrupting {fqn}",
+                        fqn = request.fqn
+                    );
                     Err(HostFunctionError::Interrupt { request })
                 }
                 AsyncActivityBehavior::KeepWaiting => {
-                    debug!("Executing {fqn}", fqn = request.fqn);
+                    debug!(
+                        "[{workflow_id},{run_id}] Executing {fqn}",
+                        fqn = request.fqn
+                    );
                     self.persist_start(&request);
                     let res =
                         Event::handle_activity_async(request.clone(), &self.activity_queue_writer)
@@ -271,7 +289,7 @@ impl CurrentEventHistory {
             },
             // Non determinism
             (event, false, Some(found)) => Err(HostFunctionError::NonDeterminismDetected(format!(
-                "Expected {found:?}, got {event:?}"
+                "[{workflow_id},{run_id}] Expected {found:?}, got {event:?}"
             ))),
         }
     }
