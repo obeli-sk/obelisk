@@ -8,7 +8,7 @@ use wasmtime::{component::Val, Config, Engine};
 use crate::{
     event_history::{SupportedFunctionResult, HOST_ACTIVITY_SLEEP_FQN},
     wasm_tools::{exported_interfaces, functions_to_metadata},
-    {FunctionFqn, FunctionMetadata},
+    ActivityFailed, {FunctionFqn, FunctionMetadata},
 };
 
 lazy_static::lazy_static! {
@@ -178,10 +178,24 @@ impl Activities {
         })
     }
 
+    fn try_lock(
+        preload_holder: &PreloadHolder,
+    ) -> Option<(
+        &wasmtime::component::Instance,
+        MutexGuard<wasmtime::Store<http::Ctx>>,
+    )> {
+        match preload_holder {
+            PreloadHolder::Instance(instance, mutex) => {
+                mutex.try_lock().map(|guard| (instance, guard)).ok()
+            }
+            PreloadHolder::Preinstance => None,
+        }
+    }
+
     pub(crate) async fn run(
         &self,
         request: &ActivityRequest,
-    ) -> Result<SupportedFunctionResult, anyhow::Error> {
+    ) -> Result<SupportedFunctionResult, ActivityFailed> {
         debug!("Running `{fqn}`", fqn = request.fqn);
         let results_len = self
             .functions_to_metadata
@@ -201,30 +215,26 @@ impl Activities {
             tokio::time::sleep(Duration::from_millis(duration)).await;
             return Ok(SupportedFunctionResult::None);
         }
-        fn try_lock(
-            preload_holder: &PreloadHolder,
-        ) -> Option<(
-            &wasmtime::component::Instance,
-            MutexGuard<wasmtime::Store<http::Ctx>>,
-        )> {
-            match preload_holder {
-                PreloadHolder::Instance(instance, mutex) => {
-                    mutex.try_lock().map(|guard| (instance, guard)).ok()
-                }
-                PreloadHolder::Preinstance => None,
-            }
-        }
+
         let mut store;
         let mut store_guard; // possibly uninitialized
         let instance_owned; // possibly uninitialized
-                            // Get existing or create new store and instance.
+
+        // Get existing or create new store and instance.
         let (instance, mut store) =
-            if let Some((instance, store_guard2)) = try_lock(&self.preload_holder) {
+            if let Some((instance, store_guard2)) = Self::try_lock(&self.preload_holder) {
                 store_guard = store_guard2;
                 (instance, store_guard.deref_mut())
             } else {
                 store = http::store(&ENGINE);
-                instance_owned = self.instance_pre.instantiate_async(&mut store).await?;
+                instance_owned = self
+                    .instance_pre
+                    .instantiate_async(&mut store)
+                    .await
+                    .map_err(|err| ActivityFailed {
+                        activity_fqn: request.fqn.clone(),
+                        reason: format!("wasm instantiation error: `{err}`"),
+                    })?;
                 (&instance_owned, &mut store)
             };
 
@@ -235,25 +245,31 @@ impl Activities {
             let mut exports_instance =
                 exports_instance
                     .instance(&request.fqn.ifc_fqn)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "cannot find exported interface: `{ifc_fqn}` in `{wasm_path}`",
-                            ifc_fqn = request.fqn.ifc_fqn,
-                            wasm_path = self.wasm_path
-                        )
+                    .ok_or_else(|| ActivityFailed {
+                        activity_fqn: request.fqn.clone(),
+                        reason: "cannot find exported interface".to_string(),
                     })?;
             exports_instance
                 .func(&request.fqn.function_name)
-                .ok_or(anyhow::anyhow!(
-                    "function `{fqn}` not found",
-                    fqn = request.fqn
-                ))?
+                .ok_or(ActivityFailed {
+                    activity_fqn: request.fqn.clone(),
+                    reason: "function not found".to_string(),
+                })?
         };
         // call func
         let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
         func.call_async(&mut store, &request.params, &mut results)
-            .await?;
-        func.post_return_async(&mut store).await?;
+            .await
+            .map_err(|err| ActivityFailed {
+                activity_fqn: request.fqn.clone(),
+                reason: format!("wasm function call error: `{err}`"),
+            })?;
+        func.post_return_async(&mut store)
+            .await
+            .map_err(|err| ActivityFailed {
+                activity_fqn: request.fqn.clone(),
+                reason: format!("wasm post function call error: `{err}`"),
+            })?;
         let results = SupportedFunctionResult::new(results);
         trace!("Finished `{fqn}` -> {results:?}", fqn = request.fqn);
         Ok(results)

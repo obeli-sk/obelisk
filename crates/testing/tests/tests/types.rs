@@ -28,7 +28,7 @@ async fn test() -> Result<(), anyhow::Error> {
     )
     .await?;
     let mut event_history = EventHistory::new();
-    let iterations = 10;
+    let iterations: usize = 10;
     let param_vals = format!("[{iterations}]");
     let fqn = FunctionFqn::new("testing:types-workflow/workflow", "noopa");
     let metadata = workflow.function_metadata(&fqn).unwrap();
@@ -37,6 +37,6 @@ async fn test() -> Result<(), anyhow::Error> {
         .execute_all(&mut event_history, &fqn, &param_vals)
         .await;
     assert_eq!(res.unwrap(), SupportedFunctionResult::None);
-    assert_eq!(event_history.len(), iterations as usize);
+    assert_eq!(event_history.successful_activities(), iterations);
     Ok(())
 }

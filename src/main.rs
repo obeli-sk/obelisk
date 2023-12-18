@@ -59,7 +59,7 @@ async fn main() -> Result<(), anyhow::Error> {
     println!(
         "Finished: in {duration:?} {res:?}, event history size: {len}",
         duration = timer.elapsed(),
-        len = event_history.len()
+        len = event_history.successful_activities()
     );
     Ok(())
 }

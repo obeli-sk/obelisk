@@ -4,7 +4,7 @@ use crate::event_history::{
 };
 use crate::queue::activity_queue::ActivityQueueSender;
 use crate::wasm_tools::{exported_interfaces, functions_to_metadata};
-use crate::{FunctionFqn, FunctionMetadata, Runtime};
+use crate::{ActivityFailed, FunctionFqn, FunctionMetadata, Runtime};
 use anyhow::{anyhow, Context};
 use std::collections::HashMap;
 use std::mem;
@@ -70,11 +70,8 @@ enum ExecutionInterrupt {
     NonDeterminismDetected(String),
     #[error("interrupted")]
     NewEventPersisted,
-    #[error("activity `{activity_fqn}` failed: `{reason}`")]
-    ActivityFailed {
-        activity_fqn: Arc<FunctionFqn<'static>>,
-        reason: String,
-    },
+    #[error(transparent)]
+    ActivityFailed(ActivityFailed),
     #[error("unknown error: `{0:?}`")]
     UnknownError(anyhow::Error),
 }
@@ -83,7 +80,7 @@ pub struct Workflow {
     #[allow(unused)] // avoid shutting down the activity queue task
     runtime: Arc<Runtime>,
     instance_pre: InstancePre<HostImports>,
-    activity_queue_writer: ActivityQueueSender,
+    activity_queue_sender: ActivityQueueSender,
     functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
     async_activity_behavior: AsyncActivityBehavior,
 }
@@ -155,10 +152,11 @@ impl Workflow {
         debug!("Loaded {:?}", functions_to_metadata.keys());
         trace!("Loaded {:?}", functions_to_metadata);
 
+        let activity_queue_sender = runtime.activity_queue_writer();
         Ok(Self {
             instance_pre,
-            activity_queue_writer: runtime.activity_queue_writer(),
             runtime,
+            activity_queue_sender,
             functions_to_metadata,
             async_activity_behavior: config.async_activity_behavior,
         })
@@ -188,12 +186,12 @@ impl Workflow {
                 .await;
             trace!("workflow.execute_all `{fqn}` -> {res:?}");
             match res {
-                Ok(output) => return Ok(output), // TODO Persist result to the history
+                Ok(output) => return Ok(output), // TODO Persist the workflow result to the history
                 Err(ExecutionInterrupt::NewEventPersisted) => {} // loop again to get to the next step
-                Err(ExecutionInterrupt::ActivityFailed {
+                Err(ExecutionInterrupt::ActivityFailed(ActivityFailed {
                     activity_fqn,
                     reason,
-                }) => {
+                })) => {
                     return Err(ExecutionError::ActivityFailed {
                         workflow_fqn: fqn.to_owned(),
                         activity_fqn,
@@ -226,7 +224,7 @@ impl Workflow {
             HostImports {
                 current_event_history: CurrentEventHistory::new(
                     mem::take(event_history),
-                    self.activity_queue_writer.clone(),
+                    self.activity_queue_sender.clone(),
                     self.async_activity_behavior,
                 ),
             },
@@ -272,40 +270,34 @@ impl Workflow {
                 ExecutionInterrupt::NonDeterminismDetected(reason.clone())
             }
             Some(HostFunctionError::Interrupt { request }) => {
-                let event = Event::new_from_interrupt(request.clone());
                 // Persist and execute the event
                 store
                     .data_mut()
                     .current_event_history
-                    .persist_start(&event.request);
-                match Event::handle_activity_async(request.clone(), &self.activity_queue_writer)
-                    .await
-                {
-                    Ok(res) => {
+                    .persist_start(request);
+                let res =
+                    Event::handle_activity_async(request.clone(), &self.activity_queue_sender)
+                        .await;
+                match res {
+                    Ok(_) => {
                         store
                             .data_mut()
                             .current_event_history
-                            .persist_end(event.request, res);
+                            .persist_end(request.clone(), res);
                         ExecutionInterrupt::NewEventPersisted
                     }
                     Err(err) => {
-                        // TODO: persist activity failure
-                        ExecutionInterrupt::ActivityFailed {
-                            activity_fqn: request.fqn.clone(),
-                            reason: err.to_string(),
-                        }
+                        store
+                            .data_mut()
+                            .current_event_history
+                            .persist_end(request.clone(), Err(err.clone()));
+                        ExecutionInterrupt::ActivityFailed(err)
                     }
                 }
             }
-            Some(HostFunctionError::ActivityFailed {
-                activity_fqn: fqn,
-                source,
-            }) => {
+            Some(HostFunctionError::ActivityFailed(activity_failed)) => {
                 // TODO: persist activity failure
-                ExecutionInterrupt::ActivityFailed {
-                    activity_fqn: fqn.clone(),
-                    reason: source.to_string(),
-                }
+                ExecutionInterrupt::ActivityFailed(activity_failed.clone())
             }
             None => ExecutionInterrupt::UnknownError(err),
         }

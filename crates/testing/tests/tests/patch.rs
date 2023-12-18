@@ -41,7 +41,6 @@ async fn test() -> Result<(), anyhow::Error> {
             .execute_all(&mut event_history, &fqn, &param_vals)
             .await;
 
-        assert_eq!(event_history.len(), 5);
         assert_matches!(
             res.unwrap_err(),
             ExecutionError::ActivityFailed {
@@ -52,6 +51,10 @@ async fn test() -> Result<(), anyhow::Error> {
             activity_fqn == Arc::new(FunctionFqn::new("testing:patch/patch", "noop"))
         );
     }
+    assert_eq!(
+        event_history.successful_activities(),
+        usize::try_from(5).unwrap()
+    );
     {
         let activities = Arc::new(
             Activities::new(
@@ -72,8 +75,8 @@ async fn test() -> Result<(), anyhow::Error> {
             .unwrap();
     }
     assert_eq!(
-        u32::try_from(event_history.len()).unwrap(),
-        EXPECTED_ACTIVITY_CALLS
+        event_history.successful_activities(),
+        usize::try_from(EXPECTED_ACTIVITY_CALLS).unwrap()
     );
     Ok(())
 }

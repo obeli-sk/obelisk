@@ -59,7 +59,7 @@ async fn test() -> Result<(), anyhow::Error> {
         res.unwrap(),
         SupportedFunctionResult::Single(Val::String(BODY.into()))
     );
-    assert_eq!(event_history.len(), 1);
+    assert_eq!(event_history.successful_activities(), 1);
     server.verify().await;
     Ok(())
 }

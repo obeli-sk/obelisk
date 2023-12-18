@@ -1,6 +1,6 @@
 use crate::{
     activity::ActivityRequest, queue::activity_queue::ActivityQueueSender,
-    workflow::AsyncActivityBehavior, FunctionFqn,
+    workflow::AsyncActivityBehavior, ActivityFailed, ActivityResponse, FunctionFqn,
 };
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, error, trace};
@@ -115,12 +115,6 @@ pub(crate) struct Event {
 }
 
 impl Event {
-    pub fn new_from_interrupt(request: ActivityRequest) -> Self {
-        Self {
-            request,
-            kind: EventKind::ActivityAsync,
-        }
-    }
     pub fn new_from_wasm_activity(fqn: Arc<FunctionFqn<'static>>, params: Arc<Vec<Val>>) -> Self {
         Self {
             request: ActivityRequest { fqn, params },
@@ -130,9 +124,9 @@ impl Event {
 
     pub(crate) async fn handle_activity_async(
         request: ActivityRequest,
-        activity_queue_writer: &ActivityQueueSender,
-    ) -> Result<SupportedFunctionResult, anyhow::Error> {
-        activity_queue_writer
+        activity_queue_sender: &ActivityQueueSender,
+    ) -> Result<SupportedFunctionResult, ActivityFailed> {
+        activity_queue_sender
             .push(request)
             .await
             .await
@@ -151,17 +145,11 @@ pub(crate) enum HostActivitySync {
     Noop,
 }
 impl HostActivitySync {
-    fn handle(&self) -> Result<SupportedFunctionResult, HostActivitySyncError> {
+    fn handle(&self) -> Result<SupportedFunctionResult, ActivityFailed> {
         match self {
             Self::Noop => Ok(SupportedFunctionResult::None),
         }
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-#[error("host activity failed: {source:?}`")]
-struct HostActivitySyncError {
-    source: anyhow::Error,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -170,18 +158,15 @@ pub(crate) enum HostFunctionError {
     NonDeterminismDetected(String),
     #[error("interrupt: `{fqn}`", fqn = request.fqn)]
     Interrupt { request: ActivityRequest },
-    #[error("activity `{activity_fqn}` failed: `{source}`")]
-    ActivityFailed {
-        activity_fqn: Arc<FunctionFqn<'static>>,
-        source: anyhow::Error,
-    },
+    #[error(transparent)]
+    ActivityFailed(#[from] ActivityFailed),
 }
 
 pub(crate) struct CurrentEventHistory {
     activity_queue_writer: ActivityQueueSender,
     pub(crate) event_history: EventHistory,
-    idx: usize,
     async_activity_behavior: AsyncActivityBehavior,
+    idx: Option<usize>,
 }
 
 impl CurrentEventHistory {
@@ -193,32 +178,52 @@ impl CurrentEventHistory {
         Self {
             activity_queue_writer,
             event_history,
-            idx: 0,
             async_activity_behavior,
+            idx: Some(0),
         }
     }
 
     pub(crate) fn persist_start(&mut self, request: &ActivityRequest) {
+        self.idx = None;
         self.event_history.persist_start(request)
     }
 
-    pub(crate) fn persist_end(&mut self, request: ActivityRequest, val: SupportedFunctionResult) {
+    pub(crate) fn persist_end(&mut self, request: ActivityRequest, val: ActivityResponse) {
+        self.idx = None;
         self.event_history.persist_end(request, val);
-        self.idx += 1;
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn next(
+        &mut self,
+    ) -> Option<(
+        &Arc<FunctionFqn<'static>>,
+        &Arc<Vec<Val>>,
+        &SupportedFunctionResult,
+    )> {
+        if let Some(mut idx) = self.idx {
+            while let Some((fqn, params, res)) = self.event_history.vec.get(idx) {
+                idx += 1;
+                self.idx = Some(idx);
+                if let Ok(res) = res {
+                    return Some((fqn, params, res));
+                }
+            }
+        }
+        self.idx = None;
+        None
     }
 
     pub(crate) async fn replay_handle_interrupt(
         &mut self,
         event: Event,
     ) -> Result<SupportedFunctionResult, HostFunctionError> {
-        let found = self.event_history.0.get(self.idx);
+        let found = self.next();
         let found_matches = matches!(found,  Some((found_fqn, found_params, _replay_result))
             if event.request.fqn == *found_fqn && event.request.params == *found_params);
         trace!(
-            "replay_handle_interrupt {fqn}, found: {found_matches}, idx: {idx}, history.len: {len}",
+            "replay_handle_interrupt {fqn}, found: {found_matches}",
             fqn = event.request.fqn,
-            idx = self.idx,
-            len = self.event_history.len()
         );
         match (event, found_matches, found) {
             // Continue running on HostActivitySync
@@ -232,24 +237,13 @@ impl CurrentEventHistory {
             ) => {
                 debug!("Running {host_activity_sync:?}");
                 self.persist_start(&request);
-                let res = host_activity_sync.handle().map_err(|err| {
-                    HostFunctionError::ActivityFailed {
-                        activity_fqn: request.fqn.clone(),
-                        source: err.source,
-                    }
-                })?;
-                // TODO: persist activity failure
+                let res = host_activity_sync.handle();
                 self.persist_end(request, res.clone());
-                Ok(res)
+                Ok(res?)
             }
             // Replay if found
             (event, true, Some((_, _, replay_result))) => {
-                debug!(
-                    "Replaying [{idx}] {fqn}",
-                    idx = self.idx,
-                    fqn = event.request.fqn
-                );
-                self.idx += 1;
+                debug!("Replaying {fqn}", fqn = event.request.fqn);
                 Ok(replay_result.clone())
             }
             // New event needs to be handled by the runtime, interrupt or execute it.
@@ -270,14 +264,9 @@ impl CurrentEventHistory {
                     self.persist_start(&request);
                     let res =
                         Event::handle_activity_async(request.clone(), &self.activity_queue_writer)
-                            .await
-                            .map_err(|source| HostFunctionError::ActivityFailed {
-                                activity_fqn: request.fqn.clone(),
-                                source,
-                            })?;
-                    // TODO: persist activity failure
+                            .await;
                     self.persist_end(request, res.clone());
-                    Ok(res)
+                    Ok(res?)
                 }
             },
             // Non determinism
@@ -289,31 +278,24 @@ impl CurrentEventHistory {
 }
 
 #[derive(Debug, Default)]
-pub struct EventHistory(
-    Vec<(
-        Arc<FunctionFqn<'static>>,
-        Arc<Vec<Val>>,
-        SupportedFunctionResult,
-    )>,
-);
+pub struct EventHistory {
+    vec: Vec<(Arc<FunctionFqn<'static>>, Arc<Vec<Val>>, ActivityResponse)>,
+}
 impl EventHistory {
     pub fn new() -> Self {
-        Self(Vec::new())
+        Self::default()
     }
 
     pub(crate) fn persist_start(&mut self, _request: &ActivityRequest) {
+
         // TODO
     }
 
-    pub(crate) fn persist_end(&mut self, request: ActivityRequest, val: SupportedFunctionResult) {
-        self.0.push((request.fqn, request.params, val));
+    pub(crate) fn persist_end(&mut self, request: ActivityRequest, val: ActivityResponse) {
+        self.vec.push((request.fqn, request.params, val));
     }
 
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    pub fn successful_activities(&self) -> usize {
+        self.vec.iter().filter(|(_, _, res)| res.is_ok()).count()
     }
 }

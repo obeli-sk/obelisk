@@ -74,7 +74,14 @@ impl FunctionMetadata {
     }
 }
 
-pub type ActivityResponse = Result<SupportedFunctionResult, anyhow::Error>;
+pub(crate) type ActivityResponse = Result<SupportedFunctionResult, ActivityFailed>;
+
+#[derive(thiserror::Error, Debug, Clone)]
+#[error("activity `{activity_fqn}` failed: {reason}")]
+pub(crate) struct ActivityFailed {
+    activity_fqn: Arc<FunctionFqn<'static>>,
+    reason: String,
+}
 
 pub struct Runtime {
     activities: Arc<Activities>,
