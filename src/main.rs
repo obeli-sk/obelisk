@@ -31,7 +31,7 @@ async fn main() -> Result<(), anyhow::Error> {
         panic!("workflow function must be a fully qualified name in format `package/interface.function`")
     };
 
-    let mut runtime = Runtime::new();
+    let mut runtime = Runtime::default();
     runtime
         .add_activity(activity_wasm_path, &ActivityConfig::default())
         .await?;

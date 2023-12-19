@@ -24,7 +24,7 @@ async fn test() -> Result<(), anyhow::Error> {
     let param_vals = vec![Val::U32(EXPECTED_ACTIVITY_CALLS)];
     let mut event_history = EventHistory::default();
     {
-        let mut runtime = Runtime::new();
+        let mut runtime = Runtime::default();
         runtime
             .add_activity(
                 test_programs_patch_activity_broken_builder::TEST_PROGRAMS_PATCH_ACTIVITY_BROKEN
@@ -62,7 +62,7 @@ async fn test() -> Result<(), anyhow::Error> {
         );
     }
     {
-        let mut runtime = Runtime::new();
+        let mut runtime = Runtime::default();
         runtime
             .add_activity(
                 test_programs_patch_activity_fixed_builder::TEST_PROGRAMS_PATCH_ACTIVITY_FIXED

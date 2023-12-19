@@ -17,14 +17,6 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    pub fn new() -> Self {
-        // TODO: remove
-        Self {
-            functions_to_workflows: HashMap::new(),
-            functions_to_activities: HashMap::new(),
-        }
-    }
-
     pub async fn add_activity(
         &mut self,
         activity_wasm_path: String,

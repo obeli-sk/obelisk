@@ -35,7 +35,7 @@ fn noop_workflow(
     workflow_config: &WorkflowConfig,
 ) -> Arc<Runtime> {
     RT.block_on(async {
-        let mut runtime = Runtime::new();
+        let mut runtime = Runtime::default();
         runtime
             .add_activity(
                 test_programs_types_activity_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
@@ -64,7 +64,7 @@ fn fibonacci(n: u64) -> u64 {
 
 fn fibo_workflow(fibo_config: &FiboConfig) -> Arc<Runtime> {
     RT.block_on(async {
-        let mut runtime = Runtime::new();
+        let mut runtime = Runtime::default();
         runtime
             .add_activity(
                 test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),

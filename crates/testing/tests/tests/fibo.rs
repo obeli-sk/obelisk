@@ -16,7 +16,7 @@ async fn test() -> Result<(), anyhow::Error> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let mut runtime = Runtime::new();
+    let mut runtime = Runtime::default();
     runtime
         .add_activity(
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),
