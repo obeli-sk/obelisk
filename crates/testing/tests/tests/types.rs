@@ -28,7 +28,7 @@ async fn test() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    let mut event_history = EventHistory::new();
+    let mut event_history = EventHistory::default();
     let iterations: usize = 10;
     let param_vals = format!("[{iterations}]");
     let fqn = FunctionFqn::new("testing:types-workflow/workflow", "noopa");

@@ -41,7 +41,7 @@ async fn main() -> Result<(), anyhow::Error> {
     println!("Initialized in {duration:?}", duration = timer.elapsed());
     println!();
 
-    let mut event_history = EventHistory::new();
+    let mut event_history = EventHistory::default();
     let timer = Instant::now();
     let fqn = FunctionFqn::new(ifc_fqn, function_name);
     let param_types = workflow

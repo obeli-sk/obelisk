@@ -33,7 +33,7 @@ async fn test() -> Result<(), anyhow::Error> {
     let iterations = 10;
 
     for workflow_function in ["fibow", "fiboa"] {
-        let mut event_history = EventHistory::new();
+        let mut event_history = EventHistory::default();
         let params = vec![Val::U8(10), Val::U32(iterations)];
         let res = runtime
             .schedule_workflow(

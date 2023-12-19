@@ -302,10 +302,6 @@ pub struct EventHistory {
     vec: Vec<EventHistoryTriple>,
 }
 impl EventHistory {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub(crate) async fn persist_start(&mut self, _request: &ActivityRequest) {
         // TODO
     }

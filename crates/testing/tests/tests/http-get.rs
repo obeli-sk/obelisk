@@ -35,7 +35,7 @@ async fn test() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    let mut event_history = EventHistory::new();
+    let mut event_history = EventHistory::default();
     let timer = Instant::now();
 
     const BODY: &str = "ok";

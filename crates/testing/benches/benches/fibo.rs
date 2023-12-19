@@ -154,7 +154,7 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
                 let runtime = noop_workflow(&activity_config, &workflow_config);
                 b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                     let params = vec![Val::U32(iterations)];
-                    let mut event_history = EventHistory::new();
+                    let mut event_history = EventHistory::default();
                     let fqn = fqn.clone();
                     let runtime = runtime.clone();
                     async move {
@@ -207,7 +207,7 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
             let runtime = fibo_workflow(&fibo_config);
             b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                 let params = vec![Val::U8(fibo_config.n), Val::U32(fibo_config.iterations)];
-                let mut event_history = EventHistory::new();
+                let mut event_history = EventHistory::default();
                 let fqn = fqn.clone();
                 let runtime = runtime.clone();
                 async move {
@@ -243,7 +243,7 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
             let runtime = fibo_workflow(&fibo_config);
             b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                 let params = vec![Val::U8(fibo_config.n), Val::U32(fibo_config.iterations)];
-                let mut event_history = EventHistory::new();
+                let mut event_history = EventHistory::default();
                 let fqn = fqn.clone();
                 let runtime = runtime.clone();
                 async move {
