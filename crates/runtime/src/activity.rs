@@ -2,7 +2,7 @@ use anyhow::Context;
 use assert_matches::assert_matches;
 use std::{collections::HashMap, fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, MutexGuard};
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 use wasmtime::{component::Val, Config, Engine};
 
 use crate::{
@@ -103,10 +103,6 @@ enum PreloadHolder {
 }
 
 pub struct Activity {
-    ifc_fqns_to_function_names: HashMap<
-        String,      /* interface FQN: package_name/interface_name */
-        Vec<String>, /* function names */
-    >,
     functions_to_metadata: HashMap<Arc<FunctionFqn<'static>>, FunctionMetadata>,
     instance_pre: wasmtime::component::InstancePre<http::Ctx>,
     preload_holder: PreloadHolder,
@@ -130,14 +126,6 @@ impl Activity {
         let exported_interfaces = exported_interfaces(&decoded)
             .with_context(|| format!("error parsing `{wasm_path}`"))?;
 
-        let mut ifc_fqns_to_function_names = HashMap::new();
-        for (package_name, ifc_name, functions) in exported_interfaces.clone() {
-            let interface_fqn = format!("{package_name}/{ifc_name}");
-            ifc_fqns_to_function_names.insert(
-                interface_fqn,
-                functions.keys().map(String::to_owned).collect(),
-            );
-        }
         let functions_to_metadata = functions_to_metadata(exported_interfaces)?;
         assert!(
             functions_to_metadata
@@ -159,8 +147,6 @@ impl Activity {
             linker.instantiate_pre(&component)?
         };
 
-        info!("Loaded {ifc_fqns_to_function_names:?}");
-
         let preload_holder = match config.preload {
             ActivityPreload::Preinstance => PreloadHolder::Preinstance,
             ActivityPreload::Instance => {
@@ -170,7 +156,6 @@ impl Activity {
             }
         };
         Ok(Self {
-            ifc_fqns_to_function_names,
             instance_pre,
             wasm_path,
             functions_to_metadata,
@@ -275,17 +260,6 @@ impl Activity {
         Ok(results)
     }
 
-    pub(crate) fn interfaces(&self) -> impl Iterator<Item = &str> {
-        self.ifc_fqns_to_function_names.keys().map(String::as_str)
-    }
-
-    pub(crate) fn functions_of_interface(&self, interface: &str) -> impl Iterator<Item = &str> {
-        self.ifc_fqns_to_function_names
-            .get(interface)
-            .map(|vec| vec.iter().map(String::as_str))
-            .unwrap()
-    }
-
     pub fn functions(&self) -> impl Iterator<Item = &Arc<FunctionFqn<'static>>> {
         self.functions_to_metadata.keys()
     }
@@ -294,7 +268,6 @@ impl Activity {
 impl Debug for Activity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Activities");
-        s.field("interfaces_functions", &self.ifc_fqns_to_function_names);
         s.field("functions_to_metadata", &self.functions_to_metadata);
         s.field("wasm_path", &self.wasm_path);
         s.finish()
