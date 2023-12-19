@@ -1,13 +1,12 @@
-use std::{sync::Arc, time::Instant};
-
 use runtime::{
-    activity::Activities,
+    activity::ActivityConfig,
     event_history::{EventHistory, SupportedFunctionResult},
     runtime::Runtime,
     workflow::WorkflowConfig,
     workflow_id::WorkflowId,
     FunctionFqn,
 };
+use std::time::Instant;
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
@@ -23,14 +22,14 @@ async fn test() -> Result<(), anyhow::Error> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let activities = Arc::new(
-        Activities::new(
+    let mut runtime = Runtime::new();
+    runtime
+        .add_activity(
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY.to_string(),
+            &ActivityConfig::default(),
         )
-        .await?,
-    );
-    let mut runtime = Runtime::new(activities);
-    let workflow = runtime
+        .await?;
+    runtime
         .add_workflow_definition(
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW.to_string(),
             &WorkflowConfig::default(),
@@ -50,8 +49,8 @@ async fn test() -> Result<(), anyhow::Error> {
     info!("started mock server on {}", server.address());
 
     let params = vec![wasmtime::component::Val::U16(server.address().port())];
-    let res = workflow
-        .execute_all(
+    let res = runtime
+        .schedule_workflow(
             &WorkflowId::generate(),
             &mut event_history,
             &FunctionFqn::new("testing:http-workflow/workflow", "execute"),

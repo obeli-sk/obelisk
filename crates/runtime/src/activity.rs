@@ -102,18 +102,18 @@ enum PreloadHolder {
     ),
 }
 
-pub struct Activities {
+pub struct Activity {
     ifc_fqns_to_function_names: HashMap<
         String,      /* interface FQN: package_name/interface_name */
         Vec<String>, /* function names */
     >,
-    functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
+    functions_to_metadata: HashMap<Arc<FunctionFqn<'static>>, FunctionMetadata>,
     instance_pre: wasmtime::component::InstancePre<http::Ctx>,
     preload_holder: PreloadHolder,
-    wasm_path: String,
+    pub(crate) wasm_path: String,
 }
 
-impl Activities {
+impl Activity {
     pub async fn new(wasm_path: String) -> Result<Self, anyhow::Error> {
         Self::new_with_config(wasm_path, &ActivityConfig::default()).await
     }
@@ -279,15 +279,19 @@ impl Activities {
         self.ifc_fqns_to_function_names.keys().map(String::as_str)
     }
 
-    pub(crate) fn functions(&self, interface: &str) -> impl Iterator<Item = &str> {
+    pub(crate) fn functions_of_interface(&self, interface: &str) -> impl Iterator<Item = &str> {
         self.ifc_fqns_to_function_names
             .get(interface)
             .map(|vec| vec.iter().map(String::as_str))
             .unwrap()
     }
+
+    pub fn functions(&self) -> impl Iterator<Item = &Arc<FunctionFqn<'static>>> {
+        self.functions_to_metadata.keys()
+    }
 }
 
-impl Debug for Activities {
+impl Debug for Activity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Activities");
         s.field("interfaces_functions", &self.ifc_fqns_to_function_names);

@@ -1,9 +1,10 @@
+use runtime::activity::ActivityConfig;
 use runtime::event_history::EventHistory;
 use runtime::runtime::Runtime;
 use runtime::workflow::WorkflowConfig;
 use runtime::workflow_id::WorkflowId;
-use runtime::{activity::Activities, FunctionFqn};
-use std::{sync::Arc, time::Instant};
+use runtime::FunctionFqn;
+use std::time::Instant;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use val_json::deserialize_sequence;
 use wasmtime::component::Val;
@@ -21,7 +22,6 @@ async fn main() -> Result<(), anyhow::Error> {
     let mut args: std::iter::Skip<std::env::Args> = std::env::args().skip(1);
 
     let activity_wasm_path = args.next().expect("activity wasm missing");
-    let activities = Arc::new(Activities::new(activity_wasm_path).await?);
 
     let workflow_wasm_path = args.next().expect("workflow wasm missing");
     let workflow_function = args.next().expect("workflow function missing");
@@ -31,7 +31,10 @@ async fn main() -> Result<(), anyhow::Error> {
         panic!("workflow function must be a fully qualified name in format `package/interface.function`")
     };
 
-    let mut runtime = Runtime::new(activities);
+    let mut runtime = Runtime::new();
+    runtime
+        .add_activity(activity_wasm_path, &ActivityConfig::default())
+        .await?;
     let workflow = runtime
         .add_workflow_definition(workflow_wasm_path, &WorkflowConfig::default())
         .await?;
@@ -56,8 +59,8 @@ async fn main() -> Result<(), anyhow::Error> {
         })
         .unwrap_or_default();
 
-    let res = workflow
-        .execute_all(
+    let res = runtime
+        .schedule_workflow(
             &WorkflowId::generate(),
             &mut event_history,
             &fqn,

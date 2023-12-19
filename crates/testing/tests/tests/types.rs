@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use runtime::{
-    activity::Activities,
+    activity::ActivityConfig,
     event_history::{EventHistory, SupportedFunctionResult},
     runtime::Runtime,
     workflow::WorkflowConfig,
@@ -17,14 +15,14 @@ async fn test() -> Result<(), anyhow::Error> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let activities = Arc::new(
-        Activities::new(
+    let mut runtime = Runtime::new();
+    runtime
+        .add_activity(
             test_programs_types_activity_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
+            &ActivityConfig::default(),
         )
-        .await?,
-    );
-    let mut runtime = Runtime::new(activities);
-    let workflow = runtime
+        .await?;
+    runtime
         .add_workflow_definition(
             test_programs_types_workflow_builder::TEST_PROGRAMS_TYPES_WORKFLOW.to_string(),
             &WorkflowConfig::default(),
@@ -34,10 +32,10 @@ async fn test() -> Result<(), anyhow::Error> {
     let iterations: usize = 10;
     let param_vals = format!("[{iterations}]");
     let fqn = FunctionFqn::new("testing:types-workflow/workflow", "noopa");
-    let metadata = workflow.function_metadata(&fqn).unwrap();
+    let metadata = runtime.workflow_function_metadata(&fqn).unwrap();
     let param_vals = metadata.deserialize_params(&param_vals).unwrap();
-    let res = workflow
-        .execute_all(
+    let res = runtime
+        .schedule_workflow(
             &WorkflowId::generate(),
             &mut event_history,
             &fqn,

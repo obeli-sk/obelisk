@@ -1,12 +1,11 @@
 use runtime::{
-    activity::Activities,
+    activity::ActivityConfig,
     event_history::{EventHistory, SupportedFunctionResult},
     runtime::Runtime,
     workflow::WorkflowConfig,
     workflow_id::WorkflowId,
     FunctionFqn,
 };
-use std::sync::Arc;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
 
@@ -17,14 +16,14 @@ async fn test() -> Result<(), anyhow::Error> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let activities = Arc::new(
-        Activities::new(
+    let mut runtime = Runtime::new();
+    runtime
+        .add_activity(
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),
+            &ActivityConfig::default(),
         )
-        .await?,
-    );
-    let mut runtime = Runtime::new(activities);
-    let workflow = runtime
+        .await?;
+    runtime
         .add_workflow_definition(
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
             &WorkflowConfig::default(),
@@ -36,8 +35,8 @@ async fn test() -> Result<(), anyhow::Error> {
     for workflow_function in ["fibow", "fiboa"] {
         let mut event_history = EventHistory::new();
         let params = vec![Val::U8(10), Val::U32(iterations)];
-        let res = workflow
-            .execute_all(
+        let res = runtime
+            .schedule_workflow(
                 &WorkflowId::generate(),
                 &mut event_history,
                 &FunctionFqn::new("testing:fibo-workflow/workflow", workflow_function),

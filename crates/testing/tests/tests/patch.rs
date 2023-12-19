@@ -1,6 +1,6 @@
 use assert_matches::assert_matches;
 use runtime::{
-    activity::Activities,
+    activity::ActivityConfig,
     event_history::EventHistory,
     runtime::Runtime,
     workflow::{ExecutionError, WorkflowConfig},
@@ -24,22 +24,22 @@ async fn test() -> Result<(), anyhow::Error> {
     let param_vals = vec![Val::U32(EXPECTED_ACTIVITY_CALLS)];
     let mut event_history = EventHistory::default();
     {
-        let activities = Arc::new(
-            Activities::new(
+        let mut runtime = Runtime::new();
+        runtime
+            .add_activity(
                 test_programs_patch_activity_broken_builder::TEST_PROGRAMS_PATCH_ACTIVITY_BROKEN
                     .to_string(),
+                &ActivityConfig::default(),
             )
-            .await?,
-        );
-        let mut runtime = Runtime::new(activities);
-        let workflow = runtime
+            .await?;
+        runtime
             .add_workflow_definition(
                 test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
                 &WorkflowConfig::default(),
             )
             .await?;
-        let res = workflow
-            .execute_all(
+        let res = runtime
+            .schedule_workflow(
                 &WorkflowId::generate(),
                 &mut event_history,
                 &fqn,
@@ -56,29 +56,28 @@ async fn test() -> Result<(), anyhow::Error> {
             } if workflow_fqn == fqn &&
             activity_fqn == Arc::new(FunctionFqn::new("testing:patch/patch", "noop"))
         );
-        runtime.abort().await;
         assert_eq!(
             event_history.successful_activities(),
             usize::try_from(5).unwrap()
         );
     }
     {
-        let activities = Arc::new(
-            Activities::new(
+        let mut runtime = Runtime::new();
+        runtime
+            .add_activity(
                 test_programs_patch_activity_fixed_builder::TEST_PROGRAMS_PATCH_ACTIVITY_FIXED
                     .to_string(),
+                &ActivityConfig::default(),
             )
-            .await?,
-        );
-        let mut runtime = Runtime::new(activities);
-        let workflow = runtime
+            .await?;
+        runtime
             .add_workflow_definition(
                 test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
                 &WorkflowConfig::default(),
             )
             .await?;
-        workflow
-            .execute_all(
+        runtime
+            .schedule_workflow(
                 &WorkflowId::generate(),
                 &mut event_history,
                 &fqn,

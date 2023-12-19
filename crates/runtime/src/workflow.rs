@@ -1,4 +1,4 @@
-use crate::activity::Activities;
+use crate::activity::Activity;
 use crate::event_history::{
     CurrentEventHistory, Event, EventHistory, HostFunctionError, HostImports,
     SupportedFunctionResult,
@@ -80,16 +80,14 @@ enum ExecutionInterrupt {
 pub struct Workflow {
     pub(crate) wasm_path: String,
     instance_pre: InstancePre<HostImports>,
-    activity_queue_sender: ActivityQueueSender,
-    functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
+    pub(crate) functions_to_metadata: HashMap<Arc<FunctionFqn<'static>>, FunctionMetadata>,
     async_activity_behavior: AsyncActivityBehavior,
 }
 
 impl Workflow {
     pub(crate) async fn new_with_config(
         wasm_path: String,
-        activities: Arc<Activities>,
-        activity_queue_sender: ActivityQueueSender,
+        activities: &HashMap<Arc<FunctionFqn<'static>>, Arc<Activity>>,
         config: &WorkflowConfig,
     ) -> Result<Self, anyhow::Error> {
         info!("Loading workflow definition from `{wasm_path}`");
@@ -101,46 +99,40 @@ impl Workflow {
             // Add workflow host activities
             HostImports::add_to_linker(&mut linker)?;
             // Add wasm activities
-            for interface in activities.interfaces() {
-                let mut linker_instance = linker.instance(interface)?;
-                for function_name in activities.functions(interface) {
-                    let fqn = Arc::new(FunctionFqn::new_owned(
-                        interface.to_string(),
-                        function_name.to_string(),
-                    ));
-                    let fqn_inner = fqn.clone();
-                    linker_instance
-                        .func_new_async(
-                            &component,
-                            &fqn.function_name,
-                            move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
-                                  params: &[Val],
-                                  results: &mut [Val]| {
-                                let fqn_inner = fqn_inner.clone();
-                                Box::new(async move {
-                                    let event = Event::new_from_wasm_activity(
-                                        fqn_inner,
-                                        Arc::new(Vec::from(params)),
-                                    );
-                                    let store = store_ctx.data_mut();
-                                    let activity_result = store
-                                        .current_event_history
-                                        .replay_handle_interrupt(event)
-                                        .await?;
-                                    assert_eq!(
-                                        results.len(),
-                                        activity_result.len(),
-                                        "unexpected results length"
-                                    );
-                                    for (idx, item) in activity_result.into_iter().enumerate() {
-                                        results[idx] = item;
-                                    }
-                                    Ok(())
-                                })
-                            },
-                        )
-                        .with_context(|| format!(" `{fqn}`"))?;
-                }
+            for fqn in activities.keys() {
+                let mut linker_instance = linker.instance(&fqn.ifc_fqn)?;
+                let fqn_inner = fqn.clone();
+                linker_instance
+                    .func_new_async(
+                        &component,
+                        &fqn.function_name,
+                        move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
+                              params: &[Val],
+                              results: &mut [Val]| {
+                            let fqn_inner = fqn_inner.clone();
+                            Box::new(async move {
+                                let event = Event::new_from_wasm_activity(
+                                    fqn_inner,
+                                    Arc::new(Vec::from(params)),
+                                );
+                                let store = store_ctx.data_mut();
+                                let activity_result = store
+                                    .current_event_history
+                                    .replay_handle_interrupt(event)
+                                    .await?;
+                                assert_eq!(
+                                    results.len(),
+                                    activity_result.len(),
+                                    "unexpected results length"
+                                );
+                                for (idx, item) in activity_result.into_iter().enumerate() {
+                                    results[idx] = item;
+                                }
+                                Ok(())
+                            })
+                        },
+                    )
+                    .with_context(|| format!(" `{fqn}`"))?;
             }
             linker.instantiate_pre(&component)?
         };
@@ -151,7 +143,6 @@ impl Workflow {
         Ok(Self {
             wasm_path,
             instance_pre,
-            activity_queue_sender,
             functions_to_metadata,
             async_activity_behavior: config.async_activity_behavior,
         })
@@ -161,13 +152,14 @@ impl Workflow {
         self.functions_to_metadata.get(fqn)
     }
 
-    pub fn functions(&self) -> impl Iterator<Item = &FunctionFqn<'static>> {
+    pub fn functions(&self) -> impl Iterator<Item = &Arc<FunctionFqn<'static>>> {
         self.functions_to_metadata.keys()
     }
 
-    pub async fn execute_all(
+    pub(crate) async fn execute_all(
         &self,
         workflow_id: &WorkflowId,
+        activity_queue_sender: &ActivityQueueSender,
         event_history: &mut EventHistory,
         fqn: &FunctionFqn<'_>,
         params: &[Val],
@@ -185,7 +177,15 @@ impl Workflow {
 
         for run_id in 0.. {
             let res = self
-                .execute_in_new_store(workflow_id, run_id, event_history, fqn, params, results_len)
+                .execute_in_new_store(
+                    workflow_id,
+                    run_id,
+                    activity_queue_sender,
+                    event_history,
+                    fqn,
+                    params,
+                    results_len,
+                )
                 .await;
             trace!("[{workflow_id},{run_id}] workflow.execute_all `{fqn}` -> {res:?}");
             match res {
@@ -216,10 +216,12 @@ impl Workflow {
     }
 
     // Execute the workflow until it is finished or interrupted.
+    #[allow(clippy::too_many_arguments)]
     async fn execute_in_new_store(
         &self,
         workflow_id: &WorkflowId,
         run_id: u64,
+        activity_queue_sender: &ActivityQueueSender,
         event_history: &mut EventHistory,
         workflow_fqn: &FunctionFqn<'_>,
         params: &[Val],
@@ -232,7 +234,7 @@ impl Workflow {
                     workflow_id.clone(),
                     run_id,
                     mem::take(event_history),
-                    self.activity_queue_sender.clone(),
+                    activity_queue_sender.clone(),
                     self.async_activity_behavior,
                 ),
             },
@@ -242,6 +244,7 @@ impl Workflow {
             .execute_one_step_interpret_errors(
                 workflow_id,
                 run_id,
+                activity_queue_sender,
                 &mut store,
                 workflow_fqn,
                 params,
@@ -256,10 +259,12 @@ impl Workflow {
         res
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn execute_one_step_interpret_errors(
         &self,
         workflow_id: &WorkflowId,
         run_id: u64,
+        activity_queue_sender: &ActivityQueueSender,
         store: &mut Store<HostImports>,
         workflow_fqn: &FunctionFqn<'_>,
         params: &[Val],
@@ -277,12 +282,15 @@ impl Workflow {
             .await
         {
             Ok(ok) => Ok(ok),
-            Err(err) => Err(self.interpret_errors(store, err).await),
+            Err(err) => Err(self
+                .interpret_errors(activity_queue_sender, store, err)
+                .await),
         }
     }
 
     async fn interpret_errors(
         &self,
+        activity_queue_sender: &ActivityQueueSender,
         store: &mut Store<HostImports>,
         err: anyhow::Error,
     ) -> ExecutionInterrupt {
@@ -301,8 +309,7 @@ impl Workflow {
                     .persist_start(request)
                     .await;
                 let res =
-                    Event::handle_activity_async(request.clone(), &self.activity_queue_sender)
-                        .await;
+                    Event::handle_activity_async(request.clone(), activity_queue_sender).await;
                 match res {
                     Ok(_) => {
                         store
@@ -365,7 +372,7 @@ impl Workflow {
 
 fn decode_wasm_function_metadata(
     wasm: &[u8],
-) -> Result<HashMap<FunctionFqn<'static>, FunctionMetadata>, anyhow::Error> {
+) -> Result<HashMap<Arc<FunctionFqn<'static>>, FunctionMetadata>, anyhow::Error> {
     let decoded = wit_component::decode(wasm)?;
     let exported_interfaces = exported_interfaces(&decoded)?;
     Ok(functions_to_metadata(exported_interfaces)?)
