@@ -1,12 +1,13 @@
-use std::sync::Arc;
-
 use assert_matches::assert_matches;
 use runtime::{
     activity::Activities,
     event_history::EventHistory,
-    workflow::{ExecutionError, Workflow},
-    FunctionFqn, Runtime,
+    runtime::Runtime,
+    workflow::{ExecutionError, WorkflowConfig},
+    workflow_id::WorkflowId,
+    FunctionFqn,
 };
+use std::sync::Arc;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
 
@@ -19,10 +20,9 @@ async fn test() -> Result<(), anyhow::Error> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let mut event_history = EventHistory::new();
-
     let fqn = FunctionFqn::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = vec![Val::U32(EXPECTED_ACTIVITY_CALLS)];
+    let mut event_history = EventHistory::default();
     {
         let activities = Arc::new(
             Activities::new(
@@ -31,14 +31,20 @@ async fn test() -> Result<(), anyhow::Error> {
             )
             .await?,
         );
-        let runtime = Arc::new(Runtime::new(activities));
-        let workflow = Workflow::new(
-            test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
-            runtime,
-        )
-        .await?;
+        let mut runtime = Runtime::new(activities);
+        let workflow = runtime
+            .add_workflow_definition(
+                test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
+                &WorkflowConfig::default(),
+            )
+            .await?;
         let res = workflow
-            .execute_all(&mut event_history, &fqn, &param_vals)
+            .execute_all(
+                &WorkflowId::generate(),
+                &mut event_history,
+                &fqn,
+                &param_vals,
+            )
             .await;
 
         assert_matches!(
@@ -50,11 +56,12 @@ async fn test() -> Result<(), anyhow::Error> {
             } if workflow_fqn == fqn &&
             activity_fqn == Arc::new(FunctionFqn::new("testing:patch/patch", "noop"))
         );
+        runtime.abort().await;
+        assert_eq!(
+            event_history.successful_activities(),
+            usize::try_from(5).unwrap()
+        );
     }
-    assert_eq!(
-        event_history.successful_activities(),
-        usize::try_from(5).unwrap()
-    );
     {
         let activities = Arc::new(
             Activities::new(
@@ -63,20 +70,26 @@ async fn test() -> Result<(), anyhow::Error> {
             )
             .await?,
         );
-        let runtime = Arc::new(Runtime::new(activities));
-        let workflow = Workflow::new(
-            test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
-            runtime,
-        )
-        .await?;
+        let mut runtime = Runtime::new(activities);
+        let workflow = runtime
+            .add_workflow_definition(
+                test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
+                &WorkflowConfig::default(),
+            )
+            .await?;
         workflow
-            .execute_all(&mut event_history, &fqn, &param_vals)
+            .execute_all(
+                &WorkflowId::generate(),
+                &mut event_history,
+                &fqn,
+                &param_vals,
+            )
             .await
             .unwrap();
+        assert_eq!(
+            event_history.successful_activities(),
+            usize::try_from(EXPECTED_ACTIVITY_CALLS).unwrap()
+        );
     }
-    assert_eq!(
-        event_history.successful_activities(),
-        usize::try_from(EXPECTED_ACTIVITY_CALLS).unwrap()
-    );
     Ok(())
 }

@@ -1,3 +1,4 @@
+use crate::activity::Activities;
 use crate::event_history::{
     CurrentEventHistory, Event, EventHistory, HostFunctionError, HostImports,
     SupportedFunctionResult,
@@ -5,7 +6,7 @@ use crate::event_history::{
 use crate::queue::activity_queue::ActivityQueueSender;
 use crate::wasm_tools::{exported_interfaces, functions_to_metadata};
 use crate::workflow_id::WorkflowId;
-use crate::{ActivityFailed, FunctionFqn, FunctionMetadata, Runtime};
+use crate::{ActivityFailed, FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, Context};
 use std::collections::HashMap;
 use std::mem;
@@ -44,7 +45,6 @@ impl Default for AsyncActivityBehavior {
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
-
 pub struct WorkflowConfig {
     pub async_activity_behavior: AsyncActivityBehavior,
 }
@@ -78,8 +78,7 @@ enum ExecutionInterrupt {
 }
 
 pub struct Workflow {
-    #[allow(unused)] // avoid shutting down the activity queue task
-    runtime: Arc<Runtime>,
+    pub(crate) wasm_path: String,
     instance_pre: InstancePre<HostImports>,
     activity_queue_sender: ActivityQueueSender,
     functions_to_metadata: HashMap<FunctionFqn<'static>, FunctionMetadata>,
@@ -87,16 +86,13 @@ pub struct Workflow {
 }
 
 impl Workflow {
-    pub async fn new(wasm_path: String, runtime: Arc<Runtime>) -> Result<Self, anyhow::Error> {
-        Self::new_with_config(wasm_path, runtime, &WorkflowConfig::default()).await
-    }
-
-    pub async fn new_with_config(
+    pub(crate) async fn new_with_config(
         wasm_path: String,
-        runtime: Arc<Runtime>,
+        activities: Arc<Activities>,
+        activity_queue_sender: ActivityQueueSender,
         config: &WorkflowConfig,
     ) -> Result<Self, anyhow::Error> {
-        info!("workflow::new {wasm_path}");
+        info!("Loading workflow definition from `{wasm_path}`");
         let wasm =
             std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
         let instance_pre = {
@@ -105,9 +101,9 @@ impl Workflow {
             // Add workflow host activities
             HostImports::add_to_linker(&mut linker)?;
             // Add wasm activities
-            for interface in runtime.activities.interfaces() {
+            for interface in activities.interfaces() {
                 let mut linker_instance = linker.instance(interface)?;
-                for function_name in runtime.activities.functions(interface) {
+                for function_name in activities.functions(interface) {
                     let fqn = Arc::new(FunctionFqn::new_owned(
                         interface.to_string(),
                         function_name.to_string(),
@@ -152,11 +148,9 @@ impl Workflow {
             .with_context(|| format!("error parsing `{wasm_path}`"))?;
         debug!("Loaded {:?}", functions_to_metadata.keys());
         trace!("Loaded {:?}", functions_to_metadata);
-
-        let activity_queue_sender = runtime.activity_queue_writer();
         Ok(Self {
+            wasm_path,
             instance_pre,
-            runtime,
             activity_queue_sender,
             functions_to_metadata,
             async_activity_behavior: config.async_activity_behavior,
@@ -167,17 +161,11 @@ impl Workflow {
         self.functions_to_metadata.get(fqn)
     }
 
-    pub async fn execute_all(
-        &self,
-        event_history: &mut EventHistory,
-        fqn: &FunctionFqn<'_>,
-        params: &[Val],
-    ) -> Result<SupportedFunctionResult, ExecutionError> {
-        self.execute_all_with_workflow_id(&WorkflowId::generate(), event_history, fqn, params)
-            .await
+    pub fn functions(&self) -> impl Iterator<Item = &FunctionFqn<'static>> {
+        self.functions_to_metadata.keys()
     }
 
-    pub async fn execute_all_with_workflow_id(
+    pub async fn execute_all(
         &self,
         workflow_id: &WorkflowId,
         event_history: &mut EventHistory,
@@ -310,7 +298,8 @@ impl Workflow {
                 store
                     .data_mut()
                     .current_event_history
-                    .persist_start(request);
+                    .persist_start(request)
+                    .await;
                 let res =
                     Event::handle_activity_async(request.clone(), &self.activity_queue_sender)
                         .await;
@@ -319,14 +308,16 @@ impl Workflow {
                         store
                             .data_mut()
                             .current_event_history
-                            .persist_end(request.clone(), res);
+                            .persist_end(request.clone(), res)
+                            .await;
                         ExecutionInterrupt::NewEventPersisted
                     }
                     Err(err) => {
                         store
                             .data_mut()
                             .current_event_history
-                            .persist_end(request.clone(), Err(err.clone()));
+                            .persist_end(request.clone(), Err(err.clone()))
+                            .await;
                         ExecutionInterrupt::ActivityFailed(err)
                     }
                 }

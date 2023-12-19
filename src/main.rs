@@ -1,6 +1,7 @@
 use runtime::event_history::EventHistory;
-use runtime::workflow::Workflow;
-use runtime::Runtime;
+use runtime::runtime::Runtime;
+use runtime::workflow::WorkflowConfig;
+use runtime::workflow_id::WorkflowId;
 use runtime::{activity::Activities, FunctionFqn};
 use std::{sync::Arc, time::Instant};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -30,8 +31,10 @@ async fn main() -> Result<(), anyhow::Error> {
         panic!("workflow function must be a fully qualified name in format `package/interface.function`")
     };
 
-    let runtime = Arc::new(Runtime::new(activities));
-    let workflow = Workflow::new(workflow_wasm_path, runtime).await?;
+    let mut runtime = Runtime::new(activities);
+    let workflow = runtime
+        .add_workflow_definition(workflow_wasm_path, &WorkflowConfig::default())
+        .await?;
     println!("Initialized in {duration:?}", duration = timer.elapsed());
     println!();
 
@@ -54,7 +57,12 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap_or_default();
 
     let res = workflow
-        .execute_all(&mut event_history, &fqn, &param_vals)
+        .execute_all(
+            &WorkflowId::generate(),
+            &mut event_history,
+            &fqn,
+            &param_vals,
+        )
         .await;
     println!(
         "Finished: in {duration:?} {res:?}, event history size: {len}",

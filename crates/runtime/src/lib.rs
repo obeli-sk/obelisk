@@ -1,14 +1,11 @@
-use std::{borrow::Cow, fmt::Display, sync::Arc};
-
-use activity::Activities;
 use event_history::SupportedFunctionResult;
-use queue::activity_queue::{ActivityQueueReceiver, ActivityQueueSender, QueueItem};
-use tokio::{sync::mpsc, task::AbortHandle};
+use std::{borrow::Cow, fmt::Display, sync::Arc};
 use val_json::{TypeWrapper, UnsupportedTypeError, ValWrapper};
 
 pub mod activity;
 pub mod event_history;
 mod queue;
+pub mod runtime;
 mod wasm_tools;
 pub mod workflow;
 
@@ -74,57 +71,22 @@ impl FunctionMetadata {
     }
 }
 
-pub(crate) type ActivityResponse = Result<SupportedFunctionResult, ActivityFailed>;
+pub type ActivityResponse = Result<SupportedFunctionResult, ActivityFailed>;
 
 #[derive(thiserror::Error, Debug, Clone)]
 #[error("activity `{activity_fqn}` failed: {reason}")]
-pub(crate) struct ActivityFailed {
+pub struct ActivityFailed {
     activity_fqn: Arc<FunctionFqn<'static>>,
     reason: String,
 }
 
-pub struct Runtime {
-    activities: Arc<Activities>,
-    queue_sender: mpsc::Sender<QueueItem>,
-    queue_task: AbortHandle,
-}
-
-impl Runtime {
-    pub fn new(activities: Arc<Activities>) -> Self {
-        let (queue_sender, queue_receiver) = mpsc::channel(100); // FIXME
-        let mut activity_queue_receiver = ActivityQueueReceiver {
-            receiver: queue_receiver,
-            activities: activities.clone(),
-        };
-        let queue_task =
-            tokio::spawn(async move { activity_queue_receiver.process().await }).abort_handle();
-        Self {
-            activities,
-            queue_sender,
-            queue_task,
-        }
-    }
-
-    fn activity_queue_writer(&self) -> ActivityQueueSender {
-        ActivityQueueSender {
-            sender: self.queue_sender.clone(),
-        }
-    }
-}
-
-impl Drop for Runtime {
-    fn drop(&mut self) {
-        self.queue_task.abort();
-    }
-}
-
-mod workflow_id {
+pub mod workflow_id {
     use std::{str::FromStr, sync::Arc};
 
     #[derive(Debug, Clone, derive_more::Display)]
     pub struct WorkflowId(Arc<String>);
     impl WorkflowId {
-        pub(crate) fn generate() -> WorkflowId {
+        pub fn generate() -> WorkflowId {
             ulid::Ulid::new().to_string().parse().unwrap() // ulid is 26 chars long
         }
     }

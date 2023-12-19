@@ -1,11 +1,12 @@
-use std::sync::Arc;
-
 use runtime::{
     activity::Activities,
     event_history::{EventHistory, SupportedFunctionResult},
-    workflow::Workflow,
-    FunctionFqn, Runtime,
+    runtime::Runtime,
+    workflow::WorkflowConfig,
+    workflow_id::WorkflowId,
+    FunctionFqn,
 };
+use std::sync::Arc;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
 
@@ -22,12 +23,13 @@ async fn test() -> Result<(), anyhow::Error> {
         )
         .await?,
     );
-    let runtime = Arc::new(Runtime::new(activities));
-    let workflow = Workflow::new(
-        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
-        runtime,
-    )
-    .await?;
+    let mut runtime = Runtime::new(activities);
+    let workflow = runtime
+        .add_workflow_definition(
+            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
+            &WorkflowConfig::default(),
+        )
+        .await?;
 
     let iterations = 10;
 
@@ -36,6 +38,7 @@ async fn test() -> Result<(), anyhow::Error> {
         let params = vec![Val::U8(10), Val::U32(iterations)];
         let res = workflow
             .execute_all(
+                &WorkflowId::generate(),
                 &mut event_history,
                 &FunctionFqn::new("testing:fibo-workflow/workflow", workflow_function),
                 &params,

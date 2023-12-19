@@ -3,8 +3,10 @@ use std::{sync::Arc, time::Instant};
 use runtime::{
     activity::Activities,
     event_history::{EventHistory, SupportedFunctionResult},
-    workflow::Workflow,
-    FunctionFqn, Runtime,
+    runtime::Runtime,
+    workflow::WorkflowConfig,
+    workflow_id::WorkflowId,
+    FunctionFqn,
 };
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -27,12 +29,13 @@ async fn test() -> Result<(), anyhow::Error> {
         )
         .await?,
     );
-    let runtime = Arc::new(Runtime::new(activities));
-    let workflow = Workflow::new(
-        test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW.to_string(),
-        runtime,
-    )
-    .await?;
+    let mut runtime = Runtime::new(activities);
+    let workflow = runtime
+        .add_workflow_definition(
+            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW.to_string(),
+            &WorkflowConfig::default(),
+        )
+        .await?;
     let mut event_history = EventHistory::new();
     let timer = Instant::now();
 
@@ -49,6 +52,7 @@ async fn test() -> Result<(), anyhow::Error> {
     let params = vec![wasmtime::component::Val::U16(server.address().port())];
     let res = workflow
         .execute_all(
+            &WorkflowId::generate(),
             &mut event_history,
             &FunctionFqn::new("testing:http-workflow/workflow", "execute"),
             &params,

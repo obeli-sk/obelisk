@@ -190,14 +190,14 @@ impl CurrentEventHistory {
         }
     }
 
-    pub(crate) fn persist_start(&mut self, request: &ActivityRequest) {
+    pub(crate) async fn persist_start(&mut self, request: &ActivityRequest) {
         self.idx = None;
-        self.event_history.persist_start(request)
+        self.event_history.persist_start(request).await
     }
 
-    pub(crate) fn persist_end(&mut self, request: ActivityRequest, val: ActivityResponse) {
+    pub(crate) async fn persist_end(&mut self, request: ActivityRequest, val: ActivityResponse) {
         self.idx = None;
-        self.event_history.persist_end(request, val);
+        self.event_history.persist_end(request, val).await;
     }
 
     #[allow(clippy::type_complexity)]
@@ -245,9 +245,9 @@ impl CurrentEventHistory {
                 None,
             ) => {
                 debug!("[{workflow_id},{run_id}] Running {host_activity_sync:?}");
-                self.persist_start(&request);
+                self.persist_start(&request).await;
                 let res = host_activity_sync.handle();
-                self.persist_end(request, res.clone());
+                self.persist_end(request, res.clone()).await;
                 Ok(res?)
             }
             // Replay if found
@@ -279,11 +279,11 @@ impl CurrentEventHistory {
                         "[{workflow_id},{run_id}] Executing {fqn}",
                         fqn = request.fqn
                     );
-                    self.persist_start(&request);
+                    self.persist_start(&request).await;
                     let res =
                         Event::handle_activity_async(request.clone(), &self.activity_queue_writer)
                             .await;
-                    self.persist_end(request, res.clone());
+                    self.persist_end(request, res.clone()).await;
                     Ok(res?)
                 }
             },
@@ -295,21 +295,22 @@ impl CurrentEventHistory {
     }
 }
 
+pub type EventHistoryTriple = (Arc<FunctionFqn<'static>>, Arc<Vec<Val>>, ActivityResponse);
+
 #[derive(Debug, Default)]
 pub struct EventHistory {
-    vec: Vec<(Arc<FunctionFqn<'static>>, Arc<Vec<Val>>, ActivityResponse)>,
+    vec: Vec<EventHistoryTriple>,
 }
 impl EventHistory {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub(crate) fn persist_start(&mut self, _request: &ActivityRequest) {
-
+    pub(crate) async fn persist_start(&mut self, _request: &ActivityRequest) {
         // TODO
     }
 
-    pub(crate) fn persist_end(&mut self, request: ActivityRequest, val: ActivityResponse) {
+    pub(crate) async fn persist_end(&mut self, request: ActivityRequest, val: ActivityResponse) {
         self.vec.push((request.fqn, request.params, val));
     }
 
