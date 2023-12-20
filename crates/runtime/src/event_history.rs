@@ -169,7 +169,8 @@ pub(crate) struct CurrentEventHistory {
     activity_queue_writer: ActivityQueueSender,
     pub(crate) event_history: EventHistory,
     async_activity_behavior: AsyncActivityBehavior,
-    idx: Option<usize>,
+    replay_idx: usize,
+    replay_len: usize,
 }
 
 impl CurrentEventHistory {
@@ -184,19 +185,31 @@ impl CurrentEventHistory {
             workflow_id,
             run_id,
             activity_queue_writer,
+            replay_len: event_history.len(),
             event_history,
             async_activity_behavior,
-            idx: Some(0),
+            replay_idx: 0,
         }
     }
 
+    pub(crate) fn replay_is_drained(&self) -> bool {
+        self.replay_idx == self.replay_len
+    }
+
+    fn assert_replay_is_drained(&self) {
+        assert_eq!(
+            self.replay_idx, self.replay_len,
+            "replay log has not been drained"
+        );
+    }
+
     pub(crate) async fn persist_start(&mut self, request: &ActivityRequest) {
-        self.idx = None;
+        self.assert_replay_is_drained();
         self.event_history.persist_start(request).await
     }
 
     pub(crate) async fn persist_end(&mut self, request: ActivityRequest, val: ActivityResponse) {
-        self.idx = None;
+        self.assert_replay_is_drained();
         self.event_history.persist_end(request, val).await;
     }
 
@@ -206,19 +219,19 @@ impl CurrentEventHistory {
     ) -> Option<(
         &Arc<FunctionFqn<'static>>,
         &Arc<Vec<Val>>,
-        &SupportedFunctionResult,
+        &Result<SupportedFunctionResult, ActivityFailed>,
     )> {
-        if let Some(mut idx) = self.idx {
-            while let Some((fqn, params, res)) = self.event_history.vec.get(idx) {
-                idx += 1;
-                self.idx = Some(idx);
-                if let Ok(res) = res {
-                    return Some((fqn, params, res));
-                }
-            }
+        if self.replay_idx < self.replay_len {
+            let (fqn, params, res) = self
+                .event_history
+                .vec
+                .get(self.replay_idx)
+                .expect("must contain value");
+            self.replay_idx += 1;
+            Some((fqn, params, res))
+        } else {
+            None
         }
-        self.idx = None;
-        None
     }
 
     pub(crate) async fn replay_handle_interrupt(
@@ -256,7 +269,7 @@ impl CurrentEventHistory {
                     "[{workflow_id},{run_id}] Replaying {fqn}",
                     fqn = event.request.fqn
                 );
-                Ok(replay_result.clone())
+                Ok(replay_result.clone()?)
             }
             // New event needs to be handled by the runtime, interrupt or execute it.
             (
@@ -297,7 +310,7 @@ impl CurrentEventHistory {
 
 pub type EventHistoryTriple = (Arc<FunctionFqn<'static>>, Arc<Vec<Val>>, ActivityResponse);
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, derive_more::From, derive_more::Into)]
 pub struct EventHistory {
     vec: Vec<EventHistoryTriple>,
 }
@@ -312,5 +325,9 @@ impl EventHistory {
 
     pub fn successful_activities(&self) -> usize {
         self.vec.iter().filter(|(_, _, res)| res.is_ok()).count()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.vec.len()
     }
 }

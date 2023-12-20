@@ -240,7 +240,7 @@ impl Workflow {
             },
         );
         // try
-        let res = self
+        let mut res = self
             .execute_one_step_interpret_errors(
                 workflow_id,
                 run_id,
@@ -256,6 +256,11 @@ impl Workflow {
             event_history,
             &mut store.data_mut().current_event_history.event_history,
         );
+        if res.is_ok() && !store.data_mut().current_event_history.replay_is_drained() {
+            res = Err(ExecutionInterrupt::NonDeterminismDetected(
+                "replay log was not drained".to_string(),
+            ))
+        }
         res
     }
 
