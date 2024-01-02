@@ -1,5 +1,5 @@
 [package]
-name = "test_programs_types_activity"
+name = "test-programs-types-activity"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

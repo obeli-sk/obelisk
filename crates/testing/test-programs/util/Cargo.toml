@@ -1,5 +1,5 @@
 [package]
-name = "test_programs_util"
+name = "test-programs-util"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

@@ -7,15 +7,19 @@ use cargo_metadata::camino::Utf8Path;
 
 const BUILD_TARGET_TRIPPLE: &str = "wasm32-unknown-unknown";
 
+fn to_snake_case(input: &str) -> String {
+    input.replace('-', "_")
+}
+
 pub fn build() {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
-    let pkg_name = pkg_name.strip_suffix("_builder").unwrap();
+    let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
     let wasm = run_cargo_component_build(&out_dir, pkg_name);
     let mut generated_code = String::new();
     generated_code += &format!(
         "pub const {name_upper}: &str = {wasm:?};\n",
-        name_upper = pkg_name.to_uppercase()
+        name_upper = to_snake_case(pkg_name).to_uppercase()
     );
     std::fs::write(out_dir.join("gen.rs"), generated_code).unwrap();
 
@@ -66,10 +70,11 @@ fn run_cargo_component_build(out_dir: &Path, name: &str) -> PathBuf {
     eprintln!("running: {cmd:?}");
     let status = cmd.status().unwrap();
     assert!(status.success());
+    let name_snake_case = to_snake_case(name);
     let target = out_dir
         .join(BUILD_TARGET_TRIPPLE)
         .join("release")
-        .join(format!("{name}.wasm",));
+        .join(format!("{name_snake_case}.wasm",));
     assert!(target.exists(), "Target path must exist: {target:?}");
     target
 }

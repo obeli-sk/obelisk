@@ -1,9 +1,9 @@
 [package]
-name = "test_programs_http_get_activity_builder"
+name = "test-programs-http-get-activity-builder"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [build-dependencies]
-test_programs_util.workspace = true
+test-programs-util.workspace = true

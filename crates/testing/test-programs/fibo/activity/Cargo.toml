@@ -1,5 +1,5 @@
 [package]
-name = "test_programs_fibo_activity"
+name = "test-programs-fibo-activity"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

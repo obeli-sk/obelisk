@@ -7,10 +7,10 @@ rust-version.workspace = true
 
 [dev-dependencies]
 runtime.workspace = true
-test_programs_fibo_activity_builder.workspace = true
-test_programs_fibo_workflow_builder.workspace = true
-test_programs_types_activity_builder.workspace = true
-test_programs_types_workflow_builder.workspace = true
+test-programs-fibo-activity-builder.workspace = true
+test-programs-fibo-workflow-builder.workspace = true
+test-programs-types-activity-builder.workspace = true
+test-programs-types-workflow-builder.workspace = true
 
 criterion = { workspace = true, features = ["async_tokio"] }
 lazy_static.workspace = true

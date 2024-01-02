@@ -7,15 +7,15 @@ rust-version.workspace = true
 
 [dev-dependencies]
 runtime.workspace = true
-test_programs_fibo_activity_builder.workspace = true
-test_programs_fibo_workflow_builder.workspace = true
-test_programs_http_get_activity_builder.workspace = true
-test_programs_http_get_workflow_builder.workspace = true
-test_programs_patch_activity_broken_builder.workspace = true
-test_programs_patch_activity_fixed_builder.workspace = true
-test_programs_patch_workflow_builder.workspace = true
-test_programs_types_activity_builder.workspace = true
-test_programs_types_workflow_builder.workspace = true
+test-programs-fibo-activity-builder.workspace = true
+test-programs-fibo-workflow-builder.workspace = true
+test-programs-http-get-activity-builder.workspace = true
+test-programs-http-get-workflow-builder.workspace = true
+test-programs-patch-activity-broken-builder.workspace = true
+test-programs-patch-activity-fixed-builder.workspace = true
+test-programs-patch-workflow-builder.workspace = true
+test-programs-types-activity-builder.workspace = true
+test-programs-types-workflow-builder.workspace = true
 val-json.workspace = true
 
 anyhow.workspace = true

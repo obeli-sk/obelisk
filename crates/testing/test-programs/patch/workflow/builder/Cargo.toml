@@ -1,9 +1,9 @@
 [package]
-name = "test_programs_patch_workflow_builder"
+name = "test-programs-patch-workflow-builder"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [build-dependencies]
-test_programs_util.workspace = true
+test-programs-util.workspace = true

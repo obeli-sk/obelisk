@@ -1,5 +1,5 @@
 [package]
-name = "test_programs_patch_activity_broken"
+name = "test-programs-patch-activity-broken"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

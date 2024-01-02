@@ -1,5 +1,5 @@
 [package]
-name = "test_programs_http_get_workflow"
+name = "test-programs-http-get-workflow"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

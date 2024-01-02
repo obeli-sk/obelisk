@@ -1,5 +1,5 @@
 [package]
-name = "test_programs_patch_workflow"
+name = "test-programs-patch-workflow"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

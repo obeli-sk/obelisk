@@ -149,10 +149,10 @@ dependencies = [
  "criterion",
  "lazy_static",
  "runtime",
- "test_programs_fibo_activity_builder",
- "test_programs_fibo_workflow_builder",
- "test_programs_types_activity_builder",
- "test_programs_types_workflow_builder",
+ "test-programs-fibo-activity-builder",
+ "test-programs-fibo-workflow-builder",
+ "test-programs-types-activity-builder",
+ "test-programs-types-workflow-builder",
  "tokio",
  "wasmtime",
 ]
@@ -2131,7 +2131,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c39fd04924ca3a864207c66fc2cd7d22d7c016007f9ce846cbb9326331930a"
 
 [[package]]
-name = "test_programs_fibo_activity"
+name = "test-programs-fibo-activity"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2139,28 +2139,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "test_programs_fibo_activity_builder"
+name = "test-programs-fibo-activity-builder"
 version = "0.1.0"
 dependencies = [
- "test_programs_util",
+ "test-programs-util",
 ]
 
 [[package]]
-name = "test_programs_fibo_workflow"
+name = "test-programs-fibo-workflow"
 version = "0.1.0"
 dependencies = [
  "cargo-component-bindings",
 ]
 
 [[package]]
-name = "test_programs_fibo_workflow_builder"
+name = "test-programs-fibo-workflow-builder"
 version = "0.1.0"
 dependencies = [
- "test_programs_util",
+ "test-programs-util",
 ]
 
 [[package]]
-name = "test_programs_http_get_activity"
+name = "test-programs-http-get-activity"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2168,98 +2168,98 @@ dependencies = [
 ]
 
 [[package]]
-name = "test_programs_http_get_activity_builder"
+name = "test-programs-http-get-activity-builder"
 version = "0.1.0"
 dependencies = [
- "test_programs_util",
+ "test-programs-util",
 ]
 
 [[package]]
-name = "test_programs_http_get_workflow"
-version = "0.1.0"
-dependencies = [
- "cargo-component-bindings",
-]
-
-[[package]]
-name = "test_programs_http_get_workflow_builder"
-version = "0.1.0"
-dependencies = [
- "test_programs_util",
-]
-
-[[package]]
-name = "test_programs_patch_activity_broken"
+name = "test-programs-http-get-workflow"
 version = "0.1.0"
 dependencies = [
  "cargo-component-bindings",
 ]
 
 [[package]]
-name = "test_programs_patch_activity_broken_builder"
+name = "test-programs-http-get-workflow-builder"
 version = "0.1.0"
 dependencies = [
- "test_programs_util",
+ "test-programs-util",
 ]
 
 [[package]]
-name = "test_programs_patch_activity_fixed"
-version = "0.1.0"
-dependencies = [
- "cargo-component-bindings",
-]
-
-[[package]]
-name = "test_programs_patch_activity_fixed_builder"
-version = "0.1.0"
-dependencies = [
- "test_programs_util",
-]
-
-[[package]]
-name = "test_programs_patch_workflow"
+name = "test-programs-patch-activity-broken"
 version = "0.1.0"
 dependencies = [
  "cargo-component-bindings",
 ]
 
 [[package]]
-name = "test_programs_patch_workflow_builder"
+name = "test-programs-patch-activity-broken-builder"
 version = "0.1.0"
 dependencies = [
- "test_programs_util",
+ "test-programs-util",
 ]
 
 [[package]]
-name = "test_programs_types_activity"
-version = "0.1.0"
-dependencies = [
- "cargo-component-bindings",
-]
-
-[[package]]
-name = "test_programs_types_activity_builder"
-version = "0.1.0"
-dependencies = [
- "test_programs_util",
-]
-
-[[package]]
-name = "test_programs_types_workflow"
+name = "test-programs-patch-activity-fixed"
 version = "0.1.0"
 dependencies = [
  "cargo-component-bindings",
 ]
 
 [[package]]
-name = "test_programs_types_workflow_builder"
+name = "test-programs-patch-activity-fixed-builder"
 version = "0.1.0"
 dependencies = [
- "test_programs_util",
+ "test-programs-util",
 ]
 
 [[package]]
-name = "test_programs_util"
+name = "test-programs-patch-workflow"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-bindings",
+]
+
+[[package]]
+name = "test-programs-patch-workflow-builder"
+version = "0.1.0"
+dependencies = [
+ "test-programs-util",
+]
+
+[[package]]
+name = "test-programs-types-activity"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-bindings",
+]
+
+[[package]]
+name = "test-programs-types-activity-builder"
+version = "0.1.0"
+dependencies = [
+ "test-programs-util",
+]
+
+[[package]]
+name = "test-programs-types-workflow"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-bindings",
+]
+
+[[package]]
+name = "test-programs-types-workflow-builder"
+version = "0.1.0"
+dependencies = [
+ "test-programs-util",
+]
+
+[[package]]
+name = "test-programs-util"
 version = "0.1.0"
 dependencies = [
  "cargo_metadata",
@@ -2273,15 +2273,15 @@ dependencies = [
  "assert_matches",
  "runtime",
  "serde_json",
- "test_programs_fibo_activity_builder",
- "test_programs_fibo_workflow_builder",
- "test_programs_http_get_activity_builder",
- "test_programs_http_get_workflow_builder",
- "test_programs_patch_activity_broken_builder",
- "test_programs_patch_activity_fixed_builder",
- "test_programs_patch_workflow_builder",
- "test_programs_types_activity_builder",
- "test_programs_types_workflow_builder",
+ "test-programs-fibo-activity-builder",
+ "test-programs-fibo-workflow-builder",
+ "test-programs-http-get-activity-builder",
+ "test-programs-http-get-workflow-builder",
+ "test-programs-patch-activity-broken-builder",
+ "test-programs-patch-activity-fixed-builder",
+ "test-programs-patch-workflow-builder",
+ "test-programs-types-activity-builder",
+ "test-programs-types-workflow-builder",
  "tokio",
  "tracing",
  "tracing-subscriber",
