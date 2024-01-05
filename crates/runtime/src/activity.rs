@@ -195,7 +195,7 @@ impl Activity {
         if *request.fqn == HOST_ACTIVITY_SLEEP_FQN {
             // sleep
             assert_eq!(request.params.len(), 1);
-            let duration = request.params.get(0).unwrap();
+            let duration = request.params.first().unwrap();
             let duration = *assert_matches!(duration, Val::U64(v) => v);
             tokio::time::sleep(Duration::from_millis(duration)).await;
             return Ok(SupportedFunctionResult::None);
