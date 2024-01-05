@@ -91,6 +91,12 @@ pub mod workflow_id {
         }
     }
 
+    impl AsRef<WorkflowId> for WorkflowId {
+        fn as_ref(&self) -> &WorkflowId {
+            self
+        }
+    }
+
     const MIN_LEN: usize = 1;
     const MAX_LEN: usize = 32;
 

@@ -60,10 +60,10 @@ impl Runtime {
         Ok(workflow)
     }
 
-    pub async fn schedule_workflow(
+    pub async fn schedule_workflow<W: AsRef<WorkflowId>, E: AsMut<EventHistory>>(
         &self,
-        workflow_id: &WorkflowId,
-        event_history: &mut EventHistory,
+        workflow_id: W,
+        mut event_history: E,
         fqn: &FunctionFqn<'_>,
         params: &[Val],
     ) -> Result<SupportedFunctionResult, ExecutionError> {
@@ -86,9 +86,9 @@ impl Runtime {
 
         workflow
             .execute_all(
-                workflow_id,
+                workflow_id.as_ref(),
                 &activity_queue_sender,
-                event_history,
+                event_history.as_mut(),
                 fqn,
                 params,
             )

@@ -331,3 +331,9 @@ impl EventHistory {
         self.vec.len()
     }
 }
+
+impl AsMut<EventHistory> for EventHistory {
+    fn as_mut(&mut self) -> &mut EventHistory {
+        self
+    }
+}

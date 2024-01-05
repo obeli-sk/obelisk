@@ -46,8 +46,9 @@ fn workflow() -> Arc<Runtime> {
 }
 
 fn benchmark_http(criterion: &mut Criterion) {
+    const ELEMENTS: u64 = 10;
     let mut group = criterion.benchmark_group("throughput");
-    group.throughput(Throughput::Elements(1));
+    group.throughput(Throughput::Elements(ELEMENTS));
     group.bench_function("http", |b| {
         let port = RT.block_on(async {
             let server = MockServer::start().await;
@@ -63,14 +64,25 @@ fn benchmark_http(criterion: &mut Criterion) {
 
         b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
             let params = vec![wasmtime::component::Val::U16(port)];
-            let mut event_history = EventHistory::default();
             let fqn = fqn.clone();
             let runtime = runtime.clone();
             async move {
-                runtime
-                    .schedule_workflow(&WorkflowId::generate(), &mut event_history, &fqn, &params)
+                let mut futures = Vec::new();
+                for _ in 0..ELEMENTS {
+                    let event_history = EventHistory::default();
+                    let workflow_id = WorkflowId::generate();
+                    futures.push(runtime.schedule_workflow(
+                        workflow_id,
+                        event_history,
+                        &fqn,
+                        &params,
+                    ));
+                }
+                futures_util::future::join_all(futures)
                     .await
-                    .unwrap()
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
             }
         })
     });

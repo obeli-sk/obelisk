@@ -74,7 +74,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
         event_history.pop().unwrap(),
         (_, _, Err(ActivityFailed { .. }))
     );
-    let mut event_history = event_history.into();
+    let mut event_history = EventHistory::from(event_history);
 
     {
         let mut runtime = Runtime::default();
