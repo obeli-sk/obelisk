@@ -151,10 +151,13 @@ dependencies = [
  "runtime",
  "test-programs-fibo-activity-builder",
  "test-programs-fibo-workflow-builder",
+ "test-programs-http-get-activity-builder",
+ "test-programs-http-get-workflow-builder",
  "test-programs-types-activity-builder",
  "test-programs-types-workflow-builder",
  "tokio",
  "wasmtime",
+ "wiremock",
 ]
 
 [[package]]

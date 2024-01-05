@@ -9,6 +9,8 @@ rust-version.workspace = true
 runtime.workspace = true
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
+test-programs-http-get-activity-builder.workspace = true
+test-programs-http-get-workflow-builder.workspace = true
 test-programs-types-activity-builder.workspace = true
 test-programs-types-workflow-builder.workspace = true
 
@@ -16,7 +18,12 @@ criterion = { workspace = true, features = ["async_tokio"] }
 lazy_static.workspace = true
 tokio.workspace = true
 wasmtime.workspace = true
+wiremock.workspace = true
 
 [[bench]]
 name = "fibo"
+harness = false
+
+[[bench]]
+name = "http"
 harness = false
