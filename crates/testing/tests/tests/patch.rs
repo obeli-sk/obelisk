@@ -45,13 +45,9 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
                 &WorkflowConfig::default(),
             )
             .await?;
+        let workflow_id = WorkflowId::generate();
         let res = runtime
-            .schedule_workflow(
-                &WorkflowId::generate(),
-                &mut event_history,
-                &fqn,
-                &param_vals,
-            )
+            .schedule_workflow(&workflow_id, &mut event_history, &fqn, &param_vals)
             .await;
 
         assert_matches!(
@@ -60,7 +56,8 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
                 workflow_fqn,
                 activity_fqn,
                 reason: _,
-            } if workflow_fqn == fqn &&
+                workflow_id: found_id
+            } if workflow_fqn == fqn && found_id == workflow_id &&
             activity_fqn == Arc::new(FunctionFqn::new("testing:patch/patch", "noop"))
         );
         assert_eq!(
@@ -182,19 +179,15 @@ async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
+    let workflow_id = WorkflowId::generate();
     let res = runtime
-        .schedule_workflow(
-            &WorkflowId::generate(),
-            &mut event_history,
-            &fqn,
-            &param_vals,
-        )
+        .schedule_workflow(&workflow_id, &mut event_history, &fqn, &param_vals)
         .await;
 
     assert_matches!(
         res.unwrap_err(),
-        ExecutionError::NonDeterminismDetected(workflow_fqn ,_reason)
-         if workflow_fqn == fqn
+        ExecutionError::NonDeterminismDetected(found_fqn , found_id,_reason)
+         if found_fqn == fqn && found_id == workflow_id
     );
     Ok(())
 }

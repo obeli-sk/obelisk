@@ -8,6 +8,7 @@ use wasmtime::{component::Val, Config, Engine};
 use crate::{
     event_history::{SupportedFunctionResult, HOST_ACTIVITY_SLEEP_FQN},
     wasm_tools::{exported_interfaces, functions_to_metadata},
+    workflow_id::WorkflowId,
     ActivityFailed, {FunctionFqn, FunctionMetadata},
 };
 
@@ -180,15 +181,16 @@ impl Activity {
     pub(crate) async fn run(
         &self,
         request: &ActivityRequest,
+        workflow_id: &WorkflowId,
     ) -> Result<SupportedFunctionResult, ActivityFailed> {
-        debug!("Running `{fqn}`", fqn = request.fqn);
+        debug!("[{workflow_id}] Running `{fqn}`", fqn = request.fqn);
         let results_len = self
             .functions_to_metadata
             .get(&request.fqn)
             .unwrap()
             .results_len;
         trace!(
-            "Running `{fqn}`({params:?}) -> results_len:{results_len}",
+            "[{workflow_id}] Running `{fqn}`({params:?}) -> results_len:{results_len}",
             fqn = request.fqn,
             params = request.params
         );
@@ -218,7 +220,7 @@ impl Activity {
                     .await
                     .map_err(|err| ActivityFailed {
                         activity_fqn: request.fqn.clone(),
-                        reason: format!("wasm instantiation error: `{err}`"),
+                        reason: format!("[{workflow_id}] wasm instantiation error: `{err}`"),
                     })?;
                 (&instance_owned, &mut store)
             };
@@ -232,13 +234,13 @@ impl Activity {
                     .instance(&request.fqn.ifc_fqn)
                     .ok_or_else(|| ActivityFailed {
                         activity_fqn: request.fqn.clone(),
-                        reason: "cannot find exported interface".to_string(),
+                        reason: "[{workflow_id}] cannot find exported interface".to_string(),
                     })?;
             exports_instance
                 .func(&request.fqn.function_name)
                 .ok_or(ActivityFailed {
                     activity_fqn: request.fqn.clone(),
-                    reason: "function not found".to_string(),
+                    reason: "[{workflow_id}] function not found".to_string(),
                 })?
         };
         // call func
@@ -247,16 +249,19 @@ impl Activity {
             .await
             .map_err(|err| ActivityFailed {
                 activity_fqn: request.fqn.clone(),
-                reason: format!("wasm function call error: `{err}`"),
+                reason: format!("[{workflow_id}] wasm function call error: `{err}`"),
             })?;
+        let results = SupportedFunctionResult::new(results);
         func.post_return_async(&mut store)
             .await
             .map_err(|err| ActivityFailed {
                 activity_fqn: request.fqn.clone(),
-                reason: format!("wasm post function call error: `{err}`"),
+                reason: format!("[{workflow_id}] wasm post function call error: `{err}`"),
             })?;
-        let results = SupportedFunctionResult::new(results);
-        trace!("Finished `{fqn}` -> {results:?}", fqn = request.fqn);
+        trace!(
+            "[{workflow_id}] Finished `{fqn}` -> {results:?}",
+            fqn = request.fqn
+        );
         Ok(results)
     }
 

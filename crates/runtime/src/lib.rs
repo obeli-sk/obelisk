@@ -83,11 +83,15 @@ pub struct ActivityFailed {
 pub mod workflow_id {
     use std::{str::FromStr, sync::Arc};
 
-    #[derive(Debug, Clone, derive_more::Display)]
+    #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
     pub struct WorkflowId(Arc<String>);
     impl WorkflowId {
         pub fn generate() -> WorkflowId {
             ulid::Ulid::new().to_string().parse().unwrap() // ulid is 26 chars long
+        }
+
+        pub fn new(s: String) -> Self {
+            Self(Arc::new(s))
         }
     }
 

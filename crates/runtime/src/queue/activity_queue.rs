@@ -1,5 +1,6 @@
 use crate::{
     activity::{Activity, ActivityRequest},
+    workflow_id::WorkflowId,
     ActivityResponse, FunctionFqn,
 };
 use std::{collections::HashMap, sync::Arc};
@@ -11,6 +12,7 @@ pub type QueueItem = (ActivityRequest, oneshot::Sender<ActivityResponse>);
 pub(crate) struct ActivityQueueReceiver {
     pub(crate) receiver: mpsc::Receiver<QueueItem>,
     pub(crate) functions_to_activities: HashMap<Arc<FunctionFqn<'static>>, Arc<Activity>>,
+    pub(crate) workflow_id: WorkflowId,
 }
 
 impl ActivityQueueReceiver {
@@ -21,16 +23,22 @@ impl ActivityQueueReceiver {
                 .get(&request.fqn)
                 .unwrap_or_else(|| {
                     panic!(
-                        "instance must have checked its imports, yet `{}` is not found",
-                        request.fqn
+                        "[{}] instance must have checked its imports, yet `{}` is not found",
+                        self.workflow_id, request.fqn
                     )
                 });
-            let activity_res = activity.run(&request).await;
+            let activity_res = activity.run(&request, &self.workflow_id).await;
             if let Err(_err) = resp_tx.send(activity_res) {
-                warn!("Not sending back the activity result");
+                warn!(
+                    "[{}] Not sending back the activity result",
+                    self.workflow_id
+                );
             }
         }
-        debug!("ActivityQueueReceiver::process exitting");
+        debug!(
+            "[{}] ActivityQueueReceiver::process exitting",
+            self.workflow_id
+        );
     }
 }
 

@@ -2235,6 +2235,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-programs-sleep-workflow"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-bindings",
+]
+
+[[package]]
+name = "test-programs-sleep-workflow-builder"
+version = "0.1.0"
+dependencies = [
+ "test-programs-util",
+]
+
+[[package]]
 name = "test-programs-types-activity"
 version = "0.1.0"
 dependencies = [
@@ -2275,6 +2289,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_matches",
+ "futures-util",
  "runtime",
  "serde_json",
  "test-programs-fibo-activity-builder",
@@ -2284,6 +2299,7 @@ dependencies = [
  "test-programs-patch-activity-broken-builder",
  "test-programs-patch-activity-fixed-builder",
  "test-programs-patch-workflow-builder",
+ "test-programs-sleep-workflow-builder",
  "test-programs-types-activity-builder",
  "test-programs-types-workflow-builder",
  "tokio",

@@ -54,15 +54,16 @@ pub enum ExecutionError {
     #[error("workflow `{0}` not found")]
     NotFound(FunctionFqn<'static>),
     #[error("workflow `{0}` encountered non deterministic execution, reason: `{1}`")]
-    NonDeterminismDetected(FunctionFqn<'static>, String),
+    NonDeterminismDetected(FunctionFqn<'static>, WorkflowId, String),
     #[error("workflow `{workflow_fqn}`, activity `{activity_fqn}`  failed: `{reason}`")]
     ActivityFailed {
         workflow_fqn: FunctionFqn<'static>,
         activity_fqn: Arc<FunctionFqn<'static>>,
+        workflow_id: WorkflowId,
         reason: String,
     },
     #[error("workflow `{0}` encountered an unknown error: `{1:?}`")]
-    UnknownError(FunctionFqn<'static>, anyhow::Error),
+    UnknownError(FunctionFqn<'static>, WorkflowId, anyhow::Error),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -198,17 +199,23 @@ impl Workflow {
                     return Err(ExecutionError::ActivityFailed {
                         workflow_fqn: fqn.to_owned(),
                         activity_fqn,
+                        workflow_id: workflow_id.clone(),
                         reason,
                     })
                 }
                 Err(ExecutionInterrupt::NonDeterminismDetected(reason)) => {
                     return Err(ExecutionError::NonDeterminismDetected(
                         fqn.to_owned(),
+                        workflow_id.clone(),
                         reason,
                     ))
                 }
                 Err(ExecutionInterrupt::UnknownError(err)) => {
-                    return Err(ExecutionError::UnknownError(fqn.to_owned(), err))
+                    return Err(ExecutionError::UnknownError(
+                        fqn.to_owned(),
+                        workflow_id.clone(),
+                        err,
+                    ))
                 }
             }
         }
@@ -368,8 +375,8 @@ impl Workflow {
         // call func
         let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
         func.call_async(&mut store, params, &mut results).await?;
-        func.post_return_async(&mut store).await?;
         let results = SupportedFunctionResult::new(results);
+        func.post_return_async(&mut store).await?;
         trace!("[{workflow_id},{run_id}] execution result `{fqn}` -> {results:?}");
         Ok(results)
     }

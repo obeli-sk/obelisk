@@ -1,0 +1,9 @@
+[package]
+name = "test-programs-sleep-workflow-builder"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[build-dependencies]
+test-programs-util.workspace = true
