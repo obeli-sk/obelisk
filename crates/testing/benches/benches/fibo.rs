@@ -8,7 +8,7 @@ use runtime::{
     workflow_id::WorkflowId,
     FunctionFqn,
 };
-use std::{fmt::Display, sync::Arc};
+use std::{fmt::Display, ops::Deref, sync::Mutex};
 use wasmtime::component::Val;
 
 const ACTIVITY_CONFIG_COLD: ActivityConfig = ActivityConfig {
@@ -31,11 +31,11 @@ lazy_static! {
 }
 
 fn noop_workflow(
+    runtime: &mut Runtime,
     activity_config: &ActivityConfig,
     workflow_config: &WorkflowConfig,
-) -> Arc<Runtime> {
-    RT.block_on(async {
-        let mut runtime = Runtime::default();
+) {
+    RT.block_on(async move {
         runtime
             .add_activity(
                 test_programs_types_activity_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
@@ -50,7 +50,6 @@ fn noop_workflow(
             )
             .await
             .unwrap();
-        Arc::new(runtime)
     })
 }
 
@@ -62,9 +61,8 @@ fn fibonacci(n: u64) -> u64 {
     }
 }
 
-fn fibo_workflow(fibo_config: &FiboConfig) -> Arc<Runtime> {
+fn fibo_workflow(runtime: &mut Runtime, fibo_config: &FiboConfig) {
     RT.block_on(async {
-        let mut runtime = Runtime::default();
         runtime
             .add_activity(
                 test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),
@@ -79,7 +77,6 @@ fn fibo_workflow(fibo_config: &FiboConfig) -> Arc<Runtime> {
             )
             .await
             .unwrap();
-        Arc::new(runtime)
     })
 }
 
@@ -143,6 +140,7 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
         ("noopha", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
         ("noopha", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
     ];
+    let runtime = Mutex::new(Runtime::default());
     for (workflow_function, iterations, activity_config, workflow_config) in functions {
         criterion.bench_function(
             &format!(
@@ -151,12 +149,13 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
             ),
             |b| {
                 let fqn = FunctionFqn::new("testing:types-workflow/workflow", workflow_function);
-                let runtime = noop_workflow(&activity_config, &workflow_config);
+                let mut runtime = runtime.try_lock().unwrap();
+                noop_workflow(&mut runtime, &activity_config, &workflow_config);
                 b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                     let params = vec![Val::U32(iterations)];
                     let mut event_history = EventHistory::default();
                     let fqn = fqn.clone();
-                    let runtime = runtime.clone();
+                    let runtime = runtime.deref();
                     async move {
                         runtime
                             .schedule_workflow(
@@ -198,18 +197,20 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
         FiboConfig::new("fiboa", 10, 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
         FiboConfig::new("fiboa", 10, 100, ACTIVITY_CONFIG_HOT, WORKFLOW_CONFIG_HOT),
     ];
+    let runtime = Mutex::new(Runtime::default());
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {
             let fqn = FunctionFqn::new(
                 "testing:fibo-workflow/workflow",
                 fibo_config.workflow_function,
             );
-            let runtime = fibo_workflow(&fibo_config);
+            let mut runtime = runtime.try_lock().unwrap();
+            fibo_workflow(&mut runtime, &fibo_config);
             b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                 let params = vec![Val::U8(fibo_config.n), Val::U32(fibo_config.iterations)];
                 let mut event_history = EventHistory::default();
                 let fqn = fqn.clone();
-                let runtime = runtime.clone();
+                let runtime = runtime.deref();
                 async move {
                     runtime
                         .schedule_workflow(
@@ -234,18 +235,20 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
         FiboConfig::new("fibow", 40, 10, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
         FiboConfig::new("fiboa", 40, 10, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
     ];
+    let runtime = Mutex::new(Runtime::default());
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {
             let fqn = FunctionFqn::new(
                 "testing:fibo-workflow/workflow",
                 fibo_config.workflow_function,
             );
-            let runtime = fibo_workflow(&fibo_config);
+            let mut runtime = runtime.try_lock().unwrap();
+            fibo_workflow(&mut runtime, &fibo_config);
             b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                 let params = vec![Val::U8(fibo_config.n), Val::U32(fibo_config.iterations)];
                 let mut event_history = EventHistory::default();
                 let fqn = fqn.clone();
-                let runtime = runtime.clone();
+                let runtime = runtime.deref();
                 async move {
                     runtime
                         .schedule_workflow(

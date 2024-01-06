@@ -36,7 +36,7 @@ impl ActivityQueueReceiver {
             }
         }
         debug!(
-            "[{}] ActivityQueueReceiver::process exitting",
+            "[{}] ActivityQueueReceiver::process exiting",
             self.workflow_id
         );
     }

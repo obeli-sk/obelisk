@@ -3,7 +3,7 @@ use assert_matches::assert_matches;
 use std::{collections::HashMap, fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, trace};
-use wasmtime::{component::Val, Config, Engine};
+use wasmtime::{component::Val, Engine};
 
 use crate::{
     event_history::{SupportedFunctionResult, HOST_ACTIVITY_SLEEP_FQN},
@@ -12,17 +12,6 @@ use crate::{
     ActivityFailed, {FunctionFqn, FunctionMetadata},
 };
 
-lazy_static::lazy_static! {
-    static ref ENGINE: Engine = {
-        let mut config = Config::new();
-        // TODO: limit execution with epoch_interruption
-        config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
-        config.wasm_component_model(true);
-        config.async_support(true);
-        config.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(wasmtime::PoolingAllocationConfig::default()));
-        Engine::new(&config).unwrap()
-    };
-}
 mod http {
     // wasmtime/crates/wasi-http/tests/all/main.rs
     use wasmtime::{Engine, Store};
@@ -104,6 +93,7 @@ enum PreloadHolder {
 }
 
 pub struct Activity {
+    engine: Arc<Engine>,
     functions_to_metadata: HashMap<Arc<FunctionFqn<'static>>, FunctionMetadata>,
     instance_pre: wasmtime::component::InstancePre<http::Ctx>,
     preload_holder: PreloadHolder,
@@ -111,13 +101,10 @@ pub struct Activity {
 }
 
 impl Activity {
-    pub async fn new(wasm_path: String) -> Result<Self, anyhow::Error> {
-        Self::new_with_config(wasm_path, &ActivityConfig::default()).await
-    }
-
     pub async fn new_with_config(
         wasm_path: String,
         config: &ActivityConfig,
+        engine: Arc<Engine>,
     ) -> Result<Self, anyhow::Error> {
         let wasm =
             std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
@@ -136,7 +123,7 @@ impl Activity {
         );
 
         let instance_pre: wasmtime::component::InstancePre<http::Ctx> = {
-            let mut linker = wasmtime::component::Linker::new(&ENGINE);
+            let mut linker = wasmtime::component::Linker::new(&engine);
             wasmtime_wasi::preview2::command::add_to_linker(&mut linker)?;
             wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(
                 &mut linker,
@@ -144,19 +131,20 @@ impl Activity {
             )?;
             wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t)?;
             // Compile the wasm component
-            let component = wasmtime::component::Component::from_binary(&ENGINE, &wasm)?;
+            let component = wasmtime::component::Component::from_binary(&engine, &wasm)?;
             linker.instantiate_pre(&component)?
         };
 
         let preload_holder = match config.preload {
             ActivityPreload::Preinstance => PreloadHolder::Preinstance,
             ActivityPreload::Instance => {
-                let mut store = http::store(&ENGINE);
+                let mut store = http::store(&engine);
                 let instance = instance_pre.instantiate_async(&mut store).await?;
                 PreloadHolder::Instance(instance, Mutex::new(store))
             }
         };
         Ok(Self {
+            engine,
             instance_pre,
             wasm_path,
             functions_to_metadata,
@@ -213,7 +201,7 @@ impl Activity {
                 store_guard = store_guard2;
                 (instance, store_guard.deref_mut())
             } else {
-                store = http::store(&ENGINE);
+                store = http::store(&self.engine);
                 instance_owned = self
                     .instance_pre
                     .instantiate_async(&mut store)

@@ -1,6 +1,6 @@
 use runtime::{
     event_history::EventHistory,
-    runtime::Runtime,
+    runtime::{EngineConfig, Runtime, RuntimeConfig},
     workflow::{AsyncActivityBehavior, WorkflowConfig},
     workflow_id::WorkflowId,
     FunctionFqn,
@@ -63,10 +63,17 @@ static COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new
 async fn test_limit() -> Result<(), anyhow::Error> {
     set_up();
 
-    const ITERATIONS: u64 = 10;
-    const SLEEP_MILLIS: u64 = 10;
+    const ITERATIONS: u64 = 2;
+    const SLEEP_MILLIS: u64 = 0;
 
-    let mut runtime = Runtime::default();
+    let mut pooling_config = wasmtime::PoolingAllocationConfig::default();
+    pooling_config.total_core_instances(2);
+    let mut runtime = Runtime::new_with_config(RuntimeConfig {
+        workflow_engine_config: EngineConfig {
+            allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pooling_config),
+        },
+        activity_engine_config: EngineConfig::default(),
+    });
     runtime
         .add_workflow_definition(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW.to_string(),

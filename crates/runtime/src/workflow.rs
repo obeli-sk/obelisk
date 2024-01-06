@@ -17,20 +17,8 @@ use wasmtime::AsContextMut;
 use wasmtime::{
     self,
     component::{Component, InstancePre, Linker},
-    Config, Engine, Store,
+    Engine, Store,
 };
-
-lazy_static::lazy_static! {
-    static ref ENGINE: Engine = {
-        let mut config = Config::new();
-        // TODO: limit execution with fuel
-        config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
-        config.wasm_component_model(true);
-        config.async_support(true);
-        config.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(wasmtime::PoolingAllocationConfig::default()));
-        Engine::new(&config).unwrap()
-    };
-}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum AsyncActivityBehavior {
@@ -79,6 +67,7 @@ enum ExecutionInterrupt {
 }
 
 pub struct Workflow {
+    engine: Arc<Engine>,
     pub(crate) wasm_path: String,
     instance_pre: InstancePre<HostImports>,
     pub(crate) functions_to_metadata: HashMap<Arc<FunctionFqn<'static>>, FunctionMetadata>,
@@ -90,13 +79,14 @@ impl Workflow {
         wasm_path: String,
         activities: &HashMap<Arc<FunctionFqn<'static>>, Arc<Activity>>,
         config: &WorkflowConfig,
+        engine: Arc<Engine>,
     ) -> Result<Self, anyhow::Error> {
         info!("Loading workflow definition from `{wasm_path}`");
         let wasm =
             std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
         let instance_pre = {
-            let mut linker = Linker::new(&ENGINE);
-            let component = Component::from_binary(&ENGINE, &wasm)?;
+            let mut linker = Linker::new(&engine);
+            let component = Component::from_binary(&engine, &wasm)?;
             // Add workflow host activities
             HostImports::add_to_linker(&mut linker)?;
             // Add wasm activities
@@ -146,6 +136,7 @@ impl Workflow {
             instance_pre,
             functions_to_metadata,
             async_activity_behavior: config.async_activity_behavior,
+            engine,
         })
     }
 
@@ -235,7 +226,7 @@ impl Workflow {
         results_len: usize,
     ) -> Result<SupportedFunctionResult, ExecutionInterrupt> {
         let mut store = Store::new(
-            &ENGINE,
+            &self.engine,
             HostImports {
                 current_event_history: CurrentEventHistory::new(
                     workflow_id.clone(),
