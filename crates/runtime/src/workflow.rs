@@ -50,6 +50,8 @@ pub enum ExecutionError {
         workflow_id: WorkflowId,
         reason: String,
     },
+    #[error("Limit reached: `{0}`")]
+    LimitReached(String),
     #[error("workflow `{0}` encountered an unknown error: `{1:?}`")]
     UnknownError(FunctionFqn<'static>, WorkflowId, anyhow::Error),
 }
@@ -62,6 +64,8 @@ enum ExecutionInterrupt {
     NewEventPersisted,
     #[error(transparent)]
     ActivityFailed(ActivityFailed),
+    #[error("Limit reached: `{0}`")]
+    LimitReached(String),
     #[error("unknown error: `{0:?}`")]
     UnknownError(anyhow::Error),
 }
@@ -201,6 +205,9 @@ impl Workflow {
                         reason,
                     ))
                 }
+                Err(ExecutionInterrupt::LimitReached(reason)) => {
+                    return Err(ExecutionError::LimitReached(reason))
+                }
                 Err(ExecutionInterrupt::UnknownError(err)) => {
                     return Err(ExecutionError::UnknownError(
                         fqn.to_owned(),
@@ -336,7 +343,14 @@ impl Workflow {
                 // TODO: persist activity failure
                 ExecutionInterrupt::ActivityFailed(activity_failed.clone())
             }
-            None => ExecutionInterrupt::UnknownError(err),
+            None => {
+                let reason = err.to_string();
+                if reason.starts_with("maximum concurrent ") {
+                    ExecutionInterrupt::LimitReached(reason)
+                } else {
+                    ExecutionInterrupt::UnknownError(err)
+                }
+            }
         }
     }
 
