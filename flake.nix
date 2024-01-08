@@ -25,6 +25,7 @@
             nativeBuildInputs = with pkgs; [
               cargo-component
               cargo-expand
+              cargo-nextest
               nixpkgs-fmt
               pkg-config
               rustToolchain
