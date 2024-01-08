@@ -5,6 +5,7 @@ use runtime::{
     workflow::AsyncActivityBehavior, workflow::WorkflowConfig, workflow_id::WorkflowId,
     FunctionFqn,
 };
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use wiremock::{
@@ -45,7 +46,15 @@ fn workflow() -> Arc<Runtime> {
     })
 }
 
+static COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
 fn benchmark_http(criterion: &mut Criterion) {
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     const ELEMENTS: u64 = 10;
     let mut group = criterion.benchmark_group("throughput");
     group.throughput(Throughput::Elements(ELEMENTS));
@@ -70,7 +79,8 @@ fn benchmark_http(criterion: &mut Criterion) {
                 let mut futures = Vec::new();
                 for _ in 0..ELEMENTS {
                     let event_history = EventHistory::default();
-                    let workflow_id = WorkflowId::generate();
+                    let workflow_id =
+                        WorkflowId::new(COUNTER.fetch_add(1, Ordering::SeqCst).to_string());
                     futures.push(runtime.schedule_workflow(
                         workflow_id,
                         event_history,
