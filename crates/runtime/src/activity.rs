@@ -107,13 +107,11 @@ impl Activity {
         engine: Arc<Engine>,
     ) -> Result<Self, anyhow::Error> {
         let wasm =
-            std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
-        let decoded =
-            wit_component::decode(&wasm).with_context(|| format!("cannot decode `{wasm_path}`"))?;
-
+            std::fs::read(&wasm_path).with_context(|| format!("cannot open \"{wasm_path}\""))?;
+        let decoded = wit_component::decode(&wasm)
+            .with_context(|| format!("cannot decode \"{wasm_path}\""))?;
         let exported_interfaces = exported_interfaces(&decoded)
-            .with_context(|| format!("error parsing `{wasm_path}`"))?;
-
+            .with_context(|| format!("error parsing \"{wasm_path}\""))?;
         let functions_to_metadata = functions_to_metadata(exported_interfaces)?;
         assert!(
             functions_to_metadata
@@ -121,7 +119,8 @@ impl Activity {
                 .is_none(),
             "host function `{HOST_ACTIVITY_SLEEP_FQN}` cannot overlap with wasm activity"
         );
-
+        debug!("Decoded functions {:?}", functions_to_metadata.keys());
+        trace!("Decoded functions {functions_to_metadata:#?}");
         let instance_pre: wasmtime::component::InstancePre<http::Ctx> = {
             let mut linker = wasmtime::component::Linker::new(&engine);
             wasmtime_wasi::preview2::command::add_to_linker(&mut linker)?;
@@ -134,7 +133,6 @@ impl Activity {
             let component = wasmtime::component::Component::from_binary(&engine, &wasm)?;
             linker.instantiate_pre(&component)?
         };
-
         let preload_holder = match config.preload {
             ActivityPreload::Preinstance => PreloadHolder::Preinstance,
             ActivityPreload::Instance => {
@@ -260,7 +258,7 @@ impl Activity {
 
 impl Debug for Activity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut s = f.debug_struct("Activities");
+        let mut s = f.debug_struct("Activity");
         s.field("functions_to_metadata", &self.functions_to_metadata);
         s.field("wasm_path", &self.wasm_path);
         s.finish()

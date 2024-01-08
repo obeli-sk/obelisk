@@ -7,7 +7,7 @@ use crate::{FunctionFqn, FunctionMetadata};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{info, trace, warn};
 use wasmtime::component::Val;
 use wasmtime::Engine;
 
@@ -77,6 +77,7 @@ impl Runtime {
         activity_wasm_path: String,
         config: &ActivityConfig,
     ) -> Result<(), anyhow::Error> {
+        info!("Loading activity from \"{activity_wasm_path}\"");
         let activity = Arc::new(
             Activity::new_with_config(activity_wasm_path, config, self.activity_engine.clone())
                 .await?,
@@ -100,6 +101,7 @@ impl Runtime {
         workflow_wasm_path: String,
         config: &WorkflowConfig,
     ) -> Result<Arc<Workflow>, anyhow::Error> {
+        info!("Loading workflow definition from \"{workflow_wasm_path}\"");
         let workflow = Arc::new(
             Workflow::new_with_config(
                 workflow_wasm_path,
@@ -109,6 +111,7 @@ impl Runtime {
             )
             .await?,
         );
+        trace!("Loaded {workflow:#?}");
         for fqn in workflow.functions() {
             if let Some(old) = self
                 .functions_to_workflows
@@ -130,6 +133,10 @@ impl Runtime {
         fqn: &FunctionFqn<'_>,
         params: &[Val],
     ) -> Result<SupportedFunctionResult, ExecutionError> {
+        info!(
+            "[{workflow_id}] Scheduling workflow `{fqn}`",
+            workflow_id = workflow_id.as_ref()
+        );
         let (queue_sender, queue_receiver) = mpsc::channel(100); // FIXME
         let mut activity_queue_receiver = ActivityQueueReceiver {
             receiver: queue_receiver,

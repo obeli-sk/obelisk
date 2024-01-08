@@ -85,9 +85,12 @@ impl Workflow {
         config: &WorkflowConfig,
         engine: Arc<Engine>,
     ) -> Result<Self, anyhow::Error> {
-        info!("Loading workflow definition from `{wasm_path}`");
         let wasm =
-            std::fs::read(&wasm_path).with_context(|| format!("cannot open `{wasm_path}`"))?;
+            std::fs::read(&wasm_path).with_context(|| format!("cannot open \"{wasm_path}\""))?;
+        let functions_to_metadata = decode_wasm_function_metadata(&wasm)
+            .with_context(|| format!("error parsing \"{wasm_path}\""))?;
+        debug!("Decoded functions {:?}", functions_to_metadata.keys());
+        trace!("Decoded functions {functions_to_metadata:#?}");
         let instance_pre = {
             let mut linker = Linker::new(&engine);
             let component = Component::from_binary(&engine, &wasm)?;
@@ -95,6 +98,7 @@ impl Workflow {
             HostImports::add_to_linker(&mut linker)?;
             // Add wasm activities
             for fqn in activities.keys() {
+                trace!("Adding function `{fqn}` to the linker");
                 let mut linker_instance = linker.instance(&fqn.ifc_fqn)?;
                 let fqn_inner = fqn.clone();
                 linker_instance
@@ -127,14 +131,11 @@ impl Workflow {
                             })
                         },
                     )
-                    .with_context(|| format!(" `{fqn}`"))?;
+                    .with_context(|| format!("adding activity `{fqn}` to the linker"))?;
             }
             linker.instantiate_pre(&component)?
         };
-        let functions_to_metadata = decode_wasm_function_metadata(&wasm)
-            .with_context(|| format!("error parsing `{wasm_path}`"))?;
-        debug!("Loaded {:?}", functions_to_metadata.keys());
-        trace!("Loaded {:?}", functions_to_metadata);
+
         Ok(Self {
             wasm_path,
             instance_pre,
@@ -393,4 +394,13 @@ fn decode_wasm_function_metadata(
     let decoded = wit_component::decode(wasm)?;
     let exported_interfaces = exported_interfaces(&decoded)?;
     Ok(functions_to_metadata(exported_interfaces)?)
+}
+
+impl Debug for Workflow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("Workflow");
+        s.field("functions_to_metadata", &self.functions_to_metadata);
+        s.field("wasm_path", &self.wasm_path);
+        s.finish()
+    }
 }
