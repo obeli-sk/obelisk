@@ -6,15 +6,23 @@ use runtime::{
     workflow_id::WorkflowId,
     FunctionFqn,
 };
+use std::sync::Once;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
 
+static INIT: Once = Once::new();
+fn set_up() {
+    INIT.call_once(|| {
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .init();
+    });
+}
+
 #[tokio::test]
-async fn test() -> Result<(), anyhow::Error> {
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .init();
+async fn test_fibow_fiboa() -> Result<(), anyhow::Error> {
+    set_up();
 
     let mut runtime = Runtime::default();
     runtime

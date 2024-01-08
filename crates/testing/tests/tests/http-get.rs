@@ -6,7 +6,7 @@ use runtime::{
     workflow_id::WorkflowId,
     FunctionFqn,
 };
-use std::time::Instant;
+use std::{sync::Once, time::Instant};
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
@@ -15,12 +15,19 @@ use wiremock::{
     Mock, MockServer, ResponseTemplate,
 };
 
+static INIT: Once = Once::new();
+fn set_up() {
+    INIT.call_once(|| {
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .init();
+    });
+}
+
 #[tokio::test]
 async fn test() -> Result<(), anyhow::Error> {
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .init();
+    set_up();
 
     let mut runtime = Runtime::default();
     runtime

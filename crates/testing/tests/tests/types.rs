@@ -1,3 +1,5 @@
+use std::sync::Once;
+
 use runtime::{
     activity::ActivityConfig,
     event_history::{EventHistory, SupportedFunctionResult},
@@ -8,12 +10,19 @@ use runtime::{
 };
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
+static INIT: Once = Once::new();
+fn set_up() {
+    INIT.call_once(|| {
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .init();
+    });
+}
+
 #[tokio::test]
 async fn test() -> Result<(), anyhow::Error> {
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .init();
+    set_up();
 
     let mut runtime = Runtime::default();
     runtime
