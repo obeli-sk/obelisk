@@ -95,3 +95,7 @@ pub(crate) fn functions_to_metadata<'a>(
     }
     Ok(functions_to_results)
 }
+
+pub(crate) fn is_limit_reached(reason: &str) -> bool {
+    reason.starts_with("maximum concurrent ")
+}

@@ -23,6 +23,7 @@ val-json.workspace = true
 
 anyhow.workspace = true
 assert_matches.workspace = true
+derive_more.workspace = true
 futures-util.workspace = true
 rstest.workspace = true
 serde_json.workspace = true

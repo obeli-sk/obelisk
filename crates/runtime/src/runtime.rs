@@ -7,7 +7,7 @@ use crate::{FunctionFqn, FunctionMetadata};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{info, trace, warn};
+use tracing::{info, warn};
 use wasmtime::component::Val;
 use wasmtime::Engine;
 
@@ -111,7 +111,6 @@ impl Runtime {
             )
             .await?,
         );
-        trace!("Loaded {workflow:#?}");
         for fqn in workflow.functions() {
             if let Some(old) = self
                 .functions_to_workflows
@@ -133,15 +132,13 @@ impl Runtime {
         fqn: &FunctionFqn<'_>,
         params: &[Val],
     ) -> Result<SupportedFunctionResult, ExecutionError> {
-        info!(
-            "[{workflow_id}] Scheduling workflow `{fqn}`",
-            workflow_id = workflow_id.as_ref()
-        );
+        let workflow_id = workflow_id.as_ref();
+        info!("[{workflow_id}] Scheduling workflow `{fqn}`",);
         let (queue_sender, queue_receiver) = mpsc::channel(100); // FIXME
         let mut activity_queue_receiver = ActivityQueueReceiver {
             receiver: queue_receiver,
             functions_to_activities: self.functions_to_activities.clone(),
-            workflow_id: workflow_id.as_ref().clone(),
+            workflow_id: workflow_id.clone(),
         };
         // TODO: allow cancelling this task
         tokio::spawn(async move { activity_queue_receiver.process().await }).abort_handle();
@@ -152,12 +149,15 @@ impl Runtime {
         let workflow = self
             .functions_to_workflows
             .get(fqn)
-            .ok_or_else(|| ExecutionError::NotFound(fqn.to_owned()))?
+            .ok_or_else(|| ExecutionError::NotFound {
+                workflow_id: workflow_id.clone(),
+                fqn: fqn.to_owned(),
+            })?
             .clone();
 
         workflow
             .execute_all(
-                workflow_id.as_ref(),
+                workflow_id,
                 &activity_queue_sender,
                 event_history.as_mut(),
                 fqn,

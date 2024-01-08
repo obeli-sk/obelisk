@@ -56,8 +56,9 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
                 workflow_fqn,
                 activity_fqn,
                 reason: _,
-                workflow_id: found_id
-            } if workflow_fqn == fqn && found_id == workflow_id &&
+                workflow_id: found_workflow_id,
+                run_id,
+            } if workflow_fqn == fqn && found_workflow_id == workflow_id && run_id == 5 &&
             activity_fqn == Arc::new(FunctionFqn::new("testing:patch/patch", "noop"))
         );
         assert_eq!(
@@ -69,7 +70,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
     let mut event_history: Vec<_> = event_history.into();
     assert_matches!(
         event_history.pop().unwrap(),
-        (_, _, Err(ActivityFailed { .. }))
+        (_, _, Err(ActivityFailed::Other { .. }))
     );
     let mut event_history = EventHistory::from(event_history);
 
@@ -186,8 +187,13 @@ async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
 
     assert_matches!(
         res.unwrap_err(),
-        ExecutionError::NonDeterminismDetected(found_fqn , found_id,_reason)
-         if found_fqn == fqn && found_id == workflow_id
+        ExecutionError::NonDeterminismDetected {
+            fqn: found_fqn ,
+            workflow_id: found_id,
+            reason,
+            run_id
+        }
+        if found_fqn == fqn && found_id == workflow_id && run_id == 0 && reason == "replay log was not drained"
     );
     Ok(())
 }

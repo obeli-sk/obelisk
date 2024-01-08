@@ -4,7 +4,7 @@ use crate::event_history::{
     SupportedFunctionResult,
 };
 use crate::queue::activity_queue::ActivityQueueSender;
-use crate::wasm_tools::{exported_interfaces, functions_to_metadata};
+use crate::wasm_tools::{exported_interfaces, functions_to_metadata, is_limit_reached};
 use crate::workflow_id::WorkflowId;
 use crate::{ActivityFailed, FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, Context};
@@ -39,21 +39,49 @@ pub struct WorkflowConfig {
 
 #[derive(thiserror::Error, Debug)]
 pub enum ExecutionError {
-    #[error("workflow `{0}` not found")]
-    NotFound(FunctionFqn<'static>),
-    #[error("workflow `{0}` encountered non deterministic execution, reason: `{1}`")]
-    NonDeterminismDetected(FunctionFqn<'static>, WorkflowId, String),
-    #[error("workflow `{workflow_fqn}`, activity `{activity_fqn}`  failed: `{reason}`")]
-    ActivityFailed {
-        workflow_fqn: FunctionFqn<'static>,
-        activity_fqn: Arc<FunctionFqn<'static>>,
+    #[error("[{workflow_id}] workflow `{fqn}` not found")]
+    NotFound {
         workflow_id: WorkflowId,
+        fqn: FunctionFqn<'static>,
+    },
+    #[error("[{workflow_id},{run_id}] workflow `{fqn}` encountered non deterministic execution, reason: `{reason}`")]
+    NonDeterminismDetected {
+        workflow_id: WorkflowId,
+        run_id: u64,
+        fqn: FunctionFqn<'static>,
         reason: String,
     },
-    #[error("Limit reached: `{0}`")]
-    LimitReached(String),
-    #[error("workflow `{0}` encountered an unknown error: `{1:?}`")]
-    UnknownError(FunctionFqn<'static>, WorkflowId, anyhow::Error),
+    #[error("[{workflow_id},{run_id}] activity failed, workflow `{workflow_fqn}`, activity `{activity_fqn}`, reason: `{reason}`")]
+    ActivityFailed {
+        workflow_id: WorkflowId,
+        run_id: u64,
+        workflow_fqn: FunctionFqn<'static>,
+        activity_fqn: Arc<FunctionFqn<'static>>,
+        reason: String,
+    },
+    #[error("[{workflow_id},{run_id}] workflow limit reached, workflow `{workflow_fqn}`, reason: `{reason}`")]
+    LimitReached {
+        workflow_id: WorkflowId,
+        run_id: u64,
+        workflow_fqn: FunctionFqn<'static>,
+        reason: String,
+    },
+    #[error("[{workflow_id},{run_id}] activity limit reached, workflow `{workflow_fqn}`, activity `{activity_fqn}`, reason: `{reason}`")]
+    ActivityLimitReached {
+        workflow_id: WorkflowId,
+        run_id: u64,
+        workflow_fqn: FunctionFqn<'static>,
+        activity_fqn: Arc<FunctionFqn<'static>>,
+        reason: String,
+    },
+    #[error("[{workflow_id},{run_id}] `{fqn}` encountered an unknown error: `{source:?}`")]
+    UnknownError {
+        workflow_id: WorkflowId,
+        run_id: u64,
+        fqn: FunctionFqn<'static>,
+        // #[backtrace]
+        source: anyhow::Error,
+    },
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -64,7 +92,7 @@ enum ExecutionInterrupt {
     NewEventPersisted,
     #[error(transparent)]
     ActivityFailed(ActivityFailed),
-    #[error("Limit reached: `{0}`")]
+    #[error("limit reached: `{0}`")]
     LimitReached(String),
     #[error("unknown error: `{0:?}`")]
     UnknownError(anyhow::Error),
@@ -173,7 +201,10 @@ impl Workflow {
         let results_len = self
             .functions_to_metadata
             .get(fqn)
-            .ok_or_else(|| ExecutionError::NotFound(fqn.to_owned()))?
+            .ok_or_else(|| ExecutionError::NotFound {
+                workflow_id: workflow_id.clone(),
+                fqn: fqn.to_owned(),
+            })?
             .results_len;
         trace!(
             "[{workflow_id}] workflow.execute_all `{fqn}`({params:?}) -> results_len:{results_len}"
@@ -195,33 +226,57 @@ impl Workflow {
             match res {
                 Ok(output) => return Ok(output), // TODO Persist the workflow result to the history
                 Err(ExecutionInterrupt::NewEventPersisted) => {} // loop again to get to the next step
-                Err(ExecutionInterrupt::ActivityFailed(ActivityFailed {
+                Err(ExecutionInterrupt::ActivityFailed(ActivityFailed::Other {
+                    workflow_id: id,
                     activity_fqn,
                     reason,
                 })) => {
+                    assert_eq!(id, *workflow_id);
                     return Err(ExecutionError::ActivityFailed {
+                        workflow_id: id,
+                        run_id,
                         workflow_fqn: fqn.to_owned(),
                         activity_fqn,
+                        reason,
+                    });
+                }
+                Err(ExecutionInterrupt::ActivityFailed(ActivityFailed::LimitReached {
+                    workflow_id: id,
+                    activity_fqn,
+                    reason,
+                })) => {
+                    assert_eq!(id, *workflow_id);
+                    return Err(ExecutionError::ActivityLimitReached {
+                        workflow_id: id,
+                        run_id,
+                        workflow_fqn: fqn.to_owned(),
+                        activity_fqn,
+                        reason,
+                    });
+                }
+                Err(ExecutionInterrupt::NonDeterminismDetected(reason)) => {
+                    return Err(ExecutionError::NonDeterminismDetected {
                         workflow_id: workflow_id.clone(),
+                        run_id,
+                        fqn: fqn.to_owned(),
                         reason,
                     })
                 }
-                Err(ExecutionInterrupt::NonDeterminismDetected(reason)) => {
-                    return Err(ExecutionError::NonDeterminismDetected(
-                        fqn.to_owned(),
-                        workflow_id.clone(),
-                        reason,
-                    ))
-                }
                 Err(ExecutionInterrupt::LimitReached(reason)) => {
-                    return Err(ExecutionError::LimitReached(reason))
+                    return Err(ExecutionError::LimitReached {
+                        workflow_id: workflow_id.clone(),
+                        run_id,
+                        workflow_fqn: fqn.to_owned(),
+                        reason,
+                    })
                 }
-                Err(ExecutionInterrupt::UnknownError(err)) => {
-                    return Err(ExecutionError::UnknownError(
-                        fqn.to_owned(),
-                        workflow_id.clone(),
-                        err,
-                    ))
+                Err(ExecutionInterrupt::UnknownError(source)) => {
+                    return Err(ExecutionError::UnknownError {
+                        workflow_id: workflow_id.clone(),
+                        run_id,
+                        fqn: fqn.to_owned(),
+                        source,
+                    })
                 }
             }
         }
@@ -353,7 +408,7 @@ impl Workflow {
             }
             None => {
                 let reason = err.to_string();
-                if reason.starts_with("maximum concurrent ") {
+                if is_limit_reached(&reason) {
                     ExecutionInterrupt::LimitReached(reason)
                 } else {
                     ExecutionInterrupt::UnknownError(err)

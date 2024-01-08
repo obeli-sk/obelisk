@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 use val_json::{TypeWrapper, UnsupportedTypeError, ValWrapper};
+use workflow_id::WorkflowId;
 
 pub mod activity;
 pub mod event_history;
@@ -78,10 +79,20 @@ impl FunctionMetadata {
 pub type ActivityResponse = Result<SupportedFunctionResult, ActivityFailed>;
 
 #[derive(thiserror::Error, Debug, Clone)]
-#[error("activity `{activity_fqn}` failed: {reason}")]
-pub struct ActivityFailed {
-    activity_fqn: Arc<FunctionFqn<'static>>,
-    reason: String,
+pub enum ActivityFailed {
+    // TODO: add run_id
+    #[error("[{workflow_id}] limit reached for activity `{activity_fqn}` - {reason}")]
+    LimitReached {
+        workflow_id: WorkflowId,
+        activity_fqn: Arc<FunctionFqn<'static>>,
+        reason: String,
+    },
+    #[error("[{workflow_id}] activity `{activity_fqn}` failed - {reason}")]
+    Other {
+        workflow_id: WorkflowId,
+        activity_fqn: Arc<FunctionFqn<'static>>,
+        reason: String,
+    },
 }
 
 pub mod workflow_id {

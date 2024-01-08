@@ -7,7 +7,7 @@ use wasmtime::{component::Val, Engine};
 
 use crate::{
     event_history::{SupportedFunctionResult, HOST_ACTIVITY_SLEEP_FQN},
-    wasm_tools::{exported_interfaces, functions_to_metadata},
+    wasm_tools::{exported_interfaces, functions_to_metadata, is_limit_reached},
     workflow_id::WorkflowId,
     ActivityFailed, {FunctionFqn, FunctionMetadata},
 };
@@ -204,9 +204,21 @@ impl Activity {
                     .instance_pre
                     .instantiate_async(&mut store)
                     .await
-                    .map_err(|err| ActivityFailed {
-                        activity_fqn: request.fqn.clone(),
-                        reason: format!("[{workflow_id}] wasm instantiation error: `{err}`"),
+                    .map_err(|err| {
+                        let reason = err.to_string();
+                        if is_limit_reached(&reason) {
+                            ActivityFailed::LimitReached {
+                                workflow_id: workflow_id.clone(),
+                                activity_fqn: request.fqn.clone(),
+                                reason,
+                            }
+                        } else {
+                            ActivityFailed::Other {
+                                workflow_id: workflow_id.clone(),
+                                activity_fqn: request.fqn.clone(),
+                                reason: format!("wasm instantiation error: `{err}`"),
+                            }
+                        }
                     })?;
                 (&instance_owned, &mut store)
             };
@@ -218,31 +230,35 @@ impl Activity {
             let mut exports_instance =
                 exports_instance
                     .instance(&request.fqn.ifc_fqn)
-                    .ok_or_else(|| ActivityFailed {
+                    .ok_or_else(|| ActivityFailed::Other {
+                        workflow_id: workflow_id.clone(),
                         activity_fqn: request.fqn.clone(),
-                        reason: "[{workflow_id}] cannot find exported interface".to_string(),
+                        reason: "cannot find exported interface".to_string(),
                     })?;
             exports_instance
                 .func(&request.fqn.function_name)
-                .ok_or(ActivityFailed {
+                .ok_or(ActivityFailed::Other {
+                    workflow_id: workflow_id.clone(),
                     activity_fqn: request.fqn.clone(),
-                    reason: "[{workflow_id}] function not found".to_string(),
+                    reason: "function not found".to_string(),
                 })?
         };
         // call func
         let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
         func.call_async(&mut store, &request.params, &mut results)
             .await
-            .map_err(|err| ActivityFailed {
+            .map_err(|err| ActivityFailed::Other {
+                workflow_id: workflow_id.clone(),
                 activity_fqn: request.fqn.clone(),
-                reason: format!("[{workflow_id}] wasm function call error: `{err}`"),
+                reason: format!("wasm function call error: `{err}`"),
             })?;
         let results = SupportedFunctionResult::new(results);
         func.post_return_async(&mut store)
             .await
-            .map_err(|err| ActivityFailed {
+            .map_err(|err| ActivityFailed::Other {
+                workflow_id: workflow_id.clone(),
                 activity_fqn: request.fqn.clone(),
-                reason: format!("[{workflow_id}] wasm post function call error: `{err}`"),
+                reason: format!("wasm post function call error: `{err}`"),
             })?;
         trace!(
             "[{workflow_id}] Finished `{fqn}` -> {results:?}",
