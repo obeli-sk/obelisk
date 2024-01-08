@@ -101,37 +101,44 @@ impl Workflow {
                 trace!("Adding function `{fqn}` to the linker");
                 let mut linker_instance = linker.instance(&fqn.ifc_fqn)?;
                 let fqn_inner = fqn.clone();
-                linker_instance
-                    .func_new_async(
-                        &component,
-                        &fqn.function_name,
-                        move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
-                              params: &[Val],
-                              results: &mut [Val]| {
-                            let fqn_inner = fqn_inner.clone();
-                            Box::new(async move {
-                                let event = Event::new_from_wasm_activity(
-                                    fqn_inner,
-                                    Arc::new(Vec::from(params)),
-                                );
-                                let store = store_ctx.data_mut();
-                                let activity_result = store
-                                    .current_event_history
-                                    .replay_handle_interrupt(event)
-                                    .await?;
-                                assert_eq!(
-                                    results.len(),
-                                    activity_result.len(),
-                                    "unexpected results length"
-                                );
-                                for (idx, item) in activity_result.into_iter().enumerate() {
-                                    results[idx] = item;
-                                }
-                                Ok(())
-                            })
-                        },
-                    )
-                    .with_context(|| format!("adding activity `{fqn}` to the linker"))?;
+                let res = linker_instance.func_new_async(
+                    &component,
+                    &fqn.function_name,
+                    move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
+                          params: &[Val],
+                          results: &mut [Val]| {
+                        let fqn_inner = fqn_inner.clone();
+                        Box::new(async move {
+                            let event = Event::new_from_wasm_activity(
+                                fqn_inner,
+                                Arc::new(Vec::from(params)),
+                            );
+                            let store = store_ctx.data_mut();
+                            let activity_result = store
+                                .current_event_history
+                                .replay_handle_interrupt(event)
+                                .await?;
+                            assert_eq!(
+                                results.len(),
+                                activity_result.len(),
+                                "unexpected results length"
+                            );
+                            for (idx, item) in activity_result.into_iter().enumerate() {
+                                results[idx] = item;
+                            }
+                            Ok(())
+                        })
+                    },
+                );
+                if let Err(err) = res {
+                    if err.to_string()
+                        == format!("import `{ifc_fqn}` not found", ifc_fqn = fqn.ifc_fqn)
+                    {
+                        debug!("Skipping function `{fqn}` which is not imported");
+                    } else {
+                        return Err(err);
+                    }
+                }
             }
             linker.instantiate_pre(&component)?
         };
