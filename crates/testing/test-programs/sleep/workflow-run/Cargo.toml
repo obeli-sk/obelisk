@@ -1,5 +1,5 @@
 [package]
-name = "test-programs-sleep-workflow"
+name = "test-programs-sleep-workflow-run"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -18,5 +18,4 @@ default = ["wasm"]
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]
-"testing:sleep".path = "../wit"
-"my-org:workflow-engine".path = "../../../../../wit/workflow-engine/"
+"wasi:cli".path = "../activity/wit/deps/cli"

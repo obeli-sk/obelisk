@@ -14,7 +14,9 @@ test-programs-http-get-workflow-builder.workspace = true
 test-programs-patch-activity-broken-builder.workspace = true
 test-programs-patch-activity-fixed-builder.workspace = true
 test-programs-patch-workflow-builder.workspace = true
+test-programs-sleep-activity-builder.workspace = true
 test-programs-sleep-workflow-builder.workspace = true
+test-programs-sleep-workflow-run-builder.workspace = true
 test-programs-types-activity-builder.workspace = true
 test-programs-types-workflow-builder.workspace = true
 val-json.workspace = true
@@ -22,6 +24,7 @@ val-json.workspace = true
 anyhow.workspace = true
 assert_matches.workspace = true
 futures-util.workspace = true
+rstest.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing-subscriber.workspace = true

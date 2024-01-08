@@ -1,5 +1,7 @@
 use assert_matches::assert_matches;
+use rstest::*;
 use runtime::{
+    activity::ActivityConfig,
     event_history::EventHistory,
     runtime::{EngineConfig, Runtime, RuntimeConfig},
     workflow::{AsyncActivityBehavior, ExecutionError, WorkflowConfig},
@@ -19,42 +21,82 @@ fn set_up() {
     });
 }
 
+#[rstest]
 #[tokio::test]
-async fn test_async_host_activity() -> Result<(), anyhow::Error> {
+async fn test_async_activity(
+    #[values("sleep", "sleep-activity")] function: &str,
+    #[values(WorkflowConfig {
+        async_activity_behavior: AsyncActivityBehavior::KeepWaiting,
+    },
+    WorkflowConfig {
+        async_activity_behavior: AsyncActivityBehavior::Restart,
+    })]
+    workflow_config: WorkflowConfig,
+) -> Result<(), anyhow::Error> {
     set_up();
 
-    for workflow_config in [
-        WorkflowConfig {
-            async_activity_behavior: AsyncActivityBehavior::KeepWaiting,
-        },
-        WorkflowConfig {
-            async_activity_behavior: AsyncActivityBehavior::Restart,
-        },
-    ] {
-        let mut runtime = Runtime::default();
-        runtime
-            .add_workflow_definition(
-                test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW.to_string(),
-                &workflow_config,
-            )
-            .await?;
-        let runtime = Arc::new(runtime);
-        let mut event_history = EventHistory::default();
-        let params = vec![wasmtime::component::Val::U64(0)];
-        let res = runtime
-            .schedule_workflow(
-                &WorkflowId::new(
-                    COUNTER
-                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                        .to_string(),
-                ),
-                &mut event_history,
-                &FunctionFqn::new("testing:sleep-workflow/workflow", "sleep"),
-                &params,
-            )
-            .await;
-        res.unwrap();
-    }
+    let mut runtime = Runtime::default();
+    runtime
+        .add_activity(
+            test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY.to_string(),
+            &ActivityConfig::default(),
+        )
+        .await?;
+    runtime
+        .add_workflow_definition(
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW.to_string(),
+            &workflow_config,
+        )
+        .await?;
+    let runtime = Arc::new(runtime);
+    let mut event_history = EventHistory::default();
+    let params = vec![wasmtime::component::Val::U64(0)];
+    let res = runtime
+        .schedule_workflow(
+            &WorkflowId::new(
+                COUNTER
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    .to_string(),
+            ),
+            &mut event_history,
+            &FunctionFqn::new("testing:sleep-workflow/workflow", function),
+            &params,
+        )
+        .await;
+    res.unwrap();
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_activity_with_version() -> Result<(), anyhow::Error> {
+    set_up();
+
+    let mut runtime = Runtime::default();
+    runtime
+        .add_activity(
+            test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY.to_string(),
+            &ActivityConfig::default(),
+        )
+        .await?;
+    runtime
+        .add_workflow_definition(
+            test_programs_sleep_workflow_run_builder::TEST_PROGRAMS_SLEEP_WORKFLOW_RUN.to_string(),
+            &WorkflowConfig::default(),
+        )
+        .await?;
+    let runtime = Arc::new(runtime);
+    let mut event_history = EventHistory::default();
+    let res = runtime
+        .schedule_workflow(
+            &WorkflowId::generate(),
+            &mut event_history,
+            &FunctionFqn::new("testing:sleep-workflow-run/workflow", "sleep"),
+            &[],
+        )
+        .await;
+    res.unwrap();
+
     Ok(())
 }
 
@@ -85,6 +127,12 @@ async fn test_limits() -> Result<(), anyhow::Error> {
             activity_engine_config: EngineConfig::default(),
         });
         runtime
+            .add_activity(
+                test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY.to_string(),
+                &ActivityConfig::default(),
+            )
+            .await?;
+        runtime
             .add_workflow_definition(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW.to_string(),
                 &WorkflowConfig::default(),
@@ -97,7 +145,7 @@ async fn test_limits() -> Result<(), anyhow::Error> {
             let join_handle = async move {
                 let mut event_history = EventHistory::default();
                 let params = vec![wasmtime::component::Val::U64(SLEEP_MILLIS)];
-                let res = runtime
+                runtime
                     .schedule_workflow(
                         &WorkflowId::new(
                             COUNTER
@@ -105,11 +153,10 @@ async fn test_limits() -> Result<(), anyhow::Error> {
                                 .to_string(),
                         ),
                         &mut event_history,
-                        &FunctionFqn::new("testing:sleep-workflow/workflow", "sleep"),
+                        &FunctionFqn::new("testing:sleep-workflow/workflow", "sleep-activity"),
                         &params,
                     )
-                    .await;
-                res
+                    .await
             };
             futures.push(join_handle);
         }
@@ -119,8 +166,8 @@ async fn test_limits() -> Result<(), anyhow::Error> {
             .collect::<Result<Vec<_>, _>>()
             .unwrap_err();
         assert_matches!(err,
-        ExecutionError::LimitReached(reason)
-        if reason == format!("maximum concurrent {limit_name} instance limit of {LIMIT} reached"));
+            ExecutionError::LimitReached(reason)
+            if reason == format!("maximum concurrent {limit_name} instance limit of {LIMIT} reached"));
     }
     Ok(())
 }

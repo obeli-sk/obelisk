@@ -1,0 +1,6 @@
+package wasi:cli@0.2.0-rc-2023-12-05;
+
+interface run {
+    /// Run the program.
+    run: func() -> result;
+  }

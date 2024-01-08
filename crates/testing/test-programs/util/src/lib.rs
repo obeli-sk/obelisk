@@ -5,17 +5,24 @@ use std::{
 
 use cargo_metadata::camino::Utf8Path;
 
-const BUILD_TARGET_TRIPPLE: &str = "wasm32-unknown-unknown";
-
 fn to_snake_case(input: &str) -> String {
     input.replace('-', "_")
 }
 
+pub fn build_activity() {
+    build_internal("wasm32-wasi");
+}
+
 pub fn build() {
+    build_internal("wasm32-unknown-unknown");
+}
+
+fn build_internal(tripple: &str) {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
-    let wasm = run_cargo_component_build(&out_dir, pkg_name);
+    let wasm = run_cargo_component_build(&out_dir, pkg_name, tripple);
+    println!("cargo:warning=Built {wasm:?}");
     let mut generated_code = String::new();
     generated_code += &format!(
         "pub const {name_upper}: &str = {wasm:?};\n",
@@ -59,11 +66,11 @@ fn add_dependency(file: &Utf8Path) {
     }
 }
 
-fn run_cargo_component_build(out_dir: &Path, name: &str) -> PathBuf {
+fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str) -> PathBuf {
     let mut cmd = Command::new("cargo-component");
     cmd.arg("build")
         .arg("--release")
-        .arg(format!("--target={BUILD_TARGET_TRIPPLE}"))
+        .arg(format!("--target={tripple}"))
         .arg(format!("--package={name}"))
         .env("CARGO_TARGET_DIR", out_dir)
         .env_remove("CARGO_ENCODED_RUSTFLAGS");
@@ -72,7 +79,7 @@ fn run_cargo_component_build(out_dir: &Path, name: &str) -> PathBuf {
     assert!(status.success());
     let name_snake_case = to_snake_case(name);
     let target = out_dir
-        .join(BUILD_TARGET_TRIPPLE)
+        .join(tripple)
         .join("release")
         .join(format!("{name_snake_case}.wasm",));
     assert!(target.exists(), "Target path must exist: {target:?}");

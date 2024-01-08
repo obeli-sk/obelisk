@@ -8,4 +8,8 @@ impl crate::bindings::exports::testing::sleep_workflow::workflow::Guest for Comp
     fn sleep(millis: u64) {
         crate::bindings::my_org::workflow_engine::host_activities::sleep(millis);
     }
+
+    fn sleep_activity(millis: u64) {
+        crate::bindings::testing::sleep::sleep::sleep(millis);
+    }
 }

@@ -1,0 +1,5 @@
+package testing:sleep;
+
+interface sleep {
+    sleep: func(millis: u64);
+}

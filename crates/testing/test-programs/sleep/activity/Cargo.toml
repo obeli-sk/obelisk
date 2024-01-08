@@ -1,12 +1,13 @@
 [package]
-name = "test-programs-sleep-workflow"
+name = "test-programs-sleep-activity"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-cargo-component-bindings = { workspace = true }
+anyhow.workspace = true
+cargo-component-bindings.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
@@ -19,4 +20,4 @@ default = ["wasm"]
 
 [package.metadata.component.target.dependencies]
 "testing:sleep".path = "../wit"
-"my-org:workflow-engine".path = "../../../../../wit/workflow-engine/"
+"wasi:cli".path = "wit/deps/cli"
