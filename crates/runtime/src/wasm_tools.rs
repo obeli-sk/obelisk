@@ -11,7 +11,7 @@ pub(crate) fn exported_interfaces(
     impl Iterator<
             Item = (
                 &'_ wit_parser::PackageName,
-                &'_ str,
+                &'_ str, // ifc_name
                 &'_ indexmap::IndexMap<String, wit_parser::Function>,
             ),
         > + Clone,
@@ -50,14 +50,22 @@ pub(crate) fn functions_to_metadata<'a>(
     exported_interfaces: impl Iterator<
         Item = (
             &'a wit_parser::PackageName,
-            &'a str,
+            &'a str, // ifc_name
             &'a indexmap::IndexMap<String, wit_parser::Function>,
         ),
     >,
 ) -> Result<HashMap<Arc<FunctionFqn<'static>>, FunctionMetadata>, FunctionMetadataError> {
     let mut functions_to_results = HashMap::new();
     for (package_name, ifc_name, functions) in exported_interfaces.into_iter() {
-        let ifc_fqn = format!("{package_name}/{ifc_name}");
+        let ifc_fqn = if let Some(version) = &package_name.version {
+            format!(
+                "{namespace}:{name}/{ifc_name}@{version}",
+                namespace = package_name.namespace,
+                name = package_name.name
+            )
+        } else {
+            format!("{package_name}/{ifc_name}")
+        };
         for (function_name, function) in functions.into_iter() {
             let fqn = Arc::new(FunctionFqn {
                 ifc_fqn: Cow::Owned(ifc_fqn.clone()),

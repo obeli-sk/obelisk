@@ -157,6 +157,7 @@ dependencies = [
  "test-programs-types-activity-builder",
  "test-programs-types-workflow-builder",
  "tokio",
+ "tracing-subscriber",
  "wasmtime",
  "wiremock",
 ]
@@ -999,6 +1000,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glob"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
+
+[[package]]
 name = "h2"
 version = "0.3.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1800,6 +1807,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08c74e62047bb2de4ff487b251e4a92e24f48745648451635cec7d591162d9f"
 
 [[package]]
+name = "relative-path"
+version = "1.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e898588f33fdd5b9420719948f9f2a32c922a246964576f71ba7f24f80610fbc"
+
+[[package]]
 name = "retain_mut"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1817,6 +1830,35 @@ dependencies = [
  "spin",
  "untrusted",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "rstest"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97eeab2f3c0a199bc4be135c36c924b6590b88c377d416494288c14f2db30199"
+dependencies = [
+ "futures",
+ "futures-timer",
+ "rstest_macros",
+ "rustc_version",
+]
+
+[[package]]
+name = "rstest_macros"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d428f8247852f894ee1be110b375111b586d4fa431f6c46e64ba5a0dcccbe605"
+dependencies = [
+ "cfg-if",
+ "glob",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "relative-path",
+ "rustc_version",
+ "syn 2.0.42",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -2235,6 +2277,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-programs-sleep-activity"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo-component-bindings",
+]
+
+[[package]]
+name = "test-programs-sleep-activity-builder"
+version = "0.1.0"
+dependencies = [
+ "test-programs-util",
+]
+
+[[package]]
 name = "test-programs-sleep-workflow"
 version = "0.1.0"
 dependencies = [
@@ -2290,6 +2347,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "futures-util",
+ "rstest",
  "runtime",
  "serde_json",
  "test-programs-fibo-activity-builder",
@@ -2299,6 +2357,7 @@ dependencies = [
  "test-programs-patch-activity-broken-builder",
  "test-programs-patch-activity-fixed-builder",
  "test-programs-patch-workflow-builder",
+ "test-programs-sleep-activity-builder",
  "test-programs-sleep-workflow-builder",
  "test-programs-types-activity-builder",
  "test-programs-types-workflow-builder",

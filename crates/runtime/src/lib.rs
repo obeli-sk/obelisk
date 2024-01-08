@@ -1,5 +1,9 @@
 use event_history::SupportedFunctionResult;
-use std::{borrow::Cow, fmt::Display, sync::Arc};
+use std::{
+    borrow::Cow,
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 use val_json::{TypeWrapper, UnsupportedTypeError, ValWrapper};
 
 pub mod activity;
@@ -11,7 +15,7 @@ pub mod workflow;
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
 pub struct FunctionFqn<'a> {
-    pub ifc_fqn: Cow<'a, str>,
+    pub ifc_fqn: Cow<'a, str>, // format namespace:name/ifc_name@version
     pub function_name: Cow<'a, str>,
 }
 
@@ -39,7 +43,7 @@ impl Display for FunctionFqn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{ifc_fqn}.{function_name}",
+            "{ifc_fqn}.{{{function_name}}}",
             ifc_fqn = self.ifc_fqn,
             function_name = self.function_name
         )

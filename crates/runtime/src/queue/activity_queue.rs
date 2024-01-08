@@ -5,7 +5,7 @@ use crate::{
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 pub type QueueItem = (ActivityRequest, oneshot::Sender<ActivityResponse>);
 
@@ -28,6 +28,9 @@ impl ActivityQueueReceiver {
                     )
                 });
             let activity_res = activity.run(&request, &self.workflow_id).await;
+            if let Err(err) = &activity_res {
+                error!("[{}] Activity failed: {err:?}", self.workflow_id);
+            }
             if let Err(_err) = resp_tx.send(activity_res) {
                 warn!(
                     "[{}] Not sending back the activity result",
