@@ -69,7 +69,7 @@ async fn test_async_activity(
 }
 
 #[tokio::test]
-async fn test_activity_with_version() -> Result<(), anyhow::Error> {
+async fn test_call_activity_with_version() -> Result<(), anyhow::Error> {
     set_up();
 
     let mut runtime = Runtime::default();
@@ -81,7 +81,7 @@ async fn test_activity_with_version() -> Result<(), anyhow::Error> {
         .await?;
     runtime
         .add_workflow_definition(
-            test_programs_sleep_workflow_run_builder::TEST_PROGRAMS_SLEEP_WORKFLOW_RUN.to_string(),
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW.to_string(),
             &WorkflowConfig::default(),
         )
         .await?;
@@ -91,7 +91,7 @@ async fn test_activity_with_version() -> Result<(), anyhow::Error> {
         .schedule_workflow(
             &WorkflowId::generate(),
             &mut event_history,
-            &FunctionFqn::new("testing:sleep-workflow-run/workflow", "sleep"),
+            &FunctionFqn::new("testing:sleep-workflow/workflow", "run"),
             &[],
         )
         .await;
@@ -99,6 +99,7 @@ async fn test_activity_with_version() -> Result<(), anyhow::Error> {
 
     Ok(())
 }
+
 static COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
 const ITERATIONS: u32 = 2;
 const SLEEP_MILLIS: u64 = 100;

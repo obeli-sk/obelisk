@@ -2306,20 +2306,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-programs-sleep-workflow-run"
-version = "0.1.0"
-dependencies = [
- "cargo-component-bindings",
-]
-
-[[package]]
-name = "test-programs-sleep-workflow-run-builder"
-version = "0.1.0"
-dependencies = [
- "test-programs-util",
-]
-
-[[package]]
 name = "test-programs-types-activity"
 version = "0.1.0"
 dependencies = [
@@ -2374,7 +2360,6 @@ dependencies = [
  "test-programs-patch-workflow-builder",
  "test-programs-sleep-activity-builder",
  "test-programs-sleep-workflow-builder",
- "test-programs-sleep-workflow-run-builder",
  "test-programs-types-activity-builder",
  "test-programs-types-workflow-builder",
  "tokio",

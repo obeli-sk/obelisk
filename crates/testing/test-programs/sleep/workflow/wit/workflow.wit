@@ -3,10 +3,12 @@ package testing:sleep-workflow;
 interface workflow {
     sleep: func(millis: u64);
     sleep-activity: func(millis: u64);
+    run: func();
 }
 
 world any {
     import my-org:workflow-engine/host-activities;
     import testing:sleep/sleep;
+    import wasi:cli/run@0.2.0-rc-2023-12-05;
     export workflow;
 }

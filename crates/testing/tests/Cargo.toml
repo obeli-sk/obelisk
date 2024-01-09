@@ -16,7 +16,6 @@ test-programs-patch-activity-fixed-builder.workspace = true
 test-programs-patch-workflow-builder.workspace = true
 test-programs-sleep-activity-builder.workspace = true
 test-programs-sleep-workflow-builder.workspace = true
-test-programs-sleep-workflow-run-builder.workspace = true
 test-programs-types-activity-builder.workspace = true
 test-programs-types-workflow-builder.workspace = true
 val-json.workspace = true
