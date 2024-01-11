@@ -31,6 +31,7 @@
               rustToolchain
               wasm-tools
             ];
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.openssl ]; # https://discourse.nixos.org/t/program-compiled-with-rust-cannot-find-libssl-so-3-at-runtime/27196/2
           };
         }
       );
