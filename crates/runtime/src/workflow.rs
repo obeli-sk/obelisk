@@ -135,9 +135,12 @@ impl Workflow {
                     move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
                           params: &[Val],
                           results: &mut [Val]| {
+                        let workflow_id =
+                            store_ctx.data().current_event_history.workflow_id.clone();
                         let fqn_inner = fqn_inner.clone();
                         Box::new(async move {
                             let event = Event::new_from_wasm_activity(
+                                workflow_id,
                                 fqn_inner,
                                 Arc::new(Vec::from(params)),
                             );

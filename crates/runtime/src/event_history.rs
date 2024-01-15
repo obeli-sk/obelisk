@@ -77,6 +77,7 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
         let event = Event {
             request: ActivityRequest {
+                workflow_id: self.current_event_history.workflow_id.clone(),
                 fqn: Arc::new(HOST_ACTIVITY_SLEEP_FQN),
                 params: Arc::new(vec![Val::U64(millis)]),
             },
@@ -95,6 +96,7 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
             FunctionFqn::new("my-org:workflow-engine/host-activities", "noop");
         let event = Event {
             request: ActivityRequest {
+                workflow_id: self.current_event_history.workflow_id.clone(),
                 fqn: Arc::new(FQN),
                 params: Arc::new(vec![]),
             },
@@ -117,9 +119,17 @@ pub(crate) struct Event {
 }
 
 impl Event {
-    pub fn new_from_wasm_activity(fqn: Arc<FunctionFqn<'static>>, params: Arc<Vec<Val>>) -> Self {
+    pub fn new_from_wasm_activity(
+        workflow_id: WorkflowId,
+        fqn: Arc<FunctionFqn<'static>>,
+        params: Arc<Vec<Val>>,
+    ) -> Self {
         Self {
-            request: ActivityRequest { fqn, params },
+            request: ActivityRequest {
+                workflow_id,
+                fqn,
+                params,
+            },
             kind: EventKind::ActivityAsync,
         }
     }
@@ -173,7 +183,7 @@ pub(crate) enum HostFunctionError {
 }
 
 pub(crate) struct CurrentEventHistory {
-    workflow_id: WorkflowId,
+    pub(crate) workflow_id: WorkflowId,
     run_id: u64,
     activity_queue_writer: ActivityQueueSender,
     pub(crate) event_history: EventHistory,

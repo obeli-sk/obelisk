@@ -138,7 +138,6 @@ impl Runtime {
         let mut activity_queue_receiver = ActivityQueueReceiver {
             receiver: queue_receiver,
             functions_to_activities: self.functions_to_activities.clone(),
-            workflow_id: workflow_id.clone(),
         };
         // TODO: allow cancelling this task
         tokio::spawn(async move { activity_queue_receiver.process().await }).abort_handle();
