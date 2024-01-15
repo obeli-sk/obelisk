@@ -10,7 +10,7 @@ cargo bench -p benches
 
 ## Tests
 ```sh
-cargo nextest run --workspace --tests  --no-default-features
+cargo nextest run --workspace --tests
 ```
 
 ### Integration tests
