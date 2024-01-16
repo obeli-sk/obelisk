@@ -1,7 +1,6 @@
 use crate::{
-    activity::ActivityRequest, queue::activity_queue::ActivityQueueSender,
-    workflow::AsyncActivityBehavior, workflow_id::WorkflowId, ActivityFailed, ActivityResponse,
-    FunctionFqn,
+    activity::ActivityRequest, database::ActivityQueueSender, workflow::AsyncActivityBehavior,
+    workflow_id::WorkflowId, ActivityFailed, ActivityResponse, FunctionFqn,
 };
 use assert_matches::assert_matches;
 use std::{fmt::Debug, sync::Arc, time::Duration};

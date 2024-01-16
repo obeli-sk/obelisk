@@ -2,6 +2,7 @@ use assert_matches::assert_matches;
 use rstest::*;
 use runtime::{
     activity::ActivityConfig,
+    database::Database,
     event_history::EventHistory,
     runtime::{EngineConfig, Runtime, RuntimeConfig},
     workflow::{AsyncActivityBehavior, ExecutionError, WorkflowConfig},
@@ -9,7 +10,8 @@ use runtime::{
     FunctionFqn,
 };
 use std::sync::{Arc, Once};
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tokio::sync::Mutex;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 static INIT: Once = Once::new();
 fn set_up() {
@@ -35,6 +37,7 @@ async fn test_async_activity(
 ) -> Result<(), anyhow::Error> {
     set_up();
 
+    let database = Database::new(100, 100);
     let mut runtime = Runtime::default();
     runtime
         .add_activity(
@@ -48,19 +51,24 @@ async fn test_async_activity(
             &workflow_config,
         )
         .await?;
-    let runtime = Arc::new(runtime);
-    let mut event_history = EventHistory::default();
-    let params = vec![wasmtime::component::Val::U64(0)];
-    let res = runtime
+    runtime.spawn(&database);
+    // let runtime = Arc::new(runtime);
+    let event_history = Arc::new(Mutex::new(EventHistory::default()));
+    let params = Arc::new(vec![wasmtime::component::Val::U64(0)]);
+    let res = database
+        .workflow_scheduler()
         .schedule_workflow(
-            &WorkflowId::new(
+            WorkflowId::new(
                 COUNTER
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
                     .to_string(),
             ),
-            &mut event_history,
-            &FunctionFqn::new("testing:sleep-workflow/workflow", function),
-            &params,
+            event_history,
+            Arc::new(FunctionFqn::new_owned(
+                "testing:sleep-workflow/workflow".to_string(),
+                function.to_string(),
+            )),
+            params,
         )
         .await;
     res.unwrap();
@@ -72,6 +80,7 @@ async fn test_async_activity(
 async fn test_call_activity_with_version() -> Result<(), anyhow::Error> {
     set_up();
 
+    let database = Database::new(100, 100);
     let mut runtime = Runtime::default();
     runtime
         .add_activity(
@@ -85,14 +94,16 @@ async fn test_call_activity_with_version() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    let runtime = Arc::new(runtime);
-    let mut event_history = EventHistory::default();
-    let res = runtime
+    runtime.spawn(&database);
+    // let runtime = Arc::new(runtime);
+    let event_history = Arc::new(Mutex::new(EventHistory::default()));
+    let res = database
+        .workflow_scheduler()
         .schedule_workflow(
-            &WorkflowId::generate(),
-            &mut event_history,
-            &FunctionFqn::new("testing:sleep-workflow/workflow", "run"),
-            &[],
+            WorkflowId::generate(),
+            event_history,
+            Arc::new(FunctionFqn::new("testing:sleep-workflow/workflow", "run")),
+            Arc::new(Vec::new()),
         )
         .await;
     res.unwrap();
@@ -102,7 +113,7 @@ async fn test_call_activity_with_version() -> Result<(), anyhow::Error> {
 
 static COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
 const ITERATIONS: u32 = 2;
-const SLEEP_MILLIS: u64 = 100;
+const SLEEP_MILLIS: u64 = 1000;
 const LIMIT: u32 = ITERATIONS - 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,7 +159,7 @@ async fn test_limits(
     #[values(LimitKind::Core, LimitKind::Component)] limit_kind: LimitKind,
 ) -> Result<(), anyhow::Error> {
     set_up();
-
+    let database = Database::new(100, 100);
     let engine_config = limit_kind.config();
     let mut runtime = Runtime::new_with_config(if limit_engine_kind == LimitEngineKind::Activity {
         RuntimeConfig {
@@ -173,23 +184,26 @@ async fn test_limits(
             &WorkflowConfig::default(),
         )
         .await?;
-    let runtime = Arc::new(runtime);
     let mut futures = Vec::new();
     for _ in 0..ITERATIONS {
-        let runtime = runtime.clone();
+        runtime.spawn(&database);
+        let workflow_scheduler = database.workflow_scheduler();
         let join_handle = async move {
-            let mut event_history = EventHistory::default();
-            let params = vec![wasmtime::component::Val::U64(SLEEP_MILLIS)];
-            runtime
+            let event_history = Arc::new(Mutex::new(EventHistory::default()));
+            let params = Arc::new(vec![wasmtime::component::Val::U64(SLEEP_MILLIS)]);
+            workflow_scheduler
                 .schedule_workflow(
-                    &WorkflowId::new(
+                    WorkflowId::new(
                         COUNTER
                             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
                             .to_string(),
                     ),
-                    &mut event_history,
-                    &FunctionFqn::new("testing:sleep-workflow/workflow", "sleep-activity"),
-                    &params,
+                    event_history,
+                    Arc::new(FunctionFqn::new(
+                        "testing:sleep-workflow/workflow",
+                        "sleep-activity",
+                    )),
+                    params,
                 )
                 .await
         };

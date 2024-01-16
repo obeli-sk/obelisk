@@ -1,5 +1,6 @@
 use runtime::{
     activity::ActivityConfig,
+    database::Database,
     event_history::{EventHistory, SupportedFunctionResult},
     runtime::Runtime,
     workflow::WorkflowConfig,
@@ -7,6 +8,7 @@ use runtime::{
     FunctionFqn,
 };
 use std::sync::{Arc, Once};
+use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
 
@@ -23,7 +25,7 @@ fn set_up() {
 #[tokio::test]
 async fn test_runtime_with_many_activities_and_workflows() -> Result<(), anyhow::Error> {
     set_up();
-
+    let database = Database::new(100, 100);
     let mut runtime = Runtime::default();
     runtime
         .add_activity(
@@ -50,26 +52,28 @@ async fn test_runtime_with_many_activities_and_workflows() -> Result<(), anyhow:
         )
         .await?;
 
-    let runtime = Arc::new(runtime);
-    let mut event_history = EventHistory::default();
-    let res = runtime
+    runtime.spawn(&database);
+    let event_history = Arc::new(Mutex::new(EventHistory::default()));
+    let res = database
+        .workflow_scheduler()
         .schedule_workflow(
-            &WorkflowId::generate(),
-            &mut event_history,
-            &FunctionFqn::new("testing:sleep-workflow/workflow", "run"),
-            &[],
+            WorkflowId::generate(),
+            event_history,
+            Arc::new(FunctionFqn::new("testing:sleep-workflow/workflow", "run")),
+            Arc::new(Vec::new()),
         )
         .await;
     res.unwrap();
 
-    let mut event_history = EventHistory::default();
-    let params = vec![Val::U8(10), Val::U32(1)];
-    let res = runtime
+    let event_history = Arc::new(Mutex::new(EventHistory::default()));
+    let params = Arc::new(vec![Val::U8(10), Val::U32(1)]);
+    let res = database
+        .workflow_scheduler()
         .schedule_workflow(
-            &WorkflowId::generate(),
-            &mut event_history,
-            &FunctionFqn::new("testing:fibo-workflow/workflow", "fiboa"),
-            &params,
+            WorkflowId::generate(),
+            event_history,
+            Arc::new(FunctionFqn::new("testing:fibo-workflow/workflow", "fiboa")),
+            params,
         )
         .await;
     assert_eq!(res.unwrap(), SupportedFunctionResult::Single(Val::U64(89)));

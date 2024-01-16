@@ -2,13 +2,15 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use lazy_static::lazy_static;
 use runtime::{
     activity::{ActivityConfig, ActivityPreload},
+    database::Database,
     event_history::EventHistory,
     runtime::Runtime,
     workflow::{AsyncActivityBehavior, WorkflowConfig},
     workflow_id::WorkflowId,
     FunctionFqn,
 };
-use std::{fmt::Display, ops::Deref, sync::Mutex};
+use std::{fmt::Display, sync::Arc};
+use tokio::sync::Mutex;
 use wasmtime::component::Val;
 
 const ACTIVITY_CONFIG_COLD: ActivityConfig = ActivityConfig {
@@ -148,24 +150,26 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
                 hot_or_cold = hot_or_cold(&activity_config, &workflow_config)
             ),
             |b| {
-                let fqn = FunctionFqn::new("testing:types-workflow/workflow", workflow_function);
+                let fqn = Arc::new(FunctionFqn::new(
+                    "testing:types-workflow/workflow",
+                    workflow_function,
+                ));
+                let database = Database::new(100, 100);
                 let mut runtime = runtime.try_lock().unwrap();
                 noop_workflow(&mut runtime, &activity_config, &workflow_config);
                 b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
-                    let params = vec![Val::U32(iterations)];
-                    let mut event_history = EventHistory::default();
+                    let abort_handle = runtime.spawn(&database);
+                    let workflow_scheduler = database.workflow_scheduler();
+                    let params = Arc::new(vec![Val::U32(iterations)]);
+                    let event_history = Arc::new(Mutex::new(EventHistory::default()));
                     let fqn = fqn.clone();
-                    let runtime = runtime.deref();
+
                     async move {
-                        runtime
-                            .schedule_workflow(
-                                &WorkflowId::generate(),
-                                &mut event_history,
-                                &fqn,
-                                &params,
-                            )
+                        workflow_scheduler
+                            .schedule_workflow(WorkflowId::generate(), event_history, fqn, params)
                             .await
-                            .unwrap()
+                            .unwrap();
+                        abort_handle.abort();
                     }
                 })
             },
@@ -200,27 +204,28 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
     let runtime = Mutex::new(Runtime::default());
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {
-            let fqn = FunctionFqn::new(
+            let fqn = Arc::new(FunctionFqn::new(
                 "testing:fibo-workflow/workflow",
                 fibo_config.workflow_function,
-            );
+            ));
+            let database = Database::new(100, 100);
             let mut runtime = runtime.try_lock().unwrap();
             fibo_workflow(&mut runtime, &fibo_config);
             b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
-                let params = vec![Val::U8(fibo_config.n), Val::U32(fibo_config.iterations)];
-                let mut event_history = EventHistory::default();
+                let workflow_scheduler = database.workflow_scheduler();
+                let abort_handle = runtime.spawn(&database);
+                let params = Arc::new(vec![
+                    Val::U8(fibo_config.n),
+                    Val::U32(fibo_config.iterations),
+                ]);
+                let event_history = Arc::new(Mutex::new(EventHistory::default()));
                 let fqn = fqn.clone();
-                let runtime = runtime.deref();
                 async move {
-                    runtime
-                        .schedule_workflow(
-                            &WorkflowId::generate(),
-                            &mut event_history,
-                            &fqn,
-                            &params,
-                        )
+                    workflow_scheduler
+                        .schedule_workflow(WorkflowId::generate(), event_history, fqn, params)
                         .await
-                        .unwrap()
+                        .unwrap();
+                    abort_handle.abort();
                 }
             })
         });
@@ -238,27 +243,28 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
     let runtime = Mutex::new(Runtime::default());
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {
-            let fqn = FunctionFqn::new(
+            let fqn = Arc::new(FunctionFqn::new(
                 "testing:fibo-workflow/workflow",
                 fibo_config.workflow_function,
-            );
+            ));
+            let database = Database::new(100, 100);
             let mut runtime = runtime.try_lock().unwrap();
             fibo_workflow(&mut runtime, &fibo_config);
             b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
-                let params = vec![Val::U8(fibo_config.n), Val::U32(fibo_config.iterations)];
-                let mut event_history = EventHistory::default();
+                let workflow_scheduler = database.workflow_scheduler();
+                let params = Arc::new(vec![
+                    Val::U8(fibo_config.n),
+                    Val::U32(fibo_config.iterations),
+                ]);
+                let event_history = Arc::new(Mutex::new(EventHistory::default()));
                 let fqn = fqn.clone();
-                let runtime = runtime.deref();
+                let abort_handle = runtime.spawn(&database);
                 async move {
-                    runtime
-                        .schedule_workflow(
-                            &WorkflowId::generate(),
-                            &mut event_history,
-                            &fqn,
-                            &params,
-                        )
+                    workflow_scheduler
+                        .schedule_workflow(WorkflowId::generate(), event_history, fqn, params)
                         .await
-                        .unwrap()
+                        .unwrap();
+                    abort_handle.abort();
                 }
             })
         });

@@ -1,9 +1,9 @@
 use crate::activity::Activity;
+use crate::database::ActivityQueueSender;
 use crate::event_history::{
     CurrentEventHistory, Event, EventHistory, HostFunctionError, HostImports,
     SupportedFunctionResult,
 };
-use crate::queue::activity_queue::ActivityQueueSender;
 use crate::wasm_tools::{exported_interfaces, functions_to_metadata, is_limit_reached};
 use crate::workflow_id::WorkflowId;
 use crate::{ActivityFailed, FunctionFqn, FunctionMetadata};
@@ -42,7 +42,7 @@ pub enum ExecutionError {
     #[error("[{workflow_id}] workflow `{fqn}` not found")]
     NotFound {
         workflow_id: WorkflowId,
-        fqn: FunctionFqn<'static>,
+        fqn: Arc<FunctionFqn<'static>>,
     },
     #[error("[{workflow_id},{run_id}] workflow `{fqn}` encountered non deterministic execution, reason: `{reason}`")]
     NonDeterminismDetected {
@@ -72,6 +72,19 @@ pub enum ExecutionError {
         run_id: u64,
         workflow_fqn: FunctionFqn<'static>,
         activity_fqn: Arc<FunctionFqn<'static>>,
+        reason: String,
+    },
+    #[error("[{workflow_id},{run_id}] activity not found, workflow `{workflow_fqn}`, activity `{activity_fqn}`")]
+    ActivityNotFound {
+        workflow_id: WorkflowId,
+        run_id: u64,
+        workflow_fqn: FunctionFqn<'static>,
+        activity_fqn: Arc<FunctionFqn<'static>>,
+    },
+    #[error("[{workflow_id}] workflow `{workflow_fqn}` cannot be scheduled: `{reason}`")]
+    SchedulingError {
+        workflow_id: WorkflowId,
+        workflow_fqn: Arc<FunctionFqn<'static>>,
         reason: String,
     },
     #[error("[{workflow_id},{run_id}] `{fqn}` encountered an unknown error: `{source:?}`")]
@@ -206,7 +219,7 @@ impl Workflow {
             .get(fqn)
             .ok_or_else(|| ExecutionError::NotFound {
                 workflow_id: workflow_id.clone(),
-                fqn: fqn.to_owned(),
+                fqn: Arc::new(fqn.to_owned()),
             })?
             .results_len;
         trace!(
@@ -255,6 +268,18 @@ impl Workflow {
                         workflow_fqn: fqn.to_owned(),
                         activity_fqn,
                         reason,
+                    });
+                }
+                Err(ExecutionInterrupt::ActivityFailed(ActivityFailed::NotFound {
+                    workflow_id: id,
+                    activity_fqn,
+                })) => {
+                    assert_eq!(id, *workflow_id);
+                    return Err(ExecutionError::ActivityNotFound {
+                        workflow_id: id,
+                        run_id,
+                        workflow_fqn: fqn.to_owned(),
+                        activity_fqn,
                     });
                 }
                 Err(ExecutionInterrupt::NonDeterminismDetected(reason)) => {

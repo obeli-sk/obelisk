@@ -1,10 +1,12 @@
-use runtime::activity::ActivityConfig;
 use runtime::event_history::EventHistory;
 use runtime::runtime::Runtime;
 use runtime::workflow::WorkflowConfig;
 use runtime::workflow_id::WorkflowId;
 use runtime::FunctionFqn;
+use runtime::{activity::ActivityConfig, database::Database};
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use val_json::deserialize_sequence;
 use wasmtime::component::Val;
@@ -25,11 +27,15 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let workflow_wasm_path = args.next().expect("workflow wasm missing");
     let workflow_function = args.next().expect("workflow function missing");
-    let Some((ifc_fqn, function_name)) =
+    let fqn = if let Some((ifc_fqn, function_name)) =
         workflow_function.split_once(IFC_FQN_FUNCTION_NAME_SEPARATOR)
-    else {
+    {
+        Arc::new(FunctionFqn::new(ifc_fqn, function_name).to_owned())
+    } else {
         panic!("workflow function must be a fully qualified name in format `package/interface.function`")
     };
+
+    let database = Database::new(100, 100);
 
     let mut runtime = Runtime::default();
     runtime
@@ -41,9 +47,8 @@ async fn main() -> Result<(), anyhow::Error> {
     println!("Initialized in {duration:?}", duration = timer.elapsed());
     println!();
 
-    let mut event_history = EventHistory::default();
+    let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let timer = Instant::now();
-    let fqn = FunctionFqn::new(ifc_fqn, function_name);
     let param_types = workflow
         .function_metadata(&fqn)
         .expect("function must exist")
@@ -51,26 +56,30 @@ async fn main() -> Result<(), anyhow::Error> {
         .iter()
         .map(|(_, ty)| ty);
 
-    let param_vals = args
-        .next()
-        .map(|param_vals| {
-            deserialize_sequence::<Val>(&param_vals, param_types)
-                .expect("deserialization of params failed")
-        })
-        .unwrap_or_default();
+    let param_vals = Arc::new(
+        args.next()
+            .map(|param_vals| {
+                deserialize_sequence::<Val>(&param_vals, param_types)
+                    .expect("deserialization of params failed")
+            })
+            .unwrap_or_default(),
+    );
 
-    let res = runtime
+    runtime.spawn(&database);
+
+    let res = database
+        .workflow_scheduler()
         .schedule_workflow(
-            &WorkflowId::generate(),
-            &mut event_history,
-            &fqn,
-            &param_vals,
+            WorkflowId::generate(),
+            event_history.clone(),
+            fqn,
+            param_vals,
         )
         .await;
     println!(
         "Finished: in {duration:?} {res:?}, event history size: {len}",
         duration = timer.elapsed(),
-        len = event_history.successful_activities()
+        len = event_history.lock().await.successful_activities()
     );
     Ok(())
 }

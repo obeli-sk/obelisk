@@ -8,6 +8,7 @@ use val_json::{TypeWrapper, UnsupportedTypeError, ValWrapper};
 use workflow_id::WorkflowId;
 
 pub mod activity;
+pub mod database;
 pub mod event_history;
 mod queue;
 pub mod runtime;
@@ -86,6 +87,11 @@ pub enum ActivityFailed {
         workflow_id: WorkflowId,
         activity_fqn: Arc<FunctionFqn<'static>>,
         reason: String,
+    },
+    #[error("[{workflow_id}] activity `{activity_fqn}` not found")]
+    NotFound {
+        workflow_id: WorkflowId,
+        activity_fqn: Arc<FunctionFqn<'static>>,
     },
     #[error("[{workflow_id}] activity `{activity_fqn}` failed - {reason}")]
     Other {

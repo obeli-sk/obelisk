@@ -1,13 +1,15 @@
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 use runtime::{
     activity::ActivityConfig,
+    database::Database,
     event_history::{EventHistory, SupportedFunctionResult},
     runtime::Runtime,
     workflow::WorkflowConfig,
     workflow_id::WorkflowId,
     FunctionFqn,
 };
+use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 static INIT: Once = Once::new();
@@ -23,7 +25,7 @@ fn set_up() {
 #[tokio::test]
 async fn test() -> Result<(), anyhow::Error> {
     set_up();
-
+    let database = Database::new(100, 100);
     let mut runtime = Runtime::default();
     runtime
         .add_activity(
@@ -37,21 +39,26 @@ async fn test() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    let mut event_history = EventHistory::default();
+    runtime.spawn(&database);
+    let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let iterations: usize = 10;
     let param_vals = format!("[{iterations}]");
-    let fqn = FunctionFqn::new("testing:types-workflow/workflow", "noopa");
+    let fqn = Arc::new(FunctionFqn::new("testing:types-workflow/workflow", "noopa"));
     let metadata = runtime.workflow_function_metadata(&fqn).unwrap();
-    let param_vals = metadata.deserialize_params(&param_vals).unwrap();
-    let res = runtime
+    let param_vals = Arc::new(metadata.deserialize_params(&param_vals).unwrap());
+    let res = database
+        .workflow_scheduler()
         .schedule_workflow(
-            &WorkflowId::generate(),
-            &mut event_history,
-            &fqn,
-            &param_vals,
+            WorkflowId::generate(),
+            event_history.clone(),
+            fqn,
+            param_vals,
         )
         .await;
     assert_eq!(res.unwrap(), SupportedFunctionResult::None);
-    assert_eq!(event_history.successful_activities(), iterations);
+    assert_eq!(
+        event_history.lock().await.successful_activities(),
+        iterations
+    );
     Ok(())
 }

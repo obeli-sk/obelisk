@@ -1,12 +1,17 @@
 use runtime::{
     activity::ActivityConfig,
+    database::Database,
     event_history::{EventHistory, SupportedFunctionResult},
     runtime::Runtime,
     workflow::WorkflowConfig,
     workflow_id::WorkflowId,
     FunctionFqn,
 };
-use std::{sync::Once, time::Instant};
+use std::{
+    sync::{Arc, Once},
+    time::Instant,
+};
+use tokio::sync::Mutex;
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
@@ -28,7 +33,7 @@ fn set_up() {
 #[tokio::test]
 async fn test() -> Result<(), anyhow::Error> {
     set_up();
-
+    let database = Database::new(100, 100);
     let mut runtime = Runtime::default();
     runtime
         .add_activity(
@@ -42,7 +47,8 @@ async fn test() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    let mut event_history = EventHistory::default();
+    runtime.spawn(&database);
+    let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let timer = Instant::now();
 
     const BODY: &str = "ok";
@@ -55,13 +61,17 @@ async fn test() -> Result<(), anyhow::Error> {
         .await;
     info!("started mock server on {}", server.address());
 
-    let params = vec![wasmtime::component::Val::U16(server.address().port())];
-    let res = runtime
+    let params = Arc::new(vec![wasmtime::component::Val::U16(server.address().port())]);
+    let res = database
+        .workflow_scheduler()
         .schedule_workflow(
-            &WorkflowId::generate(),
-            &mut event_history,
-            &FunctionFqn::new("testing:http-workflow/workflow", "execute"),
-            &params,
+            WorkflowId::generate(),
+            event_history.clone(),
+            Arc::new(FunctionFqn::new(
+                "testing:http-workflow/workflow",
+                "execute",
+            )),
+            params,
         )
         .await;
     info!("Finished: in {duration:?}", duration = timer.elapsed());
@@ -69,7 +79,7 @@ async fn test() -> Result<(), anyhow::Error> {
         res.unwrap(),
         SupportedFunctionResult::Single(Val::String(BODY.into()))
     );
-    assert_eq!(event_history.successful_activities(), 1);
+    assert_eq!(event_history.lock().await.successful_activities(), 1);
     server.verify().await;
     Ok(())
 }

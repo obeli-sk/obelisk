@@ -1,12 +1,14 @@
 use runtime::{
     activity::ActivityConfig,
+    database::Database,
     event_history::{EventHistory, SupportedFunctionResult},
     runtime::Runtime,
     workflow::WorkflowConfig,
     workflow_id::WorkflowId,
     FunctionFqn,
 };
-use std::sync::Once;
+use std::sync::{Arc, Once};
+use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use wasmtime::component::Val;
 
@@ -23,7 +25,7 @@ fn set_up() {
 #[tokio::test]
 async fn test_fibow_fiboa() -> Result<(), anyhow::Error> {
     set_up();
-
+    let database = Database::new(100, 100);
     let mut runtime = Runtime::default();
     runtime
         .add_activity(
@@ -37,23 +39,28 @@ async fn test_fibow_fiboa() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
+    runtime.spawn(&database);
 
     let iterations = 10;
 
     for workflow_function in ["fibow", "fiboa"] {
-        let mut event_history = EventHistory::default();
-        let params = vec![Val::U8(10), Val::U32(iterations)];
-        let res = runtime
+        let event_history = Arc::new(Mutex::new(EventHistory::default()));
+        let params = Arc::new(vec![Val::U8(10), Val::U32(iterations)]);
+        let res = database
+            .workflow_scheduler()
             .schedule_workflow(
-                &WorkflowId::generate(),
-                &mut event_history,
-                &FunctionFqn::new("testing:fibo-workflow/workflow", workflow_function),
-                &params,
+                WorkflowId::generate(),
+                event_history.clone(),
+                Arc::new(FunctionFqn::new(
+                    "testing:fibo-workflow/workflow",
+                    workflow_function,
+                )),
+                params,
             )
             .await;
         assert_eq!(res.unwrap(), SupportedFunctionResult::Single(Val::U64(89)));
         assert_eq!(
-            event_history.successful_activities(),
+            event_history.lock().await.successful_activities(),
             if workflow_function.ends_with('a') {
                 iterations as usize
             } else {

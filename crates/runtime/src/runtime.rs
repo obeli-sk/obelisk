@@ -1,14 +1,10 @@
 use crate::activity::{Activity, ActivityConfig};
-use crate::event_history::{EventHistory, SupportedFunctionResult};
-use crate::queue::activity_queue::{ActivityQueueReceiver, ActivityQueueSender};
+use crate::database::{ActivityQueueSender, Database, WorkflowEventFetcher};
 use crate::workflow::{ExecutionError, Workflow, WorkflowConfig};
-use crate::workflow_id::WorkflowId;
 use crate::{FunctionFqn, FunctionMetadata};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
-use tracing::{info, warn};
-use wasmtime::component::Val;
+use tracing::{debug, info, warn};
 use wasmtime::Engine;
 
 #[derive(Default)]
@@ -72,6 +68,7 @@ impl Runtime {
         }
     }
 
+    // TODO: builder
     pub async fn add_activity(
         &mut self,
         activity_wasm_path: String,
@@ -96,6 +93,7 @@ impl Runtime {
         Ok(())
     }
 
+    // TODO: builder
     pub async fn add_workflow_definition(
         &mut self,
         workflow_wasm_path: String,
@@ -125,45 +123,53 @@ impl Runtime {
         Ok(workflow)
     }
 
-    pub async fn schedule_workflow<W: AsRef<WorkflowId>, E: AsMut<EventHistory>>(
-        &self,
-        workflow_id: W,
-        mut event_history: E,
-        fqn: &FunctionFqn<'_>,
-        params: &[Val],
-    ) -> Result<SupportedFunctionResult, ExecutionError> {
-        let workflow_id = workflow_id.as_ref();
-        info!("[{workflow_id}] Scheduling workflow `{fqn}`",);
-        let (queue_sender, queue_receiver) = mpsc::channel(100); // FIXME
-        let mut activity_queue_receiver = ActivityQueueReceiver {
-            receiver: queue_receiver,
-            functions_to_activities: self.functions_to_activities.clone(),
-        };
-        // TODO: allow cancelling this task
-        tokio::spawn(async move { activity_queue_receiver.process().await }).abort_handle();
-        let activity_queue_sender = ActivityQueueSender {
-            sender: queue_sender,
-        };
-        // TODO: persist execution in the `scheduled` state.
-        let workflow = self
-            .functions_to_workflows
-            .get(fqn)
-            .ok_or_else(|| ExecutionError::NotFound {
-                workflow_id: workflow_id.clone(),
-                fqn: fqn.to_owned(),
-            })?
-            .clone();
+    async fn process_workflows(
+        functions_to_workflows: HashMap<Arc<FunctionFqn<'static>>, Arc<Workflow>>,
+        fetcher: WorkflowEventFetcher,
+        activity_queue_sender: ActivityQueueSender,
+    ) {
+        while let Some((request, oneshot_tx)) = fetcher.fetch_one().await {
+            if let Some(workflow) = functions_to_workflows.get(&request.fqn) {
+                let mut event_history = request.event_history.lock().await;
+                // TODO: currently runs until completion. Allow persisting partial completion.
+                let resp = workflow
+                    .execute_all(
+                        &request.workflow_id,
+                        &activity_queue_sender,
+                        event_history.as_mut(),
+                        &request.fqn,
+                        &request.params,
+                    )
+                    .await;
+                // TODO: persist execution in the `scheduled` state.
+                let _ = oneshot_tx.send(resp);
+            } else {
+                let err = ExecutionError::NotFound {
+                    workflow_id: request.workflow_id,
+                    fqn: request.fqn.clone(),
+                };
+                warn!("{err}");
+                let _ = oneshot_tx.send(Err(err));
+            }
+            debug!("Runtime:::process_workflows exitting");
+        }
+    }
 
-        workflow
-            .execute_all(
-                workflow_id,
-                &activity_queue_sender,
-                event_history.as_mut(),
-                fqn,
-                params,
-            )
-            .await
-        // TODO: persist final result
+    // FIXME: cancel on drop of Runtime
+    pub fn spawn(&self, database: &Database) -> tokio::task::AbortHandle {
+        let process_workflows = Self::process_workflows(
+            self.functions_to_workflows.clone(),
+            database.workflow_event_fetcher(),
+            database.activity_queue_sender(),
+        );
+        let process_activities = crate::queue::activity_queue::process(
+            database.activity_event_fetcher(),
+            self.functions_to_activities.clone(), // TODO: move here with Builder
+        );
+        tokio::spawn(async move {
+            futures_util::join!(process_activities, process_workflows);
+        })
+        .abort_handle()
     }
 
     pub fn workflow_function_metadata<'a>(

@@ -10,8 +10,10 @@ val-json.workspace = true
 
 anyhow.workspace = true
 assert_matches.workspace = true
+async-channel.workspace = true
 async-trait.workspace = true
 derive_more.workspace = true
+futures-util.workspace = true
 indexmap.workspace = true
 lazy_static.workspace = true
 serde_json.workspace = true
