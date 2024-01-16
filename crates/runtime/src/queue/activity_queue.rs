@@ -5,7 +5,7 @@ use tracing::{debug, warn};
 
 pub(crate) async fn process(
     activity_event_fetcher: ActivityEventFetcher,
-    functions_to_activities: HashMap<Arc<FunctionFqn<'static>>, Arc<Activity>>,
+    functions_to_activities: HashMap<FunctionFqn, Arc<Activity>>,
 ) {
     while let Some((request, resp_tx)) = activity_event_fetcher.fetch_one().await {
         let activity_res = match functions_to_activities.get(&request.fqn) {

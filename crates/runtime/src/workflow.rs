@@ -42,56 +42,56 @@ pub enum ExecutionError {
     #[error("[{workflow_id}] workflow `{fqn}` not found")]
     NotFound {
         workflow_id: WorkflowId,
-        fqn: Arc<FunctionFqn<'static>>,
+        fqn: FunctionFqn,
     },
     #[error("[{workflow_id},{run_id}] workflow `{fqn}` encountered non deterministic execution, reason: `{reason}`")]
     NonDeterminismDetected {
         workflow_id: WorkflowId,
         run_id: u64,
-        fqn: FunctionFqn<'static>,
+        fqn: FunctionFqn,
         reason: String,
     },
     #[error("[{workflow_id},{run_id}] activity failed, workflow `{workflow_fqn}`, activity `{activity_fqn}`, reason: `{reason}`")]
     ActivityFailed {
         workflow_id: WorkflowId,
         run_id: u64,
-        workflow_fqn: FunctionFqn<'static>,
-        activity_fqn: Arc<FunctionFqn<'static>>,
+        workflow_fqn: FunctionFqn,
+        activity_fqn: FunctionFqn,
         reason: String,
     },
     #[error("[{workflow_id},{run_id}] workflow limit reached, workflow `{workflow_fqn}`, reason: `{reason}`")]
     LimitReached {
         workflow_id: WorkflowId,
         run_id: u64,
-        workflow_fqn: FunctionFqn<'static>,
+        workflow_fqn: FunctionFqn,
         reason: String,
     },
     #[error("[{workflow_id},{run_id}] activity limit reached, workflow `{workflow_fqn}`, activity `{activity_fqn}`, reason: `{reason}`")]
     ActivityLimitReached {
         workflow_id: WorkflowId,
         run_id: u64,
-        workflow_fqn: FunctionFqn<'static>,
-        activity_fqn: Arc<FunctionFqn<'static>>,
+        workflow_fqn: FunctionFqn,
+        activity_fqn: FunctionFqn,
         reason: String,
     },
     #[error("[{workflow_id},{run_id}] activity not found, workflow `{workflow_fqn}`, activity `{activity_fqn}`")]
     ActivityNotFound {
         workflow_id: WorkflowId,
         run_id: u64,
-        workflow_fqn: FunctionFqn<'static>,
-        activity_fqn: Arc<FunctionFqn<'static>>,
+        workflow_fqn: FunctionFqn,
+        activity_fqn: FunctionFqn,
     },
     #[error("[{workflow_id}] workflow `{workflow_fqn}` cannot be scheduled: `{reason}`")]
     SchedulingError {
         workflow_id: WorkflowId,
-        workflow_fqn: Arc<FunctionFqn<'static>>,
+        workflow_fqn: FunctionFqn,
         reason: String,
     },
     #[error("[{workflow_id},{run_id}] `{fqn}` encountered an unknown error: `{source:?}`")]
     UnknownError {
         workflow_id: WorkflowId,
         run_id: u64,
-        fqn: FunctionFqn<'static>,
+        fqn: FunctionFqn,
         // #[backtrace]
         source: anyhow::Error,
     },
@@ -115,14 +115,14 @@ pub struct Workflow {
     engine: Arc<Engine>,
     pub(crate) wasm_path: String,
     instance_pre: InstancePre<HostImports>,
-    pub(crate) functions_to_metadata: HashMap<Arc<FunctionFqn<'static>>, FunctionMetadata>,
+    pub(crate) functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
     async_activity_behavior: AsyncActivityBehavior,
 }
 
 impl Workflow {
     pub(crate) async fn new_with_config(
         wasm_path: String,
-        activities: &HashMap<Arc<FunctionFqn<'static>>, Arc<Activity>>,
+        activities: &HashMap<FunctionFqn, Arc<Activity>>,
         config: &WorkflowConfig,
         engine: Arc<Engine>,
     ) -> Result<Self, anyhow::Error> {
@@ -196,11 +196,11 @@ impl Workflow {
         })
     }
 
-    pub fn function_metadata<'a>(&'a self, fqn: &FunctionFqn<'a>) -> Option<&'a FunctionMetadata> {
+    pub fn function_metadata<'a>(&'a self, fqn: &FunctionFqn) -> Option<&'a FunctionMetadata> {
         self.functions_to_metadata.get(fqn)
     }
 
-    pub fn functions(&self) -> impl Iterator<Item = &Arc<FunctionFqn<'static>>> {
+    pub fn functions(&self) -> impl Iterator<Item = &FunctionFqn> {
         self.functions_to_metadata.keys()
     }
 
@@ -209,7 +209,7 @@ impl Workflow {
         workflow_id: &WorkflowId,
         activity_queue_sender: &ActivityQueueSender,
         event_history: &mut EventHistory,
-        fqn: &FunctionFqn<'_>,
+        fqn: &FunctionFqn,
         params: &[Val],
     ) -> Result<SupportedFunctionResult, ExecutionError> {
         info!("[{workflow_id}] workflow.execute_all `{fqn}`");
@@ -219,7 +219,7 @@ impl Workflow {
             .get(fqn)
             .ok_or_else(|| ExecutionError::NotFound {
                 workflow_id: workflow_id.clone(),
-                fqn: Arc::new(fqn.to_owned()),
+                fqn: fqn.clone(),
             })?
             .results_len;
         trace!(
@@ -251,7 +251,7 @@ impl Workflow {
                     return Err(ExecutionError::ActivityFailed {
                         workflow_id: id,
                         run_id,
-                        workflow_fqn: fqn.to_owned(),
+                        workflow_fqn: fqn.clone(),
                         activity_fqn,
                         reason,
                     });
@@ -265,7 +265,7 @@ impl Workflow {
                     return Err(ExecutionError::ActivityLimitReached {
                         workflow_id: id,
                         run_id,
-                        workflow_fqn: fqn.to_owned(),
+                        workflow_fqn: fqn.clone(),
                         activity_fqn,
                         reason,
                     });
@@ -278,7 +278,7 @@ impl Workflow {
                     return Err(ExecutionError::ActivityNotFound {
                         workflow_id: id,
                         run_id,
-                        workflow_fqn: fqn.to_owned(),
+                        workflow_fqn: fqn.clone(),
                         activity_fqn,
                     });
                 }
@@ -286,7 +286,7 @@ impl Workflow {
                     return Err(ExecutionError::NonDeterminismDetected {
                         workflow_id: workflow_id.clone(),
                         run_id,
-                        fqn: fqn.to_owned(),
+                        fqn: fqn.clone(),
                         reason,
                     })
                 }
@@ -294,7 +294,7 @@ impl Workflow {
                     return Err(ExecutionError::LimitReached {
                         workflow_id: workflow_id.clone(),
                         run_id,
-                        workflow_fqn: fqn.to_owned(),
+                        workflow_fqn: fqn.clone(),
                         reason,
                     })
                 }
@@ -302,7 +302,7 @@ impl Workflow {
                     return Err(ExecutionError::UnknownError {
                         workflow_id: workflow_id.clone(),
                         run_id,
-                        fqn: fqn.to_owned(),
+                        fqn: fqn.clone(),
                         source,
                     })
                 }
@@ -319,7 +319,7 @@ impl Workflow {
         run_id: u64,
         activity_queue_sender: &ActivityQueueSender,
         event_history: &mut EventHistory,
-        workflow_fqn: &FunctionFqn<'_>,
+        workflow_fqn: &FunctionFqn,
         params: &[Val],
         results_len: usize,
     ) -> Result<SupportedFunctionResult, ExecutionInterrupt> {
@@ -367,7 +367,7 @@ impl Workflow {
         run_id: u64,
         activity_queue_sender: &ActivityQueueSender,
         store: &mut Store<HostImports>,
-        workflow_fqn: &FunctionFqn<'_>,
+        workflow_fqn: &FunctionFqn,
         params: &[Val],
         results_len: usize,
     ) -> Result<SupportedFunctionResult, ExecutionInterrupt> {
@@ -450,7 +450,7 @@ impl Workflow {
         workflow_id: &WorkflowId,
         run_id: u64,
         mut store: &mut Store<HostImports>,
-        fqn: &FunctionFqn<'_>,
+        fqn: &FunctionFqn,
         params: &[Val],
         results_len: usize,
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
@@ -480,7 +480,7 @@ impl Workflow {
 
 fn decode_wasm_function_metadata(
     wasm: &[u8],
-) -> Result<HashMap<Arc<FunctionFqn<'static>>, FunctionMetadata>, anyhow::Error> {
+) -> Result<HashMap<FunctionFqn, FunctionMetadata>, anyhow::Error> {
     let decoded = wit_component::decode(wasm)?;
     let exported_interfaces = exported_interfaces(&decoded)?;
     Ok(functions_to_metadata(exported_interfaces)?)

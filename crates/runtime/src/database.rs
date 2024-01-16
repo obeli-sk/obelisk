@@ -19,7 +19,7 @@ pub(crate) type ActivityEvent = (ActivityRequest, oneshot::Sender<ActivityRespon
 pub struct WorkflowRequest {
     pub workflow_id: WorkflowId,
     pub event_history: Arc<Mutex<EventHistory>>,
-    pub fqn: Arc<FunctionFqn<'static>>,
+    pub fqn: FunctionFqn,
     pub params: Arc<Vec<Val>>,
 }
 
@@ -105,7 +105,7 @@ impl WorkflowScheduler {
         &self,
         workflow_id: WorkflowId,
         event_history: Arc<Mutex<EventHistory>>,
-        fqn: Arc<FunctionFqn<'static>>,
+        fqn: FunctionFqn,
         params: Arc<Vec<Val>>,
     ) -> Result<SupportedFunctionResult, ExecutionError> {
         info!("[{workflow_id}] Scheduling workflow `{fqn}`",);

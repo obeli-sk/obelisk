@@ -67,10 +67,7 @@ async fn test() -> Result<(), anyhow::Error> {
         .schedule_workflow(
             WorkflowId::generate(),
             event_history.clone(),
-            Arc::new(FunctionFqn::new(
-                "testing:http-workflow/workflow",
-                "execute",
-            )),
+            FunctionFqn::new("testing:http-workflow/workflow", "execute"),
             params,
         )
         .await;

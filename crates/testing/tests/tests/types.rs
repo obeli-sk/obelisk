@@ -43,7 +43,7 @@ async fn test() -> Result<(), anyhow::Error> {
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let iterations: usize = 10;
     let param_vals = format!("[{iterations}]");
-    let fqn = Arc::new(FunctionFqn::new("testing:types-workflow/workflow", "noopa"));
+    let fqn = FunctionFqn::new("testing:types-workflow/workflow", "noopa");
     let metadata = runtime.workflow_function_metadata(&fqn).unwrap();
     let param_vals = Arc::new(metadata.deserialize_params(&param_vals).unwrap());
     let res = database

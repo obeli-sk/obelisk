@@ -64,10 +64,10 @@ async fn test_async_activity(
                     .to_string(),
             ),
             event_history,
-            Arc::new(FunctionFqn::new_owned(
+            FunctionFqn::new(
                 "testing:sleep-workflow/workflow".to_string(),
                 function.to_string(),
-            )),
+            ),
             params,
         )
         .await;
@@ -102,7 +102,7 @@ async fn test_call_activity_with_version() -> Result<(), anyhow::Error> {
         .schedule_workflow(
             WorkflowId::generate(),
             event_history,
-            Arc::new(FunctionFqn::new("testing:sleep-workflow/workflow", "run")),
+            FunctionFqn::new("testing:sleep-workflow/workflow", "run"),
             Arc::new(Vec::new()),
         )
         .await;
@@ -199,10 +199,7 @@ async fn test_limits(
                             .to_string(),
                     ),
                     event_history,
-                    Arc::new(FunctionFqn::new(
-                        "testing:sleep-workflow/workflow",
-                        "sleep-activity",
-                    )),
+                    FunctionFqn::new("testing:sleep-workflow/workflow", "sleep-activity"),
                     params,
                 )
                 .await

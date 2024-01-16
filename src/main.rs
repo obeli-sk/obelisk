@@ -30,7 +30,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let fqn = if let Some((ifc_fqn, function_name)) =
         workflow_function.split_once(IFC_FQN_FUNCTION_NAME_SEPARATOR)
     {
-        Arc::new(FunctionFqn::new(ifc_fqn, function_name).to_owned())
+        FunctionFqn::new(ifc_fqn, function_name)
     } else {
         panic!("workflow function must be a fully qualified name in format `package/interface.function`")
     };

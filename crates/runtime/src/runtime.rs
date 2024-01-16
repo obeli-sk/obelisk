@@ -28,8 +28,8 @@ impl Default for EngineConfig {
 }
 
 pub struct Runtime {
-    functions_to_workflows: HashMap<Arc<FunctionFqn<'static>>, Arc<Workflow>>,
-    functions_to_activities: HashMap<Arc<FunctionFqn<'static>>, Arc<Activity>>,
+    functions_to_workflows: HashMap<FunctionFqn, Arc<Workflow>>,
+    functions_to_activities: HashMap<FunctionFqn, Arc<Activity>>,
     workflow_engine: Arc<Engine>,
     activity_engine: Arc<Engine>,
 }
@@ -124,7 +124,7 @@ impl Runtime {
     }
 
     async fn process_workflows(
-        functions_to_workflows: HashMap<Arc<FunctionFqn<'static>>, Arc<Workflow>>,
+        functions_to_workflows: HashMap<FunctionFqn, Arc<Workflow>>,
         fetcher: WorkflowEventFetcher,
         activity_queue_sender: ActivityQueueSender,
     ) {
@@ -174,7 +174,7 @@ impl Runtime {
 
     pub fn workflow_function_metadata<'a>(
         &'a self,
-        fqn: &FunctionFqn<'a>,
+        fqn: &FunctionFqn,
     ) -> Option<&'a FunctionMetadata> {
         self.functions_to_workflows
             .get(fqn)

@@ -1,6 +1,6 @@
 use crate::{FunctionFqn, FunctionMetadata, FunctionMetadataError};
 use anyhow::{anyhow, bail};
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use val_json::{TypeWrapper, UnsupportedTypeError};
 
 use wit_component::DecodedWasm;
@@ -54,7 +54,7 @@ pub(crate) fn functions_to_metadata<'a>(
             &'a indexmap::IndexMap<String, wit_parser::Function>,
         ),
     >,
-) -> Result<HashMap<Arc<FunctionFqn<'static>>, FunctionMetadata>, FunctionMetadataError> {
+) -> Result<HashMap<FunctionFqn, FunctionMetadata>, FunctionMetadataError> {
     let mut functions_to_results = HashMap::new();
     for (package_name, ifc_name, functions) in exported_interfaces.into_iter() {
         let ifc_fqn = if let Some(version) = &package_name.version {
@@ -67,10 +67,7 @@ pub(crate) fn functions_to_metadata<'a>(
             format!("{package_name}/{ifc_name}")
         };
         for (function_name, function) in functions.into_iter() {
-            let fqn = Arc::new(FunctionFqn {
-                ifc_fqn: Cow::Owned(ifc_fqn.clone()),
-                function_name: Cow::Owned(function_name.clone()),
-            });
+            let fqn = FunctionFqn::new(ifc_fqn.clone(), function_name.clone());
             let params = function
                 .params
                 .iter()

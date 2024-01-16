@@ -64,7 +64,7 @@ mod http {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivityRequest {
     pub(crate) workflow_id: WorkflowId,
-    pub(crate) fqn: Arc<FunctionFqn<'static>>,
+    pub(crate) fqn: FunctionFqn,
     pub(crate) params: Arc<Vec<Val>>,
 }
 
@@ -95,7 +95,7 @@ enum PreloadHolder {
 
 pub struct Activity {
     engine: Arc<Engine>,
-    functions_to_metadata: HashMap<Arc<FunctionFqn<'static>>, FunctionMetadata>,
+    functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
     instance_pre: wasmtime::component::InstancePre<http::Ctx>,
     preload_holder: PreloadHolder,
     pub(crate) wasm_path: String,
@@ -114,12 +114,7 @@ impl Activity {
         let exported_interfaces = exported_interfaces(&decoded)
             .with_context(|| format!("error parsing \"{wasm_path}\""))?;
         let functions_to_metadata = functions_to_metadata(exported_interfaces)?;
-        assert!(
-            functions_to_metadata
-                .get(&HOST_ACTIVITY_SLEEP_FQN)
-                .is_none(),
-            "host function `{HOST_ACTIVITY_SLEEP_FQN}` cannot overlap with wasm activity"
-        );
+        // TODO: check that no function is in host namespace
         debug!("Decoded functions {:?}", functions_to_metadata.keys());
         trace!("Decoded functions {functions_to_metadata:#?}");
         let instance_pre: wasmtime::component::InstancePre<http::Ctx> = {
@@ -185,8 +180,8 @@ impl Activity {
             fqn = request.fqn,
             params = request.params
         );
-        if *request.fqn == HOST_ACTIVITY_SLEEP_FQN {
-            // sleep
+        if request.fqn == HOST_ACTIVITY_SLEEP_FQN {
+            // sleep implementation
             assert_eq!(request.params.len(), 1);
             let duration = request.params.first().unwrap();
             let duration = *assert_matches!(duration, Val::U64(v) => v);
@@ -273,7 +268,7 @@ impl Activity {
         Ok(results)
     }
 
-    pub fn functions(&self) -> impl Iterator<Item = &Arc<FunctionFqn<'static>>> {
+    pub fn functions(&self) -> impl Iterator<Item = &FunctionFqn> {
         self.functions_to_metadata.keys()
     }
 }

@@ -59,7 +59,7 @@ async fn test_runtime_with_many_activities_and_workflows() -> Result<(), anyhow:
         .schedule_workflow(
             WorkflowId::generate(),
             event_history,
-            Arc::new(FunctionFqn::new("testing:sleep-workflow/workflow", "run")),
+            FunctionFqn::new("testing:sleep-workflow/workflow", "run"),
             Arc::new(Vec::new()),
         )
         .await;
@@ -72,7 +72,7 @@ async fn test_runtime_with_many_activities_and_workflows() -> Result<(), anyhow:
         .schedule_workflow(
             WorkflowId::generate(),
             event_history,
-            Arc::new(FunctionFqn::new("testing:fibo-workflow/workflow", "fiboa")),
+            FunctionFqn::new("testing:fibo-workflow/workflow", "fiboa"),
             params,
         )
         .await;

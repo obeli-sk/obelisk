@@ -51,10 +51,7 @@ async fn test_fibow_fiboa() -> Result<(), anyhow::Error> {
             .schedule_workflow(
                 WorkflowId::generate(),
                 event_history.clone(),
-                Arc::new(FunctionFqn::new(
-                    "testing:fibo-workflow/workflow",
-                    workflow_function,
-                )),
+                FunctionFqn::new("testing:fibo-workflow/workflow", workflow_function),
                 params,
             )
             .await;

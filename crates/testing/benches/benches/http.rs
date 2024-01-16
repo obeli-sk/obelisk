@@ -81,10 +81,7 @@ fn benchmark_http(criterion: &mut Criterion) {
             .await;
         server.address().port()
     });
-    let fqn = Arc::new(FunctionFqn::new(
-        "testing:http-workflow/workflow",
-        "execute",
-    ));
+    let fqn = FunctionFqn::new("testing:http-workflow/workflow", "execute");
 
     const ELEMENTS: u64 = 10;
     let mut group = criterion.benchmark_group("throughput");

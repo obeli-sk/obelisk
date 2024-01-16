@@ -1,6 +1,5 @@
 use event_history::SupportedFunctionResult;
 use std::{
-    borrow::Cow,
     fmt::{Debug, Display},
     sync::Arc,
 };
@@ -16,32 +15,22 @@ mod wasm_tools;
 pub mod workflow;
 
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
-pub struct FunctionFqn<'a> {
-    pub ifc_fqn: Cow<'a, str>, // format namespace:name/ifc_name@version
-    pub function_name: Cow<'a, str>,
+pub struct FunctionFqn {
+    pub ifc_fqn: Arc<String>, // format namespace:name/ifc_name@version
+    pub function_name: Arc<String>,
+    // TODO: version
 }
 
-impl FunctionFqn<'_> {
-    pub const fn new<'a>(ifc_fqn: &'a str, function_name: &'a str) -> FunctionFqn<'a> {
+impl FunctionFqn {
+    pub fn new<T: ToString>(ifc_fqn: T, function_name: T) -> FunctionFqn {
         FunctionFqn {
-            ifc_fqn: Cow::Borrowed(ifc_fqn),
-            function_name: Cow::Borrowed(function_name),
+            ifc_fqn: Arc::new(ifc_fqn.to_string()),
+            function_name: Arc::new(function_name.to_string()),
         }
-    }
-
-    pub fn new_owned(ifc_fqn: String, function_name: String) -> FunctionFqn<'static> {
-        FunctionFqn {
-            ifc_fqn: Cow::Owned(ifc_fqn),
-            function_name: Cow::Owned(function_name),
-        }
-    }
-
-    pub fn to_owned(&self) -> FunctionFqn<'static> {
-        Self::new_owned(self.ifc_fqn.to_string(), self.function_name.to_string())
     }
 }
 
-impl Display for FunctionFqn<'_> {
+impl Display for FunctionFqn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -49,6 +38,48 @@ impl Display for FunctionFqn<'_> {
             ifc_fqn = self.ifc_fqn,
             function_name = self.function_name
         )
+    }
+}
+
+impl std::cmp::PartialEq<FunctionFqnStr<'_>> for FunctionFqn {
+    fn eq(&self, other: &FunctionFqnStr<'_>) -> bool {
+        *self.ifc_fqn == other.ifc_fqn && *self.function_name == other.function_name
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct FunctionFqnStr<'a> {
+    pub ifc_fqn: &'a str,
+    pub function_name: &'a str,
+}
+
+impl FunctionFqnStr<'_> {
+    const fn new<'a>(ifc_fqn: &'a str, function_name: &'a str) -> FunctionFqnStr<'a> {
+        FunctionFqnStr {
+            ifc_fqn,
+            function_name,
+        }
+    }
+
+    fn to_owned(&self) -> FunctionFqn {
+        FunctionFqn::new(self.ifc_fqn.to_string(), self.function_name.to_string())
+    }
+}
+
+impl Display for FunctionFqnStr<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{ifc_fqn}.{{{function_name}}}",
+            ifc_fqn = self.ifc_fqn,
+            function_name = self.function_name
+        )
+    }
+}
+
+impl std::cmp::PartialEq<FunctionFqn> for FunctionFqnStr<'_> {
+    fn eq(&self, other: &FunctionFqn) -> bool {
+        self.ifc_fqn == *other.ifc_fqn && self.function_name == *other.function_name
     }
 }
 
@@ -85,18 +116,18 @@ pub enum ActivityFailed {
     #[error("[{workflow_id}] limit reached for activity `{activity_fqn}` - {reason}")]
     LimitReached {
         workflow_id: WorkflowId,
-        activity_fqn: Arc<FunctionFqn<'static>>,
+        activity_fqn: FunctionFqn,
         reason: String,
     },
     #[error("[{workflow_id}] activity `{activity_fqn}` not found")]
     NotFound {
         workflow_id: WorkflowId,
-        activity_fqn: Arc<FunctionFqn<'static>>,
+        activity_fqn: FunctionFqn,
     },
     #[error("[{workflow_id}] activity `{activity_fqn}` failed - {reason}")]
     Other {
         workflow_id: WorkflowId,
-        activity_fqn: Arc<FunctionFqn<'static>>,
+        activity_fqn: FunctionFqn,
         reason: String,
     },
 }

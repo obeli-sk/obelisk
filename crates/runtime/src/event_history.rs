@@ -1,6 +1,6 @@
 use crate::{
     activity::ActivityRequest, database::ActivityQueueSender, workflow::AsyncActivityBehavior,
-    workflow_id::WorkflowId, ActivityFailed, ActivityResponse, FunctionFqn,
+    workflow_id::WorkflowId, ActivityFailed, ActivityResponse, FunctionFqn, FunctionFqnStr,
 };
 use assert_matches::assert_matches;
 use std::{fmt::Debug, sync::Arc, time::Duration};
@@ -68,8 +68,9 @@ impl HostImports {
     }
 }
 
-pub(crate) const HOST_ACTIVITY_SLEEP_FQN: FunctionFqn<'static> =
-    FunctionFqn::new("my-org:workflow-engine/host-activities", "sleep");
+pub(crate) const HOST_ACTIVITY_SLEEP_FQN: FunctionFqnStr<'static> =
+    FunctionFqnStr::new("my-org:workflow-engine/host-activities", "sleep");
+
 // When calling host functions, create events and continue or interrupt the execution.
 #[async_trait::async_trait]
 impl my_org::workflow_engine::host_activities::Host for HostImports {
@@ -77,7 +78,7 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
         let event = Event {
             request: ActivityRequest {
                 workflow_id: self.current_event_history.workflow_id.clone(),
-                fqn: Arc::new(HOST_ACTIVITY_SLEEP_FQN),
+                fqn: HOST_ACTIVITY_SLEEP_FQN.to_owned(),
                 params: Arc::new(vec![Val::U64(millis)]),
             },
             kind: EventKind::ActivityAsync,
@@ -91,12 +92,12 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
     }
 
     async fn noop(&mut self) -> wasmtime::Result<()> {
-        const FQN: FunctionFqn<'static> =
-            FunctionFqn::new("my-org:workflow-engine/host-activities", "noop");
+        const FQN: FunctionFqnStr =
+            FunctionFqnStr::new("my-org:workflow-engine/host-activities", "noop");
         let event = Event {
             request: ActivityRequest {
                 workflow_id: self.current_event_history.workflow_id.clone(),
-                fqn: Arc::new(FQN),
+                fqn: FQN.to_owned(),
                 params: Arc::new(vec![]),
             },
             kind: EventKind::HostActivitySync(HostActivitySync::Noop),
@@ -120,7 +121,7 @@ pub(crate) struct Event {
 impl Event {
     pub fn new_from_wasm_activity(
         workflow_id: WorkflowId,
-        fqn: Arc<FunctionFqn<'static>>,
+        fqn: FunctionFqn,
         params: Arc<Vec<Val>>,
     ) -> Self {
         Self {
@@ -137,7 +138,7 @@ impl Event {
         request: ActivityRequest,
         activity_queue_sender: &ActivityQueueSender,
     ) -> Result<SupportedFunctionResult, ActivityFailed> {
-        if *request.fqn == HOST_ACTIVITY_SLEEP_FQN {
+        if request.fqn == HOST_ACTIVITY_SLEEP_FQN {
             assert_eq!(1, request.params.len(), "sleep expects a single argument");
             let millis =
                 assert_matches!(request.params.first().unwrap(), Val::U64(millis) => *millis);
@@ -235,7 +236,7 @@ impl CurrentEventHistory {
     fn next(
         &mut self,
     ) -> Option<(
-        &Arc<FunctionFqn<'static>>,
+        &FunctionFqn,
         &Arc<Vec<Val>>,
         &Result<SupportedFunctionResult, ActivityFailed>,
     )> {
@@ -326,7 +327,7 @@ impl CurrentEventHistory {
     }
 }
 
-pub type EventHistoryTriple = (Arc<FunctionFqn<'static>>, Arc<Vec<Val>>, ActivityResponse);
+pub type EventHistoryTriple = (FunctionFqn, Arc<Vec<Val>>, ActivityResponse);
 
 #[derive(Debug, Default, derive_more::From, derive_more::Into)]
 pub struct EventHistory {

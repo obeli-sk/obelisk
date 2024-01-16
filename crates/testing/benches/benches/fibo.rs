@@ -150,10 +150,7 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
                 hot_or_cold = hot_or_cold(&activity_config, &workflow_config)
             ),
             |b| {
-                let fqn = Arc::new(FunctionFqn::new(
-                    "testing:types-workflow/workflow",
-                    workflow_function,
-                ));
+                let fqn = FunctionFqn::new("testing:types-workflow/workflow", workflow_function);
                 let database = Database::new(100, 100);
                 let mut runtime = runtime.try_lock().unwrap();
                 noop_workflow(&mut runtime, &activity_config, &workflow_config);
@@ -204,10 +201,10 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
     let runtime = Mutex::new(Runtime::default());
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {
-            let fqn = Arc::new(FunctionFqn::new(
+            let fqn = FunctionFqn::new(
                 "testing:fibo-workflow/workflow",
                 fibo_config.workflow_function,
-            ));
+            );
             let database = Database::new(100, 100);
             let mut runtime = runtime.try_lock().unwrap();
             fibo_workflow(&mut runtime, &fibo_config);
@@ -243,10 +240,10 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
     let runtime = Mutex::new(Runtime::default());
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {
-            let fqn = Arc::new(FunctionFqn::new(
+            let fqn = FunctionFqn::new(
                 "testing:fibo-workflow/workflow",
                 fibo_config.workflow_function,
-            ));
+            );
             let database = Database::new(100, 100);
             let mut runtime = runtime.try_lock().unwrap();
             fibo_workflow(&mut runtime, &fibo_config);

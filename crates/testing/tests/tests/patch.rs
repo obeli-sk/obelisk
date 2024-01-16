@@ -29,7 +29,7 @@ fn set_up() {
 async fn patch_activity() -> Result<(), anyhow::Error> {
     set_up();
     const EXPECTED_ACTIVITY_CALLS: u32 = 10;
-    let fqn = Arc::new(FunctionFqn::new("testing:patch-workflow/workflow", "noopa"));
+    let fqn = FunctionFqn::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = Arc::new(vec![Val::U32(EXPECTED_ACTIVITY_CALLS)]);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let database = Database::new(100, 100);
@@ -68,8 +68,8 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
                 reason: _,
                 workflow_id: found_workflow_id,
                 run_id,
-            } if workflow_fqn == *fqn && found_workflow_id == workflow_id && run_id == 5 &&
-            activity_fqn == Arc::new(FunctionFqn::new("testing:patch/patch", "noop"))
+            } if workflow_fqn == fqn && found_workflow_id == workflow_id && run_id == 5 &&
+            activity_fqn == FunctionFqn::new("testing:patch/patch", "noop")
         );
         assert_eq!(
             event_history.lock().await.successful_activities(),
@@ -120,7 +120,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
 
 fn generate_history(max: u32) -> EventHistory {
     let mut event_history = Vec::new();
-    let activity_fqn = Arc::new(FunctionFqn::new("testing:patch/patch", "noop"));
+    let activity_fqn = FunctionFqn::new("testing:patch/patch", "noop");
     for i in 0..max {
         event_history.push((
             activity_fqn.clone(),
@@ -136,7 +136,7 @@ async fn generate_event_history_matching() -> Result<(), anyhow::Error> {
     set_up();
     const EXPECTED_ACTIVITY_CALLS: u32 = 10;
     let event_history = Arc::new(Mutex::new(generate_history(EXPECTED_ACTIVITY_CALLS)));
-    let fqn = Arc::new(FunctionFqn::new("testing:patch-workflow/workflow", "noopa"));
+    let fqn = FunctionFqn::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = Arc::new(vec![Val::U32(EXPECTED_ACTIVITY_CALLS)]);
     let database = Database::new(100, 100);
     let mut runtime = Runtime::default();
@@ -177,7 +177,7 @@ async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
     set_up();
     const EXPECTED_ACTIVITY_CALLS: u32 = 10;
     let event_history = Arc::new(Mutex::new(generate_history(EXPECTED_ACTIVITY_CALLS + 1)));
-    let fqn = Arc::new(FunctionFqn::new("testing:patch-workflow/workflow", "noopa"));
+    let fqn = FunctionFqn::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = Arc::new(vec![Val::U32(EXPECTED_ACTIVITY_CALLS)]);
     let database = Database::new(100, 100);
     let mut runtime = Runtime::default();
@@ -209,7 +209,7 @@ async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
             reason,
             run_id
         }
-        if found_fqn == *fqn && found_id == workflow_id && run_id == 0 && reason == "replay log was not drained"
+        if found_fqn == fqn && found_id == workflow_id && run_id == 0 && reason == "replay log was not drained"
     );
     Ok(())
 }
