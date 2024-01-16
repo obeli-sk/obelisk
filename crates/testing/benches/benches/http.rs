@@ -14,7 +14,7 @@ use wiremock::{
 };
 
 lazy_static! {
-    static ref RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+    static ref RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
         .enable_time()
         .build()
