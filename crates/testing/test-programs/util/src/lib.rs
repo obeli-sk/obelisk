@@ -22,7 +22,9 @@ fn build_internal(tripple: &str) {
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
     let wasm = run_cargo_component_build(&out_dir, pkg_name, tripple);
-    println!("cargo:warning=Built {wasm:?}");
+    if std::env::var("RUST_LOG").is_ok() {
+        println!("cargo:warning=Built {wasm:?}");
+    }
     let mut generated_code = String::new();
     generated_code += &format!(
         "pub const {name_upper}: &str = {wasm:?};\n",
