@@ -1,3 +1,3 @@
 fn main() {
-    test_programs_util::build_activity();
+    cargo_component_builder::build_activity();
 }

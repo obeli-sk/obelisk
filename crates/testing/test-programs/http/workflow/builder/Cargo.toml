@@ -6,5 +6,4 @@ edition.workspace = true
 rust-version.workspace = true
 
 [build-dependencies]
-test-programs-util.workspace = true
-
+cargo-component-builder.workspace = true

@@ -318,6 +318,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cargo-component-builder"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+]
+
+[[package]]
 name = "cargo-component-macro"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2224,7 +2231,7 @@ dependencies = [
 name = "test-programs-fibo-activity-builder"
 version = "0.1.0"
 dependencies = [
- "test-programs-util",
+ "cargo-component-builder",
 ]
 
 [[package]]
@@ -2238,7 +2245,7 @@ dependencies = [
 name = "test-programs-fibo-workflow-builder"
 version = "0.1.0"
 dependencies = [
- "test-programs-util",
+ "cargo-component-builder",
 ]
 
 [[package]]
@@ -2253,7 +2260,7 @@ dependencies = [
 name = "test-programs-http-get-activity-builder"
 version = "0.1.0"
 dependencies = [
- "test-programs-util",
+ "cargo-component-builder",
 ]
 
 [[package]]
@@ -2267,7 +2274,7 @@ dependencies = [
 name = "test-programs-http-get-workflow-builder"
 version = "0.1.0"
 dependencies = [
- "test-programs-util",
+ "cargo-component-builder",
 ]
 
 [[package]]
@@ -2281,7 +2288,7 @@ dependencies = [
 name = "test-programs-patch-activity-broken-builder"
 version = "0.1.0"
 dependencies = [
- "test-programs-util",
+ "cargo-component-builder",
 ]
 
 [[package]]
@@ -2295,7 +2302,7 @@ dependencies = [
 name = "test-programs-patch-activity-fixed-builder"
 version = "0.1.0"
 dependencies = [
- "test-programs-util",
+ "cargo-component-builder",
 ]
 
 [[package]]
@@ -2309,7 +2316,7 @@ dependencies = [
 name = "test-programs-patch-workflow-builder"
 version = "0.1.0"
 dependencies = [
- "test-programs-util",
+ "cargo-component-builder",
 ]
 
 [[package]]
@@ -2324,7 +2331,7 @@ dependencies = [
 name = "test-programs-sleep-activity-builder"
 version = "0.1.0"
 dependencies = [
- "test-programs-util",
+ "cargo-component-builder",
 ]
 
 [[package]]
@@ -2338,7 +2345,7 @@ dependencies = [
 name = "test-programs-sleep-workflow-builder"
 version = "0.1.0"
 dependencies = [
- "test-programs-util",
+ "cargo-component-builder",
 ]
 
 [[package]]
@@ -2352,7 +2359,7 @@ dependencies = [
 name = "test-programs-types-activity-builder"
 version = "0.1.0"
 dependencies = [
- "test-programs-util",
+ "cargo-component-builder",
 ]
 
 [[package]]
@@ -2366,14 +2373,7 @@ dependencies = [
 name = "test-programs-types-workflow-builder"
 version = "0.1.0"
 dependencies = [
- "test-programs-util",
-]
-
-[[package]]
-name = "test-programs-util"
-version = "0.1.0"
-dependencies = [
- "cargo_metadata",
+ "cargo-component-builder",
 ]
 
 [[package]]

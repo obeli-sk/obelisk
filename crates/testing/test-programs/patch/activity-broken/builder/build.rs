@@ -1,3 +1,3 @@
 fn main() {
-    test_programs_util::build();
+    cargo_component_builder::build();
 }
