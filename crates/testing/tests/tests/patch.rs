@@ -203,7 +203,7 @@ async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
     assert_matches!(
         res.unwrap_err(),
         ExecutionError::NonDeterminismDetected {
-            fqn: found_fqn ,
+            workflow_fqn: found_fqn ,
             workflow_id: found_id,
             reason,
             run_id

@@ -44,11 +44,11 @@ pub enum ExecutionError {
         workflow_id: WorkflowId,
         fqn: FunctionFqn,
     },
-    #[error("[{workflow_id},{run_id}] workflow `{fqn}` encountered non deterministic execution, reason: `{reason}`")]
+    #[error("[{workflow_id},{run_id}] workflow `{workflow_fqn}` encountered non deterministic execution, reason: `{reason}`")]
     NonDeterminismDetected {
         workflow_id: WorkflowId,
         run_id: u64,
-        fqn: FunctionFqn,
+        workflow_fqn: FunctionFqn,
         reason: String,
     },
     #[error("[{workflow_id},{run_id}] activity failed, workflow `{workflow_fqn}`, activity `{activity_fqn}`, reason: `{reason}`")]
@@ -87,28 +87,106 @@ pub enum ExecutionError {
         workflow_fqn: FunctionFqn,
         reason: String,
     },
-    #[error("[{workflow_id},{run_id}] `{fqn}` encountered an unknown error: `{source:?}`")]
+    #[error(
+        "[{workflow_id},{run_id}] `{workflow_fqn}` encountered an unknown error: `{source:?}`"
+    )]
     UnknownError {
         workflow_id: WorkflowId,
         run_id: u64,
-        fqn: FunctionFqn,
+        workflow_fqn: FunctionFqn,
         // #[backtrace]
         source: anyhow::Error,
     },
 }
 
+#[derive(Debug)]
+enum PartialExecutionResult {
+    Ok(SupportedFunctionResult),
+    NewEventPersisted,
+}
+
 #[derive(thiserror::Error, Debug)]
-enum ExecutionInterrupt {
+enum WorkflowFailed {
     #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(String),
-    #[error("interrupted")]
-    NewEventPersisted,
     #[error(transparent)]
     ActivityFailed(ActivityFailed),
     #[error("limit reached: `{0}`")]
     LimitReached(String),
     #[error("unknown error: `{0:?}`")]
     UnknownError(anyhow::Error),
+}
+
+impl WorkflowFailed {
+    fn into_execution_error(
+        self,
+        workflow_fqn: FunctionFqn,
+        workflow_id: WorkflowId,
+        run_id: u64,
+    ) -> ExecutionError {
+        match self {
+            WorkflowFailed::ActivityFailed(ActivityFailed::Other {
+                workflow_id: id,
+                activity_fqn,
+                reason,
+            }) => {
+                assert_eq!(id, workflow_id);
+                ExecutionError::ActivityFailed {
+                    workflow_id,
+                    run_id,
+                    workflow_fqn,
+                    activity_fqn,
+                    reason,
+                }
+            }
+            WorkflowFailed::ActivityFailed(ActivityFailed::LimitReached {
+                workflow_id: id,
+                activity_fqn,
+                reason,
+            }) => {
+                assert_eq!(id, workflow_id);
+                ExecutionError::ActivityLimitReached {
+                    workflow_id,
+                    run_id,
+                    workflow_fqn,
+                    activity_fqn,
+                    reason,
+                }
+            }
+            WorkflowFailed::ActivityFailed(ActivityFailed::NotFound {
+                workflow_id: id,
+                activity_fqn,
+            }) => {
+                assert_eq!(id, workflow_id);
+                ExecutionError::ActivityNotFound {
+                    workflow_id,
+                    run_id,
+                    workflow_fqn,
+                    activity_fqn,
+                }
+            }
+            WorkflowFailed::NonDeterminismDetected(reason) => {
+                ExecutionError::NonDeterminismDetected {
+                    workflow_id,
+                    run_id,
+                    workflow_fqn,
+                    reason,
+                }
+            }
+            WorkflowFailed::LimitReached(reason) => ExecutionError::LimitReached {
+                workflow_id,
+                run_id,
+                workflow_fqn,
+                reason,
+            },
+            WorkflowFailed::UnknownError(source) => ExecutionError::UnknownError {
+                workflow_id,
+                run_id,
+                workflow_fqn,
+                source,
+            },
+        }
+    }
 }
 
 pub struct Workflow {
@@ -209,21 +287,21 @@ impl Workflow {
         workflow_id: &WorkflowId,
         activity_queue_sender: &ActivityQueueSender,
         event_history: &mut EventHistory,
-        fqn: &FunctionFqn,
+        workflow_fqn: &FunctionFqn,
         params: &[Val],
     ) -> Result<SupportedFunctionResult, ExecutionError> {
-        info!("[{workflow_id}] workflow.execute_all `{fqn}`");
+        info!("[{workflow_id}] workflow.execute_all `{workflow_fqn}`");
 
         let results_len = self
             .functions_to_metadata
-            .get(fqn)
+            .get(workflow_fqn)
             .ok_or_else(|| ExecutionError::NotFound {
                 workflow_id: workflow_id.clone(),
-                fqn: fqn.clone(),
+                fqn: workflow_fqn.clone(),
             })?
             .results_len;
         trace!(
-            "[{workflow_id}] workflow.execute_all `{fqn}`({params:?}) -> results_len:{results_len}"
+            "[{workflow_id}] workflow.execute_all `{workflow_fqn}`({params:?}) -> results_len:{results_len}"
         );
 
         for run_id in 0.. {
@@ -233,78 +311,21 @@ impl Workflow {
                     run_id,
                     activity_queue_sender,
                     event_history,
-                    fqn,
+                    workflow_fqn,
                     params,
                     results_len,
                 )
                 .await;
-            trace!("[{workflow_id},{run_id}] workflow.execute_all `{fqn}` -> {res:?}");
+            trace!("[{workflow_id},{run_id}] workflow.execute_all `{workflow_fqn}` -> {res:?}");
             match res {
-                Ok(output) => return Ok(output), // TODO Persist the workflow result to the history
-                Err(ExecutionInterrupt::NewEventPersisted) => {} // loop again to get to the next step
-                Err(ExecutionInterrupt::ActivityFailed(ActivityFailed::Other {
-                    workflow_id: id,
-                    activity_fqn,
-                    reason,
-                })) => {
-                    assert_eq!(id, *workflow_id);
-                    return Err(ExecutionError::ActivityFailed {
-                        workflow_id: id,
+                Ok(PartialExecutionResult::Ok(output)) => return Ok(output), // TODO Persist the workflow result to the history
+                Ok(PartialExecutionResult::NewEventPersisted) => {} // loop again to get to the next step
+                Err(err) => {
+                    return Err(err.into_execution_error(
+                        workflow_fqn.clone(),
+                        workflow_id.clone(),
                         run_id,
-                        workflow_fqn: fqn.clone(),
-                        activity_fqn,
-                        reason,
-                    });
-                }
-                Err(ExecutionInterrupt::ActivityFailed(ActivityFailed::LimitReached {
-                    workflow_id: id,
-                    activity_fqn,
-                    reason,
-                })) => {
-                    assert_eq!(id, *workflow_id);
-                    return Err(ExecutionError::ActivityLimitReached {
-                        workflow_id: id,
-                        run_id,
-                        workflow_fqn: fqn.clone(),
-                        activity_fqn,
-                        reason,
-                    });
-                }
-                Err(ExecutionInterrupt::ActivityFailed(ActivityFailed::NotFound {
-                    workflow_id: id,
-                    activity_fqn,
-                })) => {
-                    assert_eq!(id, *workflow_id);
-                    return Err(ExecutionError::ActivityNotFound {
-                        workflow_id: id,
-                        run_id,
-                        workflow_fqn: fqn.clone(),
-                        activity_fqn,
-                    });
-                }
-                Err(ExecutionInterrupt::NonDeterminismDetected(reason)) => {
-                    return Err(ExecutionError::NonDeterminismDetected {
-                        workflow_id: workflow_id.clone(),
-                        run_id,
-                        fqn: fqn.clone(),
-                        reason,
-                    })
-                }
-                Err(ExecutionInterrupt::LimitReached(reason)) => {
-                    return Err(ExecutionError::LimitReached {
-                        workflow_id: workflow_id.clone(),
-                        run_id,
-                        workflow_fqn: fqn.clone(),
-                        reason,
-                    })
-                }
-                Err(ExecutionInterrupt::UnknownError(source)) => {
-                    return Err(ExecutionError::UnknownError {
-                        workflow_id: workflow_id.clone(),
-                        run_id,
-                        fqn: fqn.clone(),
-                        source,
-                    })
+                    ))
                 }
             }
         }
@@ -322,7 +343,7 @@ impl Workflow {
         workflow_fqn: &FunctionFqn,
         params: &[Val],
         results_len: usize,
-    ) -> Result<SupportedFunctionResult, ExecutionInterrupt> {
+    ) -> Result<PartialExecutionResult, WorkflowFailed> {
         let mut store = Store::new(
             &self.engine,
             HostImports {
@@ -353,7 +374,7 @@ impl Workflow {
             &mut store.data_mut().current_event_history.event_history,
         );
         if res.is_ok() && !store.data_mut().current_event_history.replay_is_drained() {
-            res = Err(ExecutionInterrupt::NonDeterminismDetected(
+            res = Err(WorkflowFailed::NonDeterminismDetected(
                 "replay log was not drained".to_string(),
             ))
         }
@@ -370,7 +391,7 @@ impl Workflow {
         workflow_fqn: &FunctionFqn,
         params: &[Val],
         results_len: usize,
-    ) -> Result<SupportedFunctionResult, ExecutionInterrupt> {
+    ) -> Result<PartialExecutionResult, WorkflowFailed> {
         match self
             .execute_one_step(
                 workflow_id,
@@ -382,10 +403,17 @@ impl Workflow {
             )
             .await
         {
-            Ok(ok) => Ok(ok),
-            Err(err) => Err(self
-                .interpret_errors(activity_queue_sender, store, err)
-                .await),
+            Ok(ok) => Ok(PartialExecutionResult::Ok(ok)),
+            Err(err) => {
+                if let Some(err) = self
+                    .interpret_errors(activity_queue_sender, store, err)
+                    .await
+                {
+                    Err(err)
+                } else {
+                    Ok(PartialExecutionResult::NewEventPersisted)
+                }
+            }
         }
     }
 
@@ -394,13 +422,13 @@ impl Workflow {
         activity_queue_sender: &ActivityQueueSender,
         store: &mut Store<HostImports>,
         err: anyhow::Error,
-    ) -> ExecutionInterrupt {
+    ) -> Option<WorkflowFailed> {
         match err
             .source()
             .and_then(|source| source.downcast_ref::<HostFunctionError>())
         {
             Some(HostFunctionError::NonDeterminismDetected(reason)) => {
-                ExecutionInterrupt::NonDeterminismDetected(reason.clone())
+                Some(WorkflowFailed::NonDeterminismDetected(reason.clone()))
             }
             Some(HostFunctionError::Interrupt { request }) => {
                 // Persist and execute the event
@@ -418,7 +446,7 @@ impl Workflow {
                             .current_event_history
                             .persist_end(request.clone(), res)
                             .await;
-                        ExecutionInterrupt::NewEventPersisted
+                        None
                     }
                     Err(err) => {
                         store
@@ -426,20 +454,20 @@ impl Workflow {
                             .current_event_history
                             .persist_end(request.clone(), Err(err.clone()))
                             .await;
-                        ExecutionInterrupt::ActivityFailed(err)
+                        Some(WorkflowFailed::ActivityFailed(err))
                     }
                 }
             }
             Some(HostFunctionError::ActivityFailed(activity_failed)) => {
                 // TODO: persist activity failure
-                ExecutionInterrupt::ActivityFailed(activity_failed.clone())
+                Some(WorkflowFailed::ActivityFailed(activity_failed.clone()))
             }
             None => {
                 let reason = err.to_string();
                 if is_limit_reached(&reason) {
-                    ExecutionInterrupt::LimitReached(reason)
+                    Some(WorkflowFailed::LimitReached(reason))
                 } else {
-                    ExecutionInterrupt::UnknownError(err)
+                    Some(WorkflowFailed::UnknownError(err))
                 }
             }
         }

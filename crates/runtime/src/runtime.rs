@@ -125,6 +125,7 @@ impl RuntimeBuilder {
     }
 
     pub fn build(self) -> Runtime {
+        // TODO: check that no function is in host namespace, no activity-workflow collisions
         Runtime {
             functions_to_workflows: Arc::new(self.functions_to_workflows),
             functions_to_activities: Arc::new(self.functions_to_activities),

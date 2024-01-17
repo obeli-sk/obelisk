@@ -114,7 +114,6 @@ impl Activity {
         let exported_interfaces = exported_interfaces(&decoded)
             .with_context(|| format!("error parsing \"{wasm_path}\""))?;
         let functions_to_metadata = functions_to_metadata(exported_interfaces)?;
-        // TODO: check that no function is in host namespace
         debug!("Decoded functions {:?}", functions_to_metadata.keys());
         trace!("Decoded functions {functions_to_metadata:#?}");
         let instance_pre: wasmtime::component::InstancePre<http::Ctx> = {
@@ -180,6 +179,7 @@ impl Activity {
             fqn = request.fqn,
             params = request.params
         );
+        // TODO: Refactor async host activities
         if request.fqn == HOST_ACTIVITY_SLEEP_FQN {
             // sleep implementation
             assert_eq!(request.params.len(), 1);

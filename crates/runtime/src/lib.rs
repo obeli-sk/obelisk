@@ -17,7 +17,6 @@ pub mod workflow;
 pub struct FunctionFqn {
     pub ifc_fqn: Arc<String>, // format namespace:name/ifc_name@version
     pub function_name: Arc<String>,
-    // TODO: version
 }
 
 impl FunctionFqn {
