@@ -5,6 +5,7 @@ use crate::FunctionMetadata;
 use crate::{database::ActivityEventFetcher, ActivityFailed, FunctionFqn};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 use wasmtime::Engine;
 
@@ -146,9 +147,9 @@ impl Runtime {
             .and_then(|w| w.functions_to_metadata.get(fqn))
     }
 
-    // FIXME: cancel on drop of Runtime
     // TODO: add runtime+spawn id
-    pub fn spawn(&self, database: &Database) -> tokio::task::AbortHandle {
+    #[must_use]
+    pub fn spawn(&self, database: &Database) -> StructuredAbortHandle {
         let process_workflows = Self::process_workflows(
             self.functions_to_workflows.clone(),
             database.workflow_event_fetcher(),
@@ -158,10 +159,12 @@ impl Runtime {
             database.activity_event_fetcher(),
             self.functions_to_activities.clone(),
         );
-        tokio::spawn(async move {
-            futures_util::join!(process_activities, process_workflows);
-        })
-        .abort_handle()
+        StructuredAbortHandle(
+            tokio::spawn(async move {
+                futures_util::join!(process_activities, process_workflows);
+            })
+            .abort_handle(),
+        )
     }
 
     async fn process_workflows(
@@ -214,5 +217,19 @@ impl Runtime {
             let _ = resp_tx.send(activity_res);
         }
         debug!("Runtime::process_activities exiting");
+    }
+}
+
+pub struct StructuredAbortHandle(AbortHandle);
+
+impl StructuredAbortHandle {
+    pub fn abort(&self) {
+        self.0.abort();
+    }
+}
+
+impl Drop for StructuredAbortHandle {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }

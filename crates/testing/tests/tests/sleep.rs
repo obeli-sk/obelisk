@@ -51,7 +51,7 @@ async fn test_async_activity(
             &workflow_config,
         )
         .await?;
-    runtime.build().spawn(&database);
+    let _abort_handle = runtime.build().spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let params = Arc::new(vec![wasmtime::component::Val::U64(0)]);
     let res = database
@@ -93,7 +93,7 @@ async fn test_call_activity_with_version() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    runtime.build().spawn(&database);
+    let _abort_handle = runtime.build().spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let res = database
         .workflow_scheduler()
@@ -185,8 +185,10 @@ async fn test_limits(
         .await?;
     let mut futures = Vec::new();
     let runtime = runtime.build();
+    // Start tokio tasks to process the futures concurrently.
+    let _abort_handles: Vec<_> = (0..ITERATIONS).map(|_| runtime.spawn(&database)).collect();
+    // Prepare futures, last one processed should fail.
     for _ in 0..ITERATIONS {
-        runtime.spawn(&database);
         let workflow_scheduler = database.workflow_scheduler();
         let join_handle = async move {
             let event_history = Arc::new(Mutex::new(EventHistory::default()));

@@ -47,7 +47,7 @@ async fn test() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    runtime.build().spawn(&database);
+    let _abort_handle = runtime.build().spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let timer = Instant::now();
 

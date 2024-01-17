@@ -66,7 +66,7 @@ async fn main() -> Result<(), anyhow::Error> {
             .unwrap_or_default(),
     );
 
-    runtime.spawn(&database);
+    let _abort_handle = runtime.spawn(&database);
 
     let res = database
         .workflow_scheduler()

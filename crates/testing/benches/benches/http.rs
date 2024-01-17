@@ -66,12 +66,12 @@ fn benchmark_http(criterion: &mut Criterion) {
     set_up();
     let database = Database::new(100, 100);
     let runtime = workflow();
-    RT.block_on(async {
+    let _abort_handles: Vec<_> = RT.block_on(async {
         let worker_threads = 20;
         println!("Runtime is using {} workers", worker_threads);
-        for _ in 0..worker_threads {
-            runtime.spawn(&database);
-        }
+        (0..worker_threads)
+            .map(|_| runtime.spawn(&database))
+            .collect()
     });
     let port = RT.block_on(async {
         let server = MockServer::start().await;

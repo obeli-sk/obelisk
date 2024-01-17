@@ -40,7 +40,7 @@ async fn test() -> Result<(), anyhow::Error> {
         )
         .await?;
     let runtime = runtime.build();
-    runtime.spawn(&database);
+    let _abort_handle = runtime.spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let iterations: usize = 10;
     let param_vals = format!("[{iterations}]");

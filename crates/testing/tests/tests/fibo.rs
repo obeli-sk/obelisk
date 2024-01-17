@@ -39,7 +39,7 @@ async fn test_fibow_fiboa() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    runtime.build().spawn(&database);
+    let _abort_handle = runtime.build().spawn(&database);
 
     let iterations = 10;
 

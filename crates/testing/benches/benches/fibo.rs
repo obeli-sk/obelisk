@@ -35,7 +35,7 @@ lazy_static! {
 fn benchmark_engine_creation(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("throughput");
     group.throughput(Throughput::Elements(2)); // Workflow and Activity engine are created.
-    group.bench_function("engine", |b| b.iter(|| RuntimeBuilder::default()));
+    group.bench_function("engine", |b| b.iter(RuntimeBuilder::default));
 }
 
 fn noop_workflow(

@@ -52,7 +52,7 @@ async fn test_runtime_with_many_activities_and_workflows() -> Result<(), anyhow:
         )
         .await?;
 
-    runtime.build().spawn(&database);
+    let _abort_handle = runtime.build().spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let res = database
         .workflow_scheduler()

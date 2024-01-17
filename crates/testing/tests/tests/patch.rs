@@ -48,7 +48,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
                 &WorkflowConfig::default(),
             )
             .await?;
-        let abort_handle = runtime.build().spawn(&database);
+        let _abort_handle = runtime.build().spawn(&database);
         let workflow_id = WorkflowId::generate();
         let res = database
             .workflow_scheduler()
@@ -75,7 +75,6 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
             event_history.lock().await.successful_activities(),
             usize::try_from(5).unwrap()
         );
-        abort_handle.abort(); // FIXME
     }
     // Remove the failed activity from the event history.
     let mut event_history: Vec<_> = Arc::try_unwrap(event_history).unwrap().into_inner().into();
@@ -99,7 +98,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
                 &WorkflowConfig::default(),
             )
             .await?;
-        runtime.build().spawn(&database);
+        let _abort_handle = runtime.build().spawn(&database);
         database
             .workflow_scheduler()
             .schedule_workflow(
@@ -153,7 +152,7 @@ async fn generate_event_history_matching() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    runtime.build().spawn(&database);
+    let _abort_handle = runtime.build().spawn(&database);
     database
         .workflow_scheduler()
         .schedule_workflow(
@@ -194,7 +193,7 @@ async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    runtime.build().spawn(&database);
+    let _abort_handle = runtime.build().spawn(&database);
     let workflow_id = WorkflowId::generate();
     let res = database
         .workflow_scheduler()
