@@ -9,7 +9,6 @@ use workflow_id::WorkflowId;
 pub mod activity;
 pub mod database;
 pub mod event_history;
-mod queue;
 pub mod runtime;
 mod wasm_tools;
 pub mod workflow;

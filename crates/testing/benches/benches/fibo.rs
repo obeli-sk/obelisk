@@ -1,10 +1,10 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use lazy_static::lazy_static;
 use runtime::{
     activity::{ActivityConfig, ActivityPreload},
     database::Database,
     event_history::EventHistory,
-    runtime::Runtime,
+    runtime::{Runtime, RuntimeBuilder},
     workflow::{AsyncActivityBehavior, WorkflowConfig},
     workflow_id::WorkflowId,
     FunctionFqn,
@@ -32,11 +32,17 @@ lazy_static! {
         .expect("Should create a tokio runtime");
 }
 
+fn benchmark_engine_creation(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("throughput");
+    group.throughput(Throughput::Elements(2)); // Workflow and Activity engine are created.
+    group.bench_function("engine", |b| b.iter(|| RuntimeBuilder::default()));
+}
+
 fn noop_workflow(
-    runtime: &mut Runtime,
+    mut runtime: RuntimeBuilder,
     activity_config: &ActivityConfig,
     workflow_config: &WorkflowConfig,
-) {
+) -> Runtime {
     RT.block_on(async move {
         runtime
             .add_activity(
@@ -52,6 +58,7 @@ fn noop_workflow(
             )
             .await
             .unwrap();
+        runtime.build()
     })
 }
 
@@ -63,22 +70,23 @@ fn fibonacci(n: u64) -> u64 {
     }
 }
 
-fn fibo_workflow(runtime: &mut Runtime, fibo_config: &FiboConfig) {
+fn fibo_workflow(mut runtime_builder: RuntimeBuilder, fibo_config: &FiboConfig) -> Runtime {
     RT.block_on(async {
-        runtime
+        runtime_builder
             .add_activity(
                 test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY.to_string(),
                 &fibo_config.activity_config,
             )
             .await
             .unwrap();
-        runtime
+        runtime_builder
             .add_workflow_definition(
                 test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
                 &fibo_config.workflow_config,
             )
             .await
             .unwrap();
+        runtime_builder.build()
     })
 }
 
@@ -142,7 +150,7 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
         ("noopha", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
         ("noopha", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
     ];
-    let runtime = Mutex::new(Runtime::default());
+    let runtime_builder = Mutex::new(RuntimeBuilder::default());
     for (workflow_function, iterations, activity_config, workflow_config) in functions {
         criterion.bench_function(
             &format!(
@@ -152,8 +160,8 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
             |b| {
                 let fqn = FunctionFqn::new("testing:types-workflow/workflow", workflow_function);
                 let database = Database::new(100, 100);
-                let mut runtime = runtime.try_lock().unwrap();
-                noop_workflow(&mut runtime, &activity_config, &workflow_config);
+                let runtime_builder = runtime_builder.try_lock().unwrap().clone();
+                let runtime = noop_workflow(runtime_builder, &activity_config, &workflow_config);
                 b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                     let abort_handle = runtime.spawn(&database);
                     let workflow_scheduler = database.workflow_scheduler();
@@ -198,7 +206,7 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
         FiboConfig::new("fiboa", 10, 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
         FiboConfig::new("fiboa", 10, 100, ACTIVITY_CONFIG_HOT, WORKFLOW_CONFIG_HOT),
     ];
-    let runtime = Mutex::new(Runtime::default());
+    let runtime_builder = Mutex::new(RuntimeBuilder::default());
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {
             let fqn = FunctionFqn::new(
@@ -206,8 +214,8 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
                 fibo_config.workflow_function,
             );
             let database = Database::new(100, 100);
-            let mut runtime = runtime.try_lock().unwrap();
-            fibo_workflow(&mut runtime, &fibo_config);
+            let runtime_builder = runtime_builder.try_lock().unwrap().clone();
+            let runtime = fibo_workflow(runtime_builder, &fibo_config);
             b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                 let workflow_scheduler = database.workflow_scheduler();
                 let abort_handle = runtime.spawn(&database);
@@ -237,7 +245,7 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
         FiboConfig::new("fibow", 40, 10, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
         FiboConfig::new("fiboa", 40, 10, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
     ];
-    let runtime = Mutex::new(Runtime::default());
+    let runtime_builder = Mutex::new(RuntimeBuilder::default());
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {
             let fqn = FunctionFqn::new(
@@ -245,8 +253,8 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
                 fibo_config.workflow_function,
             );
             let database = Database::new(100, 100);
-            let mut runtime = runtime.try_lock().unwrap();
-            fibo_workflow(&mut runtime, &fibo_config);
+            let runtime_builder = runtime_builder.try_lock().unwrap().clone();
+            let runtime = fibo_workflow(runtime_builder, &fibo_config);
             b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
                 let workflow_scheduler = database.workflow_scheduler();
                 let params = Arc::new(vec![
@@ -269,6 +277,12 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
 }
 
 criterion_group! {
+  name = engine_creation;
+  config = Criterion::default();
+  targets = benchmark_engine_creation
+}
+
+criterion_group! {
   name = noop_benches;
   config = Criterion::default();
   targets = benchmark_noop_functions
@@ -283,4 +297,9 @@ criterion_group! {
   config = Criterion::default().sample_size(10);
   targets = benchmark_fibo_slow_functions
 }
-criterion_main!(noop_benches, fibo_fast_benches, fibo_slow_benches);
+criterion_main!(
+    engine_creation,
+    noop_benches,
+    fibo_fast_benches,
+    fibo_slow_benches
+);

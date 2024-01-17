@@ -1,5 +1,5 @@
 use runtime::event_history::EventHistory;
-use runtime::runtime::Runtime;
+use runtime::runtime::RuntimeBuilder;
 use runtime::workflow::WorkflowConfig;
 use runtime::workflow_id::WorkflowId;
 use runtime::FunctionFqn;
@@ -37,7 +37,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let database = Database::new(100, 100);
 
-    let mut runtime = Runtime::default();
+    let mut runtime = RuntimeBuilder::default();
     runtime
         .add_activity(activity_wasm_path, &ActivityConfig::default())
         .await?;
@@ -47,6 +47,7 @@ async fn main() -> Result<(), anyhow::Error> {
     println!("Initialized in {duration:?}", duration = timer.elapsed());
     println!();
 
+    let runtime = runtime.build();
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let timer = Instant::now();
     let param_types = workflow

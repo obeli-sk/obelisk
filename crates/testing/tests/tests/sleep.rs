@@ -4,7 +4,7 @@ use runtime::{
     activity::ActivityConfig,
     database::Database,
     event_history::EventHistory,
-    runtime::{EngineConfig, Runtime, RuntimeConfig},
+    runtime::{EngineConfig, RuntimeBuilder, RuntimeConfig},
     workflow::{AsyncActivityBehavior, ExecutionError, WorkflowConfig},
     workflow_id::WorkflowId,
     FunctionFqn,
@@ -38,7 +38,7 @@ async fn test_async_activity(
     set_up();
 
     let database = Database::new(100, 100);
-    let mut runtime = Runtime::default();
+    let mut runtime = RuntimeBuilder::default();
     runtime
         .add_activity(
             test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY.to_string(),
@@ -51,8 +51,7 @@ async fn test_async_activity(
             &workflow_config,
         )
         .await?;
-    runtime.spawn(&database);
-    // let runtime = Arc::new(runtime);
+    runtime.build().spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let params = Arc::new(vec![wasmtime::component::Val::U64(0)]);
     let res = database
@@ -81,7 +80,7 @@ async fn test_call_activity_with_version() -> Result<(), anyhow::Error> {
     set_up();
 
     let database = Database::new(100, 100);
-    let mut runtime = Runtime::default();
+    let mut runtime = RuntimeBuilder::default();
     runtime
         .add_activity(
             test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY.to_string(),
@@ -94,8 +93,7 @@ async fn test_call_activity_with_version() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    runtime.spawn(&database);
-    // let runtime = Arc::new(runtime);
+    runtime.build().spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let res = database
         .workflow_scheduler()
@@ -161,17 +159,18 @@ async fn test_limits(
     set_up();
     let database = Database::new(100, 100);
     let engine_config = limit_kind.config();
-    let mut runtime = Runtime::new_with_config(if limit_engine_kind == LimitEngineKind::Activity {
-        RuntimeConfig {
-            activity_engine_config: engine_config,
-            workflow_engine_config: EngineConfig::default(),
-        }
-    } else {
-        RuntimeConfig {
-            activity_engine_config: EngineConfig::default(),
-            workflow_engine_config: engine_config,
-        }
-    });
+    let mut runtime =
+        RuntimeBuilder::new_with_config(if limit_engine_kind == LimitEngineKind::Activity {
+            RuntimeConfig {
+                activity_engine_config: engine_config,
+                workflow_engine_config: EngineConfig::default(),
+            }
+        } else {
+            RuntimeConfig {
+                activity_engine_config: EngineConfig::default(),
+                workflow_engine_config: engine_config,
+            }
+        });
     runtime
         .add_activity(
             test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY.to_string(),
@@ -185,6 +184,7 @@ async fn test_limits(
         )
         .await?;
     let mut futures = Vec::new();
+    let runtime = runtime.build();
     for _ in 0..ITERATIONS {
         runtime.spawn(&database);
         let workflow_scheduler = database.workflow_scheduler();

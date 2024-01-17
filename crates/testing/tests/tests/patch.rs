@@ -3,7 +3,7 @@ use runtime::{
     activity::ActivityConfig,
     database::Database,
     event_history::{EventHistory, SupportedFunctionResult},
-    runtime::Runtime,
+    runtime::RuntimeBuilder,
     workflow::{ExecutionError, WorkflowConfig},
     workflow_id::WorkflowId,
     ActivityFailed, FunctionFqn,
@@ -34,7 +34,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let database = Database::new(100, 100);
     {
-        let mut runtime = Runtime::default();
+        let mut runtime = RuntimeBuilder::default();
         runtime
             .add_activity(
                 test_programs_patch_activity_broken_builder::TEST_PROGRAMS_PATCH_ACTIVITY_BROKEN
@@ -48,7 +48,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
                 &WorkflowConfig::default(),
             )
             .await?;
-        let abort_handle = runtime.spawn(&database);
+        let abort_handle = runtime.build().spawn(&database);
         let workflow_id = WorkflowId::generate();
         let res = database
             .workflow_scheduler()
@@ -85,7 +85,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
     );
     let event_history = Arc::new(Mutex::new(EventHistory::from(event_history)));
     {
-        let mut runtime = Runtime::default();
+        let mut runtime = RuntimeBuilder::default();
         runtime
             .add_activity(
                 test_programs_patch_activity_fixed_builder::TEST_PROGRAMS_PATCH_ACTIVITY_FIXED
@@ -99,7 +99,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
                 &WorkflowConfig::default(),
             )
             .await?;
-        runtime.spawn(&database);
+        runtime.build().spawn(&database);
         database
             .workflow_scheduler()
             .schedule_workflow(
@@ -139,7 +139,7 @@ async fn generate_event_history_matching() -> Result<(), anyhow::Error> {
     let fqn = FunctionFqn::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = Arc::new(vec![Val::U32(EXPECTED_ACTIVITY_CALLS)]);
     let database = Database::new(100, 100);
-    let mut runtime = Runtime::default();
+    let mut runtime = RuntimeBuilder::default();
     runtime
         .add_activity(
             test_programs_patch_activity_broken_builder::TEST_PROGRAMS_PATCH_ACTIVITY_BROKEN
@@ -153,7 +153,7 @@ async fn generate_event_history_matching() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    runtime.spawn(&database);
+    runtime.build().spawn(&database);
     database
         .workflow_scheduler()
         .schedule_workflow(
@@ -180,7 +180,7 @@ async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
     let fqn = FunctionFqn::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = Arc::new(vec![Val::U32(EXPECTED_ACTIVITY_CALLS)]);
     let database = Database::new(100, 100);
-    let mut runtime = Runtime::default();
+    let mut runtime = RuntimeBuilder::default();
     runtime
         .add_activity(
             test_programs_patch_activity_broken_builder::TEST_PROGRAMS_PATCH_ACTIVITY_BROKEN
@@ -194,7 +194,7 @@ async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
-    runtime.spawn(&database);
+    runtime.build().spawn(&database);
     let workflow_id = WorkflowId::generate();
     let res = database
         .workflow_scheduler()

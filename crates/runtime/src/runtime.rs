@@ -1,7 +1,8 @@
 use crate::activity::{Activity, ActivityConfig};
 use crate::database::{ActivityQueueSender, Database, WorkflowEventFetcher};
 use crate::workflow::{ExecutionError, Workflow, WorkflowConfig};
-use crate::{FunctionFqn, FunctionMetadata};
+use crate::FunctionMetadata;
+use crate::{database::ActivityEventFetcher, ActivityFailed, FunctionFqn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -27,20 +28,21 @@ impl Default for EngineConfig {
     }
 }
 
-pub struct Runtime {
-    functions_to_workflows: HashMap<FunctionFqn, Arc<Workflow>>,
-    functions_to_activities: HashMap<FunctionFqn, Arc<Activity>>,
+#[derive(Clone)]
+pub struct RuntimeBuilder {
     workflow_engine: Arc<Engine>,
     activity_engine: Arc<Engine>,
+    functions_to_workflows: HashMap<FunctionFqn, Arc<Workflow>>,
+    functions_to_activities: HashMap<FunctionFqn, Arc<Activity>>,
 }
 
-impl Default for Runtime {
+impl Default for RuntimeBuilder {
     fn default() -> Self {
-        Self::new_with_config(RuntimeConfig::default())
+        RuntimeBuilder::new_with_config(RuntimeConfig::default())
     }
 }
 
-impl Runtime {
+impl RuntimeBuilder {
     pub fn new_with_config(config: RuntimeConfig) -> Self {
         let workflow_engine = {
             let mut wasmtime_config = wasmtime::Config::new();
@@ -61,14 +63,13 @@ impl Runtime {
             Arc::new(Engine::new(&wasmtime_config).unwrap())
         };
         Self {
-            functions_to_workflows: HashMap::default(),
-            functions_to_activities: HashMap::default(),
             workflow_engine,
             activity_engine,
+            functions_to_workflows: HashMap::default(),
+            functions_to_activities: HashMap::default(),
         }
     }
 
-    // TODO: builder
     pub async fn add_activity(
         &mut self,
         activity_wasm_path: String,
@@ -93,7 +94,6 @@ impl Runtime {
         Ok(())
     }
 
-    // TODO: builder
     pub async fn add_workflow_definition(
         &mut self,
         workflow_wasm_path: String,
@@ -123,8 +123,49 @@ impl Runtime {
         Ok(workflow)
     }
 
+    pub fn build(self) -> Runtime {
+        Runtime {
+            functions_to_workflows: Arc::new(self.functions_to_workflows),
+            functions_to_activities: Arc::new(self.functions_to_activities),
+        }
+    }
+}
+
+pub struct Runtime {
+    functions_to_workflows: Arc<HashMap<FunctionFqn, Arc<Workflow>>>,
+    functions_to_activities: Arc<HashMap<FunctionFqn, Arc<Activity>>>,
+}
+
+impl Runtime {
+    pub fn workflow_function_metadata<'a>(
+        &'a self,
+        fqn: &FunctionFqn,
+    ) -> Option<&'a FunctionMetadata> {
+        self.functions_to_workflows
+            .get(fqn)
+            .and_then(|w| w.functions_to_metadata.get(fqn))
+    }
+
+    // FIXME: cancel on drop of Runtime
+    // TODO: add runtime+spawn id
+    pub fn spawn(&self, database: &Database) -> tokio::task::AbortHandle {
+        let process_workflows = Self::process_workflows(
+            self.functions_to_workflows.clone(),
+            database.workflow_event_fetcher(),
+            database.activity_queue_sender(),
+        );
+        let process_activities = Self::process_activities(
+            database.activity_event_fetcher(),
+            self.functions_to_activities.clone(),
+        );
+        tokio::spawn(async move {
+            futures_util::join!(process_activities, process_workflows);
+        })
+        .abort_handle()
+    }
+
     async fn process_workflows(
-        functions_to_workflows: HashMap<FunctionFqn, Arc<Workflow>>,
+        functions_to_workflows: Arc<HashMap<FunctionFqn, Arc<Workflow>>>,
         fetcher: WorkflowEventFetcher,
         activity_queue_sender: ActivityQueueSender,
     ) {
@@ -151,33 +192,27 @@ impl Runtime {
                 warn!("{err}");
                 let _ = oneshot_tx.send(Err(err));
             }
-            debug!("Runtime:::process_workflows exitting");
+            debug!("Runtime::process_workflows exitting");
         }
     }
 
-    // FIXME: cancel on drop of Runtime
-    pub fn spawn(&self, database: &Database) -> tokio::task::AbortHandle {
-        let process_workflows = Self::process_workflows(
-            self.functions_to_workflows.clone(),
-            database.workflow_event_fetcher(),
-            database.activity_queue_sender(),
-        );
-        let process_activities = crate::queue::activity_queue::process(
-            database.activity_event_fetcher(),
-            self.functions_to_activities.clone(), // TODO: move here with Builder
-        );
-        tokio::spawn(async move {
-            futures_util::join!(process_activities, process_workflows);
-        })
-        .abort_handle()
-    }
-
-    pub fn workflow_function_metadata<'a>(
-        &'a self,
-        fqn: &FunctionFqn,
-    ) -> Option<&'a FunctionMetadata> {
-        self.functions_to_workflows
-            .get(fqn)
-            .and_then(|w| w.functions_to_metadata.get(fqn))
+    async fn process_activities(
+        activity_event_fetcher: ActivityEventFetcher,
+        functions_to_activities: Arc<HashMap<FunctionFqn, Arc<Activity>>>,
+    ) {
+        while let Some((request, resp_tx)) = activity_event_fetcher.fetch_one().await {
+            let activity_res = match functions_to_activities.get(&request.fqn) {
+                Some(activity) => activity.run(&request).await,
+                None => Err(ActivityFailed::NotFound {
+                    workflow_id: request.workflow_id,
+                    activity_fqn: request.fqn,
+                }),
+            };
+            if let Err(err) = &activity_res {
+                warn!("{err}");
+            }
+            let _ = resp_tx.send(activity_res);
+        }
+        debug!("Runtime::process_activities exiting");
     }
 }

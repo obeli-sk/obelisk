@@ -4,7 +4,7 @@ use runtime::{
     activity::ActivityConfig,
     database::Database,
     event_history::{EventHistory, SupportedFunctionResult},
-    runtime::Runtime,
+    runtime::RuntimeBuilder,
     workflow::WorkflowConfig,
     workflow_id::WorkflowId,
     FunctionFqn,
@@ -26,7 +26,7 @@ fn set_up() {
 async fn test() -> Result<(), anyhow::Error> {
     set_up();
     let database = Database::new(100, 100);
-    let mut runtime = Runtime::default();
+    let mut runtime = RuntimeBuilder::default();
     runtime
         .add_activity(
             test_programs_types_activity_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
@@ -39,6 +39,7 @@ async fn test() -> Result<(), anyhow::Error> {
             &WorkflowConfig::default(),
         )
         .await?;
+    let runtime = runtime.build();
     runtime.spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let iterations: usize = 10;

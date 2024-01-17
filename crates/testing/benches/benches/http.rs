@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use lazy_static::lazy_static;
+use runtime::runtime::RuntimeBuilder;
 use runtime::{
     activity::ActivityConfig, database::Database, event_history::EventHistory, runtime::Runtime,
     workflow::AsyncActivityBehavior, workflow::WorkflowConfig, workflow_id::WorkflowId,
@@ -34,9 +35,9 @@ fn set_up() {
     });
 }
 
-fn workflow() -> Arc<Runtime> {
+fn workflow() -> Runtime {
     RT.block_on(async {
-        let mut runtime = Runtime::default();
+        let mut runtime = RuntimeBuilder::default();
         runtime
             .add_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY
@@ -55,7 +56,7 @@ fn workflow() -> Arc<Runtime> {
             )
             .await
             .unwrap();
-        Arc::new(runtime)
+        runtime.build()
     })
 }
 
