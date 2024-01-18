@@ -1,10 +1,13 @@
 use crate::activity::{Activity, ActivityConfig};
 use crate::database::{ActivityQueueSender, Database, WorkflowEventFetcher};
+use crate::event_history::{SupportedFunctionResult, HOST_ACTIVITY_SLEEP_FQN};
 use crate::workflow::{ExecutionError, Workflow, WorkflowConfig};
 use crate::FunctionMetadata;
 use crate::{database::ActivityEventFetcher, ActivityFailed, FunctionFqn};
+use assert_matches::assert_matches;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 use wasmtime::Engine;
@@ -205,17 +208,27 @@ impl Runtime {
         functions_to_activities: Arc<HashMap<FunctionFqn, Arc<Activity>>>,
     ) {
         while let Some((request, resp_tx)) = activity_event_fetcher.fetch_one().await {
-            let activity_res = match functions_to_activities.get(&request.fqn) {
-                Some(activity) => activity.run(&request).await,
-                None => Err(ActivityFailed::NotFound {
-                    workflow_id: request.workflow_id,
-                    activity_fqn: request.fqn,
-                }),
-            };
-            if let Err(err) = &activity_res {
-                warn!("{err}");
+            // TODO: Refactor async host activities
+            if request.fqn == HOST_ACTIVITY_SLEEP_FQN {
+                // sleep implementation
+                assert_eq!(request.params.len(), 1);
+                let duration = request.params.first().unwrap();
+                let duration = *assert_matches!(duration, wasmtime::component::Val::U64(v) => v);
+                tokio::time::sleep(Duration::from_millis(duration)).await;
+                let _ = resp_tx.send(Ok(SupportedFunctionResult::None));
+            } else {
+                let activity_res = match functions_to_activities.get(&request.fqn) {
+                    Some(activity) => activity.run(&request).await,
+                    None => Err(ActivityFailed::NotFound {
+                        workflow_id: request.workflow_id,
+                        activity_fqn: request.fqn,
+                    }),
+                };
+                if let Err(err) = &activity_res {
+                    warn!("{err}");
+                }
+                let _ = resp_tx.send(activity_res);
             }
-            let _ = resp_tx.send(activity_res);
         }
         debug!("Runtime::process_activities exiting");
     }

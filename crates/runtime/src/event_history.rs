@@ -2,8 +2,7 @@ use crate::{
     activity::ActivityRequest, database::ActivityQueueSender, workflow::AsyncActivityBehavior,
     workflow_id::WorkflowId, ActivityFailed, ActivityResponse, FunctionFqn, FunctionFqnStr,
 };
-use assert_matches::assert_matches;
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, error, trace};
 use wasmtime::component::{Linker, Val};
 
@@ -112,7 +111,6 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-
 pub(crate) struct Event {
     pub(crate) request: ActivityRequest,
     pub(crate) kind: EventKind,
@@ -138,19 +136,11 @@ impl Event {
         request: ActivityRequest,
         activity_queue_sender: &ActivityQueueSender,
     ) -> Result<SupportedFunctionResult, ActivityFailed> {
-        if request.fqn == HOST_ACTIVITY_SLEEP_FQN {
-            assert_eq!(1, request.params.len(), "sleep expects a single argument");
-            let millis =
-                assert_matches!(request.params.first().unwrap(), Val::U64(millis) => *millis);
-            tokio::time::sleep(Duration::from_millis(millis)).await;
-            Ok(SupportedFunctionResult::None)
-        } else {
-            activity_queue_sender
-                .push(request)
-                .await
-                .await
-                .expect("sender should not be dropped")
-        }
+        activity_queue_sender
+            .push(request)
+            .await
+            .await
+            .expect("sender should not be dropped")
     }
 }
 
