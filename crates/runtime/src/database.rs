@@ -19,7 +19,7 @@ pub(crate) type ActivityEvent = (ActivityRequest, oneshot::Sender<ActivityRespon
 pub struct WorkflowRequest {
     pub workflow_id: WorkflowId,
     pub event_history: Arc<Mutex<EventHistory>>,
-    pub fqn: FunctionFqn,
+    pub workflow_fqn: FunctionFqn,
     pub params: Arc<Vec<Val>>,
 }
 
@@ -105,14 +105,14 @@ impl WorkflowScheduler {
         &self,
         workflow_id: WorkflowId,
         event_history: Arc<Mutex<EventHistory>>,
-        fqn: FunctionFqn,
+        workflow_fqn: FunctionFqn,
         params: Arc<Vec<Val>>,
     ) -> Result<SupportedFunctionResult, ExecutionError> {
-        info!("[{workflow_id}] Scheduling workflow `{fqn}`",);
+        info!("[{workflow_id}] Scheduling workflow `{workflow_fqn}`",);
         let request = WorkflowRequest {
             workflow_id,
             event_history,
-            fqn,
+            workflow_fqn,
             params,
         };
         let (oneshot_sender, oneshot_rec) = oneshot::channel();
@@ -120,7 +120,7 @@ impl WorkflowScheduler {
             let request = err.0 .0;
             return Err(ExecutionError::SchedulingError {
                 workflow_id: request.workflow_id,
-                workflow_fqn: request.fqn,
+                workflow_fqn: request.workflow_fqn,
                 reason: "cannot add to queue".to_string(),
             });
         }

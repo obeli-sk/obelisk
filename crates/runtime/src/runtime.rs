@@ -177,7 +177,7 @@ impl Runtime {
         activity_queue_sender: ActivityQueueSender,
     ) {
         while let Some((request, oneshot_tx)) = fetcher.fetch_one().await {
-            if let Some(workflow) = functions_to_workflows.get(&request.fqn) {
+            if let Some(workflow) = functions_to_workflows.get(&request.workflow_fqn) {
                 let mut event_history = request.event_history.lock().await;
                 // TODO: currently runs until completion. Allow persisting partial completion.
                 let resp = workflow
@@ -185,7 +185,7 @@ impl Runtime {
                         &request.workflow_id,
                         &activity_queue_sender,
                         event_history.as_mut(),
-                        &request.fqn,
+                        &request.workflow_fqn,
                         &request.params,
                     )
                     .await;
@@ -194,7 +194,7 @@ impl Runtime {
             } else {
                 let err = ExecutionError::NotFound {
                     workflow_id: request.workflow_id,
-                    fqn: request.fqn.clone(),
+                    fqn: request.workflow_fqn.clone(),
                 };
                 warn!("{err}");
                 let _ = oneshot_tx.send(Err(err));
