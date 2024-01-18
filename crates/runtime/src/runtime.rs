@@ -207,15 +207,15 @@ impl Runtime {
         functions_to_activities: Arc<HashMap<FunctionFqn, Arc<Activity>>>,
     ) {
         while let Some((request, resp_tx)) = activity_event_fetcher.fetch_one().await {
-            if *request.fqn.ifc_fqn == HOST_ACTIVITY_PACKAGE {
+            if *request.activity_fqn.ifc_fqn == HOST_ACTIVITY_PACKAGE {
                 host_activity::execute_host_activity(request, resp_tx).await;
             } else {
                 // execute wasm activity
-                let activity_res = match functions_to_activities.get(&request.fqn) {
+                let activity_res = match functions_to_activities.get(&request.activity_fqn) {
                     Some(activity) => activity.run(&request).await,
                     None => Err(ActivityFailed::NotFound {
                         workflow_id: request.workflow_id,
-                        activity_fqn: request.fqn,
+                        activity_fqn: request.activity_fqn,
                     }),
                 };
                 if let Err(err) = &activity_res {

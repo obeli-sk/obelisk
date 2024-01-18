@@ -62,7 +62,7 @@ mod http {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivityRequest {
     pub(crate) workflow_id: WorkflowId,
-    pub(crate) fqn: FunctionFqn,
+    pub(crate) activity_fqn: FunctionFqn,
     pub(crate) params: Arc<Vec<Val>>,
 }
 
@@ -171,17 +171,17 @@ impl Activity {
         debug!(
             "[{workflow_id}] Running `{fqn}`",
             workflow_id = request.workflow_id,
-            fqn = request.fqn
+            fqn = request.activity_fqn
         );
         let results_len = self
             .functions_to_metadata
-            .get(&request.fqn)
+            .get(&request.activity_fqn)
             .unwrap()
             .results_len;
         trace!(
             "[{workflow_id}] Running `{fqn}`({params:?}) -> results_len:{results_len}",
             workflow_id = request.workflow_id,
-            fqn = request.fqn,
+            fqn = request.activity_fqn,
             params = request.params
         );
         let mut store;
@@ -204,13 +204,13 @@ impl Activity {
                         if is_limit_reached(&reason) {
                             ActivityFailed::LimitReached {
                                 workflow_id: request.workflow_id.clone(),
-                                activity_fqn: request.fqn.clone(),
+                                activity_fqn: request.activity_fqn.clone(),
                                 reason,
                             }
                         } else {
                             ActivityFailed::Other {
                                 workflow_id: request.workflow_id.clone(),
-                                activity_fqn: request.fqn.clone(),
+                                activity_fqn: request.activity_fqn.clone(),
                                 reason: format!("wasm instantiation error: `{err}`"),
                             }
                         }
@@ -222,19 +222,18 @@ impl Activity {
             let mut store = &mut store;
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
-            let mut exports_instance =
-                exports_instance
-                    .instance(&request.fqn.ifc_fqn)
-                    .ok_or_else(|| ActivityFailed::Other {
-                        workflow_id: request.workflow_id.clone(),
-                        activity_fqn: request.fqn.clone(),
-                        reason: "cannot find exported interface".to_string(),
-                    })?;
+            let mut exports_instance = exports_instance
+                .instance(&request.activity_fqn.ifc_fqn)
+                .ok_or_else(|| ActivityFailed::Other {
+                    workflow_id: request.workflow_id.clone(),
+                    activity_fqn: request.activity_fqn.clone(),
+                    reason: "cannot find exported interface".to_string(),
+                })?;
             exports_instance
-                .func(&request.fqn.function_name)
+                .func(&request.activity_fqn.function_name)
                 .ok_or(ActivityFailed::Other {
                     workflow_id: request.workflow_id.clone(),
-                    activity_fqn: request.fqn.clone(),
+                    activity_fqn: request.activity_fqn.clone(),
                     reason: "function not found".to_string(),
                 })?
         };
@@ -244,7 +243,7 @@ impl Activity {
             .await
             .map_err(|err| ActivityFailed::Other {
                 workflow_id: request.workflow_id.clone(),
-                activity_fqn: request.fqn.clone(),
+                activity_fqn: request.activity_fqn.clone(),
                 reason: format!("wasm function call error: `{err}`"),
             })?;
         let results = SupportedFunctionResult::new(results);
@@ -252,13 +251,13 @@ impl Activity {
             .await
             .map_err(|err| ActivityFailed::Other {
                 workflow_id: request.workflow_id.clone(),
-                activity_fqn: request.fqn.clone(),
+                activity_fqn: request.activity_fqn.clone(),
                 reason: format!("wasm post function call error: `{err}`"),
             })?;
         trace!(
             "[{workflow_id}] Finished `{fqn}` -> {results:?}",
             workflow_id = request.workflow_id,
-            fqn = request.fqn
+            fqn = request.activity_fqn
         );
         Ok(results)
     }

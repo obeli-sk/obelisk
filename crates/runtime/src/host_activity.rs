@@ -39,7 +39,7 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
         let event = Event {
             request: ActivityRequest {
                 workflow_id: self.current_event_history.workflow_id.clone(),
-                fqn: HOST_ACTIVITY_SLEEP_FQN.to_owned(),
+                activity_fqn: HOST_ACTIVITY_SLEEP_FQN.to_owned(),
                 params: Arc::new(vec![Val::U64(millis)]),
             },
             kind: EventKind::ActivityAsync,
@@ -57,7 +57,7 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
         let event = Event {
             request: ActivityRequest {
                 workflow_id: self.current_event_history.workflow_id.clone(),
-                fqn: FQN.to_owned(),
+                activity_fqn: FQN.to_owned(),
                 params: Arc::new(vec![]),
             },
             kind: EventKind::HostActivitySync(HostActivitySync::Noop),
@@ -75,7 +75,7 @@ pub(crate) async fn execute_host_activity(
     request: ActivityRequest,
     resp_tx: oneshot::Sender<ActivityResponse>,
 ) {
-    if request.fqn == HOST_ACTIVITY_SLEEP_FQN {
+    if request.activity_fqn == HOST_ACTIVITY_SLEEP_FQN {
         // sleep implementation
         assert_eq!(request.params.len(), 1);
         let duration = request.params.first().unwrap();
@@ -83,6 +83,6 @@ pub(crate) async fn execute_host_activity(
         tokio::time::sleep(Duration::from_millis(duration)).await;
         let _ = resp_tx.send(Ok(SupportedFunctionResult::None));
     } else {
-        panic!("cannot execute host activity `{}`", request.fqn);
+        panic!("cannot execute host activity `{}`", request.activity_fqn);
     }
 }

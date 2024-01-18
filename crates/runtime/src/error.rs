@@ -172,7 +172,7 @@ impl WorkflowFailed {
 pub(crate) enum HostFunctionError {
     #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(String),
-    #[error("interrupt: `{fqn}`", fqn = request.fqn)]
+    #[error("interrupt: `{fqn}`", fqn = request.activity_fqn)]
     Interrupt { request: ActivityRequest },
     #[error(transparent)]
     ActivityFailed(#[from] ActivityFailed),

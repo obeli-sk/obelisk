@@ -22,7 +22,7 @@ impl Event {
         Self {
             request: ActivityRequest {
                 workflow_id,
-                fqn,
+                activity_fqn: fqn,
                 params,
             },
             kind: EventKind::ActivityAsync,
@@ -138,10 +138,10 @@ impl CurrentEventHistory {
         let run_id = self.run_id;
         let found = self.next();
         let found_matches = matches!(found,  Some((found_fqn, found_params, _replay_result))
-            if event.request.fqn == *found_fqn && event.request.params == *found_params);
+            if event.request.activity_fqn == *found_fqn && event.request.params == *found_params);
         trace!(
             "[{workflow_id},{run_id}] replay_handle_interrupt {fqn}, found: {found_matches}",
-            fqn = event.request.fqn,
+            fqn = event.request.activity_fqn,
         );
         match (event, found_matches, found) {
             // Continue running on HostActivitySync
@@ -163,7 +163,7 @@ impl CurrentEventHistory {
             (event, true, Some((_, _, replay_result))) => {
                 debug!(
                     "[{workflow_id},{run_id}] Replaying {fqn}",
-                    fqn = event.request.fqn
+                    fqn = event.request.activity_fqn
                 );
                 Ok(replay_result.clone()?)
             }
@@ -179,14 +179,14 @@ impl CurrentEventHistory {
                 AsyncActivityBehavior::Restart => {
                     debug!(
                         "[{workflow_id},{run_id}] Interrupting {fqn}",
-                        fqn = request.fqn
+                        fqn = request.activity_fqn
                     );
                     Err(HostFunctionError::Interrupt { request })
                 }
                 AsyncActivityBehavior::KeepWaiting => {
                     debug!(
                         "[{workflow_id},{run_id}] Executing {fqn}",
-                        fqn = request.fqn
+                        fqn = request.activity_fqn
                     );
                     self.persist_start(&request).await;
                     let res =
@@ -216,7 +216,7 @@ impl EventHistory {
     }
 
     pub(crate) async fn persist_end(&mut self, request: ActivityRequest, val: ActivityResponse) {
-        self.vec.push((request.fqn, request.params, val));
+        self.vec.push((request.activity_fqn, request.params, val));
     }
 
     pub fn successful_activities(&self) -> usize {
