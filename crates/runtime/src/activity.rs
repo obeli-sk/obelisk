@@ -1,12 +1,11 @@
 use anyhow::Context;
-use assert_matches::assert_matches;
-use std::{collections::HashMap, fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, ops::DerefMut, sync::Arc};
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, trace};
 use wasmtime::{component::Val, Engine};
 
 use crate::{
-    event_history::{SupportedFunctionResult, HOST_ACTIVITY_SLEEP_FQN},
+    event_history::SupportedFunctionResult,
     wasm_tools::{exported_interfaces, functions_to_metadata, is_limit_reached},
     workflow_id::WorkflowId,
     ActivityFailed, {FunctionFqn, FunctionMetadata},
@@ -186,16 +185,6 @@ impl Activity {
             fqn = request.fqn,
             params = request.params
         );
-        // TODO: Refactor async host activities
-        if request.fqn == HOST_ACTIVITY_SLEEP_FQN {
-            // sleep implementation
-            assert_eq!(request.params.len(), 1);
-            let duration = request.params.first().unwrap();
-            let duration = *assert_matches!(duration, Val::U64(v) => v);
-            tokio::time::sleep(Duration::from_millis(duration)).await;
-            return Ok(SupportedFunctionResult::None);
-        }
-
         let mut store;
         let mut store_guard; // possibly uninitialized
         let instance_owned; // possibly uninitialized
