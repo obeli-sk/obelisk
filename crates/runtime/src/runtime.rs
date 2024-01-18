@@ -1,13 +1,11 @@
 use crate::activity::{Activity, ActivityConfig};
 use crate::database::{ActivityQueueSender, Database, WorkflowEventFetcher};
-use crate::event_history::HOST_ACTIVITY_SLEEP_FQN;
+use crate::host_activity::{self, HOST_ACTIVITY_PACKAGE};
 use crate::workflow::{ExecutionError, Workflow, WorkflowConfig};
+use crate::FunctionMetadata;
 use crate::{database::ActivityEventFetcher, ActivityFailed, FunctionFqn};
-use crate::{FunctionMetadata, SupportedFunctionResult};
-use assert_matches::assert_matches;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 use wasmtime::Engine;
@@ -208,15 +206,10 @@ impl Runtime {
         functions_to_activities: Arc<HashMap<FunctionFqn, Arc<Activity>>>,
     ) {
         while let Some((request, resp_tx)) = activity_event_fetcher.fetch_one().await {
-            // TODO: Refactor async host activities
-            if request.fqn == HOST_ACTIVITY_SLEEP_FQN {
-                // sleep implementation
-                assert_eq!(request.params.len(), 1);
-                let duration = request.params.first().unwrap();
-                let duration = *assert_matches!(duration, wasmtime::component::Val::U64(v) => v);
-                tokio::time::sleep(Duration::from_millis(duration)).await;
-                let _ = resp_tx.send(Ok(SupportedFunctionResult::None));
+            if *request.fqn.ifc_fqn == HOST_ACTIVITY_PACKAGE {
+                host_activity::execute_host_activity(request, resp_tx).await;
             } else {
+                // execute wasm activity
                 let activity_res = match functions_to_activities.get(&request.fqn) {
                     Some(activity) => activity.run(&request).await,
                     None => Err(ActivityFailed::NotFound {

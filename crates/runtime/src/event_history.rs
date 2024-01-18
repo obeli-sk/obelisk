@@ -1,74 +1,11 @@
 use crate::{
     activity::ActivityRequest, database::ActivityQueueSender, workflow::AsyncActivityBehavior,
-    workflow_id::WorkflowId, ActivityFailed, ActivityResponse, FunctionFqn, FunctionFqnStr,
+    workflow_id::WorkflowId, ActivityFailed, ActivityResponse, FunctionFqn,
     SupportedFunctionResult,
 };
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, error, trace};
-use wasmtime::component::{Linker, Val};
-
-// generate Host trait
-wasmtime::component::bindgen!({
-    path: "../../wit/workflow-engine/",
-    async: true,
-    interfaces: "import my-org:workflow-engine/host-activities;",
-});
-
-pub(crate) struct HostImports {
-    pub(crate) current_event_history: CurrentEventHistory,
-}
-
-impl HostImports {
-    pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), anyhow::Error> {
-        my_org::workflow_engine::host_activities::add_to_linker(
-            linker,
-            |state: &mut HostImports| state,
-        )
-    }
-}
-
-pub(crate) const HOST_ACTIVITY_SLEEP_FQN: FunctionFqnStr<'static> =
-    FunctionFqnStr::new("my-org:workflow-engine/host-activities", "sleep");
-
-// When calling host functions, create events and continue or interrupt the execution.
-#[async_trait::async_trait]
-impl my_org::workflow_engine::host_activities::Host for HostImports {
-    async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
-        let event = Event {
-            request: ActivityRequest {
-                workflow_id: self.current_event_history.workflow_id.clone(),
-                fqn: HOST_ACTIVITY_SLEEP_FQN.to_owned(),
-                params: Arc::new(vec![Val::U64(millis)]),
-            },
-            kind: EventKind::ActivityAsync,
-        };
-        let replay_result = self
-            .current_event_history
-            .replay_handle_interrupt(event)
-            .await?;
-        assert!(replay_result.is_empty());
-        Ok(())
-    }
-
-    async fn noop(&mut self) -> wasmtime::Result<()> {
-        const FQN: FunctionFqnStr =
-            FunctionFqnStr::new("my-org:workflow-engine/host-activities", "noop");
-        let event = Event {
-            request: ActivityRequest {
-                workflow_id: self.current_event_history.workflow_id.clone(),
-                fqn: FQN.to_owned(),
-                params: Arc::new(vec![]),
-            },
-            kind: EventKind::HostActivitySync(HostActivitySync::Noop),
-        };
-        let replay_result = self
-            .current_event_history
-            .replay_handle_interrupt(event)
-            .await?;
-        assert!(replay_result.is_empty());
-        Ok(())
-    }
-}
+use wasmtime::component::Val;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Event {
