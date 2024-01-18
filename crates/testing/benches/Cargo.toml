@@ -11,6 +11,8 @@ test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-programs-http-get-activity-builder.workspace = true
 test-programs-http-get-workflow-builder.workspace = true
+test-programs-sleep-activity-builder.workspace = true
+test-programs-sleep-workflow-builder.workspace = true
 test-programs-types-activity-builder.workspace = true
 test-programs-types-workflow-builder.workspace = true
 
@@ -32,4 +34,8 @@ harness = false
 
 [[bench]]
 name = "noop"
+harness = false
+
+[[bench]]
+name = "sleep"
 harness = false
