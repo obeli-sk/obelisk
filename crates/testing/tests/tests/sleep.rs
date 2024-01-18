@@ -26,7 +26,7 @@ fn set_up() {
 #[rstest]
 #[tokio::test]
 async fn test_async_activity(
-    #[values("sleep", "sleep-activity")] function: &str,
+    #[values("sleep-host-activity", "sleep-activity")] function: &str,
     #[values(WorkflowConfig {
         async_activity_behavior: AsyncActivityBehavior::KeepWaiting,
     },

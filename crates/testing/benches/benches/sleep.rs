@@ -71,7 +71,7 @@ fn benchmark_sleep(criterion: &mut Criterion) {
 
     let mut group = criterion.benchmark_group("sleep");
     group.throughput(Throughput::Elements(ELEMENTS_PER_ITERATION));
-    for function in ["sleep", "sleep-activity"] {
+    for function in ["sleep-host-activity", "sleep-activity"] {
         group.bench_function(function, |b| {
             let fqn = FunctionFqn::new(
                 "testing:sleep-workflow/workflow".to_string(),

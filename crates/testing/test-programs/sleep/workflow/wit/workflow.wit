@@ -1,7 +1,7 @@
 package testing:sleep-workflow;
 
 interface workflow {
-    sleep: func(millis: u64);
+    sleep-host-activity: func(millis: u64);
     sleep-activity: func(millis: u64);
     run: func();
 }
