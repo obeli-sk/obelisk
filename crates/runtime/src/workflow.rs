@@ -446,7 +446,7 @@ impl Workflow {
                             .current_event_history
                             .persist_end(request.clone(), res)
                             .await;
-                        None
+                        None // No error, workflow made progress.
                     }
                     Err(err) => {
                         store
