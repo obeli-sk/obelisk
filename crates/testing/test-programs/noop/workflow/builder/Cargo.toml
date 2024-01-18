@@ -1,5 +1,5 @@
 [package]
-name = "test-programs-types-workflow-builder"
+name = "test-programs-noop-workflow-builder"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

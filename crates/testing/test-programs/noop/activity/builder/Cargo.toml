@@ -1,5 +1,5 @@
 [package]
-name = "test-programs-types-activity-builder"
+name = "test-programs-noop-activity-builder"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

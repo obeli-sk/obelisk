@@ -1,12 +1,12 @@
 [package]
-name = "test-programs-types-workflow"
+name = "test-programs-noop-activity"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-cargo-component-bindings = { workspace = true }
+cargo-component-bindings.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
@@ -18,5 +18,4 @@ default = ["wasm"]
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]
-"testing:types".path = "../wit/"
-"my-org:workflow-engine".path = "../../../../../wit/workflow-engine/"
+"testing:types" = { path = "../wit" }

@@ -167,10 +167,10 @@ dependencies = [
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-activity-builder",
  "test-programs-http-get-workflow-builder",
+ "test-programs-noop-activity-builder",
+ "test-programs-noop-workflow-builder",
  "test-programs-sleep-activity-builder",
  "test-programs-sleep-workflow-builder",
- "test-programs-types-activity-builder",
- "test-programs-types-workflow-builder",
  "tokio",
  "tracing-subscriber",
  "wasmtime",
@@ -2280,6 +2280,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-programs-noop-activity"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-bindings",
+]
+
+[[package]]
+name = "test-programs-noop-activity-builder"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-builder",
+]
+
+[[package]]
+name = "test-programs-noop-workflow"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-bindings",
+]
+
+[[package]]
+name = "test-programs-noop-workflow-builder"
+version = "0.1.0"
+dependencies = [
+ "cargo-component-builder",
+]
+
+[[package]]
 name = "test-programs-patch-activity-broken"
 version = "0.1.0"
 dependencies = [
@@ -2351,34 +2379,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-programs-types-activity"
-version = "0.1.0"
-dependencies = [
- "cargo-component-bindings",
-]
-
-[[package]]
-name = "test-programs-types-activity-builder"
-version = "0.1.0"
-dependencies = [
- "cargo-component-builder",
-]
-
-[[package]]
-name = "test-programs-types-workflow"
-version = "0.1.0"
-dependencies = [
- "cargo-component-bindings",
-]
-
-[[package]]
-name = "test-programs-types-workflow-builder"
-version = "0.1.0"
-dependencies = [
- "cargo-component-builder",
-]
-
-[[package]]
 name = "tests"
 version = "0.1.0"
 dependencies = [
@@ -2393,13 +2393,13 @@ dependencies = [
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-activity-builder",
  "test-programs-http-get-workflow-builder",
+ "test-programs-noop-activity-builder",
+ "test-programs-noop-workflow-builder",
  "test-programs-patch-activity-broken-builder",
  "test-programs-patch-activity-fixed-builder",
  "test-programs-patch-workflow-builder",
  "test-programs-sleep-activity-builder",
  "test-programs-sleep-workflow-builder",
- "test-programs-types-activity-builder",
- "test-programs-types-workflow-builder",
  "tokio",
  "tracing",
  "tracing-subscriber",

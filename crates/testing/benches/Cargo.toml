@@ -13,8 +13,8 @@ test-programs-http-get-activity-builder.workspace = true
 test-programs-http-get-workflow-builder.workspace = true
 test-programs-sleep-activity-builder.workspace = true
 test-programs-sleep-workflow-builder.workspace = true
-test-programs-types-activity-builder.workspace = true
-test-programs-types-workflow-builder.workspace = true
+test-programs-noop-activity-builder.workspace = true
+test-programs-noop-workflow-builder.workspace = true
 
 criterion = { workspace = true, features = ["async_tokio"] }
 futures-util.workspace = true

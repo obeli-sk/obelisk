@@ -29,13 +29,13 @@ async fn test() -> Result<(), anyhow::Error> {
     let mut runtime = RuntimeBuilder::default();
     runtime
         .add_activity(
-            test_programs_types_activity_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
+            test_programs_noop_activity_builder::TEST_PROGRAMS_NOOP_ACTIVITY.to_string(),
             &ActivityConfig::default(),
         )
         .await?;
     runtime
         .add_workflow_definition(
-            test_programs_types_workflow_builder::TEST_PROGRAMS_TYPES_WORKFLOW.to_string(),
+            test_programs_noop_workflow_builder::TEST_PROGRAMS_NOOP_WORKFLOW.to_string(),
             &WorkflowConfig::default(),
         )
         .await?;

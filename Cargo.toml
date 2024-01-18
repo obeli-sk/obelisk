@@ -47,10 +47,10 @@ members = [
     "crates/testing/test-programs/sleep/activity/builder",
     "crates/testing/test-programs/sleep/workflow",
     "crates/testing/test-programs/sleep/workflow/builder",
-    "crates/testing/test-programs/types/activity",
-    "crates/testing/test-programs/types/activity/builder",
-    "crates/testing/test-programs/types/workflow",
-    "crates/testing/test-programs/types/workflow/builder",
+    "crates/testing/test-programs/noop/activity",
+    "crates/testing/test-programs/noop/activity/builder",
+    "crates/testing/test-programs/noop/workflow",
+    "crates/testing/test-programs/noop/workflow/builder",
     "crates/testing/cargo-component-builder",
     "crates/testing/tests",
     "crates/val-json",
@@ -73,8 +73,8 @@ test-programs-patch-activity-fixed-builder.path = "crates/testing/test-programs/
 test-programs-patch-workflow-builder.path = "crates/testing/test-programs/patch/workflow/builder"
 test-programs-sleep-activity-builder.path = "crates/testing/test-programs/sleep/activity/builder"
 test-programs-sleep-workflow-builder.path = "crates/testing/test-programs/sleep/workflow/builder"
-test-programs-types-activity-builder.path = "crates/testing/test-programs/types/activity/builder"
-test-programs-types-workflow-builder.path = "crates/testing/test-programs/types/workflow/builder"
+test-programs-noop-activity-builder.path = "crates/testing/test-programs/noop/activity/builder"
+test-programs-noop-workflow-builder.path = "crates/testing/test-programs/noop/workflow/builder"
 cargo-component-builder.path = "crates/testing/cargo-component-builder"
 val-json.path = "crates/val-json"
 

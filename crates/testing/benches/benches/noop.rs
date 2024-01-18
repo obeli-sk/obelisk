@@ -33,14 +33,14 @@ fn noop_workflow(
     RT.block_on(async move {
         runtime
             .add_activity(
-                test_programs_types_activity_builder::TEST_PROGRAMS_TYPES_ACTIVITY.to_string(),
+                test_programs_noop_activity_builder::TEST_PROGRAMS_NOOP_ACTIVITY.to_string(),
                 activity_config,
             )
             .await
             .unwrap();
         runtime
             .add_workflow_definition(
-                test_programs_types_workflow_builder::TEST_PROGRAMS_TYPES_WORKFLOW.to_string(),
+                test_programs_noop_workflow_builder::TEST_PROGRAMS_NOOP_WORKFLOW.to_string(),
                 workflow_config,
             )
             .await
