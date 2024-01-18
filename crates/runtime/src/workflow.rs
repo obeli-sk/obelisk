@@ -293,10 +293,10 @@ impl Workflow {
             }
             Some(HostFunctionError::Interrupt { request }) => {
                 // Persist and execute the event
-                store
+                let id = store
                     .data_mut()
                     .current_event_history
-                    .persist_start(request)
+                    .persist_activity_request(request.clone())
                     .await;
                 let res =
                     Event::handle_activity_async(request.clone(), activity_queue_sender).await;
@@ -305,7 +305,7 @@ impl Workflow {
                         store
                             .data_mut()
                             .current_event_history
-                            .persist_end(request.clone(), res)
+                            .persist_activity_response(id, res)
                             .await;
                         None // No error, workflow made progress.
                     }
@@ -313,7 +313,7 @@ impl Workflow {
                         store
                             .data_mut()
                             .current_event_history
-                            .persist_end(request.clone(), Err(err.clone()))
+                            .persist_activity_response(id, Err(err.clone()))
                             .await;
                         Some(WorkflowFailed::ActivityFailed(err))
                     }

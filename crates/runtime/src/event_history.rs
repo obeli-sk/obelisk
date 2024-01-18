@@ -99,14 +99,23 @@ impl CurrentEventHistory {
         );
     }
 
-    pub(crate) async fn persist_start(&mut self, request: &ActivityRequest) {
+    pub(crate) async fn persist_activity_request(
+        &mut self,
+        request: ActivityRequest,
+    ) -> ActivityRequestId {
         self.assert_replay_is_drained();
-        self.event_history.persist_start(request).await
+        self.event_history.persist_activity_request(request).await
     }
 
-    pub(crate) async fn persist_end(&mut self, request: ActivityRequest, val: ActivityResponse) {
+    pub(crate) async fn persist_activity_response(
+        &mut self,
+        request_id: ActivityRequestId,
+        resp: ActivityResponse,
+    ) {
         self.assert_replay_is_drained();
-        self.event_history.persist_end(request, val).await;
+        self.event_history
+            .persist_activity_response(request_id, resp)
+            .await;
     }
 
     #[allow(clippy::type_complexity)]
@@ -154,9 +163,9 @@ impl CurrentEventHistory {
                 None,
             ) => {
                 debug!("[{workflow_id},{run_id}] Running {host_activity_sync:?}");
-                self.persist_start(&request).await;
+                let id = self.persist_activity_request(request).await;
                 let res = host_activity_sync.handle();
-                self.persist_end(request, res.clone()).await;
+                self.persist_activity_response(id, res.clone()).await;
                 Ok(res?)
             }
             // Replay if found
@@ -188,11 +197,11 @@ impl CurrentEventHistory {
                         "[{workflow_id},{run_id}] Executing {fqn}",
                         fqn = request.activity_fqn
                     );
-                    self.persist_start(&request).await;
+                    let id = self.persist_activity_request(request.clone()).await;
                     let res =
                         Event::handle_activity_async(request.clone(), &self.activity_queue_writer)
                             .await;
-                    self.persist_end(request, res.clone()).await;
+                    self.persist_activity_response(id, res.clone()).await;
                     Ok(res?)
                 }
             },
@@ -204,19 +213,35 @@ impl CurrentEventHistory {
     }
 }
 
+pub(crate) type ActivityRequestId = usize;
+
 pub type EventHistoryTriple = (FunctionFqn, Arc<Vec<Val>>, ActivityResponse);
 
-#[derive(Debug, Default, derive_more::From, derive_more::Into)]
+#[derive(Debug, Default)]
 pub struct EventHistory {
+    next_request: Option<ActivityRequest>,
     vec: Vec<EventHistoryTriple>,
 }
+
 impl EventHistory {
-    pub(crate) async fn persist_start(&mut self, _request: &ActivityRequest) {
-        // TODO
+    pub(crate) async fn persist_activity_request(
+        &mut self,
+        request: ActivityRequest,
+    ) -> ActivityRequestId {
+        // Concurrent activities are not implemented.
+        assert!(self.next_request.is_none());
+        self.next_request = Some(request);
+        self.vec.len() + 1
     }
 
-    pub(crate) async fn persist_end(&mut self, request: ActivityRequest, val: ActivityResponse) {
-        self.vec.push((request.activity_fqn, request.params, val));
+    pub(crate) async fn persist_activity_response(
+        &mut self,
+        request_id: ActivityRequestId,
+        resp: ActivityResponse,
+    ) {
+        assert_eq!(self.vec.len() + 1, request_id);
+        let request = self.next_request.take().unwrap();
+        self.vec.push((request.activity_fqn, request.params, resp));
     }
 
     pub fn successful_activities(&self) -> usize {
@@ -231,5 +256,21 @@ impl EventHistory {
 impl AsMut<EventHistory> for EventHistory {
     fn as_mut(&mut self) -> &mut EventHistory {
         self
+    }
+}
+
+impl From<EventHistory> for Vec<EventHistoryTriple> {
+    fn from(value: EventHistory) -> Self {
+        assert!(value.next_request.is_none());
+        value.vec
+    }
+}
+
+impl From<Vec<EventHistoryTriple>> for EventHistory {
+    fn from(vec: Vec<EventHistoryTriple>) -> Self {
+        Self {
+            vec,
+            next_request: None,
+        }
     }
 }
