@@ -1,9 +1,10 @@
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use lazy_static::lazy_static;
+use runtime::activity::ACTIVITY_CONFIG_HOT;
 use runtime::runtime::RuntimeBuilder;
+use runtime::workflow::WORKFLOW_CONFIG_HOT;
 use runtime::{
-    activity::ActivityConfig, database::Database, event_history::EventHistory, runtime::Runtime,
-    workflow::AsyncActivityBehavior, workflow::WorkflowConfig, workflow_id::WorkflowId,
+    database::Database, event_history::EventHistory, runtime::Runtime, workflow_id::WorkflowId,
     FunctionFqn,
 };
 use std::sync::Arc;
@@ -16,6 +17,8 @@ use wiremock::{
     matchers::{method, path},
     Mock, MockServer, ResponseTemplate,
 };
+
+const TASKS_PER_RUNTIME: usize = 20;
 
 lazy_static! {
     static ref RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
@@ -42,7 +45,7 @@ fn setup_runtime() -> Runtime {
             .add_activity(
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY
                     .to_string(),
-                &ActivityConfig::default(),
+                &ACTIVITY_CONFIG_HOT,
             )
             .await
             .unwrap();
@@ -50,9 +53,7 @@ fn setup_runtime() -> Runtime {
             .add_workflow_definition(
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW
                     .to_string(),
-                &WorkflowConfig {
-                    async_activity_behavior: AsyncActivityBehavior::KeepWaiting,
-                },
+                &WORKFLOW_CONFIG_HOT,
             )
             .await
             .unwrap();
@@ -67,9 +68,7 @@ fn benchmark_http(criterion: &mut Criterion) {
     let database = Database::new(100, 100);
     let runtime = setup_runtime();
     let _abort_handles: Vec<_> = RT.block_on(async {
-        let worker_threads = 20;
-        println!("Runtime is using {} workers", worker_threads);
-        (0..worker_threads)
+        (0..TASKS_PER_RUNTIME)
             .map(|_| runtime.spawn(&database))
             .collect()
     });
@@ -85,7 +84,7 @@ fn benchmark_http(criterion: &mut Criterion) {
     let fqn = FunctionFqn::new("testing:http-workflow/workflow", "execute");
 
     const ELEMENTS: u64 = 10;
-    let mut group = criterion.benchmark_group("throughput");
+    let mut group = criterion.benchmark_group("http");
     group.throughput(Throughput::Elements(ELEMENTS));
     group.bench_function("http", |b| {
         b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
