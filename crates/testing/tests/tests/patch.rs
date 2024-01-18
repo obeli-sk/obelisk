@@ -1,12 +1,9 @@
 use assert_matches::assert_matches;
+use runtime::error::ActivityFailed;
 use runtime::{
-    activity::ActivityConfig,
-    database::Database,
-    event_history::EventHistory,
-    runtime::RuntimeBuilder,
-    workflow::{ExecutionError, WorkflowConfig},
-    workflow_id::WorkflowId,
-    ActivityFailed, FunctionFqn, SupportedFunctionResult,
+    activity::ActivityConfig, database::Database, error::ExecutionError,
+    event_history::EventHistory, runtime::RuntimeBuilder, workflow::WorkflowConfig,
+    workflow_id::WorkflowId, FunctionFqn, SupportedFunctionResult,
 };
 use std::sync::Arc;
 use std::sync::Once;

@@ -1,6 +1,6 @@
 use crate::activity::ActivityRequest;
+use crate::error::ExecutionError;
 use crate::event_history::EventHistory;
-use crate::workflow::ExecutionError;
 use crate::workflow_id::WorkflowId;
 use crate::SupportedFunctionResult;
 use crate::{ActivityResponse, FunctionFqn};

@@ -3,9 +3,10 @@ use rstest::*;
 use runtime::{
     activity::ActivityConfig,
     database::Database,
+    error::ExecutionError,
     event_history::EventHistory,
     runtime::{EngineConfig, RuntimeBuilder, RuntimeConfig},
-    workflow::{AsyncActivityBehavior, ExecutionError, WorkflowConfig},
+    workflow::{AsyncActivityBehavior, WorkflowConfig},
     workflow_id::WorkflowId,
     FunctionFqn,
 };

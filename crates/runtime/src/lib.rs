@@ -1,12 +1,13 @@
+use error::ActivityFailed;
 use std::{
     fmt::{Debug, Display},
     sync::Arc,
 };
 use val_json::{TypeWrapper, UnsupportedTypeError, ValWrapper};
-use workflow_id::WorkflowId;
 
 pub mod activity;
 pub mod database;
+pub mod error;
 pub mod event_history;
 mod host_activity;
 pub mod runtime;
@@ -107,28 +108,6 @@ impl FunctionMetadata {
 }
 
 pub type ActivityResponse = Result<SupportedFunctionResult, ActivityFailed>;
-
-#[derive(thiserror::Error, Debug, Clone)]
-pub enum ActivityFailed {
-    // TODO: add run_id
-    #[error("[{workflow_id}] limit reached for activity `{activity_fqn}` - {reason}")]
-    LimitReached {
-        workflow_id: WorkflowId,
-        activity_fqn: FunctionFqn,
-        reason: String,
-    },
-    #[error("[{workflow_id}] activity `{activity_fqn}` not found")]
-    NotFound {
-        workflow_id: WorkflowId,
-        activity_fqn: FunctionFqn,
-    },
-    #[error("[{workflow_id}] activity `{activity_fqn}` failed - {reason}")]
-    Other {
-        workflow_id: WorkflowId,
-        activity_fqn: FunctionFqn,
-        reason: String,
-    },
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SupportedFunctionResult {

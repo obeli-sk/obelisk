@@ -1,16 +1,17 @@
 use crate::activity::Activity;
 use crate::database::ActivityQueueSender;
-use crate::event_history::{CurrentEventHistory, Event, EventHistory, HostFunctionError};
+use crate::error::{ExecutionError, HostFunctionError, WorkflowFailed};
+use crate::event_history::{CurrentEventHistory, Event, EventHistory};
 use crate::host_activity::HostImports;
 use crate::wasm_tools::{exported_interfaces, functions_to_metadata, is_limit_reached};
 use crate::workflow_id::WorkflowId;
 use crate::SupportedFunctionResult;
-use crate::{ActivityFailed, FunctionFqn, FunctionMetadata};
+use crate::{FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, Context};
 use std::collections::HashMap;
 use std::mem;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, info, trace};
 use wasmtime::component::Val;
 use wasmtime::AsContextMut;
 use wasmtime::{
@@ -43,156 +44,10 @@ pub const WORKFLOW_CONFIG_HOT: WorkflowConfig = WorkflowConfig {
     async_activity_behavior: AsyncActivityBehavior::KeepWaiting,
 };
 
-#[derive(thiserror::Error, Debug)]
-pub enum ExecutionError {
-    #[error("[{workflow_id}] workflow `{fqn}` not found")]
-    NotFound {
-        workflow_id: WorkflowId,
-        fqn: FunctionFqn,
-    },
-    #[error("[{workflow_id},{run_id}] workflow `{workflow_fqn}` encountered non deterministic execution, reason: `{reason}`")]
-    NonDeterminismDetected {
-        workflow_id: WorkflowId,
-        run_id: u64,
-        workflow_fqn: FunctionFqn,
-        reason: String,
-    },
-    #[error("[{workflow_id},{run_id}] activity failed, workflow `{workflow_fqn}`, activity `{activity_fqn}`, reason: `{reason}`")]
-    ActivityFailed {
-        workflow_id: WorkflowId,
-        run_id: u64,
-        workflow_fqn: FunctionFqn,
-        activity_fqn: FunctionFqn,
-        reason: String,
-    },
-    #[error("[{workflow_id},{run_id}] workflow limit reached, workflow `{workflow_fqn}`, reason: `{reason}`")]
-    LimitReached {
-        workflow_id: WorkflowId,
-        run_id: u64,
-        workflow_fqn: FunctionFqn,
-        reason: String,
-    },
-    #[error("[{workflow_id},{run_id}] activity limit reached, workflow `{workflow_fqn}`, activity `{activity_fqn}`, reason: `{reason}`")]
-    ActivityLimitReached {
-        workflow_id: WorkflowId,
-        run_id: u64,
-        workflow_fqn: FunctionFqn,
-        activity_fqn: FunctionFqn,
-        reason: String,
-    },
-    #[error("[{workflow_id},{run_id}] activity not found, workflow `{workflow_fqn}`, activity `{activity_fqn}`")]
-    ActivityNotFound {
-        workflow_id: WorkflowId,
-        run_id: u64,
-        workflow_fqn: FunctionFqn,
-        activity_fqn: FunctionFqn,
-    },
-    #[error("[{workflow_id}] workflow `{workflow_fqn}` cannot be scheduled: `{reason}`")]
-    SchedulingError {
-        workflow_id: WorkflowId,
-        workflow_fqn: FunctionFqn,
-        reason: String,
-    },
-    #[error(
-        "[{workflow_id},{run_id}] `{workflow_fqn}` encountered an unknown error: `{source:?}`"
-    )]
-    UnknownError {
-        workflow_id: WorkflowId,
-        run_id: u64,
-        workflow_fqn: FunctionFqn,
-        // #[backtrace]
-        source: anyhow::Error,
-    },
-}
-
 #[derive(Debug)]
 enum PartialExecutionResult {
     Ok(SupportedFunctionResult),
     NewEventPersisted,
-}
-
-#[derive(thiserror::Error, Debug)]
-enum WorkflowFailed {
-    #[error("non deterministic execution: `{0}`")]
-    NonDeterminismDetected(String),
-    #[error(transparent)]
-    ActivityFailed(ActivityFailed),
-    #[error("limit reached: `{0}`")]
-    LimitReached(String),
-    #[error("unknown error: `{0:?}`")]
-    UnknownError(anyhow::Error),
-}
-
-impl WorkflowFailed {
-    fn into_execution_error(
-        self,
-        workflow_fqn: FunctionFqn,
-        workflow_id: WorkflowId,
-        run_id: u64,
-    ) -> ExecutionError {
-        match self {
-            WorkflowFailed::ActivityFailed(ActivityFailed::Other {
-                workflow_id: id,
-                activity_fqn,
-                reason,
-            }) => {
-                assert_eq!(id, workflow_id);
-                ExecutionError::ActivityFailed {
-                    workflow_id,
-                    run_id,
-                    workflow_fqn,
-                    activity_fqn,
-                    reason,
-                }
-            }
-            WorkflowFailed::ActivityFailed(ActivityFailed::LimitReached {
-                workflow_id: id,
-                activity_fqn,
-                reason,
-            }) => {
-                assert_eq!(id, workflow_id);
-                ExecutionError::ActivityLimitReached {
-                    workflow_id,
-                    run_id,
-                    workflow_fqn,
-                    activity_fqn,
-                    reason,
-                }
-            }
-            WorkflowFailed::ActivityFailed(ActivityFailed::NotFound {
-                workflow_id: id,
-                activity_fqn,
-            }) => {
-                assert_eq!(id, workflow_id);
-                ExecutionError::ActivityNotFound {
-                    workflow_id,
-                    run_id,
-                    workflow_fqn,
-                    activity_fqn,
-                }
-            }
-            WorkflowFailed::NonDeterminismDetected(reason) => {
-                ExecutionError::NonDeterminismDetected {
-                    workflow_id,
-                    run_id,
-                    workflow_fqn,
-                    reason,
-                }
-            }
-            WorkflowFailed::LimitReached(reason) => ExecutionError::LimitReached {
-                workflow_id,
-                run_id,
-                workflow_fqn,
-                reason,
-            },
-            WorkflowFailed::UnknownError(source) => ExecutionError::UnknownError {
-                workflow_id,
-                run_id,
-                workflow_fqn,
-                source,
-            },
-        }
-    }
 }
 
 pub struct Workflow {

@@ -1,7 +1,8 @@
 use crate::activity::{Activity, ActivityConfig};
 use crate::database::{ActivityQueueSender, Database, WorkflowEventFetcher};
+use crate::error::ExecutionError;
 use crate::host_activity::{self, HOST_ACTIVITY_PACKAGE};
-use crate::workflow::{ExecutionError, Workflow, WorkflowConfig};
+use crate::workflow::{Workflow, WorkflowConfig};
 use crate::FunctionMetadata;
 use crate::{database::ActivityEventFetcher, ActivityFailed, FunctionFqn};
 use std::collections::HashMap;

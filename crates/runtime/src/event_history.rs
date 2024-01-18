@@ -1,10 +1,10 @@
 use crate::{
-    activity::ActivityRequest, database::ActivityQueueSender, workflow::AsyncActivityBehavior,
-    workflow_id::WorkflowId, ActivityFailed, ActivityResponse, FunctionFqn,
-    SupportedFunctionResult,
+    activity::ActivityRequest, database::ActivityQueueSender, error::HostFunctionError,
+    workflow::AsyncActivityBehavior, workflow_id::WorkflowId, ActivityFailed, ActivityResponse,
+    FunctionFqn, SupportedFunctionResult,
 };
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, error, trace};
+use tracing::{debug, trace};
 use wasmtime::component::Val;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,16 +57,6 @@ impl HostActivitySync {
             Self::Noop => Ok(SupportedFunctionResult::None),
         }
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub(crate) enum HostFunctionError {
-    #[error("non deterministic execution: `{0}`")]
-    NonDeterminismDetected(String),
-    #[error("interrupt: `{fqn}`", fqn = request.fqn)]
-    Interrupt { request: ActivityRequest },
-    #[error(transparent)]
-    ActivityFailed(#[from] ActivityFailed),
 }
 
 pub(crate) struct CurrentEventHistory {
