@@ -37,6 +37,13 @@ pub struct WorkflowConfig {
     pub async_activity_behavior: AsyncActivityBehavior,
 }
 
+pub const WORKFLOW_CONFIG_COLD: WorkflowConfig = WorkflowConfig {
+    async_activity_behavior: AsyncActivityBehavior::Restart,
+};
+pub const WORKFLOW_CONFIG_HOT: WorkflowConfig = WorkflowConfig {
+    async_activity_behavior: AsyncActivityBehavior::KeepWaiting,
+};
+
 #[derive(thiserror::Error, Debug)]
 pub enum ExecutionError {
     #[error("[{workflow_id}] workflow `{fqn}` not found")]

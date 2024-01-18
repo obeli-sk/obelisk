@@ -85,6 +85,13 @@ pub struct ActivityConfig {
     pub preload: ActivityPreload,
 }
 
+pub const ACTIVITY_CONFIG_HOT: ActivityConfig = ActivityConfig {
+    preload: ActivityPreload::Instance,
+};
+pub const ACTIVITY_CONFIG_COLD: ActivityConfig = ActivityConfig {
+    preload: ActivityPreload::Preinstance,
+};
+
 enum PreloadHolder {
     Preinstance,
     Instance(

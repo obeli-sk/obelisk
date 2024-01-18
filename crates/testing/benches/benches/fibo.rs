@@ -1,30 +1,17 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use lazy_static::lazy_static;
 use runtime::{
-    activity::{ActivityConfig, ActivityPreload},
+    activity::{ActivityConfig, ACTIVITY_CONFIG_COLD, ACTIVITY_CONFIG_HOT},
     database::Database,
     event_history::EventHistory,
     runtime::{Runtime, RuntimeBuilder},
-    workflow::{AsyncActivityBehavior, WorkflowConfig},
+    workflow::{WorkflowConfig, WORKFLOW_CONFIG_COLD, WORKFLOW_CONFIG_HOT},
     workflow_id::WorkflowId,
     FunctionFqn,
 };
 use std::{fmt::Display, sync::Arc};
 use tokio::sync::Mutex;
 use wasmtime::component::Val;
-
-const ACTIVITY_CONFIG_COLD: ActivityConfig = ActivityConfig {
-    preload: ActivityPreload::Preinstance,
-};
-const ACTIVITY_CONFIG_HOT: ActivityConfig = ActivityConfig {
-    preload: ActivityPreload::Instance,
-};
-const WORKFLOW_CONFIG_COLD: WorkflowConfig = WorkflowConfig {
-    async_activity_behavior: AsyncActivityBehavior::Restart,
-};
-const WORKFLOW_CONFIG_HOT: WorkflowConfig = WorkflowConfig {
-    async_activity_behavior: AsyncActivityBehavior::KeepWaiting,
-};
 
 lazy_static! {
     static ref RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()

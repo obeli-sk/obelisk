@@ -35,7 +35,7 @@ fn set_up() {
     });
 }
 
-fn workflow() -> Runtime {
+fn setup_runtime() -> Runtime {
     RT.block_on(async {
         let mut runtime = RuntimeBuilder::default();
         runtime
@@ -65,7 +65,7 @@ static COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new
 fn benchmark_http(criterion: &mut Criterion) {
     set_up();
     let database = Database::new(100, 100);
-    let runtime = workflow();
+    let runtime = setup_runtime();
     let _abort_handles: Vec<_> = RT.block_on(async {
         let worker_threads = 20;
         println!("Runtime is using {} workers", worker_threads);
