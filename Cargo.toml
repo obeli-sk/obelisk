@@ -29,6 +29,7 @@ resolver = "2"
 members = [
     "crates/runtime",
     "crates/testing/benches",
+    "crates/testing/cargo-component-builder",
     "crates/testing/test-programs/fibo/activity",
     "crates/testing/test-programs/fibo/activity/builder",
     "crates/testing/test-programs/fibo/workflow",
@@ -37,6 +38,10 @@ members = [
     "crates/testing/test-programs/http/activity/builder",
     "crates/testing/test-programs/http/workflow",
     "crates/testing/test-programs/http/workflow/builder",
+    "crates/testing/test-programs/noop/activity",
+    "crates/testing/test-programs/noop/activity/builder",
+    "crates/testing/test-programs/noop/workflow",
+    "crates/testing/test-programs/noop/workflow/builder",
     "crates/testing/test-programs/patch/activity-broken",
     "crates/testing/test-programs/patch/activity-broken/builder",
     "crates/testing/test-programs/patch/activity-fixed",
@@ -47,11 +52,6 @@ members = [
     "crates/testing/test-programs/sleep/activity/builder",
     "crates/testing/test-programs/sleep/workflow",
     "crates/testing/test-programs/sleep/workflow/builder",
-    "crates/testing/test-programs/noop/activity",
-    "crates/testing/test-programs/noop/activity/builder",
-    "crates/testing/test-programs/noop/workflow",
-    "crates/testing/test-programs/noop/workflow/builder",
-    "crates/testing/cargo-component-builder",
     "crates/testing/tests",
     "crates/val-json",
 ]
@@ -63,19 +63,19 @@ edition = "2021"
 rust-version = "1.73.0"
 
 [workspace.dependencies]
+cargo-component-builder.path = "crates/testing/cargo-component-builder"
 runtime.path = "crates/runtime"
 test-programs-fibo-activity-builder.path = "crates/testing/test-programs/fibo/activity/builder"
 test-programs-fibo-workflow-builder.path = "crates/testing/test-programs/fibo/workflow/builder"
 test-programs-http-get-activity-builder.path = "crates/testing/test-programs/http/activity/builder"
 test-programs-http-get-workflow-builder.path = "crates/testing/test-programs/http/workflow/builder"
+test-programs-noop-activity-builder.path = "crates/testing/test-programs/noop/activity/builder"
+test-programs-noop-workflow-builder.path = "crates/testing/test-programs/noop/workflow/builder"
 test-programs-patch-activity-broken-builder.path = "crates/testing/test-programs/patch/activity-broken/builder"
 test-programs-patch-activity-fixed-builder.path = "crates/testing/test-programs/patch/activity-fixed/builder"
 test-programs-patch-workflow-builder.path = "crates/testing/test-programs/patch/workflow/builder"
 test-programs-sleep-activity-builder.path = "crates/testing/test-programs/sleep/activity/builder"
 test-programs-sleep-workflow-builder.path = "crates/testing/test-programs/sleep/workflow/builder"
-test-programs-noop-activity-builder.path = "crates/testing/test-programs/noop/activity/builder"
-test-programs-noop-workflow-builder.path = "crates/testing/test-programs/noop/workflow/builder"
-cargo-component-builder.path = "crates/testing/cargo-component-builder"
 val-json.path = "crates/val-json"
 
 anyhow = { version = "1.0", features = ["backtrace"] }
