@@ -1,7 +1,8 @@
 use crate::activity::ActivityRequest;
-use crate::event_history::{EventHistory, SupportedFunctionResult};
+use crate::event_history::EventHistory;
 use crate::workflow::ExecutionError;
 use crate::workflow_id::WorkflowId;
+use crate::SupportedFunctionResult;
 use crate::{ActivityResponse, FunctionFqn};
 use async_channel::{bounded, Receiver, Sender};
 use std::sync::Arc;

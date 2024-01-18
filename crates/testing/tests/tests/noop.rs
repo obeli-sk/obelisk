@@ -1,13 +1,9 @@
 use std::sync::{Arc, Once};
 
 use runtime::{
-    activity::ActivityConfig,
-    database::Database,
-    event_history::{EventHistory, SupportedFunctionResult},
-    runtime::RuntimeBuilder,
-    workflow::WorkflowConfig,
-    workflow_id::WorkflowId,
-    FunctionFqn,
+    activity::ActivityConfig, database::Database, event_history::EventHistory,
+    runtime::RuntimeBuilder, workflow::WorkflowConfig, workflow_id::WorkflowId, FunctionFqn,
+    SupportedFunctionResult,
 };
 use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};

@@ -1,6 +1,7 @@
 use crate::{
     activity::ActivityRequest, database::ActivityQueueSender, workflow::AsyncActivityBehavior,
     workflow_id::WorkflowId, ActivityFailed, ActivityResponse, FunctionFqn, FunctionFqnStr,
+    SupportedFunctionResult,
 };
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, error, trace};
@@ -12,47 +13,6 @@ wasmtime::component::bindgen!({
     async: true,
     interfaces: "import my-org:workflow-engine/host-activities;",
 });
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum SupportedFunctionResult {
-    None,
-    Single(Val),
-}
-
-impl SupportedFunctionResult {
-    pub fn new(mut vec: Vec<Val>) -> Self {
-        if vec.is_empty() {
-            Self::None
-        } else if vec.len() == 1 {
-            Self::Single(vec.pop().unwrap())
-        } else {
-            unimplemented!("multi-value return types are not supported")
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        match self {
-            Self::None => 0,
-            Self::Single(_) => 1,
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        matches!(self, Self::None)
-    }
-}
-
-impl IntoIterator for SupportedFunctionResult {
-    type Item = Val;
-    type IntoIter = std::option::IntoIter<Val>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        match self {
-            Self::None => None.into_iter(),
-            Self::Single(item) => Some(item).into_iter(),
-        }
-    }
-}
 
 pub(crate) struct HostImports {
     pub(crate) current_event_history: CurrentEventHistory,

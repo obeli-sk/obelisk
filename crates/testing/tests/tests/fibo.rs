@@ -1,11 +1,7 @@
 use runtime::{
-    activity::ActivityConfig,
-    database::Database,
-    event_history::{EventHistory, SupportedFunctionResult},
-    runtime::RuntimeBuilder,
-    workflow::WorkflowConfig,
-    workflow_id::WorkflowId,
-    FunctionFqn,
+    activity::ActivityConfig, database::Database, event_history::EventHistory,
+    runtime::RuntimeBuilder, workflow::WorkflowConfig, workflow_id::WorkflowId, FunctionFqn,
+    SupportedFunctionResult,
 };
 use std::sync::{Arc, Once};
 use tokio::sync::Mutex;

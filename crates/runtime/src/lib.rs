@@ -1,4 +1,3 @@
-use event_history::SupportedFunctionResult;
 use std::{
     fmt::{Debug, Display},
     sync::Arc,
@@ -128,6 +127,47 @@ pub enum ActivityFailed {
         activity_fqn: FunctionFqn,
         reason: String,
     },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SupportedFunctionResult {
+    None,
+    Single(wasmtime::component::Val),
+}
+
+impl SupportedFunctionResult {
+    pub fn new(mut vec: Vec<wasmtime::component::Val>) -> Self {
+        if vec.is_empty() {
+            Self::None
+        } else if vec.len() == 1 {
+            Self::Single(vec.pop().unwrap())
+        } else {
+            unimplemented!("multi-value return types are not supported")
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Single(_) => 1,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::None)
+    }
+}
+
+impl IntoIterator for SupportedFunctionResult {
+    type Item = wasmtime::component::Val;
+    type IntoIter = std::option::IntoIter<wasmtime::component::Val>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            Self::None => None.into_iter(),
+            Self::Single(item) => Some(item).into_iter(),
+        }
+    }
 }
 
 pub mod workflow_id {

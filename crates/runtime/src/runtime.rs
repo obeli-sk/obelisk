@@ -1,9 +1,9 @@
 use crate::activity::{Activity, ActivityConfig};
 use crate::database::{ActivityQueueSender, Database, WorkflowEventFetcher};
-use crate::event_history::{SupportedFunctionResult, HOST_ACTIVITY_SLEEP_FQN};
+use crate::event_history::HOST_ACTIVITY_SLEEP_FQN;
 use crate::workflow::{ExecutionError, Workflow, WorkflowConfig};
-use crate::FunctionMetadata;
 use crate::{database::ActivityEventFetcher, ActivityFailed, FunctionFqn};
+use crate::{FunctionMetadata, SupportedFunctionResult};
 use assert_matches::assert_matches;
 use std::collections::HashMap;
 use std::sync::Arc;

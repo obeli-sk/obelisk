@@ -2,10 +2,10 @@ use crate::activity::Activity;
 use crate::database::ActivityQueueSender;
 use crate::event_history::{
     CurrentEventHistory, Event, EventHistory, HostFunctionError, HostImports,
-    SupportedFunctionResult,
 };
 use crate::wasm_tools::{exported_interfaces, functions_to_metadata, is_limit_reached};
 use crate::workflow_id::WorkflowId;
+use crate::SupportedFunctionResult;
 use crate::{ActivityFailed, FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, Context};
 use std::collections::HashMap;

@@ -5,10 +5,9 @@ use tracing::{debug, trace};
 use wasmtime::{component::Val, Engine};
 
 use crate::{
-    event_history::SupportedFunctionResult,
     wasm_tools::{exported_interfaces, functions_to_metadata, is_limit_reached},
     workflow_id::WorkflowId,
-    ActivityFailed, {FunctionFqn, FunctionMetadata},
+    ActivityFailed, SupportedFunctionResult, {FunctionFqn, FunctionMetadata},
 };
 
 mod http {
