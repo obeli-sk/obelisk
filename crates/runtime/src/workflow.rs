@@ -298,8 +298,11 @@ impl Workflow {
                     .current_event_history
                     .persist_activity_request(request.clone())
                     .await;
-                let res =
-                    Event::handle_activity_async(request.clone(), activity_queue_sender).await;
+                let res = activity_queue_sender
+                    .push(request.clone())
+                    .await
+                    .await
+                    .expect("sender should not be dropped");
                 match res {
                     Ok(_) => {
                         store

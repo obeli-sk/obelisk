@@ -28,17 +28,6 @@ impl Event {
             kind: EventKind::ActivityAsync,
         }
     }
-
-    pub(crate) async fn handle_activity_async(
-        request: ActivityRequest,
-        activity_queue_sender: &ActivityQueueSender,
-    ) -> Result<SupportedFunctionResult, ActivityFailed> {
-        activity_queue_sender
-            .push(request)
-            .await
-            .await
-            .expect("sender should not be dropped")
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,7 +51,7 @@ impl HostActivitySync {
 pub(crate) struct CurrentEventHistory {
     pub(crate) workflow_id: WorkflowId,
     run_id: u64,
-    activity_queue_writer: ActivityQueueSender,
+    activity_queue_sender: ActivityQueueSender,
     pub(crate) event_history: EventHistory,
     async_activity_behavior: AsyncActivityBehavior,
     replay_idx: usize,
@@ -80,7 +69,7 @@ impl CurrentEventHistory {
         Self {
             workflow_id,
             run_id,
-            activity_queue_writer,
+            activity_queue_sender: activity_queue_writer,
             replay_len: event_history.len(),
             event_history,
             async_activity_behavior,
@@ -198,9 +187,12 @@ impl CurrentEventHistory {
                         fqn = request.activity_fqn
                     );
                     let id = self.persist_activity_request(request.clone()).await;
-                    let res =
-                        Event::handle_activity_async(request.clone(), &self.activity_queue_writer)
-                            .await;
+                    let res = self
+                        .activity_queue_sender
+                        .push(request)
+                        .await
+                        .await
+                        .expect("sender should not be dropped");
                     self.persist_activity_response(id, res.clone()).await;
                     Ok(res?)
                 }
