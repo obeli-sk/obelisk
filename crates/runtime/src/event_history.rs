@@ -52,7 +52,7 @@ pub(crate) enum HostActivitySync {
     Noop,
 }
 impl HostActivitySync {
-    fn handle(&self) -> Result<SupportedFunctionResult, ActivityFailed> {
+    fn handle(&self, _request: ActivityRequest) -> Result<SupportedFunctionResult, ActivityFailed> {
         match self {
             Self::Noop => Ok(SupportedFunctionResult::None),
         }
@@ -163,8 +163,8 @@ impl CurrentEventHistory {
                 None,
             ) => {
                 debug!("[{workflow_id},{run_id}] Running {host_activity_sync:?}");
-                let id = self.persist_activity_request(request).await;
-                let res = host_activity_sync.handle();
+                let id = self.persist_activity_request(request.clone()).await;
+                let res = host_activity_sync.handle(request);
                 self.persist_activity_response(id, res.clone()).await;
                 Ok(res?)
             }
