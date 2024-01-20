@@ -1,6 +1,7 @@
 use crate::{
     activity::ActivityRequest,
-    event_history::{CurrentEventHistory, Event, EventKind, HostActivitySync},
+    error::ActivityFailed,
+    event_history::{CurrentEventHistory, Event, EventKind},
     ActivityResponse, FunctionFqnStr, SupportedFunctionResult,
 };
 use assert_matches::assert_matches;
@@ -84,5 +85,20 @@ pub(crate) async fn execute_host_activity(
         let _ = resp_tx.send(Ok(SupportedFunctionResult::None));
     } else {
         panic!("cannot execute host activity `{}`", request.activity_fqn);
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HostActivitySync {
+    Noop,
+}
+impl HostActivitySync {
+    pub(crate) fn handle(
+        &self,
+        _request: ActivityRequest,
+    ) -> Result<SupportedFunctionResult, ActivityFailed> {
+        match self {
+            Self::Noop => Ok(SupportedFunctionResult::None),
+        }
     }
 }

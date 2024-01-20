@@ -1,7 +1,7 @@
 use crate::{
     activity::ActivityRequest, database::ActivityQueueSender, error::HostFunctionError,
-    workflow::AsyncActivityBehavior, workflow_id::WorkflowId, ActivityFailed, ActivityResponse,
-    FunctionFqn, SupportedFunctionResult,
+    host_activity::HostActivitySync, workflow::AsyncActivityBehavior, workflow_id::WorkflowId,
+    ActivityFailed, ActivityResponse, FunctionFqn, SupportedFunctionResult,
 };
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, trace};
@@ -34,18 +34,6 @@ impl Event {
 pub(crate) enum EventKind {
     HostActivitySync(HostActivitySync),
     ActivityAsync,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum HostActivitySync {
-    Noop,
-}
-impl HostActivitySync {
-    fn handle(&self, _request: ActivityRequest) -> Result<SupportedFunctionResult, ActivityFailed> {
-        match self {
-            Self::Noop => Ok(SupportedFunctionResult::None),
-        }
-    }
 }
 
 pub(crate) struct CurrentEventHistory {
