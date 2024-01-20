@@ -30,6 +30,19 @@ impl Event {
     }
 }
 
+#[derive(Debug)]
+enum CurrentHistoryResult<'a> {
+    Empty,
+    FoundMatching(&'a Result<SupportedFunctionResult, ActivityFailed>),
+    FoundNotMatching(
+        (
+            &'a FunctionFqn,
+            &'a Arc<Vec<Val>>,
+            &'a Result<SupportedFunctionResult, ActivityFailed>,
+        ),
+    ),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum EventKind {
     HostActivitySync(HostActivitySync),
@@ -122,22 +135,32 @@ impl CurrentEventHistory {
     ) -> Result<SupportedFunctionResult, HostFunctionError> {
         let workflow_id = self.workflow_id.clone();
         let run_id = self.run_id;
-        let found = self.next();
-        let found_matches = matches!(found,  Some((found_fqn, found_params, _replay_result))
-            if event.request.activity_fqn == *found_fqn && event.request.params == *found_params);
+        let async_activity_behavior = self.async_activity_behavior;
+        let current_history_result = match self.next() {
+            None => CurrentHistoryResult::Empty,
+            Some((found_fqn, found_params, replay_result))
+                if event.request.activity_fqn == *found_fqn
+                    && event.request.params == *found_params =>
+            {
+                CurrentHistoryResult::FoundMatching(replay_result)
+            }
+            Some(replay) => CurrentHistoryResult::FoundNotMatching(replay),
+        };
         trace!(
-            "[{workflow_id},{run_id}] replay_handle_interrupt {fqn}, found: {found_matches}",
+            "[{workflow_id},{run_id}] replay_handle_interrupt {fqn}, current_history_result: {r:?}",
             fqn = event.request.activity_fqn,
+            r = current_history_result
         );
-        match (event, found_matches, found) {
+
+        match (event, current_history_result, async_activity_behavior) {
             // Continue running on HostActivitySync
             (
                 Event {
                     request,
                     kind: EventKind::HostActivitySync(host_activity_sync),
                 },
+                CurrentHistoryResult::Empty,
                 _,
-                None,
             ) => {
                 debug!("[{workflow_id},{run_id}] Running {host_activity_sync:?}");
                 let id = self.persist_activity_request(request.clone()).await;
@@ -146,49 +169,58 @@ impl CurrentEventHistory {
                 Ok(res?)
             }
             // Replay if found
-            (event, true, Some((_, _, replay_result))) => {
+            (event, CurrentHistoryResult::FoundMatching(replay_result), _) => {
                 debug!(
                     "[{workflow_id},{run_id}] Replaying {fqn}",
                     fqn = event.request.activity_fqn
                 );
                 Ok(replay_result.clone()?)
             }
-            // New event needs to be handled by the runtime, interrupt or execute it.
+            // Async activity: Interrupt
             (
                 Event {
                     request,
                     kind: EventKind::ActivityAsync,
                 },
-                _,
-                None,
-            ) => match self.async_activity_behavior {
-                AsyncActivityBehavior::Restart => {
-                    debug!(
-                        "[{workflow_id},{run_id}] Interrupting {fqn}",
-                        fqn = request.activity_fqn
-                    );
-                    Err(HostFunctionError::Interrupt { request })
-                }
-                AsyncActivityBehavior::KeepWaiting => {
-                    debug!(
-                        "[{workflow_id},{run_id}] Executing {fqn}",
-                        fqn = request.activity_fqn
-                    );
-                    let id = self.persist_activity_request(request.clone()).await;
-                    let res = self
-                        .activity_queue_sender
-                        .push(request)
-                        .await
-                        .await
-                        .expect("sender should not be dropped");
-                    self.persist_activity_response(id, res.clone()).await;
-                    Ok(res?)
-                }
-            },
+                CurrentHistoryResult::Empty,
+                AsyncActivityBehavior::Restart,
+            ) => {
+                debug!(
+                    "[{workflow_id},{run_id}] Interrupting {fqn}",
+                    fqn = request.activity_fqn
+                );
+                Err(HostFunctionError::Interrupt { request })
+            }
+
+            // Async activity: Add to queue and wait for response.
+            (
+                Event {
+                    request,
+                    kind: EventKind::ActivityAsync,
+                },
+                CurrentHistoryResult::Empty,
+                AsyncActivityBehavior::KeepWaiting,
+            ) => {
+                debug!(
+                    "[{workflow_id},{run_id}] Enqueuing {fqn}",
+                    fqn = request.activity_fqn
+                );
+                let id = self.persist_activity_request(request.clone()).await;
+                let res = self
+                    .activity_queue_sender
+                    .push(request)
+                    .await
+                    .await
+                    .expect("sender should not be dropped");
+                self.persist_activity_response(id, res.clone()).await;
+                Ok(res?)
+            }
             // Non determinism
-            (event, false, Some(found)) => Err(HostFunctionError::NonDeterminismDetected(format!(
-                "[{workflow_id},{run_id}] Expected {found:?}, got {event:?}"
-            ))),
+            (event, CurrentHistoryResult::FoundNotMatching(expected), _) => {
+                Err(HostFunctionError::NonDeterminismDetected(format!(
+                    "[{workflow_id},{run_id}] Expected {expected:?}, got {event:?}"
+                )))
+            }
         }
     }
 }
