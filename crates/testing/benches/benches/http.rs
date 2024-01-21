@@ -18,8 +18,6 @@ use wiremock::{
     Mock, MockServer, ResponseTemplate,
 };
 
-const TASKS_PER_RUNTIME: usize = 20;
-
 lazy_static! {
     static ref RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
@@ -67,11 +65,7 @@ fn benchmark_http(criterion: &mut Criterion) {
     set_up();
     let database = Database::new(100, 100);
     let runtime = setup_runtime();
-    let _abort_handles: Vec<_> = RT.block_on(async {
-        (0..TASKS_PER_RUNTIME)
-            .map(|_| runtime.spawn(&database))
-            .collect()
-    });
+    let _abort_handle = RT.block_on(async { runtime.spawn(&database) });
     let port = RT.block_on(async {
         let server = MockServer::start().await;
         Mock::given(method("GET"))

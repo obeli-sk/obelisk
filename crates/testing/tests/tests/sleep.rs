@@ -186,8 +186,7 @@ async fn test_limits(
         .await?;
     let mut futures = Vec::new();
     let runtime = runtime.build();
-    // Start tokio tasks to process the futures concurrently.
-    let _abort_handles: Vec<_> = (0..ITERATIONS).map(|_| runtime.spawn(&database)).collect();
+    let _abort_handle = runtime.spawn(&database);
     // Prepare futures, last one processed should fail.
     for _ in 0..ITERATIONS {
         let workflow_scheduler = database.workflow_scheduler();

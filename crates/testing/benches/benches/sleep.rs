@@ -15,7 +15,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use wasmtime::component::Val;
 
 const DB_BUFFER_CAPACITY: usize = 100;
-const TASKS_PER_RUNTIME: usize = 20;
 const ELEMENTS_PER_ITERATION: u64 = 100;
 const SLEEP_MILLIS: u64 = 10;
 
@@ -63,11 +62,7 @@ fn benchmark_sleep(criterion: &mut Criterion) {
     set_up();
     let database = Database::new(DB_BUFFER_CAPACITY, DB_BUFFER_CAPACITY);
     let runtime = setup_runtime();
-    let _abort_handles: Vec<_> = RT.block_on(async {
-        (0..TASKS_PER_RUNTIME)
-            .map(|_| runtime.spawn(&database))
-            .collect()
-    });
+    let _abort_handle = RT.block_on(async { runtime.spawn(&database) });
 
     let mut group = criterion.benchmark_group("sleep");
     group.throughput(Throughput::Elements(ELEMENTS_PER_ITERATION));

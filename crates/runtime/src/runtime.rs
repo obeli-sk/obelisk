@@ -177,19 +177,22 @@ impl Runtime {
     ) {
         while let Some((request, oneshot_tx)) = fetcher.fetch_one().await {
             if let Some(workflow) = functions_to_workflows.get(&request.workflow_fqn) {
-                let mut event_history = request.event_history.lock().await;
-                // TODO: currently runs until completion. Allow persisting partial completion.
-                let resp = workflow
-                    .execute_all(
-                        &request.workflow_id,
-                        &activity_queue_sender,
-                        event_history.as_mut(),
-                        &request.workflow_fqn,
-                        &request.params,
-                    )
-                    .await;
-                // TODO: persist execution in the `scheduled` state.
-                let _ = oneshot_tx.send(resp);
+                let workflow = workflow.clone();
+                let activity_queue_sender = activity_queue_sender.clone();
+                tokio::spawn(async move {
+                    let mut event_history = request.event_history.lock().await;
+                    // TODO: cancellation
+                    let resp = workflow
+                        .execute_all(
+                            &request.workflow_id,
+                            &activity_queue_sender,
+                            event_history.as_mut(),
+                            &request.workflow_fqn,
+                            &request.params,
+                        )
+                        .await;
+                    let _ = oneshot_tx.send(resp);
+                });
             } else {
                 let err = ExecutionError::NotFound {
                     workflow_id: request.workflow_id,
@@ -211,17 +214,23 @@ impl Runtime {
                 host_activity::execute_host_activity(request, resp_tx).await;
             } else {
                 // execute wasm activity
-                let activity_res = match functions_to_activities.get(&request.activity_fqn) {
-                    Some(activity) => activity.run(&request).await,
-                    None => Err(ActivityFailed::NotFound {
-                        workflow_id: request.workflow_id,
-                        activity_fqn: request.activity_fqn,
-                    }),
+                match functions_to_activities.get(&request.activity_fqn) {
+                    Some(activity) => {
+                        let activity = activity.clone();
+                        tokio::spawn(async move {
+                            // TODO: cancellation
+                            let _ = resp_tx.send(activity.run(&request).await);
+                        });
+                    }
+                    None => {
+                        let err = ActivityFailed::NotFound {
+                            workflow_id: request.workflow_id,
+                            activity_fqn: request.activity_fqn,
+                        };
+                        warn!("{err}");
+                        let _ = resp_tx.send(Err(err));
+                    }
                 };
-                if let Err(err) = &activity_res {
-                    warn!("{err}");
-                }
-                let _ = resp_tx.send(activity_res);
             }
         }
         debug!("Runtime::process_activities exiting");
