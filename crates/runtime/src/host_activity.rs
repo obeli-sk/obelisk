@@ -1,7 +1,6 @@
 use crate::{
     activity::ActivityRequest,
-    error::ActivityFailed,
-    event_history::{CurrentEventHistory, Event, EventKind},
+    event_history::{CurrentEventHistory, Event},
     ActivityResponse, FunctionFqnStr, SupportedFunctionResult,
 };
 use assert_matches::assert_matches;
@@ -32,6 +31,8 @@ pub(crate) const HOST_ACTIVITY_PACKAGE: &str = "my-org:workflow-engine/host-acti
 
 pub(crate) const HOST_ACTIVITY_SLEEP_FQN: FunctionFqnStr<'static> =
     FunctionFqnStr::new(HOST_ACTIVITY_PACKAGE, "sleep");
+pub(crate) const HOST_ACTIVITY_NOOP_FQN: FunctionFqnStr =
+    FunctionFqnStr::new(HOST_ACTIVITY_PACKAGE, "noop");
 
 // When calling host functions, create events and continue or interrupt the execution.
 #[async_trait::async_trait]
@@ -43,7 +44,6 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
                 activity_fqn: HOST_ACTIVITY_SLEEP_FQN.to_owned(),
                 params: Arc::new(vec![Val::U64(millis)]),
             },
-            kind: EventKind::ActivityAsync,
         };
         let replay_result = self
             .current_event_history
@@ -54,14 +54,12 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
     }
 
     async fn noop(&mut self) -> wasmtime::Result<()> {
-        const FQN: FunctionFqnStr = FunctionFqnStr::new(HOST_ACTIVITY_PACKAGE, "noop");
         let event = Event {
             request: ActivityRequest {
                 workflow_id: self.current_event_history.workflow_id.clone(),
-                activity_fqn: FQN.to_owned(),
+                activity_fqn: HOST_ACTIVITY_NOOP_FQN.to_owned(),
                 params: Arc::new(vec![]),
             },
-            kind: EventKind::HostActivitySync(HostActivitySync::Noop),
         };
         let replay_result = self
             .current_event_history
@@ -83,22 +81,10 @@ pub(crate) async fn execute_host_activity(
         let duration = *assert_matches!(duration, wasmtime::component::Val::U64(v) => v);
         tokio::time::sleep(Duration::from_millis(duration)).await;
         let _ = resp_tx.send(Ok(SupportedFunctionResult::None));
+    } else if request.activity_fqn == HOST_ACTIVITY_NOOP_FQN {
+        assert_eq!(request.params.len(), 0);
+        let _ = resp_tx.send(Ok(SupportedFunctionResult::None));
     } else {
         panic!("cannot execute host activity `{}`", request.activity_fqn);
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum HostActivitySync {
-    Noop,
-}
-impl HostActivitySync {
-    pub(crate) fn handle(
-        &self,
-        _request: ActivityRequest,
-    ) -> Result<SupportedFunctionResult, ActivityFailed> {
-        match self {
-            Self::Noop => Ok(SupportedFunctionResult::None),
-        }
     }
 }

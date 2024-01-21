@@ -1,7 +1,7 @@
 use crate::{
     activity::ActivityRequest, database::ActivityQueueSender, error::HostFunctionError,
-    host_activity::HostActivitySync, workflow::AsyncActivityBehavior, workflow_id::WorkflowId,
-    ActivityFailed, ActivityResponse, FunctionFqn, SupportedFunctionResult,
+    workflow::AsyncActivityBehavior, workflow_id::WorkflowId, ActivityFailed, ActivityResponse,
+    FunctionFqn, SupportedFunctionResult,
 };
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, trace};
@@ -10,7 +10,6 @@ use wasmtime::component::Val;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Event {
     pub(crate) request: ActivityRequest,
-    pub(crate) kind: EventKind,
 }
 
 impl Event {
@@ -25,7 +24,6 @@ impl Event {
                 activity_fqn: fqn,
                 params,
             },
-            kind: EventKind::ActivityAsync,
         }
     }
 }
@@ -41,12 +39,6 @@ enum CurrentHistoryResult<'a> {
             &'a Result<SupportedFunctionResult, ActivityFailed>,
         ),
     ),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum EventKind {
-    HostActivitySync(HostActivitySync),
-    ActivityAsync,
 }
 
 pub(crate) struct CurrentEventHistory {
@@ -100,7 +92,6 @@ impl CurrentEventHistory {
         if self.replay_idx < self.replay_len {
             let (fqn, params, res) = self
                 .event_history
-                .vec
                 .get(self.replay_idx)
                 .expect("must contain value");
             self.replay_idx += 1;
@@ -134,27 +125,6 @@ impl CurrentEventHistory {
         );
 
         match (event, current_history_result, async_activity_behavior) {
-            // Continue running on HostActivitySync
-            (
-                Event {
-                    request,
-                    kind: EventKind::HostActivitySync(host_activity_sync),
-                },
-                CurrentHistoryResult::Empty,
-                _,
-            ) => {
-                debug!("[{workflow_id},{run_id}] Running {host_activity_sync:?}");
-                self.assert_replay_is_drained();
-                let id = self
-                    .event_history
-                    .persist_activity_request(request.clone())
-                    .await;
-                let res = host_activity_sync.handle(request);
-                self.event_history
-                    .persist_activity_response(id, res.clone())
-                    .await;
-                Ok(res?)
-            }
             // Replay if found
             (event, CurrentHistoryResult::FoundMatching(replay_result), _) => {
                 debug!(
@@ -164,14 +134,7 @@ impl CurrentEventHistory {
                 Ok(replay_result.clone()?)
             }
             // Async activity: Interrupt
-            (
-                Event {
-                    request,
-                    kind: EventKind::ActivityAsync,
-                },
-                CurrentHistoryResult::Empty,
-                AsyncActivityBehavior::Restart,
-            ) => {
+            (Event { request }, CurrentHistoryResult::Empty, AsyncActivityBehavior::Restart) => {
                 debug!(
                     "[{workflow_id},{run_id}] Interrupting {fqn}",
                     fqn = request.activity_fqn
@@ -181,10 +144,7 @@ impl CurrentEventHistory {
 
             // Async activity: Add to queue and wait for response.
             (
-                Event {
-                    request,
-                    kind: EventKind::ActivityAsync,
-                },
+                Event { request },
                 CurrentHistoryResult::Empty,
                 AsyncActivityBehavior::KeepWaiting,
             ) => {
@@ -246,6 +206,10 @@ impl EventHistory {
 
     pub(crate) fn len(&self) -> usize {
         self.vec.len()
+    }
+
+    pub(crate) fn get(&self, idx: usize) -> Option<&EventHistoryTriple> {
+        self.vec.get(idx)
     }
 }
 
