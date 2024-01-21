@@ -47,7 +47,7 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
         };
         let replay_result = self
             .current_event_history
-            .replay_handle_interrupt(event)
+            .replay_enqueue_interrupt(event)
             .await?;
         assert!(replay_result.is_empty());
         Ok(())
@@ -63,7 +63,7 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
         };
         let replay_result = self
             .current_event_history
-            .replay_handle_interrupt(event)
+            .replay_enqueue_interrupt(event)
             .await?;
         assert!(replay_result.is_empty());
         Ok(())

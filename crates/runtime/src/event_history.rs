@@ -94,7 +94,7 @@ impl CurrentEventHistory {
         }
     }
 
-    pub(crate) async fn replay_handle_interrupt(
+    pub(crate) async fn replay_enqueue_interrupt(
         &mut self,
         event: Event,
     ) -> Result<SupportedFunctionResult, HostFunctionError> {
@@ -118,7 +118,7 @@ impl CurrentEventHistory {
         );
 
         match (event, current_history_result, async_activity_behavior) {
-            // Replay if found
+            // Replay the result if found.
             (event, CurrentHistoryResult::FoundMatching(replay_result), _) => {
                 debug!(
                     "[{workflow_id},{run_id}] Replaying {fqn}",
@@ -126,15 +126,7 @@ impl CurrentEventHistory {
                 );
                 Ok(replay_result.clone()?)
             }
-            // activity: Interrupt
-            (Event { request }, CurrentHistoryResult::Empty, AsyncActivityBehavior::Restart) => {
-                debug!(
-                    "[{workflow_id},{run_id}] Interrupting {fqn}",
-                    fqn = request.activity_fqn
-                );
-                Err(HostFunctionError::Interrupt { request })
-            }
-            // activity: Add to queue and wait for response.
+            // activity: Enqueue and wait for response.
             (
                 Event { request },
                 CurrentHistoryResult::Empty,
@@ -149,6 +141,14 @@ impl CurrentEventHistory {
                     .push(request, &mut self.event_history)
                     .await;
                 Ok(res?)
+            }
+            // activity: Interrupt wasm and let the outer runtime handle it.
+            (Event { request }, CurrentHistoryResult::Empty, AsyncActivityBehavior::Restart) => {
+                debug!(
+                    "[{workflow_id},{run_id}] Interrupting {fqn}",
+                    fqn = request.activity_fqn
+                );
+                Err(HostFunctionError::Interrupt { request })
             }
             // Non determinism
             (event, CurrentHistoryResult::FoundNotMatching(expected), _) => {

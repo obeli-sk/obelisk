@@ -99,7 +99,7 @@ impl Workflow {
                             let store = store_ctx.data_mut();
                             let activity_result = store
                                 .current_event_history
-                                .replay_handle_interrupt(event)
+                                .replay_enqueue_interrupt(event)
                                 .await?;
                             assert_eq!(
                                 results.len(),
