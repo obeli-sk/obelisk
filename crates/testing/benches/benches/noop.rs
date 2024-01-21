@@ -67,7 +67,7 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
         ("noopa", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
         ("noopa", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
         ("noopa", 100, ACTIVITY_CONFIG_HOT, WORKFLOW_CONFIG_HOT),
-        ("noopha", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        ("noopha", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
         ("noopha", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
     ];
     let runtime_builder = Mutex::new(RuntimeBuilder::default());
