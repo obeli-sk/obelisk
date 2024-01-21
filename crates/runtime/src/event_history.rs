@@ -82,30 +82,11 @@ impl CurrentEventHistory {
         self.replay_idx == self.replay_len
     }
 
-    fn assert_replay_is_drained(&self) {
+    pub(crate) fn assert_replay_is_drained(&self) {
         assert_eq!(
             self.replay_idx, self.replay_len,
             "replay log has not been drained"
         );
-    }
-
-    pub(crate) async fn persist_activity_request(
-        &mut self,
-        request: ActivityRequest,
-    ) -> ActivityRequestId {
-        self.assert_replay_is_drained();
-        self.event_history.persist_activity_request(request).await
-    }
-
-    pub(crate) async fn persist_activity_response(
-        &mut self,
-        request_id: ActivityRequestId,
-        resp: ActivityResponse,
-    ) {
-        self.assert_replay_is_drained();
-        self.event_history
-            .persist_activity_response(request_id, resp)
-            .await;
     }
 
     #[allow(clippy::type_complexity)]
@@ -163,9 +144,15 @@ impl CurrentEventHistory {
                 _,
             ) => {
                 debug!("[{workflow_id},{run_id}] Running {host_activity_sync:?}");
-                let id = self.persist_activity_request(request.clone()).await;
+                self.assert_replay_is_drained();
+                let id = self
+                    .event_history
+                    .persist_activity_request(request.clone())
+                    .await;
                 let res = host_activity_sync.handle(request);
-                self.persist_activity_response(id, res.clone()).await;
+                self.event_history
+                    .persist_activity_response(id, res.clone())
+                    .await;
                 Ok(res?)
             }
             // Replay if found
@@ -205,14 +192,11 @@ impl CurrentEventHistory {
                     "[{workflow_id},{run_id}] Enqueuing {fqn}",
                     fqn = request.activity_fqn
                 );
-                let id = self.persist_activity_request(request.clone()).await;
+                self.assert_replay_is_drained();
                 let res = self
                     .activity_queue_sender
-                    .push(request)
-                    .await
-                    .await
-                    .expect("sender should not be dropped");
-                self.persist_activity_response(id, res.clone()).await;
+                    .push(request, &mut self.event_history)
+                    .await;
                 Ok(res?)
             }
             // Non determinism

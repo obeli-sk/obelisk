@@ -293,33 +293,22 @@ impl Workflow {
             }
             Some(HostFunctionError::Interrupt { request }) => {
                 // Persist and execute the event
-                let id = store
+                store
                     .data_mut()
                     .current_event_history
-                    .persist_activity_request(request.clone())
-                    .await;
+                    .assert_replay_is_drained();
+
                 let res = activity_queue_sender
-                    .push(request.clone())
-                    .await
-                    .await
-                    .expect("sender should not be dropped");
+                    .push(
+                        request.clone(),
+                        &mut store.data_mut().current_event_history.event_history,
+                    )
+                    .await;
                 match res {
                     Ok(_) => {
-                        store
-                            .data_mut()
-                            .current_event_history
-                            .persist_activity_response(id, res)
-                            .await;
                         None // No error, workflow made progress.
                     }
-                    Err(err) => {
-                        store
-                            .data_mut()
-                            .current_event_history
-                            .persist_activity_response(id, Err(err.clone()))
-                            .await;
-                        Some(WorkflowFailed::ActivityFailed(err))
-                    }
+                    Err(err) => Some(WorkflowFailed::ActivityFailed(err)),
                 }
             }
             Some(HostFunctionError::ActivityFailed(activity_failed)) => {

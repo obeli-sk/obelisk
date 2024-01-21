@@ -138,12 +138,27 @@ pub(crate) struct ActivityQueueSender {
 }
 
 impl ActivityQueueSender {
-    pub async fn push(&self, request: ActivityRequest) -> oneshot::Receiver<ActivityResponse> {
+    pub async fn push(
+        &self,
+        request: ActivityRequest,
+        event_history: &mut EventHistory,
+    ) -> ActivityResponse {
         let (resp_sender, resp_receiver) = oneshot::channel();
+
+        let id = event_history
+            .persist_activity_request(request.clone())
+            .await;
+
         self.activity_sender
             .send((request, resp_sender))
             .await
             .expect("activity queue receiver must be running");
-        resp_receiver
+        let resp = resp_receiver
+            .await
+            .expect("activity queue receiver must be running");
+        event_history
+            .persist_activity_response(id, resp.clone())
+            .await;
+        resp
     }
 }
