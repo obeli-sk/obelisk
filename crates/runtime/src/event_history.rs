@@ -74,13 +74,6 @@ impl CurrentEventHistory {
         self.replay_idx == self.replay_len
     }
 
-    pub(crate) fn assert_replay_is_drained(&self) {
-        assert_eq!(
-            self.replay_idx, self.replay_len,
-            "replay log has not been drained"
-        );
-    }
-
     #[allow(clippy::type_complexity)]
     fn next(
         &mut self,
@@ -133,7 +126,7 @@ impl CurrentEventHistory {
                 );
                 Ok(replay_result.clone()?)
             }
-            // Async activity: Interrupt
+            // activity: Interrupt
             (Event { request }, CurrentHistoryResult::Empty, AsyncActivityBehavior::Restart) => {
                 debug!(
                     "[{workflow_id},{run_id}] Interrupting {fqn}",
@@ -141,8 +134,7 @@ impl CurrentEventHistory {
                 );
                 Err(HostFunctionError::Interrupt { request })
             }
-
-            // Async activity: Add to queue and wait for response.
+            // activity: Add to queue and wait for response.
             (
                 Event { request },
                 CurrentHistoryResult::Empty,
@@ -152,7 +144,6 @@ impl CurrentEventHistory {
                     "[{workflow_id},{run_id}] Enqueuing {fqn}",
                     fqn = request.activity_fqn
                 );
-                self.assert_replay_is_drained();
                 let res = self
                     .activity_queue_sender
                     .push(request, &mut self.event_history)

@@ -292,12 +292,6 @@ impl Workflow {
                 Some(WorkflowFailed::NonDeterminismDetected(reason.clone()))
             }
             Some(HostFunctionError::Interrupt { request }) => {
-                // Persist and execute the event
-                store
-                    .data_mut()
-                    .current_event_history
-                    .assert_replay_is_drained();
-
                 let res = activity_queue_sender
                     .push(
                         request.clone(),
@@ -312,7 +306,6 @@ impl Workflow {
                 }
             }
             Some(HostFunctionError::ActivityFailed(activity_failed)) => {
-                // TODO: persist activity failure
                 Some(WorkflowFailed::ActivityFailed(activity_failed.clone()))
             }
             None => {
