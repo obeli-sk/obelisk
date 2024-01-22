@@ -8,7 +8,7 @@ use crate::{database::ActivityEventFetcher, ActivityFailed, FunctionFqn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::AbortHandle;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, info_span, warn, Instrument};
 use wasmtime::Engine;
 
 #[derive(Default)]
@@ -73,6 +73,7 @@ impl RuntimeBuilder {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub async fn add_activity(
         &mut self,
         activity_wasm_path: String,
@@ -97,6 +98,7 @@ impl RuntimeBuilder {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all)]
     pub async fn add_workflow_definition(
         &mut self,
         workflow_wasm_path: String,
@@ -170,6 +172,7 @@ impl Runtime {
         )
     }
 
+    #[tracing::instrument(skip_all)]
     async fn process_workflows(
         functions_to_workflows: Arc<HashMap<FunctionFqn, Arc<Workflow>>>,
         fetcher: WorkflowEventFetcher,
@@ -179,20 +182,23 @@ impl Runtime {
             if let Some(workflow) = functions_to_workflows.get(&request.workflow_fqn) {
                 let workflow = workflow.clone();
                 let activity_queue_sender = activity_queue_sender.clone();
-                tokio::spawn(async move {
-                    let mut event_history = request.event_history.lock().await;
-                    // TODO: cancellation
-                    let resp = workflow
-                        .execute_all(
-                            &request.workflow_id,
-                            &activity_queue_sender,
-                            event_history.as_mut(),
-                            &request.workflow_fqn,
-                            &request.params,
-                        )
-                        .await;
-                    let _ = oneshot_tx.send(resp);
-                });
+                tokio::spawn(
+                    async move {
+                        let mut event_history = request.event_history.lock().await;
+                        // TODO: cancellation
+                        let resp = workflow
+                            .execute_all(
+                                &request.workflow_id,
+                                &activity_queue_sender,
+                                event_history.as_mut(),
+                                &request.workflow_fqn,
+                                &request.params,
+                            )
+                            .await;
+                        let _ = oneshot_tx.send(resp);
+                    }
+                    .instrument(info_span!("spawn_workflow")),
+                );
             } else {
                 let err = ExecutionError::NotFound {
                     workflow_id: request.workflow_id,
@@ -205,6 +211,7 @@ impl Runtime {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     async fn process_activities(
         activity_event_fetcher: ActivityEventFetcher,
         functions_to_activities: Arc<HashMap<FunctionFqn, Arc<Activity>>>,
@@ -217,10 +224,13 @@ impl Runtime {
                 match functions_to_activities.get(&request.activity_fqn) {
                     Some(activity) => {
                         let activity = activity.clone();
-                        tokio::spawn(async move {
-                            // TODO: cancellation
-                            let _ = resp_tx.send(activity.run(&request).await);
-                        });
+                        tokio::spawn(
+                            async move {
+                                // TODO: cancellation
+                                let _ = resp_tx.send(activity.run(&request).await);
+                            }
+                            .instrument(info_span!("spawn_activity")),
+                        );
                     }
                     None => {
                         let err = ActivityFailed::NotFound {

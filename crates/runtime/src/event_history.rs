@@ -94,6 +94,7 @@ impl CurrentEventHistory {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub(crate) async fn replay_enqueue_interrupt(
         &mut self,
         event: Event,

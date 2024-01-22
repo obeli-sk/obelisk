@@ -14,17 +14,28 @@ use std::{
     time::Instant,
 };
 use tokio::sync::Mutex;
-use tracing::info;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing::{info, info_span};
+use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+static mut VAL: Option<FlushGuard> = None;
 static INIT: Once = Once::new();
-fn set_up() {
+
+fn set_up() -> FlushGuard {
     INIT.call_once(|| {
+        let (chrome_layer, guard) = ChromeLayerBuilder::new()
+            .trace_style(tracing_chrome::TraceStyle::Async)
+            .build();
         tracing_subscriber::registry()
             .with(fmt::layer())
             .with(EnvFilter::from_default_env())
+            .with(chrome_layer)
             .init();
+        unsafe {
+            VAL = Some(guard);
+        }
     });
+    unsafe { VAL.take().unwrap() }
 }
 
 #[rstest]
@@ -34,7 +45,8 @@ async fn test(
     #[values(1, 10)] iterations: usize,
     #[values("Restart", "KeepWaiting")] activity_behavior: &str,
 ) -> Result<(), anyhow::Error> {
-    set_up();
+    let _guard = set_up();
+
     let database = Database::new(100, 100);
     let mut runtime = RuntimeBuilder::default();
     runtime
@@ -59,6 +71,7 @@ async fn test(
     let fqn = FunctionFqn::new("testing:types-workflow/workflow", function);
     let metadata = runtime.workflow_function_metadata(&fqn).unwrap();
     let param_vals = Arc::new(metadata.deserialize_params(&param_vals).unwrap());
+    let span = info_span!("stopwatch").entered();
     let stopwatch = Instant::now();
     let res = database
         .workflow_scheduler()
@@ -70,6 +83,7 @@ async fn test(
         )
         .await;
     let stopwatch = stopwatch.elapsed();
+    drop(span);
     info!("Finished in {} µs", stopwatch.as_micros());
     assert_eq!(res.unwrap(), SupportedFunctionResult::None);
     assert_eq!(

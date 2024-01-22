@@ -107,6 +107,7 @@ pub struct Activity {
 }
 
 impl Activity {
+    #[tracing::instrument(skip_all)]
     pub async fn new_with_config(
         wasm_path: String,
         config: &ActivityConfig,
@@ -150,6 +151,7 @@ impl Activity {
         })
     }
 
+    #[tracing::instrument(skip_all)]
     fn try_lock(
         preload_holder: &PreloadHolder,
     ) -> Option<(
@@ -164,6 +166,7 @@ impl Activity {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub(crate) async fn run(
         &self,
         request: &ActivityRequest,

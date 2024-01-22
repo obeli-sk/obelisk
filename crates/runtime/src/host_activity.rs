@@ -6,6 +6,7 @@ use crate::{
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::oneshot;
+use tracing::instrument;
 use wasmtime::component::{Linker, Val};
 
 // generate Host trait
@@ -70,6 +71,7 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
     }
 }
 
+#[instrument(skip_all)]
 pub(crate) async fn execute_host_activity(
     request: ActivityRequest,
     resp_tx: oneshot::Sender<ActivityResponse>,

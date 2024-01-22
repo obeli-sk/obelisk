@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::mem;
 use std::{fmt::Debug, sync::Arc};
 use strum::EnumString;
-use tracing::{debug, info, trace};
+use tracing::{debug, debug_span, info, trace, Instrument};
 use wasmtime::component::Val;
 use wasmtime::AsContextMut;
 use wasmtime::{
@@ -145,6 +145,7 @@ impl Workflow {
         self.functions_to_metadata.keys()
     }
 
+    #[tracing::instrument(skip_all)]
     pub(crate) async fn execute_all(
         &self,
         workflow_id: &WorkflowId,
@@ -280,6 +281,7 @@ impl Workflow {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     async fn interpret_errors(
         &self,
         activity_queue_sender: &ActivityQueueSender,
@@ -321,6 +323,7 @@ impl Workflow {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     async fn execute_one_step(
         &self,
         workflow_id: &WorkflowId,
@@ -346,9 +349,14 @@ impl Workflow {
         };
         // call func
         let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
-        func.call_async(&mut store, params, &mut results).await?;
+        func.call_async(&mut store, params, &mut results)
+            .instrument(debug_span!("call_async"))
+            .await?;
+
         let results = SupportedFunctionResult::new(results);
-        func.post_return_async(&mut store).await?;
+        func.post_return_async(&mut store)
+            .instrument(debug_span!("post_return_async"))
+            .await?;
         trace!("[{workflow_id},{run_id}] execution result `{fqn}` -> {results:?}");
         Ok(results)
     }
