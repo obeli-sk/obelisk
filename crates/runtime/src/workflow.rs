@@ -117,7 +117,7 @@ impl Workflow {
                 );
                 if let Err(err) = res {
                     if err.to_string()
-                        == format!("import {ifc_fqn} not found", ifc_fqn = fqn.ifc_fqn)
+                        == format!("import `{ifc_fqn}` not found", ifc_fqn = fqn.ifc_fqn)
                     {
                         debug!("Skipping function {fqn} which is not imported");
                     } else {
