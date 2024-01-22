@@ -10,6 +10,7 @@ use runtime::{
     workflow_id::WorkflowId,
     FunctionFqn,
 };
+use std::str::FromStr;
 use std::sync::{Arc, Once};
 use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -28,13 +29,7 @@ fn set_up() {
 #[tokio::test]
 async fn test_async_activity(
     #[values("sleep-host-activity", "sleep-activity")] function: &str,
-    #[values(WorkflowConfig {
-        async_activity_behavior: AsyncActivityBehavior::KeepWaiting,
-    },
-    WorkflowConfig {
-        async_activity_behavior: AsyncActivityBehavior::Restart,
-    })]
-    workflow_config: WorkflowConfig,
+    #[values("Restart", "KeepWaiting")] activity_behavior: &str,
 ) -> Result<(), anyhow::Error> {
     set_up();
 
@@ -49,7 +44,10 @@ async fn test_async_activity(
     runtime
         .add_workflow_definition(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW.to_string(),
-            &workflow_config,
+            &WorkflowConfig {
+                async_activity_behavior: AsyncActivityBehavior::from_str(activity_behavior)
+                    .unwrap(),
+            },
         )
         .await?;
     let _abort_handle = runtime.build().spawn(&database);

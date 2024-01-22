@@ -94,7 +94,7 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
                             .schedule_workflow(WorkflowId::generate(), event_history, fqn, params)
                             .await
                             .unwrap();
-                        abort_handle.abort();
+                        abort_handle.abort(); // TODO: needed?
                     }
                 })
             },

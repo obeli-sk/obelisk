@@ -11,6 +11,7 @@ use anyhow::{anyhow, Context};
 use std::collections::HashMap;
 use std::mem;
 use std::{fmt::Debug, sync::Arc};
+use strum::EnumString;
 use tracing::{debug, info, trace};
 use wasmtime::component::Val;
 use wasmtime::AsContextMut;
@@ -20,8 +21,9 @@ use wasmtime::{
     Engine, Store,
 };
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, EnumString)]
 pub enum AsyncActivityBehavior {
+    // TODO rename to ActivityBehavior
     Restart,     // Shut down the instance and replay all events when the activity finishes.
     KeepWaiting, // Keep the workflow instance running.
 }
