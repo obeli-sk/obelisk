@@ -2,19 +2,19 @@ use crate::{activity::ActivityRequest, workflow_id::WorkflowId, FunctionFqn};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ExecutionError {
-    #[error("[{workflow_id}] workflow `{fqn}` not found")]
+    #[error("[{workflow_id}] workflow {fqn} not found")]
     NotFound {
         workflow_id: WorkflowId,
         fqn: FunctionFqn,
     },
-    #[error("[{workflow_id},{run_id}] workflow `{workflow_fqn}` encountered non deterministic execution, reason: `{reason}`")]
+    #[error("[{workflow_id},{run_id}] workflow {workflow_fqn} encountered non deterministic execution, reason: `{reason}`")]
     NonDeterminismDetected {
         workflow_id: WorkflowId,
         run_id: u64,
         workflow_fqn: FunctionFqn,
         reason: String,
     },
-    #[error("[{workflow_id},{run_id}] activity failed, workflow `{workflow_fqn}`, activity `{activity_fqn}`, reason: `{reason}`")]
+    #[error("[{workflow_id},{run_id}] activity failed, workflow {workflow_fqn}, activity {activity_fqn}, reason: `{reason}`")]
     ActivityFailed {
         workflow_id: WorkflowId,
         run_id: u64,
@@ -22,14 +22,14 @@ pub enum ExecutionError {
         activity_fqn: FunctionFqn,
         reason: String,
     },
-    #[error("[{workflow_id},{run_id}] workflow limit reached, workflow `{workflow_fqn}`, reason: `{reason}`")]
+    #[error("[{workflow_id},{run_id}] workflow limit reached, workflow {workflow_fqn}, reason: `{reason}`")]
     LimitReached {
         workflow_id: WorkflowId,
         run_id: u64,
         workflow_fqn: FunctionFqn,
         reason: String,
     },
-    #[error("[{workflow_id},{run_id}] activity limit reached, workflow `{workflow_fqn}`, activity `{activity_fqn}`, reason: `{reason}`")]
+    #[error("[{workflow_id},{run_id}] activity limit reached, workflow {workflow_fqn}, activity {activity_fqn}, reason: `{reason}`")]
     ActivityLimitReached {
         workflow_id: WorkflowId,
         run_id: u64,
@@ -37,21 +37,21 @@ pub enum ExecutionError {
         activity_fqn: FunctionFqn,
         reason: String,
     },
-    #[error("[{workflow_id},{run_id}] activity not found, workflow `{workflow_fqn}`, activity `{activity_fqn}`")]
+    #[error("[{workflow_id},{run_id}] activity not found, workflow {workflow_fqn}, activity {activity_fqn}")]
     ActivityNotFound {
         workflow_id: WorkflowId,
         run_id: u64,
         workflow_fqn: FunctionFqn,
         activity_fqn: FunctionFqn,
     },
-    #[error("[{workflow_id}] workflow `{workflow_fqn}` cannot be scheduled: `{reason}`")]
+    #[error("[{workflow_id}] workflow {workflow_fqn} cannot be scheduled: `{reason}`")]
     SchedulingError {
         workflow_id: WorkflowId,
         workflow_fqn: FunctionFqn,
         reason: String,
     },
     #[error(
-        "[{workflow_id},{run_id}] `{workflow_fqn}` encountered an unknown error: `{source:?}`"
+        "[{workflow_id},{run_id}] {workflow_fqn} encountered an unknown error: `{source:?}`"
     )]
     UnknownError {
         workflow_id: WorkflowId,
@@ -65,18 +65,18 @@ pub enum ExecutionError {
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ActivityFailed {
     // TODO: add run_id
-    #[error("[{workflow_id}] limit reached for activity `{activity_fqn}` - {reason}")]
+    #[error("[{workflow_id}] limit reached for activity {activity_fqn} - `{reason}`")]
     LimitReached {
         workflow_id: WorkflowId,
         activity_fqn: FunctionFqn,
         reason: String,
     },
-    #[error("[{workflow_id}] activity `{activity_fqn}` not found")]
+    #[error("[{workflow_id}] activity {activity_fqn} not found")]
     NotFound {
         workflow_id: WorkflowId,
         activity_fqn: FunctionFqn,
     },
-    #[error("[{workflow_id}] activity `{activity_fqn}` failed - {reason}")]
+    #[error("[{workflow_id}] activity {activity_fqn} failed - {reason}")]
     Other {
         workflow_id: WorkflowId,
         activity_fqn: FunctionFqn,
@@ -172,7 +172,7 @@ impl WorkflowFailed {
 pub(crate) enum HostFunctionError {
     #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(String),
-    #[error("interrupt: `{fqn}`", fqn = request.activity_fqn)]
+    #[error("interrupt: {fqn}", fqn = request.activity_fqn)]
     Interrupt { request: ActivityRequest },
     #[error(transparent)]
     ActivityFailed(#[from] ActivityFailed),

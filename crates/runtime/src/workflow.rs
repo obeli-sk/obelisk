@@ -80,7 +80,7 @@ impl Workflow {
             HostImports::add_to_linker(&mut linker)?;
             // Add wasm activities
             for fqn in activities.keys() {
-                trace!("Adding function `{fqn}` to the linker");
+                trace!("Adding function {fqn} to the linker");
                 let mut linker_instance = linker.instance(&fqn.ifc_fqn)?;
                 let fqn_inner = fqn.clone();
                 let res = linker_instance.func_new_async(
@@ -117,9 +117,9 @@ impl Workflow {
                 );
                 if let Err(err) = res {
                     if err.to_string()
-                        == format!("import `{ifc_fqn}` not found", ifc_fqn = fqn.ifc_fqn)
+                        == format!("import {ifc_fqn} not found", ifc_fqn = fqn.ifc_fqn)
                     {
-                        debug!("Skipping function `{fqn}` which is not imported");
+                        debug!("Skipping function {fqn} which is not imported");
                     } else {
                         return Err(err);
                     }
@@ -154,7 +154,7 @@ impl Workflow {
         workflow_fqn: &FunctionFqn,
         params: &[Val],
     ) -> Result<SupportedFunctionResult, ExecutionError> {
-        info!("[{workflow_id}] workflow.execute_all `{workflow_fqn}`");
+        info!("[{workflow_id}] workflow.execute_all {workflow_fqn}");
 
         let results_len = self
             .functions_to_metadata
@@ -165,7 +165,7 @@ impl Workflow {
             })?
             .results_len;
         trace!(
-            "[{workflow_id}] workflow.execute_all `{workflow_fqn}`({params:?}) -> results_len:{results_len}"
+            "[{workflow_id}] workflow.execute_all {workflow_fqn}({params:?}) -> results_len:{results_len}"
         );
 
         for run_id in 0.. {
@@ -180,7 +180,7 @@ impl Workflow {
                     results_len,
                 )
                 .await;
-            trace!("[{workflow_id},{run_id}] workflow.execute_all `{workflow_fqn}` -> {res:?}");
+            trace!("[{workflow_id},{run_id}] workflow.execute_all {workflow_fqn} -> {res:?}");
             match res {
                 Ok(PartialExecutionResult::Ok(output)) => return Ok(output), // TODO Persist the workflow result to the history
                 Ok(PartialExecutionResult::NewEventPersisted) => {} // loop again to get to the next step
@@ -333,19 +333,20 @@ impl Workflow {
         params: &[Val],
         results_len: usize,
     ) -> Result<SupportedFunctionResult, anyhow::Error> {
-        debug!("[{workflow_id},{run_id}] execute `{fqn}`");
-        trace!("[{workflow_id},{run_id}] execute `{fqn}`({params:?})");
+        debug!("[{workflow_id},{run_id}] execute {fqn}");
+        trace!("[{workflow_id},{run_id}] execute {fqn}({params:?})");
         let instance = self.instance_pre.instantiate_async(&mut store).await?;
         let func = {
             let mut store = store.as_context_mut();
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
-            let mut exports_instance = exports_instance
-                .instance(&fqn.ifc_fqn)
-                .ok_or_else(|| anyhow!("cannot find exported interface: `{}`", fqn.ifc_fqn))?;
+            let mut exports_instance =
+                exports_instance.instance(&fqn.ifc_fqn).ok_or_else(|| {
+                    anyhow!("cannot find exported interface: {fqn}", fqn = fqn.ifc_fqn)
+                })?;
             exports_instance
                 .func(&fqn.function_name)
-                .ok_or(anyhow::anyhow!("function `{fqn}` not found"))?
+                .ok_or(anyhow::anyhow!("function {fqn} not found"))?
         };
         // call func
         let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
@@ -357,7 +358,7 @@ impl Workflow {
         func.post_return_async(&mut store)
             .instrument(debug_span!("post_return_async"))
             .await?;
-        trace!("[{workflow_id},{run_id}] execution result `{fqn}` -> {results:?}");
+        trace!("[{workflow_id},{run_id}] execution result {fqn} -> {results:?}");
         Ok(results)
     }
 }

@@ -172,7 +172,7 @@ impl Activity {
         request: &ActivityRequest,
     ) -> Result<SupportedFunctionResult, ActivityFailed> {
         debug!(
-            "[{workflow_id}] Running `{fqn}`",
+            "[{workflow_id}] Running {fqn}",
             workflow_id = request.workflow_id,
             fqn = request.activity_fqn
         );
@@ -182,7 +182,7 @@ impl Activity {
             .unwrap()
             .results_len;
         trace!(
-            "[{workflow_id}] Running `{fqn}`({params:?}) -> results_len:{results_len}",
+            "[{workflow_id}] Running {fqn}({params:?}) -> results_len:{results_len}",
             workflow_id = request.workflow_id,
             fqn = request.activity_fqn,
             params = request.params
@@ -258,7 +258,7 @@ impl Activity {
                 reason: format!("wasm post function call error: `{err}`"),
             })?;
         trace!(
-            "[{workflow_id}] Finished `{fqn}` -> {results:?}",
+            "[{workflow_id}] Finished {fqn} -> {results:?}",
             workflow_id = request.workflow_id,
             fqn = request.activity_fqn
         );

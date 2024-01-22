@@ -90,8 +90,8 @@ impl RuntimeBuilder {
                 .insert(fqn.clone(), activity.clone())
             {
                 warn!(
-                    "Replaced activity `{fqn}` from `{old}`",
-                    old = old.wasm_path
+                    "Replaced activity {fqn} from `{old_path}`",
+                    old_path = old.wasm_path
                 );
             }
         }
@@ -120,8 +120,8 @@ impl RuntimeBuilder {
                 .insert(fqn.clone(), workflow.clone())
             {
                 warn!(
-                    "Replaced workflow `{fqn}` from `{old}`",
-                    old = old.wasm_path
+                    "Replaced workflow {fqn} from `{old_path}`",
+                    old_path = old.wasm_path
                 );
             }
         }

@@ -14,7 +14,7 @@ pub mod runtime;
 mod wasm_tools;
 pub mod workflow;
 
-#[derive(Hash, Clone, Debug, PartialEq, Eq)]
+#[derive(Hash, Clone, PartialEq, Eq)]
 pub struct FunctionFqn {
     pub ifc_fqn: Arc<String>, // format namespace:name/ifc_name@version
     pub function_name: Arc<String>,
@@ -33,10 +33,16 @@ impl Display for FunctionFqn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{ifc_fqn}.{function_name}",
+            "`{ifc_fqn}.{function_name}`",
             ifc_fqn = self.ifc_fqn,
             function_name = self.function_name
         )
+    }
+}
+
+impl Debug for FunctionFqn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self, f)
     }
 }
 
@@ -87,7 +93,7 @@ pub enum FunctionMetadataError {
     #[error("{0}")]
     UnsupportedType(#[from] UnsupportedTypeError),
 
-    #[error("unsupported return type in `{fqn}`, got type {ty}")]
+    #[error("unsupported return type in {fqn}, got type `{ty}`")]
     UnsupportedReturnType { fqn: String, ty: String },
 }
 

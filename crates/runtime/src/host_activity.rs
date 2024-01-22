@@ -87,6 +87,9 @@ pub(crate) async fn execute_host_activity(
         assert_eq!(request.params.len(), 0);
         let _ = resp_tx.send(Ok(SupportedFunctionResult::None));
     } else {
-        panic!("cannot execute host activity `{}`", request.activity_fqn);
+        panic!(
+            "cannot execute host activity {fqn}",
+            fqn = request.activity_fqn
+        );
     }
 }

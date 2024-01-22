@@ -84,7 +84,7 @@ pub struct WorkflowEventFetcher {
 }
 
 impl WorkflowEventFetcher {
-    /// Fetch one `WorkflowEvent`
+    /// Fetch one WorkflowEvent
     /// Returns None if the channel is closed
     pub async fn fetch_one(&self) -> Option<WorkflowEvent> {
         self.workflow_receiver.recv().await.ok()
@@ -109,7 +109,7 @@ impl WorkflowScheduler {
         workflow_fqn: FunctionFqn,
         params: Arc<Vec<Val>>,
     ) -> Result<SupportedFunctionResult, ExecutionError> {
-        info!("[{workflow_id}] Scheduling workflow `{workflow_fqn}`",);
+        info!("[{workflow_id}] Scheduling workflow {workflow_fqn}",);
         let request = WorkflowRequest {
             workflow_id,
             event_history,
