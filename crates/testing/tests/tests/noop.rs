@@ -18,24 +18,33 @@ use tracing::{info, info_span};
 use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-static mut VAL: Option<FlushGuard> = None;
+static mut CHRMOE_TRACE_FILE_GUARD: Option<FlushGuard> = None;
 static INIT: Once = Once::new();
 
-fn set_up() -> FlushGuard {
+fn set_up() -> Option<FlushGuard> {
     INIT.call_once(|| {
-        let (chrome_layer, guard) = ChromeLayerBuilder::new()
-            .trace_style(tracing_chrome::TraceStyle::Async)
-            .build();
-        tracing_subscriber::registry()
+        let builder = tracing_subscriber::registry()
             .with(fmt::layer())
-            .with(EnvFilter::from_default_env())
-            .with(chrome_layer)
-            .init();
-        unsafe {
-            VAL = Some(guard);
+            .with(EnvFilter::from_default_env());
+        let enable_chrome_layer = std::env::var("CHRMOE_TRACE")
+            .ok()
+            .and_then(|val| val.parse::<bool>().ok())
+            .unwrap_or_default();
+
+        if dbg!(enable_chrome_layer) {
+            let (chrome_layer, guard) = ChromeLayerBuilder::new()
+                .trace_style(tracing_chrome::TraceStyle::Async)
+                .build();
+            unsafe {
+                CHRMOE_TRACE_FILE_GUARD = Some(guard);
+            }
+
+            builder.with(chrome_layer).init();
+        } else {
+            builder.init();
         }
     });
-    unsafe { VAL.take().unwrap() }
+    unsafe { CHRMOE_TRACE_FILE_GUARD.take() }
 }
 
 #[rstest]
