@@ -50,7 +50,8 @@ impl RuntimeBuilder {
         let workflow_engine = {
             let mut wasmtime_config = wasmtime::Config::new();
             // TODO: limit execution with fuel
-            wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+            // Disable backtrace details to improve performance of restarting workflows.
+            wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Disable);
             wasmtime_config.wasm_component_model(true);
             wasmtime_config.async_support(true);
             wasmtime_config.allocation_strategy(config.workflow_engine_config.allocation_strategy);
