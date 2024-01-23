@@ -62,12 +62,16 @@ fn hot_or_cold(activity_config: &ActivityConfig, workflow_config: &WorkflowConfi
 
 fn benchmark_noop_functions(criterion: &mut Criterion) {
     let functions = vec![
-        ("noopw", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
-        ("noopw", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
+        ("noopw", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD), /* no interruptions */
+        ("noopw", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD), /* no interruptions */
+        ("noopa", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
         ("noopa", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
+        ("noopa", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
         ("noopa", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
         ("noopa", 100, ACTIVITY_CONFIG_HOT, WORKFLOW_CONFIG_HOT),
+        ("noopha", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
         ("noopha", 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
+        ("noopha", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
         ("noopha", 100, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_HOT),
     ];
     let runtime_builder = Mutex::new(RuntimeBuilder::default());
