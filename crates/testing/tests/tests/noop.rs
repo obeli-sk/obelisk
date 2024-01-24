@@ -31,7 +31,7 @@ fn set_up() -> Option<FlushGuard> {
             .and_then(|val| val.parse::<bool>().ok())
             .unwrap_or_default();
 
-        if dbg!(enable_chrome_layer) {
+        if enable_chrome_layer {
             let (chrome_layer, guard) = ChromeLayerBuilder::new()
                 .trace_style(tracing_chrome::TraceStyle::Async)
                 .build();

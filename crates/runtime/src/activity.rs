@@ -160,6 +160,7 @@ impl Activity {
     )> {
         match preload_holder {
             PreloadHolder::Instance(instance, mutex) => {
+                // FIXME: Invalidate wasm trap: cannot enter component instance
                 mutex.try_lock().map(|guard| (instance, guard)).ok()
             }
             PreloadHolder::Preinstance => None,

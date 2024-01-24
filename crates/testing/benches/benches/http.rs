@@ -10,8 +10,8 @@ use runtime::{
 use std::sync::Arc;
 use std::sync::{atomic::Ordering, Once};
 use tokio::sync::Mutex;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use wiremock::{
     matchers::{method, path},
@@ -26,14 +26,33 @@ lazy_static! {
         .expect("Should create a tokio runtime");
 }
 
+static mut CHRMOE_TRACE_FILE_GUARD: Option<FlushGuard> = None;
 static INIT: Once = Once::new();
-fn set_up() {
+
+fn set_up() -> Option<FlushGuard> {
     INIT.call_once(|| {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer())
-            .with(tracing_subscriber::EnvFilter::from_default_env())
-            .init();
+        let builder = tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env());
+        let enable_chrome_layer = std::env::var("CHRMOE_TRACE")
+            .ok()
+            .and_then(|val| val.parse::<bool>().ok())
+            .unwrap_or_default();
+
+        if enable_chrome_layer {
+            let (chrome_layer, guard) = ChromeLayerBuilder::new()
+                .trace_style(tracing_chrome::TraceStyle::Threaded)
+                .build();
+            unsafe {
+                CHRMOE_TRACE_FILE_GUARD = Some(guard);
+            }
+
+            builder.with(chrome_layer).init();
+        } else {
+            builder.init();
+        }
     });
+    unsafe { CHRMOE_TRACE_FILE_GUARD.take() }
 }
 
 fn setup_runtime() -> Runtime {
@@ -62,7 +81,7 @@ fn setup_runtime() -> Runtime {
 static COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
 
 fn benchmark_http(criterion: &mut Criterion) {
-    set_up();
+    let _guard = set_up();
     let database = Database::new(100, 100);
     let runtime = setup_runtime();
     let _abort_handle = RT.block_on(async { runtime.spawn(&database) });
