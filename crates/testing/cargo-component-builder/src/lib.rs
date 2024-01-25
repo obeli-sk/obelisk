@@ -13,7 +13,7 @@ pub fn build_activity() {
     build_internal("wasm32-wasi");
 }
 
-pub fn build() {
+pub fn build_workflow() {
     build_internal("wasm32-unknown-unknown");
 }
 
