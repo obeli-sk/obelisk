@@ -296,6 +296,7 @@ impl Workflow {
                 Some(WorkflowFailed::NonDeterminismDetected(reason.clone()))
             }
             Some(HostFunctionError::Interrupt { request }) => {
+                trace!("Interrupted at {err:?}");
                 let res = activity_queue_sender
                     .push(
                         request.clone(),

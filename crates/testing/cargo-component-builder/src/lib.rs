@@ -75,6 +75,7 @@ fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str) -> PathB
         .arg(format!("--target={tripple}"))
         .arg(format!("--package={name}"))
         .env("CARGO_TARGET_DIR", out_dir)
+        .env("RUSTFLAGS", "-g") // keep debuginfo for backtraces
         .env_remove("CARGO_ENCODED_RUSTFLAGS");
     eprintln!("running: {cmd:?}");
     let status = cmd.status().unwrap();

@@ -51,6 +51,7 @@ impl RuntimeBuilder {
             let mut wasmtime_config = wasmtime::Config::new();
             // TODO: limit execution with fuel
             // Disable backtrace details to improve performance of restarting workflows.
+            // TODO: Re-enable for matching interrupts with source code.
             wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Disable);
             wasmtime_config.wasm_component_model(true);
             wasmtime_config.async_support(true);
