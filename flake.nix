@@ -18,10 +18,10 @@
               cargo-component = prev.cargo-component.overrideAttrs (old: rec {
                 version = "0.6.0";
                 src = prev.fetchFromGitHub {
-                      owner = "bytecodealliance";
+                      owner = "tomasol";
                       repo = "cargo-component";
-                      rev = "v0.7.0";
-                      sha256 = "sha256-xOHu7sm06Phe2hc2oev1Am2VlhiSBaeH52aSiFBxuqw=";
+                      rev = "c9ac8531f8ecfb1df07a0ce48fa6ec241f9eb630";
+                      sha256 = "sha256-B50wIMKuyYjxPLRUH1pekgcpAs7LI+MR/heDihehEnU=";
                 };
                 cargoDeps = old.cargoDeps.overrideAttrs (pkgs.lib.const {
                   inherit src;
