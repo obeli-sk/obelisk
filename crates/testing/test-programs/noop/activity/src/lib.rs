@@ -4,6 +4,6 @@ mod bindings;
 
 struct Component;
 
-impl crate::bindings::exports::testing::types::types::Guest for Component {
+impl crate::bindings::exports::testing::noop::noop::Guest for Component {
     fn noop() {}
 }

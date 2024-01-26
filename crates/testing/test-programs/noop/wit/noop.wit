@@ -1,0 +1,5 @@
+package testing:noop;
+
+interface noop {
+    noop: func();
+}

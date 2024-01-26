@@ -18,5 +18,5 @@ default = ["wasm"]
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]
-"testing:types".path = "../wit/"
+"testing:noop".path = "../wit/"
 "my-org:workflow-engine".path = "../../../../../wit/workflow-engine/"

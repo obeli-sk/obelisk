@@ -4,10 +4,10 @@ mod bindings;
 
 struct Component;
 
-impl crate::bindings::exports::testing::types_workflow::workflow::Guest for Component {
+impl crate::bindings::exports::testing::noop_workflow::workflow::Guest for Component {
     fn noopa(iterations: u32) {
         for _ in 0..iterations {
-            crate::bindings::testing::types::types::noop();
+            crate::bindings::testing::noop::noop::noop();
         }
     }
 

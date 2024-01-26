@@ -1,4 +1,4 @@
-package testing:types-workflow;
+package testing:noop-workflow;
 
 interface workflow {
     noopa: func(iterations: u32);
@@ -7,7 +7,7 @@ interface workflow {
 }
 
 world any {
-    import testing:types/types;
+    import testing:noop/noop;
     import my-org:workflow-engine/host-activities;
     export workflow;
 }

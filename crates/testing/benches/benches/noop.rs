@@ -82,7 +82,7 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
                 hot_or_cold = hot_or_cold(&activity_config, &workflow_config)
             ),
             |b| {
-                let fqn = FunctionFqn::new("testing:types-workflow/workflow", workflow_function);
+                let fqn = FunctionFqn::new("testing:noop-workflow/workflow", workflow_function);
                 let database = Database::new(100, 100);
                 let runtime_builder = runtime_builder.try_lock().unwrap().clone();
                 let runtime = noop_workflow(runtime_builder, &activity_config, &workflow_config);

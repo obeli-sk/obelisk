@@ -1,5 +1,0 @@
-package testing:types;
-
-interface types {
-    noop: func();
-}
