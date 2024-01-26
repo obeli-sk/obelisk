@@ -141,7 +141,7 @@ impl RuntimeBuilder {
         );
 
         for fqn in workflow.functions() {
-            if let Some(old) = self.functions_to_workflows.get(&fqn) {
+            if let Some(old) = self.functions_to_workflows.get(fqn) {
                 // FIXME: leaves the builder in inconsistent state
                 bail!(
                     "cannot replace workflow {fqn} from `{old_path}`",

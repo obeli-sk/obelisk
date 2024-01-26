@@ -98,7 +98,7 @@ impl Workflow {
             for (ifc_fqn, functions) in activities {
                 trace!("Adding activity interface {ifc_fqn} to the linker");
 
-                let mut linker_instance = linker.instance(&ifc_fqn)?;
+                let mut linker_instance = linker.instance(ifc_fqn)?;
                 for function_name in functions {
                     trace!("Adding activity function {function_name} to the linker");
                     let fqn_inner = FunctionFqn {
@@ -107,7 +107,7 @@ impl Workflow {
                     };
                     let res = linker_instance.func_new_async(
                         &component,
-                        &function_name,
+                        function_name,
                         move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
                               params: &[Val],
                               results: &mut [Val]| {
@@ -153,12 +153,12 @@ impl Workflow {
             for (ifc_fqn, functions) in workflows.iter() {
                 trace!("Adding workflow interface {ifc_fqn} to the linker");
 
-                let mut linker_instance = linker.instance(&ifc_fqn)?;
+                let mut linker_instance = linker.instance(ifc_fqn)?;
                 for function_name in functions {
                     trace!("Adding workflow function {function_name} to the linker");
                     let res = linker_instance.func_new_async(
                         &component,
-                        &function_name,
+                        function_name,
                         move |_store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
                               _params: &[Val],
                               _results: &mut [Val]| {
