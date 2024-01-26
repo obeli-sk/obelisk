@@ -2,7 +2,7 @@
 
 mod http;
 
-cargo_component_bindings::generate!();
+mod bindings;
 
 use crate::bindings::wasi::http::types::Method;
 use crate::bindings::wasi::http::types::Scheme;

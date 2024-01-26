@@ -1,6 +1,6 @@
 #![cfg(feature = "wasm")]
 
-cargo_component_bindings::generate!();
+mod bindings;
 
 struct Component;
 

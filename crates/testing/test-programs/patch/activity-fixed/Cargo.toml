@@ -6,7 +6,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-cargo-component-bindings.workspace = true
+wit-bindgen.workspace = true
+
 
 [lib]
 crate-type = ["cdylib"]

@@ -18,14 +18,14 @@
               cargo-component = prev.cargo-component.overrideAttrs (old: rec {
                 version = "0.6.0";
                 src = prev.fetchFromGitHub {
-                      owner = "tomasol";
+                      owner = "bytecodealliance";
                       repo = "cargo-component";
-                      rev = "898209357f582b89c52633d47ea7b16b9ddbc203";
-                      sha256 = "sha256-GtLQXNzkFcFt9ciVxvDAxaGJSZNSahvKZpfBnkvanu4=";
+                      rev = "v0.7.0";
+                      sha256 = "sha256-xOHu7sm06Phe2hc2oev1Am2VlhiSBaeH52aSiFBxuqw=";
                 };
                 cargoDeps = old.cargoDeps.overrideAttrs (pkgs.lib.const {
                   inherit src;
-                  outputHash = "sha256-sqLSNhmpYpMZhX4QIr6wRB5wJCXBglme1jvyyPtzb5U=";
+                  outputHash = "sha256-sNdjatP22TSxWz8mJN91sAjx6nVOAf6hZYMPEeRRHe0=";
                 });
               });
             })

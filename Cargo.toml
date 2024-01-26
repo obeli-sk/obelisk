@@ -83,7 +83,6 @@ assert_matches = "1.5.0"
 async-channel = "2.1.1"
 async-trait = "0.1"
 cargo_metadata = "0.18"
-cargo-component-bindings = "0.6"
 criterion = "0.5"
 derive_more = "0.99.17"
 futures-util = "0.3.30"
@@ -103,5 +102,8 @@ wasmtime = { version = "17.0", features = ["component-model"] }
 wasmtime-wasi = "17.0"
 wasmtime-wasi-http = "17.0"
 wiremock = "0.5"
+wit-bindgen = { version = "0.16.0", default-features = false, features = [
+    "realloc",
+] }
 wit-component = "0.19"
 wit-parser = "0.13"

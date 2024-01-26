@@ -311,31 +311,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "cargo-component-bindings"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "545e48ba821e07f93c97aea897bee6d407de4d58947f914160131f3d78b2c704"
-dependencies = [
- "cargo-component-macro",
- "wit-bindgen",
-]
-
-[[package]]
 name = "cargo-component-builder"
 version = "0.1.0"
 dependencies = [
  "cargo_metadata",
-]
-
-[[package]]
-name = "cargo-component-macro"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e198ee0b668e902b43b5e7d2e9620a3891d2632429b3ba66e1ceea455053cbf5"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.42",
 ]
 
 [[package]]
@@ -2256,7 +2235,7 @@ name = "test-programs-fibo-activity"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cargo-component-bindings",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2270,7 +2249,7 @@ dependencies = [
 name = "test-programs-fibo-workflow"
 version = "0.1.0"
 dependencies = [
- "cargo-component-bindings",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2285,7 +2264,7 @@ name = "test-programs-http-get-activity"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cargo-component-bindings",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2299,7 +2278,7 @@ dependencies = [
 name = "test-programs-http-get-workflow"
 version = "0.1.0"
 dependencies = [
- "cargo-component-bindings",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2313,7 +2292,7 @@ dependencies = [
 name = "test-programs-noop-activity"
 version = "0.1.0"
 dependencies = [
- "cargo-component-bindings",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2327,7 +2306,7 @@ dependencies = [
 name = "test-programs-noop-workflow"
 version = "0.1.0"
 dependencies = [
- "cargo-component-bindings",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2341,7 +2320,7 @@ dependencies = [
 name = "test-programs-patch-activity-broken"
 version = "0.1.0"
 dependencies = [
- "cargo-component-bindings",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2355,7 +2334,7 @@ dependencies = [
 name = "test-programs-patch-activity-fixed"
 version = "0.1.0"
 dependencies = [
- "cargo-component-bindings",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2369,7 +2348,7 @@ dependencies = [
 name = "test-programs-patch-workflow"
 version = "0.1.0"
 dependencies = [
- "cargo-component-bindings",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2384,7 +2363,7 @@ name = "test-programs-sleep-activity"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cargo-component-bindings",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2398,7 +2377,7 @@ dependencies = [
 name = "test-programs-sleep-workflow"
 version = "0.1.0"
 dependencies = [
- "cargo-component-bindings",
+ "wit-bindgen",
 ]
 
 [[package]]
