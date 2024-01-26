@@ -99,9 +99,9 @@ tracing = { version = "0.1", features = ["log"] }
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 ulid = "1.1.0"
-wasmtime = { version = "16.0", features = ["component-model"] }
-wasmtime-wasi = "16.0"
-wasmtime-wasi-http = "16.0"
+wasmtime = { version = "17.0", features = ["component-model"] }
+wasmtime-wasi = "17.0"
+wasmtime-wasi-http = "17.0"
 wiremock = "0.5"
 wit-component = "0.19"
 wit-parser = "0.13"

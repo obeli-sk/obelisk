@@ -12,21 +12,35 @@ use crate::{
 
 mod http {
     // wasmtime/crates/wasi-http/tests/all/main.rs
-    use wasmtime::{Engine, Store};
-    use wasmtime_wasi::preview2::{Table, WasiCtx, WasiCtxBuilder, WasiView};
-    use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+    use std::sync::Arc;
+    use wasmtime::{
+        component::{Resource, ResourceTable},
+        Engine, Store,
+    };
+    use wasmtime_wasi::preview2::{WasiCtx, WasiCtxBuilder, WasiView};
+    use wasmtime_wasi_http::{
+        types::{self, HostFutureIncomingResponse, OutgoingRequest},
+        WasiHttpCtx, WasiHttpView,
+    };
+
+    type RequestSender = Arc<
+        dyn Fn(&mut Ctx, OutgoingRequest) -> wasmtime::Result<Resource<HostFutureIncomingResponse>>
+            + Send
+            + Sync,
+    >;
 
     pub(crate) struct Ctx {
-        table: Table,
+        table: ResourceTable,
         wasi: WasiCtx,
         http: WasiHttpCtx,
+        send_request: Option<RequestSender>,
     }
 
     impl WasiView for Ctx {
-        fn table(&self) -> &Table {
+        fn table(&self) -> &ResourceTable {
             &self.table
         }
-        fn table_mut(&mut self) -> &mut Table {
+        fn table_mut(&mut self) -> &mut ResourceTable {
             &mut self.table
         }
         fn ctx(&self) -> &WasiCtx {
@@ -42,8 +56,19 @@ mod http {
             &mut self.http
         }
 
-        fn table(&mut self) -> &mut Table {
+        fn table(&mut self) -> &mut ResourceTable {
             &mut self.table
+        }
+
+        fn send_request(
+            &mut self,
+            request: OutgoingRequest,
+        ) -> wasmtime::Result<Resource<HostFutureIncomingResponse>> {
+            if let Some(send_request) = self.send_request.clone() {
+                send_request(self, request)
+            } else {
+                types::default_send_request(self, request)
+            }
         }
     }
 
@@ -51,10 +76,13 @@ mod http {
         // Create our wasi context.
         let mut builder = WasiCtxBuilder::new();
         let ctx = Ctx {
-            table: Table::new(),
+            table: ResourceTable::new(),
             wasi: builder.build(),
             http: WasiHttpCtx {},
+
+            send_request: None,
         };
+
         Store::new(engine, ctx)
     }
 }

@@ -9,6 +9,6 @@ interface workflow {
 world any {
     import my-org:workflow-engine/host-activities;
     import testing:sleep/sleep;
-    import wasi:cli/run@0.2.0-rc-2023-12-05;
+    import wasi:cli/run@0.2.0;
     export workflow;
 }

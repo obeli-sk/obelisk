@@ -1,5 +1,3 @@
-package wasi:http@0.2.0-rc-2023-12-05;
-
 /// This interface defines a handler of incoming HTTP Requests. It should
 /// be exported by components which can respond to HTTP Requests.
 interface incoming-handler {
