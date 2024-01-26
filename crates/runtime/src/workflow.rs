@@ -6,7 +6,7 @@ use crate::wasm_tools::{exported_interfaces, functions_to_metadata, is_limit_rea
 use crate::workflow_id::WorkflowId;
 use crate::SupportedFunctionResult;
 use crate::{FunctionFqn, FunctionMetadata};
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, bail, Context};
 use std::collections::HashMap;
 use std::mem;
 use std::{fmt::Debug, sync::Arc};
@@ -63,6 +63,7 @@ impl Workflow {
     pub(crate) async fn new_with_config(
         wasm_path: String,
         activities: impl Iterator<Item = (&Arc<String>, &Vec<Arc<String>>)>,
+        workflows: &mut HashMap<Arc<String>, Vec<Arc<String>>>,
         config: &WorkflowConfig,
         engine: Arc<Engine>,
     ) -> Result<Self, anyhow::Error> {
@@ -72,6 +73,22 @@ impl Workflow {
             .with_context(|| format!("error parsing \"{wasm_path}\""))?;
         debug!("Decoded functions {:?}", functions_to_metadata.keys());
         trace!("Decoded functions {functions_to_metadata:#?}");
+        {
+            let mut interfaces_to_workflow_function_names = HashMap::<_, Vec<_>>::new();
+            for fqn in functions_to_metadata.keys() {
+                interfaces_to_workflow_function_names
+                    .entry(fqn.ifc_fqn.clone())
+                    .or_default()
+                    .push(fqn.function_name.clone());
+            }
+            for (ifc_name, _vec) in interfaces_to_workflow_function_names.iter() {
+                if workflows.get(ifc_name).is_some() {
+                    bail!("interface {ifc_name} already exported",);
+                }
+            }
+            workflows.extend(interfaces_to_workflow_function_names.drain());
+        }
+
         let instance_pre = {
             let mut linker = Linker::new(&engine);
             let component = Component::from_binary(&engine, &wasm)?;
@@ -79,11 +96,11 @@ impl Workflow {
             HostImports::add_to_linker(&mut linker)?;
             // Add wasm activities
             for (ifc_fqn, functions) in activities {
-                trace!("Adding interface {ifc_fqn} to the linker");
+                trace!("Adding activity interface {ifc_fqn} to the linker");
 
                 let mut linker_instance = linker.instance(&ifc_fqn)?;
                 for function_name in functions {
-                    trace!("Adding function {function_name} to the linker");
+                    trace!("Adding activity function {function_name} to the linker");
                     let fqn_inner = FunctionFqn {
                         ifc_fqn: ifc_fqn.clone(),
                         function_name: function_name.clone(),
@@ -123,10 +140,38 @@ impl Workflow {
                     if let Err(err) = res {
                         let err_string = err.to_string();
                         if err_string == format!("import `{ifc_fqn}` not found") {
-                            debug!("Skipping interface {ifc_fqn}");
+                            debug!("Skipping activity interface {ifc_fqn}");
                             break;
                         } else if err_string == format!("import `{function_name}` not found") {
-                            debug!("Skipping function {function_name}");
+                            debug!("Skipping activity function {function_name}");
+                        } else {
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+            for (ifc_fqn, functions) in workflows.iter() {
+                trace!("Adding workflow interface {ifc_fqn} to the linker");
+
+                let mut linker_instance = linker.instance(&ifc_fqn)?;
+                for function_name in functions {
+                    trace!("Adding workflow function {function_name} to the linker");
+                    let res = linker_instance.func_new_async(
+                        &component,
+                        &function_name,
+                        move |_store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
+                              _params: &[Val],
+                              _results: &mut [Val]| {
+                            Box::new(async move { bail!("not implemented") })
+                        },
+                    );
+                    if let Err(err) = res {
+                        let err_string = err.to_string();
+                        if err_string == format!("import `{ifc_fqn}` not found") {
+                            debug!("Skipping workflow interface {ifc_fqn}");
+                            break;
+                        } else if err_string == format!("import `{function_name}` not found") {
+                            debug!("Skipping workflow function {function_name}");
                         } else {
                             return Err(err);
                         }

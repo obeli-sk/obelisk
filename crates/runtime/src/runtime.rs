@@ -39,6 +39,7 @@ pub struct RuntimeBuilder {
     functions_to_workflows: HashMap<FunctionFqn, Arc<Workflow>>,
     functions_to_activities: HashMap<FunctionFqn, Arc<Activity>>,
     interfaces_to_activity_function_names: HashMap<Arc<String>, Vec<Arc<String>>>,
+    interfaces_to_workflow_function_names: HashMap<Arc<String>, Vec<Arc<String>>>,
 }
 
 impl Default for RuntimeBuilder {
@@ -74,7 +75,8 @@ impl RuntimeBuilder {
             activity_engine,
             functions_to_workflows: HashMap::default(),
             functions_to_activities: HashMap::default(),
-            interfaces_to_activity_function_names: HashMap::new(),
+            interfaces_to_activity_function_names: HashMap::default(),
+            interfaces_to_workflow_function_names: HashMap::default(),
         }
     }
 
@@ -110,6 +112,7 @@ impl RuntimeBuilder {
                 .get(&ifc_name)
                 .is_some()
             {
+                // FIXME: leaves the builder in inconsistent state
                 bail!("interface {ifc_name} already exported",);
             }
             self.interfaces_to_activity_function_names
@@ -130,21 +133,23 @@ impl RuntimeBuilder {
             Workflow::new_with_config(
                 workflow_wasm_path,
                 self.interfaces_to_activity_function_names.iter(),
+                &mut self.interfaces_to_workflow_function_names,
                 config,
                 self.workflow_engine.clone(),
             )
             .await?,
         );
+
         for fqn in workflow.functions() {
-            if let Some(old) = self
-                .functions_to_workflows
-                .insert(fqn.clone(), workflow.clone())
-            {
-                warn!(
-                    "Replaced workflow {fqn} from `{old_path}`",
+            if let Some(old) = self.functions_to_workflows.get(&fqn) {
+                // FIXME: leaves the builder in inconsistent state
+                bail!(
+                    "cannot replace workflow {fqn} from `{old_path}`",
                     old_path = old.wasm_path
                 );
             }
+            self.functions_to_workflows
+                .insert(fqn.clone(), workflow.clone());
         }
         Ok(workflow)
     }

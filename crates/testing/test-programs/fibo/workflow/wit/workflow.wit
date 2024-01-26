@@ -5,7 +5,13 @@ interface workflow {
     fiboa: func(n: u8, iterations: u32) -> u64;
 }
 
+interface workflow-nesting {
+    fibo-nested-workflow: func(n: u8) -> u64;
+}
+
 world any {
     import testing:fibo/fibo;
     export workflow;
+    import workflow;
+    export workflow-nesting;
 }

@@ -30,6 +30,17 @@ impl crate::bindings::exports::testing::fibo_workflow::workflow::Guest for Compo
     }
 }
 
+impl crate::bindings::exports::testing::fibo_workflow::workflow_nesting::Guest for Component {
+    fn fibo_nested_workflow(n: u8) -> u64 {
+        use crate::bindings::testing::fibo_workflow::workflow::fibow as fibo;
+        if n <= 1 {
+            1
+        } else {
+            fibo(n - 1, 1) + fibo(n - 2, 1)
+        }
+    }
+}
+
 pub fn fibo(n: u8) -> u64 {
     if n <= 1 {
         1
