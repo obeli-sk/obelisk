@@ -5,6 +5,7 @@ use crate::host_activity::{self, HOST_ACTIVITY_PACKAGE};
 use crate::workflow::{Workflow, WorkflowConfig};
 use crate::FunctionMetadata;
 use crate::{database::ActivityEventFetcher, ActivityFailed, FunctionFqn};
+use anyhow::bail;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::AbortHandle;
@@ -37,6 +38,7 @@ pub struct RuntimeBuilder {
     activity_engine: Arc<Engine>,
     functions_to_workflows: HashMap<FunctionFqn, Arc<Workflow>>,
     functions_to_activities: HashMap<FunctionFqn, Arc<Activity>>,
+    interfaces_to_activity_function_names: HashMap<Arc<String>, Vec<Arc<String>>>,
 }
 
 impl Default for RuntimeBuilder {
@@ -72,6 +74,7 @@ impl RuntimeBuilder {
             activity_engine,
             functions_to_workflows: HashMap::default(),
             functions_to_activities: HashMap::default(),
+            interfaces_to_activity_function_names: HashMap::new(),
         }
     }
 
@@ -86,17 +89,33 @@ impl RuntimeBuilder {
             Activity::new_with_config(activity_wasm_path, config, self.activity_engine.clone())
                 .await?,
         );
+        let mut interfaces_to_activity_function_names = HashMap::<_, Vec<_>>::new();
         for fqn in activity.functions() {
-            if let Some(old) = self
-                .functions_to_activities
-                .insert(fqn.clone(), activity.clone())
-            {
-                warn!(
-                    "Replaced activity {fqn} from `{old_path}`",
+            if let Some(old) = self.functions_to_activities.get(fqn) {
+                bail!(
+                    "cannot replace activity {fqn} from `{old_path}`",
                     old_path = old.wasm_path
                 );
             }
+            self.functions_to_activities
+                .insert(fqn.clone(), activity.clone());
+            interfaces_to_activity_function_names
+                .entry(fqn.ifc_fqn.clone())
+                .or_default()
+                .push(fqn.function_name.clone());
         }
+        for (ifc_name, vec) in interfaces_to_activity_function_names {
+            if self
+                .interfaces_to_activity_function_names
+                .get(&ifc_name)
+                .is_some()
+            {
+                bail!("interface {ifc_name} already exported",);
+            }
+            self.interfaces_to_activity_function_names
+                .insert(ifc_name, vec);
+        }
+
         Ok(())
     }
 
@@ -110,7 +129,7 @@ impl RuntimeBuilder {
         let workflow = Arc::new(
             Workflow::new_with_config(
                 workflow_wasm_path,
-                &self.functions_to_activities,
+                self.interfaces_to_activity_function_names.iter(),
                 config,
                 self.workflow_engine.clone(),
             )

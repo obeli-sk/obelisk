@@ -6,4 +6,6 @@ struct Component;
 
 impl crate::bindings::exports::testing::noop::noop::Guest for Component {
     fn noop() {}
+
+    fn noop2() {}
 }

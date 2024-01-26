@@ -1,4 +1,3 @@
-use crate::activity::Activity;
 use crate::database::ActivityQueueSender;
 use crate::error::{ExecutionError, HostFunctionError, WorkflowFailed};
 use crate::event_history::{CurrentEventHistory, Event, EventHistory};
@@ -63,7 +62,7 @@ pub struct Workflow {
 impl Workflow {
     pub(crate) async fn new_with_config(
         wasm_path: String,
-        activities: &HashMap<FunctionFqn, Arc<Activity>>,
+        activities: impl Iterator<Item = (&Arc<String>, &Vec<Arc<String>>)>,
         config: &WorkflowConfig,
         engine: Arc<Engine>,
     ) -> Result<Self, anyhow::Error> {
@@ -76,52 +75,61 @@ impl Workflow {
         let instance_pre = {
             let mut linker = Linker::new(&engine);
             let component = Component::from_binary(&engine, &wasm)?;
-            // Add workflow host activities
+            // Add host activities
             HostImports::add_to_linker(&mut linker)?;
             // Add wasm activities
-            for fqn in activities.keys() {
-                trace!("Adding function {fqn} to the linker");
-                let mut linker_instance = linker.instance(&fqn.ifc_fqn)?;
-                let fqn_inner = fqn.clone();
-                let res = linker_instance.func_new_async(
-                    &component,
-                    &fqn.function_name,
-                    move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
-                          params: &[Val],
-                          results: &mut [Val]| {
-                        let workflow_id =
-                            store_ctx.data().current_event_history.workflow_id.clone();
-                        let fqn_inner = fqn_inner.clone();
-                        Box::new(async move {
-                            let event = Event::new_from_wasm_activity(
-                                workflow_id,
-                                fqn_inner,
-                                Arc::new(Vec::from(params)),
-                            );
-                            let store = store_ctx.data_mut();
-                            let activity_result = store
-                                .current_event_history
-                                .replay_enqueue_interrupt(event)
-                                .await?;
-                            assert_eq!(
-                                results.len(),
-                                activity_result.len(),
-                                "unexpected results length"
-                            );
-                            for (idx, item) in activity_result.into_iter().enumerate() {
-                                results[idx] = item;
-                            }
-                            Ok(())
-                        })
-                    },
-                );
-                if let Err(err) = res {
-                    if err.to_string()
-                        == format!("import `{ifc_fqn}` not found", ifc_fqn = fqn.ifc_fqn)
-                    {
-                        debug!("Skipping function {fqn} which is not imported");
-                    } else {
-                        return Err(err);
+            for (ifc_fqn, functions) in activities {
+                trace!("Adding interface {ifc_fqn} to the linker");
+
+                let mut linker_instance = linker.instance(&ifc_fqn)?;
+                for function_name in functions {
+                    trace!("Adding function {function_name} to the linker");
+                    let fqn_inner = FunctionFqn {
+                        ifc_fqn: ifc_fqn.clone(),
+                        function_name: function_name.clone(),
+                    };
+                    let res = linker_instance.func_new_async(
+                        &component,
+                        &function_name,
+                        move |mut store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
+                              params: &[Val],
+                              results: &mut [Val]| {
+                            let workflow_id =
+                                store_ctx.data().current_event_history.workflow_id.clone();
+                            let fqn_inner = fqn_inner.clone();
+                            Box::new(async move {
+                                let event = Event::new_from_wasm_activity(
+                                    workflow_id,
+                                    fqn_inner,
+                                    Arc::new(Vec::from(params)),
+                                );
+                                let store = store_ctx.data_mut();
+                                let activity_result = store
+                                    .current_event_history
+                                    .replay_enqueue_interrupt(event)
+                                    .await?;
+                                assert_eq!(
+                                    results.len(),
+                                    activity_result.len(),
+                                    "unexpected results length"
+                                );
+                                for (idx, item) in activity_result.into_iter().enumerate() {
+                                    results[idx] = item;
+                                }
+                                Ok(())
+                            })
+                        },
+                    );
+                    if let Err(err) = res {
+                        let err_string = err.to_string();
+                        if err_string == format!("import `{ifc_fqn}` not found") {
+                            debug!("Skipping interface {ifc_fqn}");
+                            break;
+                        } else if err_string == format!("import `{function_name}` not found") {
+                            debug!("Skipping function {function_name}");
+                        } else {
+                            return Err(err);
+                        }
                     }
                 }
             }
