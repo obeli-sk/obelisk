@@ -3,7 +3,7 @@ use anyhow::{anyhow, bail};
 use std::{collections::HashMap, sync::Arc};
 use val_json::{TypeWrapper, UnsupportedTypeError};
 use wit_component::DecodedWasm;
-use wit_parser::{Resolve, WorldId};
+use wit_parser::{Resolve, WorldId, WorldItem, WorldKey};
 
 pub fn decode(wasm: &[u8]) -> Result<(Resolve, WorldId), anyhow::Error> {
     let decoded = wit_component::decode(wasm)?;
@@ -13,93 +13,73 @@ pub fn decode(wasm: &[u8]) -> Result<(Resolve, WorldId), anyhow::Error> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PackageIfcFns<'a> {
+    package_name: &'a wit_parser::PackageName,
+    ifc_name: &'a str,
+    fns: &'a indexmap::IndexMap<String, wit_parser::Function>,
+}
+
 pub fn exported_ifc_fns<'a>(
     resolve: &'a Resolve,
     world_id: &'a WorldId,
-) -> Result<
-    impl Iterator<
-            Item = (
-                &'a wit_parser::PackageName,
-                &'a str, // ifc_name
-                &'a indexmap::IndexMap<String, wit_parser::Function>,
-            ),
-        > + Clone,
-    anyhow::Error,
-> {
+) -> Result<Vec<PackageIfcFns<'a>>, anyhow::Error> {
     let world = resolve
         .worlds
         .get(*world_id)
         .ok_or_else(|| anyhow!("world must exist"))?;
-    Ok(world.exports.iter().filter_map(|(_, item)| match item {
-        wit_parser::WorldItem::Interface(ifc) => {
-            let ifc = resolve
-                .interfaces
-                .get(*ifc)
-                .unwrap_or_else(|| panic!("interface must exist"));
-            let package_name = ifc
-                .package
-                .and_then(|pkg| resolve.packages.get(pkg))
-                .map(|p| &p.name)
-                .unwrap_or_else(|| panic!("empty packages are not supported"));
-            let ifc_name = ifc
-                .name
-                .as_deref()
-                .unwrap_or_else(|| panic!("empty interfaces are not supported"));
-            Some((package_name, ifc_name, &ifc.functions))
-        }
-        _ => None,
-    }))
+    ifc_fns(resolve, world.exports.iter())
 }
 
 pub fn imported_ifc_fns<'a>(
     resolve: &'a Resolve,
     world_id: &'a WorldId,
-) -> Result<
-    impl Iterator<
-            Item = (
-                &'a wit_parser::PackageName,
-                &'a str, // ifc_name
-                &'a indexmap::IndexMap<String, wit_parser::Function>,
-            ),
-        > + Clone,
-    anyhow::Error,
-> {
+) -> Result<Vec<PackageIfcFns<'a>>, anyhow::Error> {
     let world = resolve
         .worlds
         .get(*world_id)
         .ok_or_else(|| anyhow!("world must exist"))?;
-    Ok(world.imports.iter().filter_map(|(_, item)| match item {
+    ifc_fns(resolve, world.imports.iter())
+}
+
+fn ifc_fns<'a>(
+    resolve: &'a Resolve,
+    iter: impl Iterator<Item = (&'a WorldKey, &'a WorldItem)>,
+) -> Result<Vec<PackageIfcFns<'a>>, anyhow::Error> {
+    iter.filter_map(|(_, item)| match item {
         wit_parser::WorldItem::Interface(ifc) => {
-            let ifc = resolve
-                .interfaces
-                .get(*ifc)
-                .unwrap_or_else(|| panic!("interface must exist"));
-            let package_name = ifc
+            let ifc = resolve.interfaces.get(*ifc).unwrap_or_else(|| panic!());
+            let Some(package_name) = ifc
                 .package
                 .and_then(|pkg| resolve.packages.get(pkg))
                 .map(|p| &p.name)
-                .unwrap_or_else(|| panic!("empty packages are not supported"));
-            let ifc_name = ifc
-                .name
-                .as_deref()
-                .unwrap_or_else(|| panic!("empty interfaces are not supported"));
-            Some((package_name, ifc_name, &ifc.functions))
+            else {
+                return Some(Err(anyhow!("empty packages are not supported")));
+            };
+            let Some(ifc_name) = ifc.name.as_deref() else {
+                return Some(Err(anyhow!("empty interfaces are not supported")));
+            };
+            Some(Ok(PackageIfcFns {
+                package_name,
+                ifc_name,
+                fns: &ifc.functions,
+            }))
         }
         _ => None,
-    }))
+    })
+    .collect::<Result<Vec<_>, _>>()
 }
 
-pub(crate) fn functions_to_metadata<'a>(
-    exported_interfaces: impl Iterator<
-        Item = (
-            &'a wit_parser::PackageName,
-            &'a str, // ifc_name
-            &'a indexmap::IndexMap<String, wit_parser::Function>,
-        ),
-    >,
+pub(crate) fn functions_to_metadata(
+    exported_interfaces: Vec<PackageIfcFns>,
 ) -> Result<HashMap<FunctionFqn, FunctionMetadata>, FunctionMetadataError> {
     let mut functions_to_results = HashMap::new();
-    for (package_name, ifc_name, functions) in exported_interfaces.into_iter() {
+    for PackageIfcFns {
+        package_name,
+        ifc_name,
+        fns,
+    } in exported_interfaces.into_iter()
+    {
         let ifc_fqn = if let Some(version) = &package_name.version {
             format!(
                 "{namespace}:{name}/{ifc_name}@{version}",
@@ -109,7 +89,7 @@ pub(crate) fn functions_to_metadata<'a>(
         } else {
             format!("{package_name}/{ifc_name}")
         };
-        for (function_name, function) in functions.into_iter() {
+        for (function_name, function) in fns.into_iter() {
             let fqn = FunctionFqn::new(ifc_fqn.clone(), function_name.clone());
             let params = function
                 .params
@@ -161,7 +141,7 @@ mod tests {
         let wasm_path = test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW;
         let wasm = std::fs::read(wasm_path)?;
         let (resolve, world_id) = super::decode(&wasm)?;
-        let exported_interfaces = super::exported_ifc_fns(&resolve, &world_id)?.collect::<Vec<_>>();
+        let exported_interfaces = super::exported_ifc_fns(&resolve, &world_id)?;
         println!(" {:#?}", exported_interfaces);
         Ok(())
     }
@@ -171,7 +151,7 @@ mod tests {
         let wasm_path = test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW;
         let wasm = std::fs::read(wasm_path)?;
         let (resolve, world_id) = super::decode(&wasm)?;
-        let exported_interfaces = super::imported_ifc_fns(&resolve, &world_id)?.collect::<Vec<_>>();
+        let exported_interfaces = super::imported_ifc_fns(&resolve, &world_id)?;
         println!(" {:#?}", exported_interfaces);
         assert_eq!(exported_interfaces.len(), 2);
         Ok(())
