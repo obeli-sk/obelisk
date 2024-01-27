@@ -5,7 +5,7 @@ use tracing::{debug, trace};
 use wasmtime::{component::Val, Engine};
 
 use crate::{
-    wasm_tools::{exported_interfaces, functions_to_metadata, is_limit_reached},
+    wasm_tools::{self, functions_to_metadata, is_limit_reached},
     workflow_id::WorkflowId,
     ActivityFailed, SupportedFunctionResult, {FunctionFqn, FunctionMetadata},
 };
@@ -143,9 +143,9 @@ impl Activity {
     ) -> Result<Self, anyhow::Error> {
         let wasm =
             std::fs::read(&wasm_path).with_context(|| format!("cannot open \"{wasm_path}\""))?;
-        let decoded = wit_component::decode(&wasm)
-            .with_context(|| format!("cannot decode \"{wasm_path}\""))?;
-        let exported_interfaces = exported_interfaces(&decoded)
+        let (resolve, world_id) =
+            wasm_tools::decode(&wasm).with_context(|| format!("cannot decode \"{wasm_path}\""))?;
+        let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
             .with_context(|| format!("error parsing \"{wasm_path}\""))?;
         let functions_to_metadata = functions_to_metadata(exported_interfaces)?;
         debug!("Decoded functions {:?}", functions_to_metadata.keys());

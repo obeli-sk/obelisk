@@ -28,12 +28,12 @@ impl HostImports {
         )
     }
 }
-pub(crate) const HOST_ACTIVITY_PACKAGE: &str = "my-org:workflow-engine/host-activities";
+pub(crate) const HOST_ACTIVITY_IFC: &str = "my-org:workflow-engine/host-activities";
 
 pub(crate) const HOST_ACTIVITY_SLEEP_FQN: FunctionFqnStr<'static> =
-    FunctionFqnStr::new(HOST_ACTIVITY_PACKAGE, "sleep");
+    FunctionFqnStr::new(HOST_ACTIVITY_IFC, "sleep");
 pub(crate) const HOST_ACTIVITY_NOOP_FQN: FunctionFqnStr =
-    FunctionFqnStr::new(HOST_ACTIVITY_PACKAGE, "noop");
+    FunctionFqnStr::new(HOST_ACTIVITY_IFC, "noop");
 
 // When calling host functions, create events and continue or interrupt the execution.
 #[async_trait::async_trait]

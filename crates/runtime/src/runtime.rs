@@ -1,7 +1,7 @@
 use crate::activity::{Activity, ActivityConfig};
 use crate::database::{ActivityQueueSender, Database, WorkflowEventFetcher};
 use crate::error::ExecutionError;
-use crate::host_activity::{self, HOST_ACTIVITY_PACKAGE};
+use crate::host_activity::{self, HOST_ACTIVITY_IFC};
 use crate::workflow::{Workflow, WorkflowConfig};
 use crate::FunctionMetadata;
 use crate::{database::ActivityEventFetcher, ActivityFailed, FunctionFqn};
@@ -39,7 +39,6 @@ pub struct RuntimeBuilder {
     functions_to_workflows: HashMap<FunctionFqn, Arc<Workflow>>,
     functions_to_activities: HashMap<FunctionFqn, Arc<Activity>>,
     interfaces_to_activity_function_names: HashMap<Arc<String>, Vec<Arc<String>>>,
-    interfaces_to_workflow_function_names: HashMap<Arc<String>, Vec<Arc<String>>>,
 }
 
 impl Default for RuntimeBuilder {
@@ -76,7 +75,6 @@ impl RuntimeBuilder {
             functions_to_workflows: HashMap::default(),
             functions_to_activities: HashMap::default(),
             interfaces_to_activity_function_names: HashMap::default(),
-            interfaces_to_workflow_function_names: HashMap::default(),
         }
     }
 
@@ -133,7 +131,6 @@ impl RuntimeBuilder {
             Workflow::new_with_config(
                 workflow_wasm_path,
                 self.interfaces_to_activity_function_names.iter(),
-                &mut self.interfaces_to_workflow_function_names,
                 config,
                 self.workflow_engine.clone(),
             )
@@ -243,7 +240,7 @@ impl Runtime {
         functions_to_activities: Arc<HashMap<FunctionFqn, Arc<Activity>>>,
     ) {
         while let Some((request, resp_tx)) = activity_event_fetcher.fetch_one().await {
-            if *request.activity_fqn.ifc_fqn == HOST_ACTIVITY_PACKAGE {
+            if *request.activity_fqn.ifc_fqn == HOST_ACTIVITY_IFC {
                 host_activity::execute_host_activity(request, resp_tx).await;
             } else {
                 // execute wasm activity

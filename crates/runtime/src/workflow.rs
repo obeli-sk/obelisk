@@ -1,14 +1,16 @@
 use crate::database::ActivityQueueSender;
 use crate::error::{ExecutionError, HostFunctionError, WorkflowFailed};
 use crate::event_history::{CurrentEventHistory, Event, EventHistory};
-use crate::host_activity::HostImports;
-use crate::wasm_tools::{exported_interfaces, functions_to_metadata, is_limit_reached};
+use crate::host_activity::{HostImports, HOST_ACTIVITY_IFC};
+use crate::wasm_tools::{self, functions_to_metadata, is_limit_reached};
 use crate::workflow_id::WorkflowId;
 use crate::SupportedFunctionResult;
 use crate::{FunctionFqn, FunctionMetadata};
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, Context};
+use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::mem;
+use std::ops::Deref;
 use std::{fmt::Debug, sync::Arc};
 use strum::EnumString;
 use tracing::{debug, debug_span, info, trace, Instrument};
@@ -59,35 +61,41 @@ pub struct Workflow {
     async_activity_behavior: AsyncActivityBehavior,
 }
 
+lazy_static! {
+    static ref HOST_ACTIVITY_IFC_STRING: String = HOST_ACTIVITY_IFC.to_string();
+}
+
 impl Workflow {
     pub(crate) async fn new_with_config(
         wasm_path: String,
         activities: impl Iterator<Item = (&Arc<String>, &Vec<Arc<String>>)>,
-        workflows: &mut HashMap<Arc<String>, Vec<Arc<String>>>,
         config: &WorkflowConfig,
         engine: Arc<Engine>,
     ) -> Result<Self, anyhow::Error> {
         let wasm =
             std::fs::read(&wasm_path).with_context(|| format!("cannot open \"{wasm_path}\""))?;
-        let functions_to_metadata = decode_wasm_function_metadata(&wasm)
-            .with_context(|| format!("error parsing \"{wasm_path}\""))?;
-        debug!("Decoded functions {:?}", functions_to_metadata.keys());
-        trace!("Decoded functions {functions_to_metadata:#?}");
-        {
-            let mut interfaces_to_workflow_function_names = HashMap::<_, Vec<_>>::new();
-            for fqn in functions_to_metadata.keys() {
-                interfaces_to_workflow_function_names
-                    .entry(fqn.ifc_fqn.clone())
-                    .or_default()
-                    .push(fqn.function_name.clone());
-            }
-            for (ifc_name, _vec) in interfaces_to_workflow_function_names.iter() {
-                if workflows.get(ifc_name).is_some() {
-                    bail!("interface {ifc_name} already exported",);
-                }
-            }
-            workflows.extend(interfaces_to_workflow_function_names.drain());
-        }
+        let (resolve, world_id) = wasm_tools::decode(&wasm)?;
+        let exp_fns_to_metadata =
+            functions_to_metadata(wasm_tools::exported_ifc_fns(&resolve, &world_id)?)
+                .with_context(|| {
+                    format!("error parsing exported interfaces from \"{wasm_path}\"")
+                })?;
+        debug!(
+            "Decoded exported functions {:?}",
+            exp_fns_to_metadata.keys()
+        );
+        trace!("Decoded exported functions {exp_fns_to_metadata:#?}");
+        let imp_ifcs_to_fn_names = {
+            let imp_fns_to_metadata =
+                functions_to_metadata(wasm_tools::imported_ifc_fns(&resolve, &world_id)?)
+                    .with_context(|| {
+                        format!("error parsing imported interfaces from \"{wasm_path}\"")
+                    })?;
+            let mut imp_ifcs_to_fn_names =
+                wasm_tools::group_by_ifc_to_fn_names(imp_fns_to_metadata.keys());
+            imp_ifcs_to_fn_names.remove(HOST_ACTIVITY_IFC_STRING.deref());
+            imp_ifcs_to_fn_names
+        };
 
         let instance_pre = {
             let mut linker = Linker::new(&engine);
@@ -95,12 +103,11 @@ impl Workflow {
             // Add host activities
             HostImports::add_to_linker(&mut linker)?;
             // Add wasm activities
-            for (ifc_fqn, functions) in activities {
-                trace!("Adding activity interface {ifc_fqn} to the linker");
-
+            for (ifc_fqn, functions) in &imp_ifcs_to_fn_names {
+                trace!("Adding imported interface {ifc_fqn} to the linker");
                 let mut linker_instance = linker.instance(ifc_fqn)?;
                 for function_name in functions {
-                    trace!("Adding activity function {function_name} to the linker");
+                    trace!("Adding imported function {function_name} to the linker");
                     let fqn_inner = FunctionFqn {
                         ifc_fqn: ifc_fqn.clone(),
                         function_name: function_name.clone(),
@@ -114,6 +121,7 @@ impl Workflow {
                             let workflow_id =
                                 store_ctx.data().current_event_history.workflow_id.clone();
                             let fqn_inner = fqn_inner.clone();
+                            // TODO: is it activity or a workflow
                             Box::new(async move {
                                 let event = Event::new_from_wasm_activity(
                                     workflow_id,
@@ -138,40 +146,8 @@ impl Workflow {
                         },
                     );
                     if let Err(err) = res {
-                        let err_string = err.to_string();
-                        if err_string == format!("import `{ifc_fqn}` not found") {
-                            debug!("Skipping activity interface {ifc_fqn}");
-                            break;
-                        } else if err_string == format!("import `{function_name}` not found") {
+                        if err.to_string() == format!("import `{function_name}` not found") {
                             debug!("Skipping activity function {function_name}");
-                        } else {
-                            return Err(err);
-                        }
-                    }
-                }
-            }
-            for (ifc_fqn, functions) in workflows.iter() {
-                trace!("Adding workflow interface {ifc_fqn} to the linker");
-
-                let mut linker_instance = linker.instance(ifc_fqn)?;
-                for function_name in functions {
-                    trace!("Adding workflow function {function_name} to the linker");
-                    let res = linker_instance.func_new_async(
-                        &component,
-                        function_name,
-                        move |_store_ctx: wasmtime::StoreContextMut<'_, HostImports>,
-                              _params: &[Val],
-                              _results: &mut [Val]| {
-                            Box::new(async move { bail!("not implemented") })
-                        },
-                    );
-                    if let Err(err) = res {
-                        let err_string = err.to_string();
-                        if err_string == format!("import `{ifc_fqn}` not found") {
-                            debug!("Skipping workflow interface {ifc_fqn}");
-                            break;
-                        } else if err_string == format!("import `{function_name}` not found") {
-                            debug!("Skipping workflow function {function_name}");
                         } else {
                             return Err(err);
                         }
@@ -184,7 +160,7 @@ impl Workflow {
         Ok(Self {
             wasm_path,
             instance_pre,
-            functions_to_metadata,
+            functions_to_metadata: exp_fns_to_metadata,
             async_activity_behavior: config.async_activity_behavior,
             engine,
         })
@@ -415,14 +391,6 @@ impl Workflow {
         trace!("[{workflow_id},{run_id}] execution result {fqn} -> {results:?}");
         Ok(results)
     }
-}
-
-fn decode_wasm_function_metadata(
-    wasm: &[u8],
-) -> Result<HashMap<FunctionFqn, FunctionMetadata>, anyhow::Error> {
-    let decoded = wit_component::decode(wasm)?;
-    let exported_interfaces = exported_interfaces(&decoded)?;
-    Ok(functions_to_metadata(exported_interfaces)?)
 }
 
 impl Debug for Workflow {

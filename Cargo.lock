@@ -1898,6 +1898,7 @@ dependencies = [
  "lazy_static",
  "serde_json",
  "strum",
+ "test-programs-fibo-workflow-builder",
  "thiserror",
  "tokio",
  "tracing",

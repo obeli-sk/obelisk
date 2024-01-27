@@ -27,3 +27,7 @@ wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 wit-component.workspace = true
 wit-parser.workspace = true
+
+[dev-dependencies]
+test-programs-fibo-workflow-builder.workspace = true
+tokio = { workspace = true, features = ["full"] }
