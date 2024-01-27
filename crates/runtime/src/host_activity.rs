@@ -1,11 +1,11 @@
 use crate::{
     activity::ActivityRequest,
+    error::ActivityFailed,
     event_history::{CurrentEventHistory, Event},
-    ActivityResponse, FunctionFqnStr, SupportedFunctionResult,
+    FunctionFqnStr, SupportedFunctionResult,
 };
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
-use tokio::sync::oneshot;
 use tracing::instrument;
 use wasmtime::component::{Linker, Val};
 
@@ -74,22 +74,21 @@ impl my_org::workflow_engine::host_activities::Host for HostImports {
 #[instrument(skip_all)]
 pub(crate) async fn execute_host_activity(
     request: ActivityRequest,
-    resp_tx: oneshot::Sender<ActivityResponse>,
-) {
+) -> Result<SupportedFunctionResult, ActivityFailed> {
     if request.activity_fqn == HOST_ACTIVITY_SLEEP_FQN {
         // sleep implementation
         assert_eq!(request.params.len(), 1);
         let duration = request.params.first().unwrap();
         let duration = *assert_matches!(duration, wasmtime::component::Val::U64(v) => v);
         tokio::time::sleep(Duration::from_millis(duration)).await;
-        let _ = resp_tx.send(Ok(SupportedFunctionResult::None));
+        Ok(SupportedFunctionResult::None)
     } else if request.activity_fqn == HOST_ACTIVITY_NOOP_FQN {
         assert_eq!(request.params.len(), 0);
-        let _ = resp_tx.send(Ok(SupportedFunctionResult::None));
+        Ok(SupportedFunctionResult::None)
     } else {
-        panic!(
-            "cannot execute host activity {fqn}",
-            fqn = request.activity_fqn
-        );
+        Err(ActivityFailed::NotFound {
+            workflow_id: request.workflow_id,
+            activity_fqn: request.activity_fqn,
+        })
     }
 }

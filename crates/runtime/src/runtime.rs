@@ -221,19 +221,18 @@ impl Runtime {
     ) {
         while let Some((request, resp_tx)) = activity_event_fetcher.fetch_one().await {
             if *request.activity_fqn.ifc_fqn == HOST_ACTIVITY_IFC {
-                host_activity::execute_host_activity(request, resp_tx).await;
+                tokio::spawn(async move {
+                    let _ = resp_tx.send(host_activity::execute_host_activity(request).await);
+                });
             } else {
                 // execute wasm activity
                 match functions_to_activities.get(&request.activity_fqn) {
                     Some(activity) => {
                         let activity = activity.clone();
-                        tokio::spawn(
-                            async move {
-                                // TODO: cancellation
-                                let _ = resp_tx.send(activity.run(&request).await);
-                            }
-                            .instrument(info_span!("spawn_activity")),
-                        );
+                        tokio::spawn(async move {
+                            // TODO: cancellation
+                            let _ = resp_tx.send(activity.run(&request).await);
+                        });
                     }
                     None => {
                         let err = ActivityFailed::NotFound {
