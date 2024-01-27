@@ -41,17 +41,16 @@ async fn main() -> Result<(), anyhow::Error> {
     runtime
         .add_activity(activity_wasm_path, &ActivityConfig::default())
         .await?;
-    let workflow = runtime
-        .add_workflow_definition(workflow_wasm_path, &WorkflowConfig::default())
+    let runtime = runtime
+        .build(workflow_wasm_path, &WorkflowConfig::default())
         .await?;
     println!("Initialized in {duration:?}", duration = timer.elapsed());
     println!();
 
-    let runtime = runtime.build();
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let timer = Instant::now();
-    let param_types = workflow
-        .function_metadata(&fqn)
+    let param_types = runtime
+        .workflow_function_metadata(&fqn)
         .expect("function must exist")
         .params
         .iter()

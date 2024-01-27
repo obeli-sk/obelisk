@@ -46,13 +46,12 @@ fn setup_runtime() -> Runtime {
             .await
             .unwrap();
         runtime
-            .add_workflow_definition(
+            .build(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW.to_string(),
                 &WORKFLOW_CONFIG_HOT,
             )
             .await
-            .unwrap();
-        runtime.build()
+            .unwrap()
     })
 }
 

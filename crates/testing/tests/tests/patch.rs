@@ -39,13 +39,13 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
                 &ActivityConfig::default(),
             )
             .await?;
-        runtime
-            .add_workflow_definition(
+        let runtime = runtime
+            .build(
                 test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
                 &WorkflowConfig::default(),
             )
             .await?;
-        let _abort_handle = runtime.build().spawn(&database);
+        let _abort_handle = runtime.spawn(&database);
         let workflow_id = WorkflowId::generate();
         let res = database
             .workflow_scheduler()
@@ -89,13 +89,13 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
                 &ActivityConfig::default(),
             )
             .await?;
-        runtime
-            .add_workflow_definition(
+        let runtime = runtime
+            .build(
                 test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
                 &WorkflowConfig::default(),
             )
             .await?;
-        let _abort_handle = runtime.build().spawn(&database);
+        let _abort_handle = runtime.spawn(&database);
         database
             .workflow_scheduler()
             .schedule_workflow(
@@ -143,13 +143,13 @@ async fn generate_event_history_matching() -> Result<(), anyhow::Error> {
             &ActivityConfig::default(),
         )
         .await?;
-    runtime
-        .add_workflow_definition(
+    let runtime = runtime
+        .build(
             test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
             &WorkflowConfig::default(),
         )
         .await?;
-    let _abort_handle = runtime.build().spawn(&database);
+    let _abort_handle = runtime.spawn(&database);
     database
         .workflow_scheduler()
         .schedule_workflow(
@@ -184,13 +184,13 @@ async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
             &ActivityConfig::default(),
         )
         .await?;
-    runtime
-        .add_workflow_definition(
+    let runtime = runtime
+        .build(
             test_programs_patch_workflow_builder::TEST_PROGRAMS_PATCH_WORKFLOW.to_string(),
             &WorkflowConfig::default(),
         )
         .await?;
-    let _abort_handle = runtime.build().spawn(&database);
+    let _abort_handle = runtime.spawn(&database);
     let workflow_id = WorkflowId::generate();
     let res = database
         .workflow_scheduler()

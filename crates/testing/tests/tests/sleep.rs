@@ -10,9 +10,10 @@ use runtime::{
     workflow_id::WorkflowId,
     FunctionFqn,
 };
-use std::str::FromStr;
 use std::sync::{Arc, Once};
+use std::{str::FromStr, time::Instant};
 use tokio::sync::Mutex;
+use tracing::info;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 static INIT: Once = Once::new();
@@ -41,8 +42,8 @@ async fn test_async_activity(
             &ActivityConfig::default(),
         )
         .await?;
-    runtime
-        .add_workflow_definition(
+    let runtime = runtime
+        .build(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW.to_string(),
             &WorkflowConfig {
                 async_activity_behavior: AsyncActivityBehavior::from_str(activity_behavior)
@@ -50,10 +51,11 @@ async fn test_async_activity(
             },
         )
         .await?;
-    let _abort_handle = runtime.build().spawn(&database);
+    let _abort_handle = runtime.spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
-    let params = Arc::new(vec![wasmtime::component::Val::U64(0)]);
-    let res = database
+    let params = Arc::new(vec![wasmtime::component::Val::U64(10)]);
+    let stopwatch = Instant::now();
+    database
         .workflow_scheduler()
         .schedule_workflow(
             WorkflowId::new(
@@ -68,8 +70,11 @@ async fn test_async_activity(
             ),
             params,
         )
-        .await;
-    res.unwrap();
+        .await
+        .unwrap();
+    let stopwatch = stopwatch.elapsed();
+
+    info!("`{function}` finished in {} µs", stopwatch.as_micros());
 
     Ok(())
 }
@@ -86,13 +91,13 @@ async fn test_call_activity_with_version() -> Result<(), anyhow::Error> {
             &ActivityConfig::default(),
         )
         .await?;
-    runtime
-        .add_workflow_definition(
+    let runtime = runtime
+        .build(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW.to_string(),
             &WorkflowConfig::default(),
         )
         .await?;
-    let _abort_handle = runtime.build().spawn(&database);
+    let _abort_handle = runtime.spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let res = database
         .workflow_scheduler()
@@ -176,14 +181,13 @@ async fn test_limits(
             &ActivityConfig::default(),
         )
         .await?;
-    runtime
-        .add_workflow_definition(
+    let runtime = runtime
+        .build(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW.to_string(),
             &WorkflowConfig::default(),
         )
         .await?;
     let mut futures = Vec::new();
-    let runtime = runtime.build();
     let _abort_handle = runtime.spawn(&database);
     // Prepare futures, last one processed should fail.
     for _ in 0..ITERATIONS {

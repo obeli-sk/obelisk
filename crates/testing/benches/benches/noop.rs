@@ -39,13 +39,12 @@ fn noop_workflow(
             .await
             .unwrap();
         runtime
-            .add_workflow_definition(
+            .build(
                 test_programs_noop_workflow_builder::TEST_PROGRAMS_NOOP_WORKFLOW.to_string(),
                 workflow_config,
             )
             .await
-            .unwrap();
-        runtime.build()
+            .unwrap()
     })
 }
 

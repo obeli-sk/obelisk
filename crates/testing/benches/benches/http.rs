@@ -67,14 +67,13 @@ fn setup_runtime() -> Runtime {
             .await
             .unwrap();
         runtime
-            .add_workflow_definition(
+            .build(
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW
                     .to_string(),
                 &WORKFLOW_CONFIG_HOT,
             )
             .await
-            .unwrap();
-        runtime.build()
+            .unwrap()
     })
 }
 

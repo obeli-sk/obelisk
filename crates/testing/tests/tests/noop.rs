@@ -64,8 +64,8 @@ async fn test(
             &ActivityConfig::default(),
         )
         .await?;
-    runtime
-        .add_workflow_definition(
+    let runtime = runtime
+        .build(
             test_programs_noop_workflow_builder::TEST_PROGRAMS_NOOP_WORKFLOW.to_string(),
             &WorkflowConfig {
                 async_activity_behavior: AsyncActivityBehavior::from_str(activity_behavior)
@@ -73,7 +73,6 @@ async fn test(
             },
         )
         .await?;
-    let runtime = runtime.build();
     let _abort_handle = runtime.spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let param_vals = format!("[{iterations}]");

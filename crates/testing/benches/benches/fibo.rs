@@ -37,13 +37,12 @@ fn fibo_workflow(mut runtime_builder: RuntimeBuilder, fibo_config: &FiboConfig) 
             .await
             .unwrap();
         runtime_builder
-            .add_workflow_definition(
+            .build(
                 test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
                 &fibo_config.workflow_config,
             )
             .await
-            .unwrap();
-        runtime_builder.build()
+            .unwrap()
     })
 }
 

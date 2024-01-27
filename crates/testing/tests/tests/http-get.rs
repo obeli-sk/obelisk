@@ -37,13 +37,13 @@ async fn test() -> Result<(), anyhow::Error> {
             &ActivityConfig::default(),
         )
         .await?;
-    runtime
-        .add_workflow_definition(
+    let runtime = runtime
+        .build(
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW.to_string(),
             &WorkflowConfig::default(),
         )
         .await?;
-    let _abort_handle = runtime.build().spawn(&database);
+    let _abort_handle = runtime.spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let timer = Instant::now();
 

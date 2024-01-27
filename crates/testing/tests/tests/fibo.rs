@@ -29,13 +29,13 @@ async fn test_fibow_fiboa() -> Result<(), anyhow::Error> {
             &ActivityConfig::default(),
         )
         .await?;
-    runtime
-        .add_workflow_definition(
+    let runtime = runtime
+        .build(
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW.to_string(),
             &WorkflowConfig::default(),
         )
         .await?;
-    let _abort_handle = runtime.build().spawn(&database);
+    let _abort_handle = runtime.spawn(&database);
 
     let iterations = 10;
 

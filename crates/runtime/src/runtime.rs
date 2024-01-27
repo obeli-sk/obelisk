@@ -36,7 +36,6 @@ impl Default for EngineConfig {
 pub struct RuntimeBuilder {
     workflow_engine: Arc<Engine>,
     activity_engine: Arc<Engine>,
-    functions_to_workflows: HashMap<FunctionFqn, Arc<Workflow>>,
     functions_to_activities: HashMap<FunctionFqn, Arc<Activity>>,
     interfaces_to_activity_function_names: HashMap<Arc<String>, Vec<Arc<String>>>,
 }
@@ -72,7 +71,6 @@ impl RuntimeBuilder {
         Self {
             workflow_engine,
             activity_engine,
-            functions_to_workflows: HashMap::default(),
             functions_to_activities: HashMap::default(),
             interfaces_to_activity_function_names: HashMap::default(),
         }
@@ -121,11 +119,11 @@ impl RuntimeBuilder {
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn add_workflow_definition(
-        &mut self,
+    pub async fn build(
+        self,
         workflow_wasm_path: String,
         config: &WorkflowConfig,
-    ) -> Result<Arc<Workflow>, anyhow::Error> {
+    ) -> Result<Runtime, anyhow::Error> {
         info!("Loading workflow definition from \"{workflow_wasm_path}\"");
         let workflow = Arc::new(
             Workflow::new_with_config(
@@ -136,32 +134,16 @@ impl RuntimeBuilder {
             )
             .await?,
         );
-
-        for fqn in workflow.functions() {
-            if let Some(old) = self.functions_to_workflows.get(fqn) {
-                // FIXME: leaves the builder in inconsistent state
-                bail!(
-                    "cannot replace workflow {fqn} from `{old_path}`",
-                    old_path = old.wasm_path
-                );
-            }
-            self.functions_to_workflows
-                .insert(fqn.clone(), workflow.clone());
-        }
-        Ok(workflow)
-    }
-
-    pub fn build(self) -> Runtime {
         // TODO: check that no function is in host namespace, no activity-workflow collisions
-        Runtime {
-            functions_to_workflows: Arc::new(self.functions_to_workflows),
+        Ok(Runtime {
+            workflow,
             functions_to_activities: Arc::new(self.functions_to_activities),
-        }
+        })
     }
 }
 
 pub struct Runtime {
-    functions_to_workflows: Arc<HashMap<FunctionFqn, Arc<Workflow>>>,
+    workflow: Arc<Workflow>,
     functions_to_activities: Arc<HashMap<FunctionFqn, Arc<Activity>>>,
 }
 
@@ -170,16 +152,14 @@ impl Runtime {
         &'a self,
         fqn: &FunctionFqn,
     ) -> Option<&'a FunctionMetadata> {
-        self.functions_to_workflows
-            .get(fqn)
-            .and_then(|w| w.functions_to_metadata.get(fqn))
+        self.workflow.function_metadata(fqn)
     }
 
     // TODO: add runtime+spawn id
     #[must_use]
     pub fn spawn(&self, database: &Database) -> StructuredAbortHandle {
-        let process_workflows = Self::process_workflows(
-            self.functions_to_workflows.clone(),
+        let process_workflow = Self::process_workflow(
+            self.workflow.clone(),
             database.workflow_event_fetcher(),
             database.activity_queue_sender(),
         );
@@ -189,20 +169,20 @@ impl Runtime {
         );
         StructuredAbortHandle(
             tokio::spawn(async move {
-                futures_util::join!(process_activities, process_workflows);
+                futures_util::join!(process_activities, process_workflow);
             })
             .abort_handle(),
         )
     }
 
     #[tracing::instrument(skip_all)]
-    async fn process_workflows(
-        functions_to_workflows: Arc<HashMap<FunctionFqn, Arc<Workflow>>>,
+    async fn process_workflow(
+        workflow: Arc<Workflow>,
         fetcher: WorkflowEventFetcher,
         activity_queue_sender: ActivityQueueSender,
     ) {
         while let Some((request, oneshot_tx)) = fetcher.fetch_one().await {
-            if let Some(workflow) = functions_to_workflows.get(&request.workflow_fqn) {
+            if workflow.contains(&request.workflow_fqn) {
                 let workflow = workflow.clone();
                 let activity_queue_sender = activity_queue_sender.clone();
                 tokio::spawn(

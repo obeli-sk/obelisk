@@ -174,6 +174,10 @@ impl Workflow {
         self.functions_to_metadata.keys()
     }
 
+    pub fn contains(&self, fqn: &FunctionFqn) -> bool {
+        self.function_metadata(fqn).is_some()
+    }
+
     #[tracing::instrument(skip_all)]
     pub(crate) async fn execute_all(
         &self,
