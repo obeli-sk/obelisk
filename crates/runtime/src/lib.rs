@@ -1,6 +1,9 @@
 use error::ActivityFailed;
 use std::{
+    borrow::Borrow,
     fmt::{Debug, Display},
+    marker::PhantomData,
+    ops::Deref,
     sync::Arc,
 };
 use val_json::{TypeWrapper, UnsupportedTypeError, ValWrapper};
@@ -15,16 +18,61 @@ mod wasm_tools;
 pub mod workflow;
 
 #[derive(Hash, Clone, PartialEq, Eq)]
+pub struct Name<T> {
+    value: Arc<String>,
+    phantom_data: PhantomData<fn(T) -> T>,
+}
+
+impl<T> Name<T> {
+    pub fn new(value: impl ToString) -> Self {
+        Self {
+            value: Arc::new(value.to_string()),
+            phantom_data: Default::default(),
+        }
+    }
+}
+
+impl<T> Display for Name<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.value)
+    }
+}
+
+impl<T> Deref for Name<T> {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.value.deref().deref()
+    }
+}
+
+impl<T> Borrow<str> for Name<T> {
+    fn borrow(&self) -> &str {
+        self.deref()
+    }
+}
+
+#[derive(Hash, Clone, PartialEq, Eq)]
+pub struct IfcFqnMarker;
+
+pub type IfcFqnName = Name<IfcFqnMarker>; // namespace:name/ifc_name@version
+
+#[derive(Hash, Clone, PartialEq, Eq)]
+pub struct FnMarker;
+
+pub type FnName = Name<FnMarker>;
+
+#[derive(Hash, Clone, PartialEq, Eq)]
 pub struct FunctionFqn {
-    pub ifc_fqn: Arc<String>, // format namespace:name/ifc_name@version
-    pub function_name: Arc<String>,
+    pub ifc_fqn: IfcFqnName,
+    pub function_name: FnName,
 }
 
 impl FunctionFqn {
-    pub fn new<T: ToString>(ifc_fqn: T, function_name: T) -> FunctionFqn {
+    pub fn new(ifc_fqn: impl ToString, function_name: impl ToString) -> FunctionFqn {
         FunctionFqn {
-            ifc_fqn: Arc::new(ifc_fqn.to_string()),
-            function_name: Arc::new(function_name.to_string()),
+            ifc_fqn: Name::new(ifc_fqn),
+            function_name: Name::new(function_name),
         }
     }
 }
@@ -48,7 +96,7 @@ impl Debug for FunctionFqn {
 
 impl std::cmp::PartialEq<FunctionFqnStr<'_>> for FunctionFqn {
     fn eq(&self, other: &FunctionFqnStr<'_>) -> bool {
-        *self.ifc_fqn == other.ifc_fqn && *self.function_name == other.function_name
+        *self.ifc_fqn == *other.ifc_fqn && *self.function_name == *other.function_name
     }
 }
 
@@ -84,7 +132,7 @@ impl Display for FunctionFqnStr<'_> {
 
 impl std::cmp::PartialEq<FunctionFqn> for FunctionFqnStr<'_> {
     fn eq(&self, other: &FunctionFqn) -> bool {
-        self.ifc_fqn == *other.ifc_fqn && self.function_name == *other.function_name
+        *self.ifc_fqn == *other.ifc_fqn && *self.function_name == *other.function_name
     }
 }
 

@@ -3,8 +3,8 @@ use crate::database::{ActivityQueueSender, Database, WorkflowEventFetcher};
 use crate::error::ExecutionError;
 use crate::host_activity::{self, HOST_ACTIVITY_IFC};
 use crate::workflow::{Workflow, WorkflowConfig};
-use crate::FunctionMetadata;
 use crate::{database::ActivityEventFetcher, ActivityFailed, FunctionFqn};
+use crate::{FnName, FunctionMetadata, IfcFqnName};
 use anyhow::bail;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,7 +37,7 @@ pub struct RuntimeBuilder {
     workflow_engine: Arc<Engine>,
     activity_engine: Arc<Engine>,
     functions_to_activities: HashMap<FunctionFqn, Arc<Activity>>,
-    interfaces_to_activity_function_names: HashMap<Arc<String>, Vec<Arc<String>>>,
+    interfaces_to_activity_function_names: HashMap<IfcFqnName, Vec<FnName>>,
 }
 
 impl Default for RuntimeBuilder {
@@ -220,7 +220,7 @@ impl Runtime {
         functions_to_activities: Arc<HashMap<FunctionFqn, Arc<Activity>>>,
     ) {
         while let Some((request, resp_tx)) = activity_event_fetcher.fetch_one().await {
-            if *request.activity_fqn.ifc_fqn == HOST_ACTIVITY_IFC {
+            if *request.activity_fqn.ifc_fqn == *HOST_ACTIVITY_IFC {
                 tokio::spawn(async move {
                     let _ = resp_tx.send(host_activity::execute_host_activity(request).await);
                 });

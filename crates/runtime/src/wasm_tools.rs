@@ -1,6 +1,6 @@
-use crate::{FunctionFqn, FunctionMetadata, FunctionMetadataError};
+use crate::{FnName, FunctionFqn, FunctionMetadata, FunctionMetadataError, IfcFqnName};
 use anyhow::{anyhow, bail};
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use val_json::{TypeWrapper, UnsupportedTypeError};
 use wit_component::DecodedWasm;
 use wit_parser::{Resolve, WorldId, WorldItem, WorldKey};
@@ -118,7 +118,7 @@ pub(crate) fn functions_to_metadata(
 
 pub fn group_by_ifc_to_fn_names<'a>(
     fqns: impl Iterator<Item = &'a FunctionFqn>,
-) -> HashMap<Arc<String>, Vec<Arc<String>>> {
+) -> HashMap<IfcFqnName, Vec<FnName>> {
     let mut ifcs_to_fn_names = HashMap::<_, Vec<_>>::new();
     for fqn in fqns {
         ifcs_to_fn_names

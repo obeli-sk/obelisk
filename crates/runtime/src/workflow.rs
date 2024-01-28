@@ -4,7 +4,7 @@ use crate::event_history::{CurrentEventHistory, Event, EventHistory};
 use crate::host_activity::{HostImports, HOST_ACTIVITY_IFC};
 use crate::wasm_tools::{self, functions_to_metadata, is_limit_reached};
 use crate::workflow_id::WorkflowId;
-use crate::SupportedFunctionResult;
+use crate::{FnName, IfcFqnName, SupportedFunctionResult};
 use crate::{FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, Context};
 use lazy_static::lazy_static;
@@ -68,7 +68,7 @@ lazy_static! {
 impl Workflow {
     pub(crate) async fn new_with_config(
         wasm_path: String,
-        activities: impl Iterator<Item = (&Arc<String>, &Vec<Arc<String>>)>,
+        activities: impl Iterator<Item = (&IfcFqnName, &Vec<FnName>)>,
         config: &WorkflowConfig,
         engine: Arc<Engine>,
     ) -> Result<Self, anyhow::Error> {
@@ -93,7 +93,7 @@ impl Workflow {
                     })?;
             let mut imp_ifcs_to_fn_names =
                 wasm_tools::group_by_ifc_to_fn_names(imp_fns_to_metadata.keys());
-            imp_ifcs_to_fn_names.remove(HOST_ACTIVITY_IFC_STRING.deref());
+            imp_ifcs_to_fn_names.remove(HOST_ACTIVITY_IFC_STRING.deref().deref());
             imp_ifcs_to_fn_names
         };
 
