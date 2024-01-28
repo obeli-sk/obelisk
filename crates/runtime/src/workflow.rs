@@ -4,7 +4,7 @@ use crate::event_history::{CurrentEventHistory, Event, EventHistory};
 use crate::host_activity::{HostImports, HOST_ACTIVITY_IFC};
 use crate::wasm_tools::{self, functions_to_metadata, is_limit_reached};
 use crate::workflow_id::WorkflowId;
-use crate::{FnName, IfcFqnName, SupportedFunctionResult};
+use crate::SupportedFunctionResult;
 use crate::{FunctionFqn, FunctionMetadata};
 use anyhow::{anyhow, Context};
 use lazy_static::lazy_static;
@@ -68,7 +68,7 @@ lazy_static! {
 impl Workflow {
     pub(crate) async fn new_with_config(
         wasm_path: String,
-        activities: impl Iterator<Item = (&IfcFqnName, &Vec<FnName>)>,
+        is_activity_fn: impl Fn(&FunctionFqn) -> bool,
         config: &WorkflowConfig,
         engine: Arc<Engine>,
     ) -> Result<Self, anyhow::Error> {
@@ -107,11 +107,12 @@ impl Workflow {
                 trace!("Adding imported interface {ifc_fqn} to the linker");
                 let mut linker_instance = linker.instance(ifc_fqn)?;
                 for function_name in functions {
-                    trace!("Adding imported function {function_name} to the linker");
-                    let fqn_inner = FunctionFqn {
+                    let ffqn = FunctionFqn {
                         ifc_fqn: ifc_fqn.clone(),
                         function_name: function_name.clone(),
                     };
+                    let is_activity = is_activity_fn(&ffqn);
+                    trace!("Adding imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(
                         &component,
                         function_name,
@@ -120,12 +121,12 @@ impl Workflow {
                               results: &mut [Val]| {
                             let workflow_id =
                                 store_ctx.data().current_event_history.workflow_id.clone();
-                            let fqn_inner = fqn_inner.clone();
-                            // TODO: is it activity or a workflow
+
+                            let ffqn = ffqn.clone();
                             Box::new(async move {
                                 let event = Event::new_from_wasm_activity(
                                     workflow_id,
-                                    fqn_inner,
+                                    ffqn,
                                     Arc::new(Vec::from(params)),
                                 );
                                 let store = store_ctx.data_mut();

@@ -128,7 +128,7 @@ impl RuntimeBuilder {
         let workflow = Arc::new(
             Workflow::new_with_config(
                 workflow_wasm_path,
-                self.interfaces_to_activity_function_names.iter(),
+                |ffqn| self.functions_to_activities.contains_key(ffqn),
                 config,
                 self.workflow_engine.clone(),
             )
