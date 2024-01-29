@@ -10,17 +10,18 @@ use runtime::{
     FunctionFqn,
 };
 use std::sync::{atomic::Ordering, Arc, Once};
-use tokio::sync::Mutex;
+use tokio::{process::Command, sync::Mutex};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use wasmtime::component::Val;
 
 const DB_BUFFER_CAPACITY: usize = 100;
 const ELEMENTS_PER_ITERATION: u64 = 100;
-const SLEEP_MILLIS: u64 = 10;
+const SLEEP_MILLIS: u64 = 0;
 
 lazy_static! {
     static ref RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_time()
+        .enable_io()
         .build()
         .expect("Should create a tokio runtime");
 }
@@ -100,9 +101,47 @@ fn benchmark_sleep(criterion: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_sleep_process(criterion: &mut Criterion) {
+    set_up();
+    let mut group = criterion.benchmark_group("sleep-process");
+    group.throughput(Throughput::Elements(ELEMENTS_PER_ITERATION));
+    let mut which = std::process::Command::new("which")
+        .arg("sleep")
+        .output()
+        .unwrap()
+        .stdout;
+    which.pop();
+    for exe in ["sleep", &String::from_utf8_lossy(which.as_slice())] {
+        group.bench_function(exe, |b| {
+            b.to_async::<&tokio::runtime::Runtime>(&RT)
+                .iter(|| async move {
+                    let sleep_seconds = "0";
+                    let mut futures = Vec::new();
+                    for _ in 0..ELEMENTS_PER_ITERATION {
+                        futures.push(Command::new(exe).arg(sleep_seconds).status());
+                    }
+                    assert!(futures_util::future::join_all(futures)
+                        .await
+                        .into_iter()
+                        .collect::<Result<Vec<_>, _>>()
+                        .unwrap()
+                        .into_iter()
+                        .all(|status| status.success()));
+                })
+        });
+    }
+    group.finish();
+}
+
 criterion_group! {
   name = sleep;
   config = Criterion::default();
   targets = benchmark_sleep
 }
-criterion_main!(sleep,);
+
+criterion_group! {
+  name = sleep_process;
+  config = Criterion::default();
+  targets = benchmark_sleep_process
+}
+criterion_main!(sleep, sleep_process);

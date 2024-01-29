@@ -90,6 +90,7 @@ impl RuntimeBuilder {
         let mut interfaces_to_activity_function_names = HashMap::<_, Vec<_>>::new();
         for fqn in activity.functions() {
             if let Some(old) = self.functions_to_activities.get(fqn) {
+                // FIXME: leaves the builder in inconsistent state
                 bail!(
                     "cannot replace activity {fqn} from `{old_path}`",
                     old_path = old.wasm_path
