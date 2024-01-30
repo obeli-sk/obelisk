@@ -9,7 +9,7 @@ use anyhow::bail;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::AbortHandle;
-use tracing::{debug, info, info_span, warn, Instrument};
+use tracing::{debug, info, info_span, trace, warn, Instrument};
 use wasmtime::Engine;
 
 #[derive(Default)]
@@ -223,7 +223,16 @@ impl Runtime {
         while let Some((request, resp_tx)) = activity_event_fetcher.fetch_one().await {
             if *request.activity_fqn.ifc_fqn == *HOST_ACTIVITY_IFC {
                 tokio::spawn(async move {
-                    let _ = resp_tx.send(host_activity::execute_host_activity(request).await);
+                    debug!("Executing {activity}", activity = request.activity_fqn);
+                    trace!("Executing {request:?}");
+                    let _ = resp_tx.send(
+                        async {
+                            let res = host_activity::execute_host_activity(request).await;
+                            trace!("Execution finished: {res:?}");
+                            res
+                        }
+                        .await,
+                    );
                 });
             } else {
                 // execute wasm activity
@@ -231,8 +240,17 @@ impl Runtime {
                     Some(activity) => {
                         let activity = activity.clone();
                         tokio::spawn(async move {
+                            debug!("Executing {activity}", activity = request.activity_fqn);
+                            trace!("Executing {request:?}");
                             // TODO: cancellation
-                            let _ = resp_tx.send(activity.run(&request).await);
+                            let _ = resp_tx.send(
+                                async {
+                                    let res = activity.run(&request).await;
+                                    trace!("Execution finished: {res:?}");
+                                    res
+                                }
+                                .await,
+                            );
                         });
                     }
                     None => {
