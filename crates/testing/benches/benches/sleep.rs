@@ -16,7 +16,7 @@ use wasmtime::component::Val;
 
 const DB_BUFFER_CAPACITY: usize = 100;
 const ELEMENTS_PER_ITERATION: u64 = 100;
-const SLEEP_MILLIS: u64 = 0;
+const SLEEP_MILLIS: u64 = 1;
 
 lazy_static! {
     static ref RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()

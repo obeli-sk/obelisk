@@ -14,16 +14,36 @@ use std::sync::{Arc, Once};
 use std::{str::FromStr, time::Instant};
 use tokio::sync::Mutex;
 use tracing::info;
+use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+static mut CHRMOE_TRACE_FILE_GUARD: Option<FlushGuard> = None;
 static INIT: Once = Once::new();
-fn set_up() {
+
+fn set_up() -> Option<FlushGuard> {
     INIT.call_once(|| {
-        tracing_subscriber::registry()
+        let builder = tracing_subscriber::registry()
             .with(fmt::layer())
-            .with(EnvFilter::from_default_env())
-            .init();
+            .with(EnvFilter::from_default_env());
+        let enable_chrome_layer = std::env::var("CHRMOE_TRACE")
+            .ok()
+            .and_then(|val| val.parse::<bool>().ok())
+            .unwrap_or_default();
+
+        if enable_chrome_layer {
+            let (chrome_layer, guard) = ChromeLayerBuilder::new()
+                .trace_style(tracing_chrome::TraceStyle::Async)
+                .build();
+            unsafe {
+                CHRMOE_TRACE_FILE_GUARD = Some(guard);
+            }
+
+            builder.with(chrome_layer).init();
+        } else {
+            builder.init();
+        }
     });
+    unsafe { CHRMOE_TRACE_FILE_GUARD.take() }
 }
 
 #[rstest]
@@ -32,7 +52,9 @@ async fn test_async_activity(
     #[values("sleep-host-activity", "sleep-activity")] function: &str,
     #[values("Restart", "KeepWaiting")] activity_behavior: &str,
 ) -> Result<(), anyhow::Error> {
-    set_up();
+    let _guard = set_up();
+
+    const SLEEP_MILLIS: u64 = 1;
 
     let database = Database::new(100, 100);
     let mut runtime = RuntimeBuilder::default();
@@ -53,7 +75,7 @@ async fn test_async_activity(
         .await?;
     let _abort_handle = runtime.spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
-    let params = Arc::new(vec![wasmtime::component::Val::U64(10)]);
+    let params = Arc::new(vec![wasmtime::component::Val::U64(SLEEP_MILLIS)]);
     let stopwatch = Instant::now();
     database
         .workflow_scheduler()
