@@ -26,6 +26,9 @@ tracing-subscriber.workspace = true
 wasmtime.workspace = true
 wiremock.workspace = true
 
+[lints]
+workspace = true
+
 [[bench]]
 name = "fibo"
 harness = false

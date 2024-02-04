@@ -20,8 +20,7 @@ lazy_static! {
 
 fn fibonacci(n: u64) -> u64 {
     match n {
-        0 => 1,
-        1 => 1,
+        0 | 1 => 1,
         n => fibonacci(n - 1) + fibonacci(n - 2),
     }
 }
@@ -84,13 +83,14 @@ impl Display for FiboConfig {
     }
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn hot_or_cold(activity_config: &ActivityConfig, workflow_config: &WorkflowConfig) -> String {
     let mut v = Vec::new();
     if activity_config == &ACTIVITY_CONFIG_HOT {
-        v.push("activity_hot")
+        v.push("activity_hot");
     }
     if workflow_config == &WORKFLOW_CONFIG_HOT {
-        v.push("workflow_hot")
+        v.push("workflow_hot");
     }
     v.join(",")
 }
@@ -102,14 +102,14 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
             for _ in 0..10 {
                 fibonacci(black_box(10));
             }
-        })
+        });
     });
     criterion.bench_function("fibo(10)*100", |b| {
         b.iter(|| {
             for _ in 0..100 {
                 fibonacci(black_box(10));
             }
-        })
+        });
     });
     let functions = vec![
         FiboConfig::new("fibow", 10, 1, ACTIVITY_CONFIG_COLD, WORKFLOW_CONFIG_COLD),
@@ -145,7 +145,7 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
                         .unwrap();
                     abort_handle.abort();
                 }
-            })
+            });
         });
     }
 }
@@ -184,7 +184,7 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
                         .unwrap();
                     abort_handle.abort();
                 }
-            })
+            });
         });
     }
 }

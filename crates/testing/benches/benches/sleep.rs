@@ -94,7 +94,7 @@ fn benchmark_sleep(criterion: &mut Criterion) {
                         .collect::<Result<Vec<_>, _>>()
                         .unwrap();
                 }
-            })
+            });
         });
     }
     group.finish();
@@ -126,7 +126,7 @@ fn benchmark_sleep_process(criterion: &mut Criterion) {
                         .unwrap()
                         .into_iter()
                         .all(|status| status.success()));
-                })
+                });
         });
     }
     group.finish();

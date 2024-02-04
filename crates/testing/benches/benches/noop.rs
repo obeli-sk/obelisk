@@ -24,6 +24,7 @@ fn benchmark_engine_creation(criterion: &mut Criterion) {
     group.bench_function("engine", |b| b.iter(RuntimeBuilder::default));
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn noop_workflow(
     mut runtime: RuntimeBuilder,
     activity_config: &ActivityConfig,
@@ -47,13 +48,14 @@ fn noop_workflow(
     })
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn hot_or_cold(activity_config: &ActivityConfig, workflow_config: &WorkflowConfig) -> String {
     let mut v = Vec::new();
     if activity_config == &ACTIVITY_CONFIG_HOT {
-        v.push("activity_hot")
+        v.push("activity_hot");
     }
     if workflow_config == &WORKFLOW_CONFIG_HOT {
-        v.push("workflow_hot")
+        v.push("workflow_hot");
     }
     v.join(",")
 }
@@ -98,7 +100,7 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
                             .unwrap();
                         abort_handle.abort(); // TODO: needed?
                     }
-                })
+                });
             },
         );
     }

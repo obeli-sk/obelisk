@@ -78,6 +78,8 @@ fn setup_runtime() -> Runtime {
 static COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
 
 fn benchmark_http(criterion: &mut Criterion) {
+    const ELEMENTS: u64 = 10;
+
     let _guard = set_up();
     let database = Database::new(100, 100);
     let runtime = setup_runtime();
@@ -93,7 +95,6 @@ fn benchmark_http(criterion: &mut Criterion) {
     });
     let fqn = FunctionFqnStr::new("testing:http-workflow/workflow", "execute");
 
-    const ELEMENTS: u64 = 10;
     let mut group = criterion.benchmark_group("http");
     group.throughput(Throughput::Elements(ELEMENTS));
     group.bench_function("http", |b| {
@@ -120,7 +121,7 @@ fn benchmark_http(criterion: &mut Criterion) {
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
             }
-        })
+        });
     });
     group.finish();
 }
