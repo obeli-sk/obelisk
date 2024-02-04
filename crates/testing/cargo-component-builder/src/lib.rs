@@ -63,7 +63,7 @@ fn add_dependency(file: &Utf8Path) {
             .unwrap_or_else(|err| panic!("cannot read folder `{file}` - {err:?}"))
             .flatten()
         {
-            add_dependency(file.path())
+            add_dependency(file.path());
         }
     }
 }
