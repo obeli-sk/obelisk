@@ -11,3 +11,6 @@ serde.workspace = true
 thiserror.workspace = true
 wasmtime.workspace = true
 wit-parser.workspace = true
+
+[lints]
+workspace = true

@@ -105,6 +105,7 @@ impl TryFrom<wasmtime::component::Val> for ValWrapper {
 */
 
 impl PartialEq for ValWrapper {
+    #[allow(clippy::match_same_arms)]
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             // IEEE 754 equality considers NaN inequal to NaN and negative zero

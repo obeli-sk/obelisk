@@ -8,6 +8,7 @@ struct ValDeserialize<'a>(&'a TypeWrapper);
 impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
     type Value = ValWrapper;
 
+    #[allow(clippy::too_many_lines)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
@@ -41,7 +42,10 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 if matches!(self.0, TypeWrapper::U8) {
                     Ok(ValWrapper::U8(val))
                 } else {
-                    Err(Error::invalid_type(Unexpected::Unsigned(val as u64), &self))
+                    Err(Error::invalid_type(
+                        Unexpected::Unsigned(u64::from(val)),
+                        &self,
+                    ))
                 }
             }
 
@@ -52,7 +56,10 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 if matches!(self.0, TypeWrapper::U16) {
                     Ok(ValWrapper::U16(val))
                 } else {
-                    Err(Error::invalid_type(Unexpected::Unsigned(val as u64), &self))
+                    Err(Error::invalid_type(
+                        Unexpected::Unsigned(u64::from(val)),
+                        &self,
+                    ))
                 }
             }
 
@@ -63,7 +70,10 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 if matches!(self.0, TypeWrapper::U32) {
                     Ok(ValWrapper::U32(val))
                 } else {
-                    Err(Error::invalid_type(Unexpected::Unsigned(val as u64), &self))
+                    Err(Error::invalid_type(
+                        Unexpected::Unsigned(u64::from(val)),
+                        &self,
+                    ))
                 }
             }
 
@@ -90,7 +100,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 } else {
                     Err(())
                 }
-                .map_err(|_| Error::invalid_type(Unexpected::Unsigned(val), &self))
+                .map_err(|()| Error::invalid_type(Unexpected::Unsigned(val), &self))
             }
 
             fn visit_i8<E>(self, val: i8) -> Result<Self::Value, E>
@@ -100,7 +110,10 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 if matches!(self.0, TypeWrapper::S8) {
                     Ok(ValWrapper::S8(val))
                 } else {
-                    Err(Error::invalid_type(Unexpected::Signed(val as i64), &self))
+                    Err(Error::invalid_type(
+                        Unexpected::Signed(i64::from(val)),
+                        &self,
+                    ))
                 }
             }
 
@@ -111,7 +124,10 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 if matches!(self.0, TypeWrapper::U16) {
                     Ok(ValWrapper::S16(val))
                 } else {
-                    Err(Error::invalid_type(Unexpected::Signed(val as i64), &self))
+                    Err(Error::invalid_type(
+                        Unexpected::Signed(i64::from(val)),
+                        &self,
+                    ))
                 }
             }
 
@@ -122,7 +138,10 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 if matches!(self.0, TypeWrapper::U32) {
                     Ok(ValWrapper::S32(val))
                 } else {
-                    Err(Error::invalid_type(Unexpected::Signed(val as i64), &self))
+                    Err(Error::invalid_type(
+                        Unexpected::Signed(i64::from(val)),
+                        &self,
+                    ))
                 }
             }
 
@@ -149,7 +168,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 } else {
                     Err(())
                 }
-                .map_err(|_| Error::invalid_type(Unexpected::Signed(val), &self))
+                .map_err(|()| Error::invalid_type(Unexpected::Signed(val), &self))
             }
 
             fn visit_f32<E>(self, val: f32) -> Result<Self::Value, E>
@@ -159,7 +178,10 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 if matches!(self.0, TypeWrapper::Float32) {
                     Ok(ValWrapper::Float32(val))
                 } else {
-                    Err(Error::invalid_type(Unexpected::Float(val as f64), &self))
+                    Err(Error::invalid_type(
+                        Unexpected::Float(f64::from(val)),
+                        &self,
+                    ))
                 }
             }
 
@@ -170,16 +192,18 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 if *self.0 == TypeWrapper::Float64 {
                     Ok(ValWrapper::Float64(val))
                 } else if *self.0 == TypeWrapper::Float32 {
+                    // Warining: This might truncate the value.
+                    #[allow(clippy::cast_possible_truncation)]
                     let f32 = val as f32;
+                    // Fail on overflow.
                     if val.is_finite() == f32.is_finite() {
-                        Ok(ValWrapper::Float32(f32))
-                    } else {
-                        Err(())
+                        return Ok(ValWrapper::Float32(f32));
                     }
+                    Err(())
                 } else {
                     Err(())
                 }
-                .map_err(|_| Error::invalid_type(Unexpected::Float(val), &self))
+                .map_err(|()| Error::invalid_type(Unexpected::Float(val), &self))
             }
 
             fn visit_char<E>(self, val: char) -> Result<Self::Value, E>
@@ -345,7 +369,7 @@ mod tests {
 
     #[test]
     fn f64() {
-        let f = f32::MAX as f64 + 1.0;
+        let f = f64::from(f32::MAX) + 1.0;
         let expected = ValWrapper::Float64(f);
         let input = f.to_string();
         let ty = TypeWrapper::Float64;
@@ -357,7 +381,7 @@ mod tests {
 
     #[test]
     fn f32_from_f64_overflow1() {
-        let f = f32::MAX as f64 * 2.0;
+        let f = f64::from(f32::MAX) * 2.0;
         let input = f.to_string();
         let ty = TypeWrapper::Float32;
         let err = ValDeserialize(&ty)
