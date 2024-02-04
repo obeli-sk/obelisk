@@ -1,4 +1,4 @@
-use concepts::{workflow_id::WorkflowId, FunctionFqn, SupportedFunctionResult};
+use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
 use runtime::{
     activity::ActivityConfig, database::Database, event_history::EventHistory,
     runtime::RuntimeBuilder, workflow::WorkflowConfig,
@@ -47,7 +47,7 @@ async fn test_fibow_fiboa() -> Result<(), anyhow::Error> {
             .schedule_workflow(
                 WorkflowId::generate(),
                 event_history.clone(),
-                FunctionFqn::new("testing:fibo-workflow/workflow", workflow_function),
+                FunctionFqnStr::new("testing:fibo-workflow/workflow", workflow_function).to_owned(),
                 params,
             )
             .await;

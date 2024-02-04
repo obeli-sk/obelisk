@@ -1,4 +1,4 @@
-use concepts::{workflow_id::WorkflowId, FunctionFqn};
+use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use lazy_static::lazy_static;
 use runtime::{
@@ -80,7 +80,7 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
                 hot_or_cold = hot_or_cold(&activity_config, &workflow_config)
             ),
             |b| {
-                let fqn = FunctionFqn::new("testing:noop-workflow/workflow", workflow_function);
+                let fqn = FunctionFqnStr::new("testing:noop-workflow/workflow", workflow_function);
                 let database = Database::new(100, 100);
                 let runtime_builder = runtime_builder.try_lock().unwrap().clone();
                 let runtime = noop_workflow(runtime_builder, &activity_config, &workflow_config);
@@ -89,7 +89,7 @@ fn benchmark_noop_functions(criterion: &mut Criterion) {
                     let workflow_scheduler = database.workflow_scheduler();
                     let params = Arc::new(vec![Val::U32(iterations)]);
                     let event_history = Arc::new(Mutex::new(EventHistory::default()));
-                    let fqn = fqn.clone();
+                    let fqn = fqn.to_owned();
 
                     async move {
                         workflow_scheduler

@@ -1,4 +1,5 @@
-use concepts::{workflow_id::WorkflowId, FunctionFqn};
+use concepts::workflow_id::WorkflowId;
+use concepts::FunctionFqnStr;
 use runtime::event_history::EventHistory;
 use runtime::runtime::RuntimeBuilder;
 use runtime::workflow::WorkflowConfig;
@@ -29,7 +30,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let fqn = if let Some((ifc_fqn, function_name)) =
         workflow_function.split_once(IFC_FQN_FUNCTION_NAME_SEPARATOR)
     {
-        FunctionFqn::new(ifc_fqn, function_name)
+        FunctionFqnStr::new(ifc_fqn, function_name).to_owned()
     } else {
         panic!("workflow function must be a fully qualified name in format `package/interface.function`")
     };

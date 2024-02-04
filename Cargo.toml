@@ -110,3 +110,19 @@ wit-bindgen = { version = "0.16.0", default-features = false, features = [
 ] }
 wit-component = "0.19"
 wit-parser = "0.13"
+
+
+[workspace.lints]
+# lower the priority to allow overriding later
+clippy.pedantic = { level = "deny", priority = -1 }
+clippy.all = { level = "deny", priority = -1 }
+
+clippy.dbg_macro = "deny"
+rust.unused_extern_crates = "forbid"
+clippy.explicit_deref_methods = "allow"
+clippy.missing_errors_doc = "allow"
+clippy.missing_panics_doc = "allow"
+rust.unknown_lints = "deny"
+
+[lints]
+workspace = true

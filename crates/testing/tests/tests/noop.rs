@@ -1,4 +1,4 @@
-use concepts::{workflow_id::WorkflowId, FunctionFqn, SupportedFunctionResult};
+use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
 use rstest::rstest;
 use runtime::{
     activity::ActivityConfig,
@@ -75,7 +75,7 @@ async fn test(
     let _abort_handle = runtime.spawn(&database);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let param_vals = format!("[{iterations}]");
-    let fqn = FunctionFqn::new("testing:noop-workflow/workflow", function);
+    let fqn = FunctionFqnStr::new("testing:noop-workflow/workflow", function).to_owned();
     let metadata = runtime.workflow_function_metadata(&fqn).unwrap();
     let param_vals = Arc::new(metadata.deserialize_params(&param_vals).unwrap());
     let span = info_span!("stopwatch").entered();

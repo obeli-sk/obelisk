@@ -1,4 +1,4 @@
-use concepts::{workflow_id::WorkflowId, FunctionFqn};
+use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use lazy_static::lazy_static;
 use runtime::{
@@ -122,7 +122,7 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
     let runtime_builder = Mutex::new(RuntimeBuilder::default());
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {
-            let fqn = FunctionFqn::new(
+            let fqn = FunctionFqnStr::new(
                 "testing:fibo-workflow/workflow",
                 fibo_config.workflow_function,
             );
@@ -137,7 +137,7 @@ fn benchmark_fibo_fast_functions(criterion: &mut Criterion) {
                     Val::U32(fibo_config.iterations),
                 ]);
                 let event_history = Arc::new(Mutex::new(EventHistory::default()));
-                let fqn = fqn.clone();
+                let fqn = fqn.to_owned();
                 async move {
                     workflow_scheduler
                         .schedule_workflow(WorkflowId::generate(), event_history, fqn, params)
@@ -161,7 +161,7 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
     let runtime_builder = Mutex::new(RuntimeBuilder::default());
     for fibo_config in functions {
         criterion.bench_function(&fibo_config.to_string(), |b| {
-            let fqn = FunctionFqn::new(
+            let fqn = FunctionFqnStr::new(
                 "testing:fibo-workflow/workflow",
                 fibo_config.workflow_function,
             );
@@ -175,7 +175,7 @@ fn benchmark_fibo_slow_functions(criterion: &mut Criterion) {
                     Val::U32(fibo_config.iterations),
                 ]);
                 let event_history = Arc::new(Mutex::new(EventHistory::default()));
-                let fqn = fqn.clone();
+                let fqn = fqn.to_owned();
                 let abort_handle = runtime.spawn(&database);
                 async move {
                     workflow_scheduler

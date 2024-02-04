@@ -14,10 +14,11 @@ pub struct Name<T> {
 }
 
 impl<T> Name<T> {
-    pub fn new(value: impl ToString) -> Self {
+    #[must_use]
+    pub fn new(value: String) -> Self {
         Self {
-            value: Arc::new(value.to_string()),
-            phantom_data: Default::default(),
+            value: Arc::new(value),
+            phantom_data: PhantomData,
         }
     }
 }
@@ -59,7 +60,8 @@ pub struct FunctionFqn {
 }
 
 impl FunctionFqn {
-    pub fn new(ifc_fqn: impl ToString, function_name: impl ToString) -> FunctionFqn {
+    #[must_use]
+    pub fn new(ifc_fqn: String, function_name: String) -> FunctionFqn {
         FunctionFqn {
             ifc_fqn: Name::new(ifc_fqn),
             function_name: Name::new(function_name),
@@ -97,6 +99,7 @@ pub struct FunctionFqnStr<'a> {
 }
 
 impl FunctionFqnStr<'_> {
+    #[must_use]
     pub const fn new<'a>(ifc_fqn: &'a str, function_name: &'a str) -> FunctionFqnStr<'a> {
         FunctionFqnStr {
             ifc_fqn,
@@ -104,8 +107,9 @@ impl FunctionFqnStr<'_> {
         }
     }
 
+    #[must_use]
     pub fn to_owned(&self) -> FunctionFqn {
-        FunctionFqn::new(self.ifc_fqn.to_string(), self.function_name.to_string())
+        FunctionFqn::new(self.ifc_fqn.to_owned(), self.function_name.to_owned())
     }
 }
 
@@ -158,6 +162,7 @@ pub enum SupportedFunctionResult {
 }
 
 impl SupportedFunctionResult {
+    #[must_use]
     pub fn new(mut vec: Vec<wasmtime::component::Val>) -> Self {
         if vec.is_empty() {
             Self::None
@@ -168,6 +173,7 @@ impl SupportedFunctionResult {
         }
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         match self {
             Self::None => 0,
@@ -175,6 +181,7 @@ impl SupportedFunctionResult {
         }
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         matches!(self, Self::None)
     }
@@ -198,10 +205,12 @@ pub mod workflow_id {
     #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
     pub struct WorkflowId(Arc<String>);
     impl WorkflowId {
+        #[must_use]
         pub fn generate() -> WorkflowId {
             ulid::Ulid::new().to_string().parse().unwrap() // ulid is 26 chars long
         }
 
+        #[must_use]
         pub fn new(s: String) -> Self {
             Self(Arc::new(s))
         }
@@ -217,27 +226,27 @@ pub mod workflow_id {
     const MAX_LEN: usize = 32;
 
     impl FromStr for WorkflowId {
-        type Err = WorkflowIdParseError;
+        type Err = ParseError;
 
         fn from_str(s: &str) -> Result<Self, Self::Err> {
             if s.len() < MIN_LEN {
-                return Err(WorkflowIdParseError::TooShort);
+                return Err(ParseError::TooShort);
             }
             if s.len() > MAX_LEN {
-                return Err(WorkflowIdParseError::TooLong);
+                return Err(ParseError::TooLong);
             }
             if s.chars()
                 .all(|x| x.is_alphanumeric() || x == '_' || x == '-')
             {
                 Ok(Self(Arc::new(s.to_string())))
             } else {
-                Err(WorkflowIdParseError::IllegalCharacters)
+                Err(ParseError::IllegalCharacters)
             }
         }
     }
 
     #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-    pub enum WorkflowIdParseError {
+    pub enum ParseError {
         #[error("workflow id too long, maximal length: {MAX_LEN}")]
         TooLong,
         #[error("workflow id too short, minimal length: {MIN_LEN}")]
@@ -250,7 +259,7 @@ pub mod workflow_id {
     mod tests {
         use crate::workflow_id::MAX_LEN;
 
-        use super::{WorkflowId, WorkflowIdParseError};
+        use super::{ParseError, WorkflowId};
 
         #[test]
         fn parse_workflow_id() {
@@ -261,15 +270,12 @@ pub mod workflow_id {
             );
             assert_eq!(
                 "w1\n".parse::<WorkflowId>().unwrap_err(),
-                WorkflowIdParseError::IllegalCharacters
+                ParseError::IllegalCharacters
             );
-            assert_eq!(
-                "".parse::<WorkflowId>().unwrap_err(),
-                WorkflowIdParseError::TooShort
-            );
+            assert_eq!("".parse::<WorkflowId>().unwrap_err(), ParseError::TooShort);
             assert_eq!(
                 "x".repeat(MAX_LEN + 1).parse::<WorkflowId>().unwrap_err(),
-                WorkflowIdParseError::TooLong
+                ParseError::TooLong
             );
         }
     }

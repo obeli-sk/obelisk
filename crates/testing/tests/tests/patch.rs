@@ -1,5 +1,6 @@
 use assert_matches::assert_matches;
-use concepts::{workflow_id::WorkflowId, FunctionFqn, SupportedFunctionResult};
+use concepts::FunctionFqnStr;
+use concepts::{workflow_id::WorkflowId, SupportedFunctionResult};
 use runtime::error::ActivityFailed;
 use runtime::{
     activity::ActivityConfig, database::Database, error::ExecutionError,
@@ -26,7 +27,7 @@ fn set_up() {
 async fn patch_activity() -> Result<(), anyhow::Error> {
     set_up();
     const EXPECTED_ACTIVITY_CALLS: u32 = 10;
-    let fqn = FunctionFqn::new("testing:patch-workflow/workflow", "noopa");
+    let fqn = FunctionFqnStr::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = Arc::new(vec![Val::U32(EXPECTED_ACTIVITY_CALLS)]);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let database = Database::new(100, 100);
@@ -52,7 +53,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
             .schedule_workflow(
                 workflow_id.clone(),
                 event_history.clone(),
-                fqn.clone(),
+                fqn.to_owned(),
                 param_vals.clone(),
             )
             .await;
@@ -66,7 +67,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
                 workflow_id: found_workflow_id,
                 run_id,
             } if workflow_fqn == fqn && found_workflow_id == workflow_id && run_id == 5 &&
-            activity_fqn == FunctionFqn::new("testing:patch/patch", "noop")
+            activity_fqn == FunctionFqnStr::new("testing:patch/patch", "noop")
         );
         assert_eq!(
             event_history.lock().await.successful_activities(),
@@ -101,7 +102,7 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
             .schedule_workflow(
                 WorkflowId::generate(),
                 event_history.clone(),
-                fqn,
+                fqn.to_owned(),
                 param_vals,
             )
             .await
@@ -116,10 +117,10 @@ async fn patch_activity() -> Result<(), anyhow::Error> {
 
 fn generate_history(max: u32) -> EventHistory {
     let mut event_history = Vec::new();
-    let activity_fqn = FunctionFqn::new("testing:patch/patch", "noop");
+    let activity_fqn = FunctionFqnStr::new("testing:patch/patch", "noop");
     for i in 0..max {
         event_history.push((
-            activity_fqn.clone(),
+            activity_fqn.to_owned(),
             Arc::new(vec![Val::U32(i)]),
             Ok(SupportedFunctionResult::None),
         ));
@@ -132,7 +133,7 @@ async fn generate_event_history_matching() -> Result<(), anyhow::Error> {
     set_up();
     const EXPECTED_ACTIVITY_CALLS: u32 = 10;
     let event_history = Arc::new(Mutex::new(generate_history(EXPECTED_ACTIVITY_CALLS)));
-    let fqn = FunctionFqn::new("testing:patch-workflow/workflow", "noopa");
+    let fqn = FunctionFqnStr::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = Arc::new(vec![Val::U32(EXPECTED_ACTIVITY_CALLS)]);
     let database = Database::new(100, 100);
     let mut runtime = RuntimeBuilder::default();
@@ -155,7 +156,7 @@ async fn generate_event_history_matching() -> Result<(), anyhow::Error> {
         .schedule_workflow(
             WorkflowId::generate(),
             event_history.clone(),
-            fqn,
+            fqn.to_owned(),
             param_vals,
         )
         .await
@@ -173,7 +174,7 @@ async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
     set_up();
     const EXPECTED_ACTIVITY_CALLS: u32 = 10;
     let event_history = Arc::new(Mutex::new(generate_history(EXPECTED_ACTIVITY_CALLS + 1)));
-    let fqn = FunctionFqn::new("testing:patch-workflow/workflow", "noopa");
+    let fqn = FunctionFqnStr::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = Arc::new(vec![Val::U32(EXPECTED_ACTIVITY_CALLS)]);
     let database = Database::new(100, 100);
     let mut runtime = RuntimeBuilder::default();
@@ -194,7 +195,12 @@ async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
     let workflow_id = WorkflowId::generate();
     let res = database
         .workflow_scheduler()
-        .schedule_workflow(workflow_id.clone(), event_history, fqn.clone(), param_vals)
+        .schedule_workflow(
+            workflow_id.clone(),
+            event_history,
+            fqn.to_owned(),
+            param_vals,
+        )
         .await;
 
     assert_matches!(

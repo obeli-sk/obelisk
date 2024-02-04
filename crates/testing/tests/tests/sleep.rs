@@ -1,5 +1,5 @@
 use assert_matches::assert_matches;
-use concepts::{workflow_id::WorkflowId, FunctionFqn};
+use concepts::{workflow_id::WorkflowId, FunctionFqn, FunctionFqnStr};
 use rstest::*;
 use runtime::{
     activity::ActivityConfig,
@@ -125,7 +125,7 @@ async fn test_call_activity_with_version() -> Result<(), anyhow::Error> {
         .schedule_workflow(
             WorkflowId::generate(),
             event_history,
-            FunctionFqn::new("testing:sleep-workflow/workflow", "run"),
+            FunctionFqnStr::new("testing:sleep-workflow/workflow", "run").to_owned(),
             Arc::new(Vec::new()),
         )
         .await;
@@ -224,7 +224,8 @@ async fn test_limits(
                             .to_string(),
                     ),
                     event_history,
-                    FunctionFqn::new("testing:sleep-workflow/workflow", "sleep-activity"),
+                    FunctionFqnStr::new("testing:sleep-workflow/workflow", "sleep-activity")
+                        .to_owned(),
                     params,
                 )
                 .await

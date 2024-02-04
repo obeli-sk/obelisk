@@ -1,4 +1,5 @@
-use concepts::{workflow_id::WorkflowId, FunctionFqn};
+use concepts::workflow_id::WorkflowId;
+use concepts::FunctionFqnStr;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use lazy_static::lazy_static;
 use runtime::activity::ACTIVITY_CONFIG_HOT;
@@ -90,7 +91,7 @@ fn benchmark_http(criterion: &mut Criterion) {
             .await;
         server.address().port()
     });
-    let fqn = FunctionFqn::new("testing:http-workflow/workflow", "execute");
+    let fqn = FunctionFqnStr::new("testing:http-workflow/workflow", "execute");
 
     const ELEMENTS: u64 = 10;
     let mut group = criterion.benchmark_group("http");
@@ -98,7 +99,7 @@ fn benchmark_http(criterion: &mut Criterion) {
     group.bench_function("http", |b| {
         b.to_async::<&tokio::runtime::Runtime>(&RT).iter(|| {
             let params = Arc::new(vec![wasmtime::component::Val::U16(port)]);
-            let fqn = fqn.clone();
+            let fqn = fqn.to_owned();
             let workflow_scheduler = database.workflow_scheduler();
             async move {
                 let mut futures = Vec::new();

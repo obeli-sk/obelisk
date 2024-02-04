@@ -25,3 +25,6 @@ ulid.workspace = true
 wasmtime.workspace = true
 wit-component.workspace = true
 wit-parser.workspace = true
+
+[lints]
+workspace = true
