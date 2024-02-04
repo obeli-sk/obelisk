@@ -9,22 +9,11 @@ rust-version.workspace = true
 [dependencies]
 val-json.workspace = true
 
-anyhow.workspace = true
-assert_matches.workspace = true
-async-trait.workspace = true
 derive_more.workspace = true
-futures-util.workspace = true
-indexmap.workspace = true
-lazy_static.workspace = true
 serde_json.workspace = true
-strum.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
-tracing.workspace = true
 ulid.workspace = true
 wasmtime.workspace = true
-wit-component.workspace = true
-wit-parser.workspace = true
 
 [lints]
 workspace = true

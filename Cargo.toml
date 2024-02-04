@@ -14,16 +14,9 @@ runtime.workspace = true
 val-json.workspace = true
 
 anyhow.workspace = true
-async-trait.workspace = true
-lazy_static.workspace = true
-thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing-subscriber.workspace = true
-wasmtime-wasi-http.workspace = true
-wasmtime-wasi.workspace = true
 wasmtime.workspace = true
-wit-component.workspace = true
-wit-parser.workspace = true
 
 [workspace]
 resolver = "2"
@@ -118,7 +111,6 @@ clippy.all = { level = "deny", priority = -1 }
 clippy.dbg_macro = "deny"
 clippy.pedantic = { level = "deny", priority = -1 }
 rust.unknown_lints = "deny"
-# rust.unused_extern_crates = "forbid"
 
 clippy.explicit_deref_methods = "allow"     # Lots of false positives.
 clippy.missing_errors_doc = "allow"         # Allow missing docs for now

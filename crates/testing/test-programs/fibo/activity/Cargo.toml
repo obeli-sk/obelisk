@@ -6,7 +6,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 wit-bindgen.workspace = true
 
 [lib]

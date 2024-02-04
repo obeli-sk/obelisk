@@ -419,23 +419,12 @@ checksum = "702fc72eb24e5a1e48ce58027a675bc24edd52096d5397d4aea7c6dd9eca0bd1"
 name = "concepts"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "assert_matches",
- "async-trait",
  "derive_more",
- "futures-util",
- "indexmap",
- "lazy_static",
  "serde_json",
- "strum",
  "thiserror",
- "tokio",
- "tracing",
  "ulid",
  "val-json",
  "wasmtime",
- "wit-component",
- "wit-parser",
 ]
 
 [[package]]
@@ -1917,17 +1906,14 @@ dependencies = [
  "async-channel 2.1.1",
  "async-trait",
  "concepts",
- "derive_more",
  "futures-util",
  "indexmap",
  "lazy_static",
- "serde_json",
  "strum",
  "test-programs-fibo-workflow-builder",
  "thiserror",
  "tokio",
  "tracing",
- "ulid",
  "val-json",
  "wasmtime",
  "wasmtime-wasi",
@@ -2260,7 +2246,6 @@ checksum = "14c39fd04924ca3a864207c66fc2cd7d22d7c016007f9ce846cbb9326331930a"
 name = "test-programs-fibo-activity"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "wit-bindgen",
 ]
 
@@ -2388,7 +2373,6 @@ dependencies = [
 name = "test-programs-sleep-activity"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "wit-bindgen",
 ]
 
@@ -3648,19 +3632,12 @@ name = "workflow-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "concepts",
- "lazy_static",
  "runtime",
- "thiserror",
  "tokio",
  "tracing-subscriber",
  "val-json",
  "wasmtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
- "wit-component",
- "wit-parser",
 ]
 
 [[package]]
