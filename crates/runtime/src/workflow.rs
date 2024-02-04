@@ -67,7 +67,6 @@ lazy_static! {
 }
 
 impl Workflow {
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub(crate) fn new_with_config(
         wasm_path: String,
         is_activity_fn: impl Fn(&FunctionFqn) -> bool,

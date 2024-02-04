@@ -83,7 +83,6 @@ impl Display for FiboConfig {
     }
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
 fn hot_or_cold(activity_config: &ActivityConfig, workflow_config: &WorkflowConfig) -> String {
     let mut v = Vec::new();
     if activity_config == &ACTIVITY_CONFIG_HOT {

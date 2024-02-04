@@ -120,9 +120,9 @@ clippy.pedantic = { level = "deny", priority = -1 }
 rust.unknown_lints = "deny"
 # rust.unused_extern_crates = "forbid"
 
-clippy.explicit_deref_methods = "allow" # Lots of false positives.
-clippy.missing_errors_doc = "allow"     # Allow missing docs for now
-clippy.missing_panics_doc = "allow"     # Allow missing docs for now
-
+clippy.explicit_deref_methods = "allow"     # Lots of false positives.
+clippy.missing_errors_doc = "allow"         # Allow missing docs for now
+clippy.missing_panics_doc = "allow"         # Allow missing docs for now
+clippy.trivially_copy_pass_by_ref = "allow" # Lots of false positives.
 [lints]
 workspace = true

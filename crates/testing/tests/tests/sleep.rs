@@ -51,9 +51,9 @@ async fn test_async_activity(
     #[values("sleep-host-activity", "sleep-activity")] function: &str,
     #[values("Restart", "KeepWaiting")] activity_behavior: &str,
 ) -> Result<(), anyhow::Error> {
-    let _guard = set_up();
-
     const SLEEP_MILLIS: u64 = 1;
+
+    let _guard = set_up();
 
     let database = Database::new(100, 100);
     let mut runtime = RuntimeBuilder::default();
@@ -153,6 +153,7 @@ enum LimitKind {
     Component,
 }
 impl LimitKind {
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     fn config(&self) -> EngineConfig {
         match self {
             Self::Core => {
@@ -242,13 +243,13 @@ async fn test_limits(
         assert_matches!(err,
             ExecutionError::ActivityLimitReached { reason, .. }
             if reason == format!("maximum concurrent {limit_kind} instance limit of {LIMIT} reached"),
-            "{:?}", match &err { ExecutionError::UnknownError{source,..} => source.to_string(), _ => "".to_string()}
+            "{:?}", match &err { ExecutionError::UnknownError{source,..} => source.to_string(), _ => String::new()}
         );
     } else {
         assert_matches!(err,
             ExecutionError::LimitReached { reason, .. }
             if reason == format!("maximum concurrent {limit_kind} instance limit of {LIMIT} reached"),
-            "{:?}", match &err { ExecutionError::UnknownError{source,..} => source.to_string(), _ => "".to_string()}
+            "{:?}", match &err { ExecutionError::UnknownError{source,..} => source.to_string(), _ => String::new()}
         );
     }
 

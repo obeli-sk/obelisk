@@ -28,6 +28,7 @@ fn set_up() {
 
 #[tokio::test]
 async fn test() -> Result<(), anyhow::Error> {
+    const BODY: &str = "ok";
     set_up();
     let database = Database::new(100, 100);
     let mut runtime = RuntimeBuilder::default();
@@ -47,7 +48,6 @@ async fn test() -> Result<(), anyhow::Error> {
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
     let timer = Instant::now();
 
-    const BODY: &str = "ok";
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/"))

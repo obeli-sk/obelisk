@@ -25,8 +25,8 @@ fn set_up() {
 
 #[tokio::test]
 async fn patch_activity() -> Result<(), anyhow::Error> {
-    set_up();
     const EXPECTED_ACTIVITY_CALLS: u32 = 10;
+    set_up();
     let fqn = FunctionFqnStr::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = Arc::new(vec![Val::U32(EXPECTED_ACTIVITY_CALLS)]);
     let event_history = Arc::new(Mutex::new(EventHistory::default()));
@@ -130,8 +130,8 @@ fn generate_history(max: u32) -> EventHistory {
 
 #[tokio::test]
 async fn generate_event_history_matching() -> Result<(), anyhow::Error> {
-    set_up();
     const EXPECTED_ACTIVITY_CALLS: u32 = 10;
+    set_up();
     let event_history = Arc::new(Mutex::new(generate_history(EXPECTED_ACTIVITY_CALLS)));
     let fqn = FunctionFqnStr::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = Arc::new(vec![Val::U32(EXPECTED_ACTIVITY_CALLS)]);
@@ -171,8 +171,8 @@ async fn generate_event_history_matching() -> Result<(), anyhow::Error> {
 
 #[tokio::test]
 async fn generate_event_history_too_big() -> Result<(), anyhow::Error> {
-    set_up();
     const EXPECTED_ACTIVITY_CALLS: u32 = 10;
+    set_up();
     let event_history = Arc::new(Mutex::new(generate_history(EXPECTED_ACTIVITY_CALLS + 1)));
     let fqn = FunctionFqnStr::new("testing:patch-workflow/workflow", "noopa");
     let param_vals = Arc::new(vec![Val::U32(EXPECTED_ACTIVITY_CALLS)]);

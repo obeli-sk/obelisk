@@ -33,3 +33,6 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 wasmtime.workspace = true
 wiremock.workspace = true
+
+[lints]
+workspace = true
