@@ -1,4 +1,5 @@
 use assert_matches::assert_matches;
+use concepts::{workflow_id::WorkflowId, FunctionFqn};
 use rstest::*;
 use runtime::{
     activity::ActivityConfig,
@@ -7,8 +8,6 @@ use runtime::{
     event_history::EventHistory,
     runtime::{EngineConfig, RuntimeBuilder, RuntimeConfig},
     workflow::{AsyncActivityBehavior, WorkflowConfig},
-    workflow_id::WorkflowId,
-    FunctionFqn,
 };
 use std::sync::{Arc, Once};
 use std::{str::FromStr, time::Instant};

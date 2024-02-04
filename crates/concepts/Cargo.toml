@@ -1,17 +1,16 @@
 [package]
-name = "runtime"
+name = "concepts"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+
 [dependencies]
-concepts.workspace = true
 val-json.workspace = true
 
 anyhow.workspace = true
 assert_matches.workspace = true
-async-channel.workspace = true
 async-trait.workspace = true
 derive_more.workspace = true
 futures-util.workspace = true
@@ -23,12 +22,6 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 ulid.workspace = true
-wasmtime-wasi-http.workspace = true
-wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 wit-component.workspace = true
 wit-parser.workspace = true
-
-[dev-dependencies]
-test-programs-fibo-workflow-builder.workspace = true
-tokio = { workspace = true, features = ["full"] }

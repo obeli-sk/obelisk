@@ -1,10 +1,11 @@
 use crate::activity::ActivityRequest;
 use crate::error::ExecutionError;
 use crate::event_history::EventHistory;
-use crate::workflow_id::WorkflowId;
+use crate::ActivityResponse;
 use crate::SupportedFunctionResult;
-use crate::{ActivityResponse, FunctionFqn};
 use async_channel::{bounded, Receiver, Sender};
+use concepts::workflow_id::WorkflowId;
+use concepts::FunctionFqn;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex};
 use tracing::info;

@@ -159,6 +159,7 @@ checksum = "35636a1494ede3b646cc98f74f8e62c773a38a659ebc777a2cf26b9b74171df9"
 name = "benches"
 version = "0.1.0"
 dependencies = [
+ "concepts",
  "criterion",
  "futures-util",
  "lazy_static",
@@ -413,6 +414,29 @@ name = "clap_lex"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "702fc72eb24e5a1e48ce58027a675bc24edd52096d5397d4aea7c6dd9eca0bd1"
+
+[[package]]
+name = "concepts"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_matches",
+ "async-trait",
+ "derive_more",
+ "futures-util",
+ "indexmap",
+ "lazy_static",
+ "serde_json",
+ "strum",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "ulid",
+ "val-json",
+ "wasmtime",
+ "wit-component",
+ "wit-parser",
+]
 
 [[package]]
 name = "concurrent-queue"
@@ -1892,6 +1916,7 @@ dependencies = [
  "assert_matches",
  "async-channel 2.1.1",
  "async-trait",
+ "concepts",
  "derive_more",
  "futures-util",
  "indexmap",
@@ -2394,6 +2419,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_matches",
+ "concepts",
  "derive_more",
  "futures-util",
  "rstest",
@@ -3623,6 +3649,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "concepts",
  "lazy_static",
  "runtime",
  "thiserror",

@@ -1,4 +1,5 @@
-use crate::{activity::ActivityRequest, workflow_id::WorkflowId, FunctionFqn};
+use crate::activity::ActivityRequest;
+use concepts::{workflow_id::WorkflowId, FunctionFqn};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ExecutionError {
@@ -50,9 +51,7 @@ pub enum ExecutionError {
         workflow_fqn: FunctionFqn,
         reason: String,
     },
-    #[error(
-        "[{workflow_id},{run_id}] {workflow_fqn} encountered an unknown error: `{source:?}`"
-    )]
+    #[error("[{workflow_id},{run_id}] {workflow_fqn} encountered an unknown error: `{source:?}`")]
     UnknownError {
         workflow_id: WorkflowId,
         run_id: u64,

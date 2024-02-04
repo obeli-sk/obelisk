@@ -2,9 +2,10 @@ use crate::{
     activity::ActivityRequest,
     error::ActivityFailed,
     event_history::{CurrentEventHistory, Event},
-    FunctionFqnStr, SupportedFunctionResult,
+    SupportedFunctionResult,
 };
 use assert_matches::assert_matches;
+use concepts::FunctionFqnStr;
 use std::{sync::Arc, time::Duration};
 use tracing::instrument;
 use wasmtime::component::{Linker, Val};

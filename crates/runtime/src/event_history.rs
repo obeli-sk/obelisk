@@ -1,8 +1,8 @@
 use crate::{
     activity::ActivityRequest, database::ActivityQueueSender, error::HostFunctionError,
-    workflow::AsyncActivityBehavior, workflow_id::WorkflowId, ActivityFailed, ActivityResponse,
-    FunctionFqn, SupportedFunctionResult,
+    workflow::AsyncActivityBehavior, ActivityFailed, ActivityResponse, SupportedFunctionResult,
 };
+use concepts::{workflow_id::WorkflowId, FunctionFqn};
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, trace};
 use wasmtime::component::Val;

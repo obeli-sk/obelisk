@@ -1,3 +1,4 @@
+use concepts::{workflow_id::WorkflowId, FunctionFqn, SupportedFunctionResult};
 use rstest::rstest;
 use runtime::{
     activity::ActivityConfig,
@@ -5,8 +6,6 @@ use runtime::{
     event_history::EventHistory,
     runtime::RuntimeBuilder,
     workflow::{AsyncActivityBehavior, WorkflowConfig},
-    workflow_id::WorkflowId,
-    FunctionFqn, SupportedFunctionResult,
 };
 use std::str::FromStr;
 use std::{

@@ -1,8 +1,7 @@
+use concepts::{workflow_id::WorkflowId, FunctionFqn};
 use runtime::event_history::EventHistory;
 use runtime::runtime::RuntimeBuilder;
 use runtime::workflow::WorkflowConfig;
-use runtime::workflow_id::WorkflowId;
-use runtime::FunctionFqn;
 use runtime::{activity::ActivityConfig, database::Database};
 use std::sync::Arc;
 use std::time::Instant;

@@ -1,3 +1,4 @@
+use concepts::{workflow_id::WorkflowId, FunctionFqn};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use lazy_static::lazy_static;
 use runtime::{
@@ -6,8 +7,6 @@ use runtime::{
     event_history::EventHistory,
     runtime::{Runtime, RuntimeBuilder},
     workflow::WORKFLOW_CONFIG_HOT,
-    workflow_id::WorkflowId,
-    FunctionFqn,
 };
 use std::sync::{atomic::Ordering, Arc, Once};
 use tokio::{process::Command, sync::Mutex};

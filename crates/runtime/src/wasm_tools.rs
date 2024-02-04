@@ -1,5 +1,5 @@
-use crate::{FnName, FunctionFqn, FunctionMetadata, FunctionMetadataError, IfcFqnName};
 use anyhow::{anyhow, bail};
+use concepts::{FnName, FunctionFqn, FunctionMetadata, FunctionMetadataError, IfcFqnName};
 use std::collections::HashMap;
 use val_json::{TypeWrapper, UnsupportedTypeError};
 use wit_component::DecodedWasm;
