@@ -163,6 +163,7 @@ impl CurrentEventHistory {
 
 pub(crate) type ActivityRequestId = usize;
 
+#[allow(clippy::module_name_repetitions)]
 pub type EventHistoryTriple = (FunctionFqn, Arc<Vec<Val>>, ActivityResponse);
 
 #[derive(Debug, Default)]
@@ -172,6 +173,7 @@ pub struct EventHistory {
 }
 
 impl EventHistory {
+    #[allow(clippy::unused_async)]
     pub(crate) async fn persist_activity_request(
         &mut self,
         request: ActivityRequest,
@@ -182,6 +184,7 @@ impl EventHistory {
         self.vec.len() + 1
     }
 
+    #[allow(clippy::unused_async)]
     pub(crate) async fn persist_activity_response(
         &mut self,
         request_id: ActivityRequestId,
@@ -192,6 +195,7 @@ impl EventHistory {
         self.vec.push((request.activity_fqn, request.params, resp));
     }
 
+    #[must_use]
     pub fn successful_activities(&self) -> usize {
         self.vec.iter().filter(|(_, _, res)| res.is_ok()).count()
     }

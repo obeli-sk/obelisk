@@ -2,6 +2,7 @@ use crate::activity::ActivityRequest;
 use concepts::{workflow_id::WorkflowId, FunctionFqn};
 
 #[derive(thiserror::Error, Debug)]
+#[allow(clippy::module_name_repetitions)]
 pub enum ExecutionError {
     #[error("[{workflow_id}] workflow {fqn} not found")]
     NotFound {

@@ -9,7 +9,7 @@ pub fn decode(wasm: &[u8]) -> Result<(Resolve, WorldId), anyhow::Error> {
     let decoded = wit_component::decode(wasm)?;
     match decoded {
         DecodedWasm::Component(resolve, world_id) => Ok((resolve, world_id)),
-        _ => bail!("cannot parse component"),
+        DecodedWasm::WitPackage(..) => bail!("cannot parse component"),
     }
 }
 
@@ -78,7 +78,7 @@ pub(crate) fn functions_to_metadata(
         package_name,
         ifc_name,
         fns,
-    } in exported_interfaces.into_iter()
+    } in exported_interfaces
     {
         let ifc_fqn = if let Some(version) = &package_name.version {
             format!(
@@ -89,7 +89,7 @@ pub(crate) fn functions_to_metadata(
         } else {
             format!("{package_name}/{ifc_name}")
         };
-        for (function_name, function) in fns.into_iter() {
+        for (function_name, function) in fns {
             let fqn = FunctionFqn::new(ifc_fqn.clone(), function_name.clone());
             let params = function
                 .params
@@ -99,10 +99,12 @@ pub(crate) fn functions_to_metadata(
             match &function.results {
                 wit_parser::Results::Anon(_) => Ok(()),
                 wit_parser::Results::Named(named) if named.is_empty() => Ok(()),
-                other => Err(FunctionMetadataError::UnsupportedReturnType {
-                    fqn: fqn.to_string(),
-                    ty: format!("{other:?}"),
-                }),
+                other @ wit_parser::Results::Named(_) => {
+                    Err(FunctionMetadataError::UnsupportedReturnType {
+                        fqn: fqn.to_string(),
+                        ty: format!("{other:?}"),
+                    })
+                }
             }?;
             functions_to_results.insert(
                 fqn,
@@ -142,7 +144,7 @@ mod tests {
         let wasm = std::fs::read(wasm_path)?;
         let (resolve, world_id) = super::decode(&wasm)?;
         let exported_interfaces = super::exported_ifc_fns(&resolve, &world_id)?;
-        println!(" {:#?}", exported_interfaces);
+        println!(" {exported_interfaces:#?}",);
         Ok(())
     }
 
@@ -152,7 +154,7 @@ mod tests {
         let wasm = std::fs::read(wasm_path)?;
         let (resolve, world_id) = super::decode(&wasm)?;
         let exported_interfaces = super::imported_ifc_fns(&resolve, &world_id)?;
-        println!(" {:#?}", exported_interfaces);
+        println!(" {exported_interfaces:#?}");
         assert_eq!(exported_interfaces.len(), 2);
         Ok(())
     }

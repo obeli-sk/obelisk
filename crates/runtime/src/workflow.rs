@@ -36,6 +36,7 @@ impl Default for AsyncActivityBehavior {
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+#[allow(clippy::module_name_repetitions)]
 pub struct WorkflowConfig {
     pub async_activity_behavior: AsyncActivityBehavior,
 }
@@ -66,7 +67,8 @@ lazy_static! {
 }
 
 impl Workflow {
-    pub(crate) async fn new_with_config(
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    pub(crate) fn new_with_config(
         wasm_path: String,
         is_activity_fn: impl Fn(&FunctionFqn) -> bool,
         config: &WorkflowConfig,
@@ -167,6 +169,7 @@ impl Workflow {
         })
     }
 
+    #[must_use]
     pub fn function_metadata<'a>(&'a self, fqn: &FunctionFqn) -> Option<&'a FunctionMetadata> {
         self.functions_to_metadata.get(fqn)
     }
@@ -175,6 +178,7 @@ impl Workflow {
         self.functions_to_metadata.keys()
     }
 
+    #[must_use]
     pub fn contains(&self, fqn: &FunctionFqn) -> bool {
         self.function_metadata(fqn).is_some()
     }
@@ -274,7 +278,7 @@ impl Workflow {
         if res.is_ok() && !store.data_mut().current_event_history.replay_is_drained() {
             res = Err(WorkflowFailed::NonDeterminismDetected(
                 "replay log was not drained".to_string(),
-            ))
+            ));
         }
         res
     }
@@ -384,7 +388,9 @@ impl Workflow {
                 .ok_or(anyhow::anyhow!("function {fqn} not found"))?
         };
         // call func
-        let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
+        let mut results = std::iter::repeat(Val::Bool(false))
+            .take(results_len)
+            .collect::<Vec<_>>();
         func.call_async(&mut store, params, &mut results)
             .instrument(debug_span!("call_async"))
             .await?;
@@ -398,11 +404,13 @@ impl Workflow {
     }
 }
 
+#[allow(clippy::missing_fields_in_debug)]
 impl Debug for Workflow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Workflow");
         s.field("functions_to_metadata", &self.functions_to_metadata);
         s.field("wasm_path", &self.wasm_path);
+        s.field("async_activity_behavior", &self.async_activity_behavior);
         s.finish()
     }
 }

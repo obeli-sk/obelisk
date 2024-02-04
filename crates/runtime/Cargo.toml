@@ -32,3 +32,6 @@ wit-parser.workspace = true
 [dev-dependencies]
 test-programs-fibo-workflow-builder.workspace = true
 tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

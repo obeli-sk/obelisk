@@ -34,6 +34,7 @@ pub struct Database {
 }
 
 impl Database {
+    #[must_use]
     pub fn new(workflow_cap: usize, activity_cap: usize) -> Self {
         let (workflow_sender, workflow_receiver) = bounded(workflow_cap);
         let (activity_sender, activity_receiver) = bounded(activity_cap);
@@ -85,7 +86,7 @@ pub struct WorkflowEventFetcher {
 }
 
 impl WorkflowEventFetcher {
-    /// Fetch one WorkflowEvent
+    /// Fetch one `WorkflowEvent`
     /// Returns None if the channel is closed
     pub async fn fetch_one(&self) -> Option<WorkflowEvent> {
         self.workflow_receiver.recv().await.ok()

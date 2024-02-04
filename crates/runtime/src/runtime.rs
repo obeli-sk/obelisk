@@ -13,6 +13,7 @@ use tracing::{debug, info, info_span, trace, warn, Instrument};
 use wasmtime::Engine;
 
 #[derive(Default)]
+#[allow(clippy::module_name_repetitions)]
 pub struct RuntimeConfig {
     pub workflow_engine_config: EngineConfig,
     pub activity_engine_config: EngineConfig,
@@ -33,6 +34,7 @@ impl Default for EngineConfig {
 }
 
 #[derive(Clone)]
+#[allow(clippy::module_name_repetitions)]
 pub struct RuntimeBuilder {
     workflow_engine: Arc<Engine>,
     activity_engine: Arc<Engine>,
@@ -47,6 +49,7 @@ impl Default for RuntimeBuilder {
 }
 
 impl RuntimeBuilder {
+    #[must_use]
     pub fn new_with_config(config: RuntimeConfig) -> Self {
         let workflow_engine = {
             let mut wasmtime_config = wasmtime::Config::new();
@@ -126,15 +129,12 @@ impl RuntimeBuilder {
         config: &WorkflowConfig,
     ) -> Result<Runtime, anyhow::Error> {
         info!("Loading workflow definition from \"{workflow_wasm_path}\"");
-        let workflow = Arc::new(
-            Workflow::new_with_config(
-                workflow_wasm_path,
-                |ffqn| self.functions_to_activities.contains_key(ffqn),
-                config,
-                self.workflow_engine.clone(),
-            )
-            .await?,
-        );
+        let workflow = Arc::new(Workflow::new_with_config(
+            workflow_wasm_path,
+            |ffqn| self.functions_to_activities.contains_key(ffqn),
+            config,
+            self.workflow_engine.clone(),
+        )?);
         // TODO: check that no function is in host namespace, no activity-workflow collisions
         Ok(Runtime {
             workflow,
@@ -149,6 +149,7 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    #[must_use]
     pub fn workflow_function_metadata<'a>(
         &'a self,
         fqn: &FunctionFqn,
@@ -236,32 +237,29 @@ impl Runtime {
                 });
             } else {
                 // execute wasm activity
-                match functions_to_activities.get(&request.activity_fqn) {
-                    Some(activity) => {
-                        let activity = activity.clone();
-                        tokio::spawn(async move {
-                            debug!("Executing {activity}", activity = request.activity_fqn);
-                            trace!("Executing {request:?}");
-                            // TODO: cancellation
-                            let _ = resp_tx.send(
-                                async {
-                                    let res = activity.run(&request).await;
-                                    trace!("Execution finished: {res:?}");
-                                    res
-                                }
-                                .await,
-                            );
-                        });
-                    }
-                    None => {
-                        let err = ActivityFailed::NotFound {
-                            workflow_id: request.workflow_id,
-                            activity_fqn: request.activity_fqn,
-                        };
-                        warn!("{err}");
-                        let _ = resp_tx.send(Err(err));
-                    }
-                };
+                if let Some(activity) = functions_to_activities.get(&request.activity_fqn) {
+                    let activity = activity.clone();
+                    tokio::spawn(async move {
+                        debug!("Executing {activity}", activity = request.activity_fqn);
+                        trace!("Executing {request:?}");
+                        // TODO: cancellation
+                        let _ = resp_tx.send(
+                            async {
+                                let res = activity.run(&request).await;
+                                trace!("Execution finished: {res:?}");
+                                res
+                            }
+                            .await,
+                        );
+                    });
+                } else {
+                    let err = ActivityFailed::NotFound {
+                        workflow_id: request.workflow_id,
+                        activity_fqn: request.activity_fqn,
+                    };
+                    warn!("{err}");
+                    let _ = resp_tx.send(Err(err));
+                }
             }
         }
         debug!("Runtime::process_activities exiting");

@@ -88,6 +88,7 @@ mod http {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::module_name_repetitions)]
 pub struct ActivityRequest {
     pub(crate) workflow_id: WorkflowId,
     pub(crate) activity_fqn: FunctionFqn,
@@ -95,6 +96,7 @@ pub struct ActivityRequest {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[allow(clippy::module_name_repetitions)]
 pub enum ActivityPreload {
     Preinstance,
     Instance,
@@ -107,6 +109,7 @@ impl Default for ActivityPreload {
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
+#[allow(clippy::module_name_repetitions)]
 pub struct ActivityConfig {
     pub preload: ActivityPreload,
 }
@@ -172,10 +175,10 @@ impl Activity {
         };
         Ok(Self {
             engine,
-            instance_pre,
-            wasm_path,
             functions_to_metadata,
+            instance_pre,
             preload_holder,
+            wasm_path,
         })
     }
 
@@ -251,7 +254,6 @@ impl Activity {
             };
 
         let func = {
-            let mut store = &mut store;
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
             let mut exports_instance = exports_instance
@@ -270,7 +272,9 @@ impl Activity {
                 })?
         };
         // call func
-        let mut results = Vec::from_iter(std::iter::repeat(Val::Bool(false)).take(results_len));
+        let mut results = std::iter::repeat(Val::Bool(false))
+            .take(results_len)
+            .collect::<Vec<_>>();
         func.call_async(&mut store, &request.params, &mut results)
             .await
             .map_err(|err| ActivityFailed::Other {
@@ -299,6 +303,7 @@ impl Activity {
     }
 }
 
+#[allow(clippy::missing_fields_in_debug)]
 impl Debug for Activity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("Activity");
