@@ -87,26 +87,26 @@ impl QueueWriter for InMemoryQueueWriter {
     }
 }
 
-pub struct QueueReaderTask<W: Worker> {
+pub struct QueueReader<W: Worker> {
     ffqn: FunctionFqn,
     receiver: Receiver<QueueEntry>,
     worker: Arc<W>,
     _database: InMemoryDatabase, // Avoid closing the async channel
 }
 
-pub struct QueueReaderTaskAbortHandle {
+pub struct QueueReaderAbortHandle {
     ffqn: FunctionFqn,
     main_task: AbortHandle,
 }
 
-impl Drop for QueueReaderTaskAbortHandle {
+impl Drop for QueueReaderAbortHandle {
     fn drop(&mut self) {
         info!("Dropping {ffqn} queue reader", ffqn = self.ffqn);
         self.main_task.abort();
     }
 }
 
-impl<W: Worker + Send + Sync + 'static> QueueReaderTask<W> {
+impl<W: Worker + Send + Sync + 'static> QueueReader<W> {
     pub fn new(ffqn: FunctionFqn, worker: W, database: InMemoryDatabase) -> Self {
         let receiver = database.receiver(ffqn.clone());
         Self {
@@ -121,7 +121,7 @@ impl<W: Worker + Send + Sync + 'static> QueueReaderTask<W> {
         self,
         max_tasks: usize,
         max_task_duration: Option<Duration>,
-    ) -> QueueReaderTaskAbortHandle {
+    ) -> QueueReaderAbortHandle {
         assert!(max_tasks > 0, "`max_tasks` must be greater than zero");
         let ffqn = self.ffqn.clone();
         let main_task = tokio::spawn(async move {
@@ -168,7 +168,7 @@ impl<W: Worker + Send + Sync + 'static> QueueReaderTask<W> {
                 // TODO: Persist the result atomically
             }
         }).abort_handle();
-        QueueReaderTaskAbortHandle {
+        QueueReaderAbortHandle {
             ffqn: self.ffqn,
             main_task,
         }
@@ -222,10 +222,12 @@ mod tests {
         let execution = queue_writer
             .enqueue(WorkflowId::generate(), Vec::new())
             .unwrap();
-        let workflow_worker = SimpleWorkflowWorker;
-        let worker_task =
-            QueueReaderTask::new(SIMPLE_WORKFLOW_FFQN.to_owned(), workflow_worker, database);
-        let _close_handler = worker_task.spawn(1, None);
+        let queue_reader = QueueReader::new(
+            SIMPLE_WORKFLOW_FFQN.to_owned(),
+            SimpleWorkflowWorker,
+            database,
+        );
+        let _abort_handle = queue_reader.spawn(1, None);
         let resp = execution.await.unwrap();
         assert_eq!(ExecutionResult::Ok(SupportedFunctionResult::None), resp);
     }
@@ -264,9 +266,9 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let workflow_worker = SemaphoreWorker(tokio::sync::Semaphore::new(max_tasks));
-        let worker_task =
-            QueueReaderTask::new(SIMPLE_WORKFLOW_FFQN.to_owned(), workflow_worker, database);
-        let _close_handler = worker_task.spawn(max_tasks, None);
+        let queue_reader =
+            QueueReader::new(SIMPLE_WORKFLOW_FFQN.to_owned(), workflow_worker, database);
+        let _abort_handle = queue_reader.spawn(max_tasks, None);
         for execution in executions {
             assert_eq!(
                 ExecutionResult::Ok(SupportedFunctionResult::None),
@@ -301,13 +303,13 @@ mod tests {
         let queue_writer =
             InMemoryQueueWriter::build(SIMPLE_WORKFLOW_FFQN.to_owned(), database.clone());
         let finished_check = Arc::new(AtomicBool::new(false));
-        let worker_task = QueueReaderTask::new(
+        let queue_reader = QueueReader::new(
             SIMPLE_WORKFLOW_FFQN.to_owned(),
             SleepyWorkflow(finished_check.clone()),
             database,
         );
         let max_duration_millis = 100;
-        let _close_handler = worker_task.spawn(1, Some(Duration::from_millis(max_duration_millis)));
+        let _abort_handle = queue_reader.spawn(1, Some(Duration::from_millis(max_duration_millis)));
 
         let execute = |millis: u64, workflow_id: WorkflowId| {
             queue_writer
@@ -336,18 +338,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn queue_reader_task_abort_propagates_to_workers() {
+    async fn queue_reader_abort_propagates_to_workers() {
         set_up();
         let database = InMemoryDatabase::new(1);
         let queue_writer =
             InMemoryQueueWriter::build(SIMPLE_WORKFLOW_FFQN.to_owned(), database.clone());
         let finished_check = Arc::new(AtomicBool::new(false));
-        let worker_task = QueueReaderTask::new(
+        let queue_reader = QueueReader::new(
             SIMPLE_WORKFLOW_FFQN.to_owned(),
             SleepyWorkflow(finished_check.clone()),
             database,
         );
-        let close_handler = worker_task.spawn(1, None);
+        let abort_handle = queue_reader.spawn(1, None);
         let execute = |millis: u64, workflow_id: WorkflowId| {
             queue_writer
                 .enqueue(
@@ -359,7 +361,7 @@ mod tests {
         let execution_fut = execute(100, WorkflowId::generate());
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
-            drop(close_handler);
+            drop(abort_handle);
         });
         assert_eq!(
             "channel closed",
