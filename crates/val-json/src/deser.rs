@@ -387,8 +387,10 @@ mod tests {
         let err = ValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(&input))
             .unwrap_err();
-        assert_starts_with(&err,
-            "invalid type: floating point `680564693277057700000000000000000000000`, expected value matching Float32");
+        assert_starts_with(
+            &err,
+            "invalid type: floating point `6.805646932770577e38`, expected value matching Float32",
+        );
     }
 
     #[test]
