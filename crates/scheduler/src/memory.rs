@@ -1,12 +1,12 @@
 use crate::{EnqueueError, ExecutionResult, QueueWriter, Worker, WorkerError};
 use async_channel::{Receiver, Sender, TrySendError};
 use concepts::{workflow_id::WorkflowId, FunctionFqn};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, thread::sleep, time::Duration};
 use tokio::{
     sync::oneshot,
     task::{AbortHandle, JoinSet},
 };
-use tracing::{debug, info, trace, Level};
+use tracing::{debug, info, info_span, instrument, span, trace, Instrument, Level};
 
 #[derive(Debug)]
 struct QueueEntry {
@@ -39,10 +39,7 @@ impl InMemoryDatabase {
             .or_insert_with(|| async_channel::bounded(self.queue_capacity))
             .0
             .clone();
-        InMemoryQueueWriter {
-            _database: self.clone(),
-            sender,
-        }
+        InMemoryQueueWriter { sender }
     }
 
     pub fn enqueue(
@@ -79,7 +76,6 @@ impl InMemoryDatabase {
             ffqn,
             receiver,
             worker: Arc::new(worker),
-            _database: self.clone(),
         }
     }
 }
@@ -87,15 +83,16 @@ impl InMemoryDatabase {
 #[derive(Debug)]
 pub struct InMemoryQueueWriter {
     sender: Sender<QueueEntry>,
-    _database: InMemoryDatabase, // Avoid closed channel
 }
 
 impl InMemoryQueueWriter {
+    #[instrument(skip_all, fields(workflow_id = workflow_id.to_string()))]
     fn enqueue(
         sender: &Sender<QueueEntry>,
         workflow_id: WorkflowId,
         params: Vec<wasmtime::component::Val>,
     ) -> Result<oneshot::Receiver<ExecutionResult>, EnqueueError> {
+        trace!("Enqueuing");
         let (oneshot_sender, oneshot_receiver) = oneshot::channel();
         let entry = QueueEntry {
             workflow_id,
@@ -108,7 +105,10 @@ impl InMemoryQueueWriter {
                 workflow_id: entry.workflow_id,
                 params: entry.params,
             }),
-            Err(TrySendError::Closed(_)) => panic!("channel cannot be closed"),
+            Err(TrySendError::Closed(entry)) => Err(EnqueueError::Full {
+                workflow_id: entry.workflow_id,
+                params: entry.params,
+            }),
         }
     }
 }
@@ -127,52 +127,88 @@ pub struct QueueReader<W: Worker> {
     ffqn: FunctionFqn,
     receiver: Receiver<QueueEntry>,
     worker: Arc<W>,
-    _database: InMemoryDatabase, // Avoid closing the async channel
 }
 
 pub struct QueueReaderAbortHandle {
     ffqn: FunctionFqn,
     main_task: AbortHandle,
+    receiver: Receiver<QueueEntry>,
+}
+
+impl QueueReaderAbortHandle {
+    /// Graceful shutdown. Waits until all workers terminate.
+    ///
+    /// # Panics
+    ///
+    /// All senders must be closed, otherwise this function will panic.
+    #[instrument(skip_all, fields(ffqn = self.ffqn.to_string()))]
+    pub async fn close(self) {
+        assert!(
+            self.receiver.is_closed(),
+            "the queue channel must be closed"
+        );
+        if tracing::enabled!(Level::TRACE) {
+            trace!(
+                "Gracefully closing. The queue writer task finished? {}",
+                self.main_task.is_finished()
+            );
+        } else {
+            info!("Gracefully closing");
+        }
+        while !self.main_task.is_finished() {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
 }
 
 impl Drop for QueueReaderAbortHandle {
+    #[instrument(skip_all, fields(ffqn = self.ffqn.to_string()))]
     fn drop(&mut self) {
-        info!("Dropping {ffqn} queue reader", ffqn = self.ffqn);
+        info!("Dropping queue reader");
         self.main_task.abort();
     }
 }
 
 impl<W: Worker + Send + Sync + 'static> QueueReader<W> {
+    #[instrument(skip_all, fields(ffqn = self.ffqn.to_string()))]
     pub fn spawn(
         self,
-        max_tasks: usize,
+        max_tasks: u32,
         max_task_duration: Option<Duration>,
     ) -> QueueReaderAbortHandle {
         assert!(max_tasks > 0, "`max_tasks` must be greater than zero");
-        let ffqn = self.ffqn.clone();
+        info!("Spawning");
+        let receiver = self.receiver.clone();
         let main_task = tokio::spawn(async move {
             let mut worker_set = JoinSet::new(); // All worker tasks are cancelled on drop.
-            let semaphore = Arc::new(tokio::sync::Semaphore::new(max_tasks));
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(
+                usize::try_from(max_tasks).expect("usize from u32 should not fail"),
+            ));
             loop {
                 trace!(
-                    "[{ffqn}] Available permits: {permits}",
+                    "Available permits: {permits}",
                     permits = semaphore.available_permits()
                 );
+                // The permit to be moved to the new task or to grace shutdown.
                 let permit = semaphore.clone().acquire_owned().await.unwrap();
                 // receive next entry
-                let QueueEntry {
+                let Ok(QueueEntry {
                     workflow_id,
                     params,
                     oneshot_sender,
-                } = self
-                    .receiver
-                    .recv()
-                    .await
-                    .expect("channel cannot be closed");
+                }) = receiver.recv().await
+                else {
+                    info!("Graceful shutdown detected, waiting for inflight workers");
+                    // We already have `permit`. Acquiring all other permits.
+                    let _blocking_permits = semaphore.acquire_many(max_tasks - 1).await.unwrap();
+                    trace!("All workers have finished");
+                    return;
+                };
+                trace!("Received {workflow_id}");
                 let worker = self.worker.clone();
-                let ffqn = ffqn.clone();
+                let worker_span = info_span!("worker", workflow_id = workflow_id.to_string());
                 worker_set.spawn(async move {
-                    debug!("[{ffqn}, {workflow_id}] spawned");
+                    debug!("Spawned");
                     let execution_result_fut = worker.run(workflow_id.clone(), params);
                     let execution_result = if let Some(max_task_duration) = max_task_duration {
                         tokio::select! {
@@ -183,20 +219,25 @@ impl<W: Worker + Send + Sync + 'static> QueueReader<W> {
                         execution_result_fut.await
                     };
                     if tracing::enabled!(Level::TRACE) {
-                        trace!("[{ffqn}, {workflow_id}] finished: {execution_result:?}");
+                        trace!("Finished: {execution_result:?}");
                     } else {
-                        debug!("[{ffqn}, {workflow_id}] finished");
+                        debug!("Finished");
                     }
                     let _ = oneshot_sender.send(execution_result);
                     drop(permit);
-                });
+                }
+                .instrument(worker_span)
+                );
                 // TODO: retries with backoff, scheduled tasks
                 // TODO: Persist the result atomically
             }
-        }).abort_handle();
+        }
+        .instrument(info_span!("main_task"))
+        ).abort_handle();
         QueueReaderAbortHandle {
             ffqn: self.ffqn,
             main_task,
+            receiver: self.receiver,
         }
     }
 }
@@ -283,7 +324,9 @@ mod tests {
                     .unwrap()
             })
             .collect::<Vec<_>>();
-        let workflow_worker = SemaphoreWorker(tokio::sync::Semaphore::new(max_tasks));
+        let workflow_worker = SemaphoreWorker(tokio::sync::Semaphore::new(
+            usize::try_from(max_tasks).unwrap(),
+        ));
         let queue_reader = database.reader(SOME_FFQN.to_owned(), workflow_worker);
         let _abort_handle = queue_reader.spawn(max_tasks, None);
         for execution in executions {
@@ -298,16 +341,17 @@ mod tests {
 
     #[async_trait]
     impl Worker for SleepyWorker {
+        #[instrument(skip_all)]
         async fn run(
             &self,
-            workflow_id: WorkflowId,
+            _workflow_id: WorkflowId,
             mut params: Vec<wasmtime::component::Val>,
         ) -> ExecutionResult {
             assert_eq!(params.len(), 1);
             let millis = assert_matches!(params.pop().unwrap(), wasmtime::component::Val::U64(millis) => millis);
-            trace!("[{workflow_id}] sleeping for {millis} ms");
+            trace!("sleeping for {millis} ms");
             tokio::time::sleep(Duration::from_millis(millis)).await;
-            trace!("[{workflow_id}] done!");
+            trace!("done!");
             self.0.store(true, std::sync::atomic::Ordering::SeqCst);
             ExecutionResult::Ok(SupportedFunctionResult::None)
         }
@@ -381,6 +425,37 @@ mod tests {
         assert_eq!(
             false,
             finished_check.load(std::sync::atomic::Ordering::SeqCst)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_graceful_shutdown() {
+        set_up();
+        let database = InMemoryDatabase::new(1);
+        let sleep_millis = 100;
+        let execution = database
+            .enqueue(
+                SOME_FFQN.to_owned(),
+                WorkflowId::generate(),
+                Vec::from([wasmtime::component::Val::U64(sleep_millis)]),
+            )
+            .unwrap();
+        let finished_check = Arc::new(AtomicBool::new(false));
+        let queue_reader =
+            database.reader(SOME_FFQN.to_owned(), SleepyWorker(finished_check.clone()));
+        let abort_handle = queue_reader.spawn(10, None);
+        tokio::time::sleep(Duration::from_millis(sleep_millis / 2)).await;
+        info!("Dropping the database");
+        drop(database);
+        abort_handle.close().await;
+        // Make sure that the worker finished.
+        assert_eq!(
+            true,
+            finished_check.load(std::sync::atomic::Ordering::SeqCst)
+        );
+        assert_eq!(
+            ExecutionResult::Ok(SupportedFunctionResult::None),
+            execution.await.unwrap()
         );
     }
 }

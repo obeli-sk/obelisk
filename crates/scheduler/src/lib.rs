@@ -29,6 +29,11 @@ pub enum EnqueueError {
         workflow_id: WorkflowId,
         params: Vec<wasmtime::component::Val>,
     },
+    #[error("queue is closed")]
+    Closed {
+        workflow_id: WorkflowId,
+        params: Vec<wasmtime::component::Val>,
+    },
 }
 
 pub trait QueueWriter {
