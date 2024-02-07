@@ -30,43 +30,69 @@ impl InMemoryDatabase {
         }
     }
 
-    fn sender(&self, ffqn: FunctionFqn) -> Sender<QueueEntry> {
-        self.queues
+    pub fn writer(&self, ffqn: FunctionFqn) -> InMemoryQueueWriter {
+        let sender = self
+            .queues
             .lock()
             .unwrap()
             .entry(ffqn)
             .or_insert_with(|| async_channel::bounded(self.queue_capacity))
             .0
-            .clone()
+            .clone();
+        InMemoryQueueWriter {
+            _database: self.clone(),
+            sender,
+        }
     }
 
-    fn receiver(&self, ffqn: FunctionFqn) -> Receiver<QueueEntry> {
-        self.queues
+    pub fn enqueue(
+        &self,
+        ffqn: FunctionFqn,
+        workflow_id: WorkflowId,
+        params: Vec<wasmtime::component::Val>,
+    ) -> Result<oneshot::Receiver<ExecutionResult>, EnqueueError> {
+        let sender = self
+            .queues
             .lock()
             .unwrap()
             .entry(ffqn)
             .or_insert_with(|| async_channel::bounded(self.queue_capacity))
+            .0
+            .clone();
+        InMemoryQueueWriter::enqueue(&sender, workflow_id, params)
+    }
+
+    fn reader<W: Worker + Send + Sync + 'static>(
+        &self,
+        ffqn: FunctionFqn,
+        worker: W,
+    ) -> QueueReader<W> {
+        let receiver = self
+            .queues
+            .lock()
+            .unwrap()
+            .entry(ffqn.clone())
+            .or_insert_with(|| async_channel::bounded(self.queue_capacity))
             .1
-            .clone()
+            .clone();
+        QueueReader {
+            ffqn,
+            receiver,
+            worker: Arc::new(worker),
+            _database: self.clone(),
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct InMemoryQueueWriter {
     sender: Sender<QueueEntry>,
-    database: InMemoryDatabase, // Avoid closed channel
+    _database: InMemoryDatabase, // Avoid closed channel
 }
 
 impl InMemoryQueueWriter {
-    fn build(ffqn: FunctionFqn, database: InMemoryDatabase) -> Self {
-        let sender = database.sender(ffqn);
-        Self { sender, database }
-    }
-}
-
-impl QueueWriter for InMemoryQueueWriter {
     fn enqueue(
-        &self,
+        sender: &Sender<QueueEntry>,
         workflow_id: WorkflowId,
         params: Vec<wasmtime::component::Val>,
     ) -> Result<oneshot::Receiver<ExecutionResult>, EnqueueError> {
@@ -76,7 +102,7 @@ impl QueueWriter for InMemoryQueueWriter {
             params,
             oneshot_sender,
         };
-        match self.sender.try_send(entry) {
+        match sender.try_send(entry) {
             Ok(()) => Ok(oneshot_receiver),
             Err(TrySendError::Full(entry)) => Err(EnqueueError::Full {
                 workflow_id: entry.workflow_id,
@@ -84,6 +110,16 @@ impl QueueWriter for InMemoryQueueWriter {
             }),
             Err(TrySendError::Closed(_)) => panic!("channel cannot be closed"),
         }
+    }
+}
+
+impl QueueWriter for InMemoryQueueWriter {
+    fn enqueue(
+        &self,
+        workflow_id: WorkflowId,
+        params: Vec<wasmtime::component::Val>,
+    ) -> Result<oneshot::Receiver<ExecutionResult>, EnqueueError> {
+        Self::enqueue(&self.sender, workflow_id, params)
     }
 }
 
@@ -107,16 +143,6 @@ impl Drop for QueueReaderAbortHandle {
 }
 
 impl<W: Worker + Send + Sync + 'static> QueueReader<W> {
-    pub fn new(ffqn: FunctionFqn, worker: W, database: InMemoryDatabase) -> Self {
-        let receiver = database.receiver(ffqn.clone());
-        Self {
-            ffqn,
-            receiver,
-            worker: Arc::new(worker),
-            _database: database,
-        }
-    }
-
     pub fn spawn(
         self,
         max_tasks: usize,
@@ -177,13 +203,12 @@ impl<W: Worker + Send + Sync + 'static> QueueReader<W> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicBool;
-
     use super::*;
     use crate::{ExecutionResult, Worker};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
+    use std::sync::atomic::AtomicBool;
 
     static INIT: std::sync::Once = std::sync::Once::new();
     fn set_up() {
@@ -197,16 +222,16 @@ mod tests {
         });
     }
 
-    const SIMPLE_WORKFLOW_FFQN: FunctionFqnStr = FunctionFqnStr::new("ifc_fqn", "simple-workflow");
+    const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("namespace:package/ifc", "function-name");
 
     #[tokio::test]
     async fn test_simple_workflow() {
         set_up();
 
-        struct SimpleWorkflowWorker;
+        struct SimpleWorker;
 
         #[async_trait]
-        impl Worker for SimpleWorkflowWorker {
+        impl Worker for SimpleWorker {
             async fn run(
                 &self,
                 _workflow_id: WorkflowId,
@@ -217,16 +242,10 @@ mod tests {
         }
 
         let database = InMemoryDatabase::new(1);
-        let queue_writer =
-            InMemoryQueueWriter::build(SIMPLE_WORKFLOW_FFQN.to_owned(), database.clone());
-        let execution = queue_writer
-            .enqueue(WorkflowId::generate(), Vec::new())
+        let execution = database
+            .enqueue(SOME_FFQN.to_owned(), WorkflowId::generate(), Vec::new())
             .unwrap();
-        let queue_reader = QueueReader::new(
-            SIMPLE_WORKFLOW_FFQN.to_owned(),
-            SimpleWorkflowWorker,
-            database,
-        );
+        let queue_reader = database.reader(SOME_FFQN.to_owned(), SimpleWorker);
         let _abort_handle = queue_reader.spawn(1, None);
         let resp = execution.await.unwrap();
         assert_eq!(ExecutionResult::Ok(SupportedFunctionResult::None), resp);
@@ -255,8 +274,7 @@ mod tests {
         }
 
         let database = InMemoryDatabase::new(10);
-        let queue_writer =
-            InMemoryQueueWriter::build(SIMPLE_WORKFLOW_FFQN.to_owned(), database.clone());
+        let queue_writer = database.writer(SOME_FFQN.to_owned());
         let max_tasks = 3;
         let executions = (0..max_tasks * 2)
             .map(|_| {
@@ -266,8 +284,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let workflow_worker = SemaphoreWorker(tokio::sync::Semaphore::new(max_tasks));
-        let queue_reader =
-            QueueReader::new(SIMPLE_WORKFLOW_FFQN.to_owned(), workflow_worker, database);
+        let queue_reader = database.reader(SOME_FFQN.to_owned(), workflow_worker);
         let _abort_handle = queue_reader.spawn(max_tasks, None);
         for execution in executions {
             assert_eq!(
@@ -277,10 +294,10 @@ mod tests {
         }
     }
 
-    struct SleepyWorkflow(Arc<AtomicBool>);
+    struct SleepyWorker(Arc<AtomicBool>);
 
     #[async_trait]
-    impl Worker for SleepyWorkflow {
+    impl Worker for SleepyWorker {
         async fn run(
             &self,
             workflow_id: WorkflowId,
@@ -300,14 +317,10 @@ mod tests {
     async fn worker_timeout() {
         set_up();
         let database = InMemoryDatabase::new(1);
-        let queue_writer =
-            InMemoryQueueWriter::build(SIMPLE_WORKFLOW_FFQN.to_owned(), database.clone());
+        let queue_writer = database.writer(SOME_FFQN.to_owned());
         let finished_check = Arc::new(AtomicBool::new(false));
-        let queue_reader = QueueReader::new(
-            SIMPLE_WORKFLOW_FFQN.to_owned(),
-            SleepyWorkflow(finished_check.clone()),
-            database,
-        );
+        let queue_reader =
+            database.reader(SOME_FFQN.to_owned(), SleepyWorker(finished_check.clone()));
         let max_duration_millis = 100;
         let _abort_handle = queue_reader.spawn(1, Some(Duration::from_millis(max_duration_millis)));
 
@@ -341,14 +354,10 @@ mod tests {
     async fn queue_reader_abort_propagates_to_workers() {
         set_up();
         let database = InMemoryDatabase::new(1);
-        let queue_writer =
-            InMemoryQueueWriter::build(SIMPLE_WORKFLOW_FFQN.to_owned(), database.clone());
+        let queue_writer = database.writer(SOME_FFQN.to_owned());
         let finished_check = Arc::new(AtomicBool::new(false));
-        let queue_reader = QueueReader::new(
-            SIMPLE_WORKFLOW_FFQN.to_owned(),
-            SleepyWorkflow(finished_check.clone()),
-            database,
-        );
+        let queue_reader =
+            database.reader(SOME_FFQN.to_owned(), SleepyWorker(finished_check.clone()));
         let abort_handle = queue_reader.spawn(1, None);
         let execute = |millis: u64, workflow_id: WorkflowId| {
             queue_writer
