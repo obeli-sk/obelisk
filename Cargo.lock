@@ -2002,6 +2002,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "scheduler"
+version = "0.1.0"
+dependencies = [
+ "assert_matches",
+ "async-channel 2.1.1",
+ "async-trait",
+ "concepts",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+ "val-json",
+ "wasmtime",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -23,6 +23,7 @@ resolver = "2"
 members = [
     "crates/concepts",
     "crates/runtime",
+    "crates/scheduler",
     "crates/testing/benches",
     "crates/testing/cargo-component-builder",
     "crates/testing/test-programs/fibo/activity",
@@ -103,7 +104,6 @@ wit-bindgen = { version = "0.16.0", default-features = false, features = [
 ] }
 wit-component = "0.19"
 wit-parser = "0.13"
-
 
 [workspace.lints]
 # lower the priority to allow overriding later

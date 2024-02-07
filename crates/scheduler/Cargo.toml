@@ -1,0 +1,26 @@
+[package]
+name = "scheduler"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+concepts.workspace = true
+val-json.workspace = true
+
+async-channel.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+ulid.workspace = true
+wasmtime.workspace = true
+
+[dev-dependencies]
+assert_matches.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "time"] }
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
