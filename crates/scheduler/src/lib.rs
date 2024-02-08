@@ -35,11 +35,3 @@ pub enum EnqueueError {
         params: Vec<wasmtime::component::Val>,
     },
 }
-
-pub trait QueueWriter {
-    fn enqueue(
-        &self,
-        workflow_id: WorkflowId,
-        params: Vec<wasmtime::component::Val>,
-    ) -> Result<oneshot::Receiver<ExecutionResult>, EnqueueError>;
-}

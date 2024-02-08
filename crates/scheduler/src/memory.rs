@@ -1,4 +1,4 @@
-use crate::{EnqueueError, ExecutionResult, QueueWriter, Worker, WorkerError};
+use crate::{EnqueueError, ExecutionResult, Worker, WorkerError};
 use async_channel::{Receiver, Sender, TrySendError};
 use concepts::{workflow_id::WorkflowId, FunctionFqn};
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -30,18 +30,7 @@ impl InMemoryDatabase {
         }
     }
 
-    pub fn writer(&self, ffqn: FunctionFqn) -> InMemoryQueueWriter {
-        let sender = self
-            .queues
-            .lock()
-            .unwrap()
-            .entry(ffqn.clone())
-            .or_insert_with(|| async_channel::bounded(self.queue_capacity))
-            .0
-            .clone();
-        InMemoryQueueWriter { sender, ffqn }
-    }
-
+    #[instrument(skip_all, fields(ffqn = ffqn.to_string(), workflow_id = workflow_id.to_string()))]
     pub fn enqueue(
         &self,
         ffqn: FunctionFqn,
@@ -56,7 +45,25 @@ impl InMemoryDatabase {
             .or_insert_with(|| async_channel::bounded(self.queue_capacity))
             .0
             .clone();
-        InMemoryQueueWriter::enqueue(&sender, workflow_id, params, &ffqn)
+
+        trace!("Enqueuing");
+        let (oneshot_sender, oneshot_receiver) = oneshot::channel();
+        let entry = QueueEntry {
+            workflow_id,
+            params,
+            oneshot_sender,
+        };
+        match sender.try_send(entry) {
+            Ok(()) => Ok(oneshot_receiver),
+            Err(TrySendError::Full(entry)) => Err(EnqueueError::Full {
+                workflow_id: entry.workflow_id,
+                params: entry.params,
+            }),
+            Err(TrySendError::Closed(entry)) => Err(EnqueueError::Closed {
+                workflow_id: entry.workflow_id,
+                params: entry.params,
+            }),
+        }
     }
 
     fn reader<W: Worker + Send + Sync + 'static>(
@@ -77,51 +84,6 @@ impl InMemoryDatabase {
             receiver,
             worker: Arc::new(worker),
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct InMemoryQueueWriter {
-    sender: Sender<QueueEntry>,
-    ffqn: FunctionFqn,
-}
-
-impl InMemoryQueueWriter {
-    #[instrument(skip_all, fields(fffqn = ffqn.to_string(), workflow_id = workflow_id.to_string()))]
-    fn enqueue(
-        sender: &Sender<QueueEntry>,
-        workflow_id: WorkflowId,
-        params: Vec<wasmtime::component::Val>,
-        ffqn: &FunctionFqn,
-    ) -> Result<oneshot::Receiver<ExecutionResult>, EnqueueError> {
-        trace!("Enqueuing");
-        let (oneshot_sender, oneshot_receiver) = oneshot::channel();
-        let entry = QueueEntry {
-            workflow_id,
-            params,
-            oneshot_sender,
-        };
-        match sender.try_send(entry) {
-            Ok(()) => Ok(oneshot_receiver),
-            Err(TrySendError::Full(entry)) => Err(EnqueueError::Full {
-                workflow_id: entry.workflow_id,
-                params: entry.params,
-            }),
-            Err(TrySendError::Closed(entry)) => Err(EnqueueError::Closed {
-                workflow_id: entry.workflow_id,
-                params: entry.params,
-            }),
-        }
-    }
-}
-
-impl QueueWriter for InMemoryQueueWriter {
-    fn enqueue(
-        &self,
-        workflow_id: WorkflowId,
-        params: Vec<wasmtime::component::Val>,
-    ) -> Result<oneshot::Receiver<ExecutionResult>, EnqueueError> {
-        Self::enqueue(&self.sender, workflow_id, params, &self.ffqn)
     }
 }
 
@@ -244,7 +206,10 @@ mod tests {
     use crate::{ExecutionResult, Worker};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
+    use concepts::{
+        workflow_id::{self, WorkflowId},
+        FunctionFqnStr, SupportedFunctionResult,
+    };
     use std::sync::atomic::AtomicBool;
 
     static INIT: std::sync::Once = std::sync::Once::new();
@@ -311,12 +276,11 @@ mod tests {
         }
 
         let database = InMemoryDatabase::new(10);
-        let queue_writer = database.writer(SOME_FFQN.to_owned());
         let max_tasks = 3;
         let executions = (0..max_tasks * 2)
             .map(|_| {
-                queue_writer
-                    .enqueue(WorkflowId::generate(), Vec::new())
+                database
+                    .enqueue(SOME_FFQN.to_owned(), WorkflowId::generate(), Vec::new())
                     .unwrap()
             })
             .collect::<Vec<_>>();
@@ -357,7 +321,6 @@ mod tests {
     async fn worker_timeout() {
         set_up();
         let database = InMemoryDatabase::new(1);
-        let queue_writer = database.writer(SOME_FFQN.to_owned());
         let finished_check = Arc::new(AtomicBool::new(false));
         let queue_reader =
             database.reader(SOME_FFQN.to_owned(), SleepyWorker(finished_check.clone()));
@@ -365,8 +328,9 @@ mod tests {
         let _abort_handle = queue_reader.spawn(1, Some(Duration::from_millis(max_duration_millis)));
 
         let execute = |millis: u64, workflow_id: WorkflowId| {
-            queue_writer
+            database
                 .enqueue(
+                    SOME_FFQN.to_owned(),
                     workflow_id,
                     Vec::from([wasmtime::component::Val::U64(millis)]),
                 )
@@ -391,33 +355,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn queue_reader_abort_propagates_to_workers() {
+    async fn dropping_abort_handle_aborts_its_inflight_executions() {
         set_up();
         let database = InMemoryDatabase::new(1);
-        let queue_writer = database.writer(SOME_FFQN.to_owned());
         let finished_check = Arc::new(AtomicBool::new(false));
-        let queue_reader =
-            database.reader(SOME_FFQN.to_owned(), SleepyWorker(finished_check.clone()));
-        let abort_handle = queue_reader.spawn(1, None);
-        let execute = |millis: u64, workflow_id: WorkflowId| {
-            queue_writer
-                .enqueue(
-                    workflow_id,
-                    Vec::from([wasmtime::component::Val::U64(millis)]),
-                )
-                .unwrap()
-        };
-        let execution_fut = execute(100, WorkflowId::generate());
+
+        let abort_handle = database
+            .reader(SOME_FFQN.to_owned(), SleepyWorker(finished_check.clone()))
+            .spawn(1, None);
+
+        let sleep_millis = 100;
+        let workflow_id = WorkflowId::generate();
+        let execution = database
+            .enqueue(
+                SOME_FFQN.to_owned(),
+                workflow_id,
+                Vec::from([wasmtime::component::Val::U64(sleep_millis)]),
+            )
+            .unwrap();
+        // Drop the abort handle after 10ms.
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
             drop(abort_handle);
         });
-        assert_eq!(
-            "channel closed",
-            execution_fut.await.unwrap_err().to_string()
-        );
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        // Make sure that the worker did not finish.
+        // Await execution termination.
+        assert_eq!("channel closed", execution.await.unwrap_err().to_string());
+        tokio::time::sleep(Duration::from_millis(sleep_millis * 2)).await;
+        // Make sure that the worker was aborted and did not mark the execution as finished.
         assert_eq!(
             false,
             finished_check.load(std::sync::atomic::Ordering::SeqCst)
@@ -439,12 +403,11 @@ mod tests {
         let finished_check = Arc::new(AtomicBool::new(false));
         let queue_reader =
             database.reader(SOME_FFQN.to_owned(), SleepyWorker(finished_check.clone()));
-        let abort_handle = queue_reader.spawn(10, None);
+        let abort_handle = queue_reader.spawn(1, None);
         tokio::time::sleep(Duration::from_millis(sleep_millis / 2)).await;
         info!("Dropping the database");
         drop(database);
-        abort_handle.close().await;
-        // Make sure that the worker finished.
+        abort_handle.close().await; // block until the execution is done.
         assert_eq!(
             true,
             finished_check.load(std::sync::atomic::Ordering::SeqCst)
