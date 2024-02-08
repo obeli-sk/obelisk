@@ -1,12 +1,12 @@
 use crate::{EnqueueError, ExecutionResult, QueueWriter, Worker, WorkerError};
 use async_channel::{Receiver, Sender, TrySendError};
 use concepts::{workflow_id::WorkflowId, FunctionFqn};
-use std::{collections::HashMap, sync::Arc, thread::sleep, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     sync::oneshot,
     task::{AbortHandle, JoinSet},
 };
-use tracing::{debug, info, info_span, instrument, span, trace, Instrument, Level};
+use tracing::{debug, info, info_span, instrument, trace, Instrument, Level};
 
 #[derive(Debug)]
 struct QueueEntry {
@@ -35,11 +35,11 @@ impl InMemoryDatabase {
             .queues
             .lock()
             .unwrap()
-            .entry(ffqn)
+            .entry(ffqn.clone())
             .or_insert_with(|| async_channel::bounded(self.queue_capacity))
             .0
             .clone();
-        InMemoryQueueWriter { sender }
+        InMemoryQueueWriter { sender, ffqn }
     }
 
     pub fn enqueue(
@@ -52,11 +52,11 @@ impl InMemoryDatabase {
             .queues
             .lock()
             .unwrap()
-            .entry(ffqn)
+            .entry(ffqn.clone())
             .or_insert_with(|| async_channel::bounded(self.queue_capacity))
             .0
             .clone();
-        InMemoryQueueWriter::enqueue(&sender, workflow_id, params)
+        InMemoryQueueWriter::enqueue(&sender, workflow_id, params, &ffqn)
     }
 
     fn reader<W: Worker + Send + Sync + 'static>(
@@ -83,14 +83,16 @@ impl InMemoryDatabase {
 #[derive(Debug)]
 pub struct InMemoryQueueWriter {
     sender: Sender<QueueEntry>,
+    ffqn: FunctionFqn,
 }
 
 impl InMemoryQueueWriter {
-    #[instrument(skip_all, fields(workflow_id = workflow_id.to_string()))]
+    #[instrument(skip_all, fields(fffqn = ffqn.to_string(), workflow_id = workflow_id.to_string()))]
     fn enqueue(
         sender: &Sender<QueueEntry>,
         workflow_id: WorkflowId,
         params: Vec<wasmtime::component::Val>,
+        ffqn: &FunctionFqn,
     ) -> Result<oneshot::Receiver<ExecutionResult>, EnqueueError> {
         trace!("Enqueuing");
         let (oneshot_sender, oneshot_receiver) = oneshot::channel();
@@ -119,7 +121,7 @@ impl QueueWriter for InMemoryQueueWriter {
         workflow_id: WorkflowId,
         params: Vec<wasmtime::component::Val>,
     ) -> Result<oneshot::Receiver<ExecutionResult>, EnqueueError> {
-        Self::enqueue(&self.sender, workflow_id, params)
+        Self::enqueue(&self.sender, workflow_id, params, &self.ffqn)
     }
 }
 
