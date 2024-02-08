@@ -107,7 +107,7 @@ impl InMemoryQueueWriter {
                 workflow_id: entry.workflow_id,
                 params: entry.params,
             }),
-            Err(TrySendError::Closed(entry)) => Err(EnqueueError::Full {
+            Err(TrySendError::Closed(entry)) => Err(EnqueueError::Closed {
                 workflow_id: entry.workflow_id,
                 params: entry.params,
             }),
