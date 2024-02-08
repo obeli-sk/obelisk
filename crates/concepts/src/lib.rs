@@ -199,10 +199,31 @@ impl IntoIterator for SupportedFunctionResult {
     }
 }
 
+#[derive(Debug, Clone, Default, derive_more::Deref)]
+pub struct Params(Arc<Vec<wasmtime::component::Val>>);
+
+impl Params {
+    pub fn new(params: Vec<wasmtime::component::Val>) -> Self {
+        Self(Arc::new(params))
+    }
+}
+
+impl From<&[wasmtime::component::Val]> for Params {
+    fn from(value: &[wasmtime::component::Val]) -> Self {
+        Self(Arc::new(Vec::from(value)))
+    }
+}
+
+impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
+    fn from(value: [wasmtime::component::Val; N]) -> Self {
+        Self(Arc::new(Vec::from(value)))
+    }
+}
+
 pub mod workflow_id {
     use std::{str::FromStr, sync::Arc};
 
-    #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
+    #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Hash)]
     pub struct WorkflowId(Arc<String>);
     impl WorkflowId {
         #[must_use]
