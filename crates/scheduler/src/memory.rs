@@ -149,17 +149,11 @@ impl QueueReaderAbortHandle {
             self.receiver.is_closed(),
             "the queue channel must be closed"
         );
-        if tracing::enabled!(Level::TRACE) {
-            trace!(
-                "Gracefully closing. The queue writer task finished? {}",
-                self.main_task.is_finished()
-            );
-        } else {
-            info!("Gracefully closing");
-        }
+        debug!("Gracefully closing");
         while !self.main_task.is_finished() {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
+        info!("Gracefully closed");
     }
 }
 
