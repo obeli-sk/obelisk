@@ -62,6 +62,7 @@ rust-version = "1.73.0"
 cargo-component-builder.path = "crates/testing/cargo-component-builder"
 concepts.path = "crates/concepts"
 runtime.path = "crates/runtime"
+scheduler.path = "crates/scheduler/"
 test-programs-fibo-activity-builder.path = "crates/testing/test-programs/fibo/activity/builder"
 test-programs-fibo-workflow-builder.path = "crates/testing/test-programs/fibo/workflow/builder"
 test-programs-http-get-activity-builder.path = "crates/testing/test-programs/http/activity/builder"
@@ -83,6 +84,9 @@ cargo_metadata = "0.18"
 criterion = "0.5"
 derive_more = "0.99.17"
 futures-util = "0.3.30"
+http-body-util = "0.1"
+hyper = "1.1.0"
+hyper-util = "0.1"
 indexmap = "2.1"
 lazy_static = "1.4"
 rstest = "0.18.2"
@@ -99,9 +103,7 @@ wasmtime = { version = "17.0", features = ["component-model"] }
 wasmtime-wasi = "17.0"
 wasmtime-wasi-http = "17.0"
 wiremock = "0.5"
-wit-bindgen = { version = "0.17.0", default-features = false, features = [
-    "realloc",
-] }
+wit-bindgen = { version = "0.17.0", default-features = false, features = ["realloc"] }
 wit-component = "0.20"
 wit-parser = "0.13"
 

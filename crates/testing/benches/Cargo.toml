@@ -19,6 +19,9 @@ test-programs-noop-workflow-builder.workspace = true
 
 criterion = { workspace = true, features = ["async_tokio"] }
 futures-util.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["client", "http1"] }
+hyper-util = { workspace = true, features = ["full"] }
 lazy_static.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing-chrome.workspace = true
@@ -44,3 +47,4 @@ harness = false
 [[bench]]
 name = "sleep"
 harness = false
+
