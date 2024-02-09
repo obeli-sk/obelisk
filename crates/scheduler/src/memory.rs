@@ -1,21 +1,35 @@
 use crate::{ExecutionResult, Worker, WorkerError};
 use async_channel::{Receiver, Sender};
 use concepts::{workflow_id::WorkflowId, FunctionFqn, Params, SupportedFunctionResult};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     sync::oneshot,
     task::{AbortHandle, JoinSet},
 };
 use tracing::{debug, info, info_span, instrument, trace, Instrument, Level};
 
+// Done:
+// Execution insertion, enqueueing, executing on a worker.
+// Timeouts (permanent)
+// Handling executor abortion (re-enqueueing)
+// Enqueueing in the background when a queue is full during insertion.
+
+// TODO:
+// * feat: interrupts - partial progress + event history passing
+// * refactor: remove old db, runtime
+// * fix: detect worker corruption e.g. after panic
+// * feat: dependent workflows (parent-child)
+// * feat: retries on timeouts
+// * feat: retries on errors
+// * feat: schedule the execution into the future
+// * feat: retries with exponential backoff
+// * feat: execution id, regenerate between retries
+// * feat: execution history - 1.pending, 2. enqueued..
+// * resil: limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
+// * perf: wake up the listener by insertion and executor by pushing a workflow id to an mpsc channel.
 #[derive(Debug)]
 struct QueueEntry {
     workflow_id: WorkflowId,
-    // execution_id: ExecutionId,
     params: Params,
     executor_db_sender: oneshot::Sender<ExecutionResult>,
 }
@@ -23,10 +37,7 @@ struct QueueEntry {
 #[derive(Debug)]
 struct InflightExecution {
     ffqn: FunctionFqn,
-    version: u64,
     params: Params,
-    created_at: SystemTime,
-    updated_at: SystemTime,
     db_client_sender: Option<oneshot::Sender<ExecutionResult>>, // Hack: Always present so it can be taken and used by the listener.
     executor_db_receiver: Option<oneshot::Receiver<ExecutionResult>>, // None if this entry needs to be submitted to the mpmc channel.
     status: InflightExecutionStatus,
@@ -36,6 +47,10 @@ struct InflightExecution {
 enum InflightExecutionStatus {
     Pending,
     Enqueued,
+    // #[display(fmt = "IntermittentTimeout({retry_index})")]
+    // IntermittentTimeout {
+    //     retry_index: usize,
+    // },
 }
 
 #[derive(Debug, Clone)]
@@ -69,15 +84,19 @@ impl InMemoryDatabase {
         let db_to_executor_mpmc_queues: Arc<
             std::sync::Mutex<HashMap<FunctionFqn, (Sender<QueueEntry>, Receiver<QueueEntry>)>>,
         > = Default::default();
+        let finished_executions: Arc<
+            std::sync::Mutex<HashMap<WorkflowId, FinishedExecutionStatus>>,
+        > = Default::default();
         let listener = Self::spawn_listener(
             inflight_executions.clone(),
             db_to_executor_mpmc_queues.clone(),
+            finished_executions.clone(),
         );
         Self {
             queue_capacity,
             db_to_executor_mpmc_queues,
             inflight_executions,
-            finished_executions: Default::default(),
+            finished_executions,
             listener,
         }
     }
@@ -131,7 +150,6 @@ impl InMemoryDatabase {
                 params: params.clone(),
                 executor_db_sender,
             };
-            let now = SystemTime::now();
             let (executor_db_receiver, status) = match db_to_executor_mpmc_sender.try_send(entry) {
                 Ok(()) => (
                     Some(executor_db_receiver),
@@ -146,10 +164,7 @@ impl InMemoryDatabase {
             };
             InflightExecution {
                 ffqn,
-                version: 0,
                 params,
-                created_at: now,
-                updated_at: now,
                 executor_db_receiver,
                 status,
                 db_client_sender: Some(db_client_sender),
@@ -192,16 +207,18 @@ impl InMemoryDatabase {
         db_to_executor_mpmc_queues: Arc<
             std::sync::Mutex<HashMap<FunctionFqn, (Sender<QueueEntry>, Receiver<QueueEntry>)>>,
         >,
+        finished_executions: Arc<std::sync::Mutex<HashMap<WorkflowId, FinishedExecutionStatus>>>,
     ) -> AbortHandle {
         info!("Spawning");
         tokio::spawn(
             async move {
                 loop {
                     Self::listener_tick(
-                        inflight_executions.lock().unwrap(),
+                        &inflight_executions,
                         &db_to_executor_mpmc_queues,
+                        &finished_executions,
                     );
-                    tokio::time::sleep(Duration::from_micros(10)).await; //FIXME: wake up on a signal
+                    tokio::time::sleep(Duration::from_micros(10)).await;
                 }
             }
             .instrument(info_span!("db_listener")),
@@ -210,14 +227,15 @@ impl InMemoryDatabase {
     }
 
     fn listener_tick(
-        mut inflight_executions_guard: std::sync::MutexGuard<
-            HashMap<WorkflowId, InflightExecution>,
-        >,
+        inflight_executions: &std::sync::Mutex<HashMap<WorkflowId, InflightExecution>>,
         db_to_executor_mpmc_queues: &std::sync::Mutex<
             HashMap<FunctionFqn, (Sender<QueueEntry>, Receiver<QueueEntry>)>,
         >,
+        finished_executions: &std::sync::Mutex<HashMap<WorkflowId, FinishedExecutionStatus>>,
     ) {
-        inflight_executions_guard.retain(|workflow_id, inflight_execution| {
+        let mut finished = Vec::new();
+
+        inflight_executions.lock().unwrap().retain(|workflow_id, inflight_execution| {
             info_span!("listener_tick", workflow_id=workflow_id.to_string()).in_scope(||
             match inflight_execution
                 .executor_db_receiver
@@ -227,7 +245,11 @@ impl InMemoryDatabase {
                 Some(Ok(res)) => {
                     assert_eq!(InflightExecutionStatus::Enqueued, inflight_execution.status);
                     debug!("Received result, notifying client");
-                    // TODO: Move the execution to finished_executions
+                    let finished_status = match &res {
+                        Ok(supported_res) => FinishedExecutionStatus::Finished { result: supported_res.clone() },
+                        Err(WorkerError::Timeout) => FinishedExecutionStatus::PermanentTimeout,
+                    };
+                    finished.push((workflow_id.clone(), finished_status));
                     // notify the client
                     let db_client_sender = inflight_execution
                         .db_client_sender
@@ -280,14 +302,16 @@ impl InMemoryDatabase {
                             }
                         }
                     };
-                    inflight_execution.updated_at = SystemTime::now();
-                    inflight_execution.version = inflight_execution.version + 1;
                     inflight_execution.executor_db_receiver = executor_db_receiver;
                     inflight_execution.status = status;
                     true
                 }
             })
         });
+        finished_executions
+            .lock()
+            .unwrap()
+            .extend(finished.into_iter())
     }
 
     pub async fn close(self) {
@@ -338,41 +362,43 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
     info!("Spawning");
     let executor_task = {
         let receiver = receiver.clone();
-        tokio::spawn(async move {
-            let mut worker_set = JoinSet::new(); // All worker tasks are cancelled on drop.
-            let semaphore = Arc::new(tokio::sync::Semaphore::new(
-                usize::try_from(max_tasks).expect("usize from u32 should not fail"),
-            ));
-            loop {
-                trace!(
-                    "Available permits: {permits}",
-                    permits = semaphore.available_permits()
-                );
-                // The permit to be moved to the new task or to grace shutdown.
-                let permit = semaphore.clone().acquire_owned().await.unwrap();
-                // receive next entry
-                let Ok(QueueEntry {
-                    workflow_id,
-                    params,
-                    executor_db_sender,
-                }) = receiver.recv().await
-                else {
-                    info!("Graceful shutdown detected, waiting for inflight workers");
-                    // We already have `permit`. Acquiring all other permits.
-                    let _blocking_permits = semaphore.acquire_many(max_tasks - 1).await.unwrap();
-                    trace!("All workers have finished");
-                    return;
-                };
-                trace!("Received {workflow_id}");
-                let worker = worker.clone();
-                let worker_span = info_span!("worker", workflow_id = workflow_id.to_string());
-                worker_set.spawn(async move {
+        tokio::spawn(
+            async move {
+                let mut worker_set = JoinSet::new(); // All worker tasks are cancelled on drop.
+                let semaphore = Arc::new(tokio::sync::Semaphore::new(
+                    usize::try_from(max_tasks).expect("usize from u32 should not fail"),
+                ));
+                loop {
+                    trace!(
+                        "Available permits: {permits}",
+                        permits = semaphore.available_permits()
+                    );
+                    // The permit to be moved to the new task or to grace shutdown.
+                    let permit = semaphore.clone().acquire_owned().await.unwrap();
+                    // receive next entry
+                    let Ok(QueueEntry {
+                        workflow_id,
+                        params,
+                        executor_db_sender,
+                    }) = receiver.recv().await
+                    else {
+                        info!("Graceful shutdown detected, waiting for inflight workers");
+                        // We already have `permit`. Acquiring all other permits.
+                        let _blocking_permits =
+                            semaphore.acquire_many(max_tasks - 1).await.unwrap();
+                        trace!("All workers have finished");
+                        return;
+                    };
+                    trace!("Received {workflow_id}");
+                    let worker = worker.clone();
+                    let worker_span = info_span!("worker", workflow_id = workflow_id.to_string());
+                    worker_set.spawn(async move {
                     debug!("Spawned");
                     let execution_result_fut = worker.run(workflow_id.clone(), params);
                     let execution_result = if let Some(max_task_duration) = max_task_duration {
                         tokio::select! {
                             res = execution_result_fut => res,
-                            _ = tokio::time::sleep(max_task_duration) => Err(WorkerError::Timeout { workflow_id: workflow_id.clone() })
+                            _ = tokio::time::sleep(max_task_duration) => Err(WorkerError::Timeout)
                         }
                     } else {
                         execution_result_fut.await
@@ -389,12 +415,11 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
                 }
                 .instrument(worker_span)
                 );
-                // TODO: retries with backoff, scheduled tasks
-                // TODO: Persist the result atomically
+                }
             }
-        }
-        .instrument(info_span!("executor"))
-        ).abort_handle()
+            .instrument(info_span!("executor")),
+        )
+        .abort_handle()
     };
     ExecutorAbortHandle {
         ffqn,
@@ -409,7 +434,10 @@ mod tests {
     use crate::{ExecutionResult, Worker};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
+    use concepts::{
+        workflow_id::{self, WorkflowId},
+        FunctionFqnStr, SupportedFunctionResult,
+    };
     use std::sync::atomic::AtomicBool;
 
     static INIT: std::sync::Once = std::sync::Once::new();
@@ -440,15 +468,16 @@ mod tests {
         }
 
         let db = InMemoryDatabase::spawn_new(1);
-        let execution = db.insert(
-            SOME_FFQN.to_owned(),
-            WorkflowId::generate(),
-            Params::default(),
-        );
+        let workflow_id = WorkflowId::generate();
+        let execution = db.insert(SOME_FFQN.to_owned(), workflow_id.clone(), Params::default());
         let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
         tokio::time::sleep(Duration::from_secs(1)).await;
         let resp = execution.await.unwrap();
         assert_eq!(ExecutionResult::Ok(SupportedFunctionResult::None), resp);
+        assert_eq!(
+            Some(ExecutionStatusInfo::Finished(SupportedFunctionResult::None)),
+            db.get_execution_status(&workflow_id)
+        );
     }
 
     #[tokio::test]
@@ -527,30 +556,24 @@ mod tests {
             1,
             Some(Duration::from_millis(max_duration_millis)),
         );
-
-        let execute = |millis: u64, workflow_id: WorkflowId| {
-            db.insert(
-                SOME_FFQN.to_owned(),
-                workflow_id,
-                Params::from([wasmtime::component::Val::U64(millis)]),
-            )
-        };
-        assert_eq!(
-            ExecutionResult::Ok(SupportedFunctionResult::None),
-            execute(max_duration_millis / 2, WorkflowId::generate())
-                .await
-                .unwrap()
-        );
-
         let workflow_id = WorkflowId::generate();
-        let res = execute(max_duration_millis * 2, workflow_id.clone())
+        let res = db
+            .insert(
+                SOME_FFQN.to_owned(),
+                workflow_id.clone(),
+                Params::from([wasmtime::component::Val::U64(max_duration_millis * 2)]),
+            )
             .await
             .unwrap();
         assert_eq!(
-            ExecutionResult::Err(WorkerError::Timeout { workflow_id }),
-            res
+            false,
+            finished_check.load(std::sync::atomic::Ordering::SeqCst)
         );
-        assert!(finished_check.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(ExecutionResult::Err(WorkerError::Timeout), res);
+        assert_eq!(
+            Some(ExecutionStatusInfo::PermanentTimeout),
+            db.get_execution_status(&workflow_id)
+        );
     }
 
     #[tokio::test]
@@ -667,6 +690,10 @@ mod tests {
             assert_eq!(
                 ExecutionResult::Ok(SupportedFunctionResult::None),
                 execution.1.await.unwrap()
+            );
+            assert_eq!(
+                Some(ExecutionStatusInfo::Finished(SupportedFunctionResult::None)),
+                db.get_execution_status(&execution.0)
             );
         }
     }

@@ -8,8 +8,8 @@ pub type ExecutionId = ulid::Ulid;
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
 pub enum WorkerError {
-    #[error("worker timed out: {workflow_id}")]
-    Timeout { workflow_id: WorkflowId },
+    #[error("worker timed out")]
+    Timeout,
 }
 
 #[async_trait]
