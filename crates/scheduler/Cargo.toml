@@ -11,6 +11,7 @@ val-json.workspace = true
 
 async-channel.workspace = true
 async-trait.workspace = true
+derive_more.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true

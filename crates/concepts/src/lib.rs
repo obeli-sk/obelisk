@@ -155,7 +155,7 @@ impl FunctionMetadata {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SupportedFunctionResult {
     None,
     Single(wasmtime::component::Val),

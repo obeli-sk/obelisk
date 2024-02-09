@@ -32,24 +32,22 @@ struct InflightExecution {
     status: InflightExecutionStatus,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, derive_more::Display)]
 enum InflightExecutionStatus {
-    Submitted,
-    Resubmitted,
-    IntermittentTimeout {
-        retry_index: usize,
-        updated_at: SystemTime,
-    },
+    Pending,
+    Enqueued,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum FinishedExecutionStatus {
     Finished { result: SupportedFunctionResult },
     PermanentTimeout,
 }
 
+#[derive(Debug, PartialEq, Clone, Eq)]
 pub enum ExecutionStatusInfo {
-    Submitted,
+    Pending,
+    Enqueued,
     Finished(SupportedFunctionResult),
     PermanentTimeout,
 }
@@ -94,15 +92,16 @@ impl InMemoryDatabase {
             }
             None => {}
         };
-        if self
+        match self
             .inflight_executions
             .lock()
             .unwrap()
-            .contains_key(workflow_id)
+            .get(workflow_id)
+            .map(|found| found.status)
         {
-            Some(ExecutionStatusInfo::Submitted)
-        } else {
-            None
+            Some(InflightExecutionStatus::Pending) => Some(ExecutionStatusInfo::Pending),
+            Some(InflightExecutionStatus::Enqueued) => Some(ExecutionStatusInfo::Enqueued),
+            None => None,
         }
     }
 
@@ -133,9 +132,14 @@ impl InMemoryDatabase {
                 executor_db_sender,
             };
             let now = SystemTime::now();
-            let executor_db_receiver = match db_to_executor_mpmc_sender.try_send(entry) {
-                Ok(()) => Some(executor_db_receiver),
-                Err(async_channel::TrySendError::Full(_)) => None,
+            let (executor_db_receiver, status) = match db_to_executor_mpmc_sender.try_send(entry) {
+                Ok(()) => (
+                    Some(executor_db_receiver),
+                    InflightExecutionStatus::Enqueued,
+                ),
+                Err(async_channel::TrySendError::Full(_)) => {
+                    (None, InflightExecutionStatus::Pending)
+                }
                 Err(async_channel::TrySendError::Closed(_)) => {
                     unreachable!("database holds a receiver")
                 }
@@ -147,11 +151,15 @@ impl InMemoryDatabase {
                 created_at: now,
                 updated_at: now,
                 executor_db_receiver,
-                status: InflightExecutionStatus::Submitted,
+                status,
                 db_client_sender: Some(db_client_sender),
             }
         };
         // Save the execution
+        debug!(
+            "Inserting new execution with status {status}",
+            status = submitted.status
+        );
         self.inflight_executions
             .lock()
             .unwrap()
@@ -217,6 +225,7 @@ impl InMemoryDatabase {
                 .map(|rec| rec.try_recv())
             {
                 Some(Ok(res)) => {
+                    assert_eq!(InflightExecutionStatus::Enqueued, inflight_execution.status);
                     debug!("Received result, notifying client");
                     // TODO: Move the execution to finished_executions
                     // notify the client
@@ -228,17 +237,19 @@ impl InMemoryDatabase {
                     false
                 }
                 Some(Err(oneshot::error::TryRecvError::Empty)) => {
+                    assert_eq!(InflightExecutionStatus::Enqueued, inflight_execution.status);
                     // No response yet, keep the entry.
                     true
                 }
-                Some(Err(oneshot::error::TryRecvError::Closed)) => {
-                    // The executor was aborted while running the execution. Update the execution.
-                    inflight_execution.updated_at = SystemTime::now();
-                    inflight_execution.version = inflight_execution.version + 1;
-                    inflight_execution.status = InflightExecutionStatus::Resubmitted;
-                    inflight_execution.executor_db_receiver = {
+                recv @ Some(Err(oneshot::error::TryRecvError::Closed)) | recv @ None => {
+                    if recv.is_some() {
+                        // The executor was aborted while running the execution. Update the execution.
+                        assert_eq!(InflightExecutionStatus::Enqueued, inflight_execution.status);
+                    } else {
+                        assert_eq!(InflightExecutionStatus::Pending, inflight_execution.status);
+                    }
+                    let (executor_db_receiver, status) = {
                         // Attempt to submit the execution to the mpmc channel.
-                        // The mpmc channel must be created at this point, obtain its sender.
                         let db_to_executor_mpmc_sender = db_to_executor_mpmc_queues
                             .lock()
                             .unwrap()
@@ -246,7 +257,6 @@ impl InMemoryDatabase {
                             .expect("must be created in `insert`")
                             .0
                             .clone();
-
                         let (executor_db_sender, executor_db_receiver) = oneshot::channel();
                         let entry = QueueEntry {
                             workflow_id: workflow_id.clone(),
@@ -254,20 +264,27 @@ impl InMemoryDatabase {
                             executor_db_sender,
                         };
                         let send_res = db_to_executor_mpmc_sender.try_send(entry);
-                        debug!("Attempted to enqueue the execution after the executor was aborted. Success: {send_res}", send_res = send_res.is_ok());
+                        debug!("Attempted to enqueue the execution with status {status}. Success: {send_res}",
+                            status = inflight_execution.status,
+                            send_res = send_res.is_ok());
                         match send_res {
-                            Ok(()) => Some(executor_db_receiver),
-                            Err(async_channel::TrySendError::Full(_)) => None,
+                            Ok(()) => (
+                                Some(executor_db_receiver),
+                                InflightExecutionStatus::Enqueued,
+                            ),
+                            Err(async_channel::TrySendError::Full(_)) => {
+                                (None, InflightExecutionStatus::Pending)
+                            }
                             Err(async_channel::TrySendError::Closed(_)) => {
                                 unreachable!("database holds a receiver")
                             }
                         }
                     };
+                    inflight_execution.updated_at = SystemTime::now();
+                    inflight_execution.version = inflight_execution.version + 1;
+                    inflight_execution.executor_db_receiver = executor_db_receiver;
+                    inflight_execution.status = status;
                     true
-                }
-                None => {
-                    // Attempt to submit the execution to the mpmc channel.
-                    todo!()
                 }
             })
         });
@@ -476,7 +493,7 @@ mod tests {
         }
     }
 
-    struct SleepyWorker(Arc<AtomicBool>);
+    struct SleepyWorker(Option<Arc<AtomicBool>>);
 
     #[async_trait]
     impl Worker for SleepyWorker {
@@ -488,7 +505,12 @@ mod tests {
             trace!("sleeping for {millis} ms");
             tokio::time::sleep(Duration::from_millis(millis)).await;
             trace!("done!");
-            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Some(finished_check) = &self.0 {
+                assert_eq!(
+                    false,
+                    finished_check.swap(true, std::sync::atomic::Ordering::SeqCst)
+                );
+            }
             ExecutionResult::Ok(SupportedFunctionResult::None)
         }
     }
@@ -501,7 +523,7 @@ mod tests {
         let max_duration_millis = 100;
         let _executor_abort_handle = db.spawn_executor(
             SOME_FFQN.to_owned(),
-            SleepyWorker(finished_check.clone()),
+            SleepyWorker(Some(finished_check.clone())),
             1,
             Some(Duration::from_millis(max_duration_millis)),
         );
@@ -539,7 +561,7 @@ mod tests {
 
         let executor_abort_handle = db.spawn_executor(
             SOME_FFQN.to_owned(),
-            SleepyWorker(finished_check.clone()),
+            SleepyWorker(Some(finished_check.clone())),
             1,
             None,
         );
@@ -551,14 +573,13 @@ mod tests {
             workflow_id,
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
         );
-        // Drop the executor's abort handle after 10ms.
+        // Drop the executor after 10ms.
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
             drop(executor_abort_handle);
         });
-        // Await execution termination.
+        // Make sure that the worker task was aborted and did not mark the execution as finished.
         tokio::time::sleep(Duration::from_millis(sleep_millis * 2)).await;
-        // Make sure that the worker was aborted and did not mark the execution as finished.
         assert_eq!(
             false,
             finished_check.load(std::sync::atomic::Ordering::SeqCst)
@@ -570,7 +591,7 @@ mod tests {
         // Abandoned execution should be picked by another worker spawned the new executor.
         let _executor = db.spawn_executor(
             SOME_FFQN.to_owned(),
-            SleepyWorker(finished_check.clone()),
+            SleepyWorker(Some(finished_check.clone())),
             1,
             None,
         );
@@ -597,7 +618,7 @@ mod tests {
         let finished_check = Arc::new(AtomicBool::new(false));
         let executor_abort_handle = db.spawn_executor(
             SOME_FFQN.to_owned(),
-            SleepyWorker(finished_check.clone()),
+            SleepyWorker(Some(finished_check.clone())),
             1,
             None,
         );
@@ -612,5 +633,41 @@ mod tests {
             ExecutionResult::Ok(SupportedFunctionResult::None),
             execution.await.unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn execution_added_to_full_mpmc_queue_should_finish() {
+        const QUEUE_SIZE: usize = 1;
+        set_up();
+        let db = InMemoryDatabase::spawn_new(QUEUE_SIZE);
+        let max_duration_millis = 100;
+        let _executor = db.spawn_executor(SOME_FFQN.to_owned(), SleepyWorker(None), 1, None);
+        let execute = |workflow_id: WorkflowId| {
+            (
+                workflow_id.clone(),
+                db.insert(
+                    SOME_FFQN.to_owned(),
+                    workflow_id,
+                    Params::from([wasmtime::component::Val::U64(max_duration_millis)]),
+                ),
+            )
+        };
+        let executions = (0..QUEUE_SIZE + 1)
+            .map(|idx| execute(WorkflowId::new(idx.to_string())))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            Some(ExecutionStatusInfo::Enqueued),
+            db.get_execution_status(&executions[0].0)
+        );
+        assert_eq!(
+            Some(ExecutionStatusInfo::Pending),
+            db.get_execution_status(&executions.last().unwrap().0)
+        );
+        for execution in executions {
+            assert_eq!(
+                ExecutionResult::Ok(SupportedFunctionResult::None),
+                execution.1.await.unwrap()
+            );
+        }
     }
 }
