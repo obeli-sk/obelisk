@@ -9,6 +9,7 @@ use concepts::FunctionFqn;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex};
 use tracing::info;
+use tracing_unwrap::ResultExt;
 use wasmtime::component::Val;
 
 pub(crate) type WorkflowEvent = (
@@ -127,7 +128,7 @@ impl WorkflowScheduler {
                 reason: "cannot add to queue".to_string(),
             });
         }
-        oneshot_rec.await.unwrap() // TODO
+        oneshot_rec.await.unwrap_or_log() // TODO
 
         // TODO: persist final result
     }

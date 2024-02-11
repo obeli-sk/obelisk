@@ -7,6 +7,7 @@ use tokio::{
     task::{AbortHandle, JoinSet},
 };
 use tracing::{debug, info, info_span, instrument, trace, Instrument, Level};
+use tracing_unwrap::ResultExt;
 
 // Done:
 // Execution insertion, enqueueing, executing on a worker.
@@ -102,7 +103,12 @@ impl InMemoryDatabase {
     }
 
     pub fn get_execution_status(&self, workflow_id: &WorkflowId) -> Option<ExecutionStatusInfo> {
-        match self.finished_executions.lock().unwrap().get(workflow_id) {
+        match self
+            .finished_executions
+            .lock()
+            .unwrap_or_log()
+            .get(workflow_id)
+        {
             Some(FinishedExecutionStatus::Finished { result }) => {
                 return Some(ExecutionStatusInfo::Finished(result.clone()))
             }
@@ -114,7 +120,7 @@ impl InMemoryDatabase {
         match self
             .inflight_executions
             .lock()
-            .unwrap()
+            .unwrap_or_log()
             .get(workflow_id)
             .map(|found| found.status)
         {
@@ -135,7 +141,7 @@ impl InMemoryDatabase {
         let db_to_executor_mpmc_sender = self
             .db_to_executor_mpmc_queues
             .lock()
-            .unwrap()
+            .unwrap_or_log()
             .entry(ffqn.clone())
             .or_insert_with(|| async_channel::bounded(self.queue_capacity))
             .0
@@ -161,7 +167,7 @@ impl InMemoryDatabase {
         // Save the execution
         self.inflight_executions
             .lock()
-            .unwrap()
+            .unwrap_or_log()
             .insert(workflow_id, submitted);
 
         db_client_receiver
@@ -207,7 +213,7 @@ impl InMemoryDatabase {
         let receiver = self
             .db_to_executor_mpmc_queues
             .lock()
-            .unwrap()
+            .unwrap_or_log()
             .entry(ffqn.clone())
             .or_insert_with(|| async_channel::bounded(self.queue_capacity))
             .1
@@ -253,7 +259,7 @@ impl InMemoryDatabase {
 
         inflight_executions
             .lock()
-            .unwrap()
+            .unwrap_or_log()
             .retain(|workflow_id, inflight_execution| {
                 info_span!("listener_tick", %workflow_id).in_scope(|| {
                     match inflight_execution
@@ -309,7 +315,7 @@ impl InMemoryDatabase {
                                 // Attempt to submit the execution to the mpmc channel.
                                 let db_to_executor_mpmc_sender = db_to_executor_mpmc_queues
                                     .lock()
-                                    .unwrap()
+                                    .unwrap_or_log()
                                     .get(&inflight_execution.ffqn)
                                     .expect("must be created in `insert`")
                                     .0
@@ -330,7 +336,7 @@ impl InMemoryDatabase {
             });
         finished_executions
             .lock()
-            .unwrap()
+            .unwrap_or_log()
             .extend(finished.into_iter())
     }
 
@@ -397,7 +403,7 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
                         permits = semaphore.available_permits()
                     );
                     // The permit to be moved to the new task or to grace shutdown.
-                    let permit = semaphore.clone().acquire_owned().await.unwrap();
+                    let permit = semaphore.clone().acquire_owned().await.unwrap_or_log();
                     // receive next entry
                     let Ok(QueueEntry {
                         workflow_id,
@@ -408,7 +414,7 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
                         info!("Graceful shutdown detected, waiting for inflight workers");
                         // We already have `permit`. Acquiring all other permits.
                         let _blocking_permits =
-                            semaphore.acquire_many(max_tasks - 1).await.unwrap();
+                            semaphore.acquire_many(max_tasks - 1).await.unwrap_or_log();
                         trace!("All workers have finished");
                         return;
                     };
@@ -460,6 +466,7 @@ mod tests {
     use async_trait::async_trait;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
     use std::{sync::atomic::AtomicBool, time::Instant};
+    use tracing_unwrap::OptionExt;
 
     static INIT: std::sync::Once = std::sync::Once::new();
     fn set_up() {
@@ -493,7 +500,7 @@ mod tests {
         let execution = db.insert(SOME_FFQN.to_owned(), workflow_id.clone(), Params::default());
         let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let resp = execution.await.unwrap();
+        let resp = execution.await.unwrap_or_log();
         assert_eq!(ExecutionResult::Ok(SupportedFunctionResult::None), resp);
         assert_eq!(
             Some(ExecutionStatusInfo::Finished(SupportedFunctionResult::None)),
@@ -511,7 +518,7 @@ mod tests {
         impl Worker for SemaphoreWorker {
             async fn run(&self, workflow_id: WorkflowId, _params: Params) -> ExecutionResult {
                 trace!("[{workflow_id}] acquiring");
-                let _permit = self.0.try_acquire().unwrap();
+                let _permit = self.0.try_acquire().unwrap_or_log();
                 trace!("[{workflow_id}] sleeping");
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 trace!("[{workflow_id}] done!");
@@ -531,14 +538,14 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let workflow_worker = SemaphoreWorker(tokio::sync::Semaphore::new(
-            usize::try_from(max_tasks).unwrap(),
+            usize::try_from(max_tasks).unwrap_or_log(),
         ));
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), workflow_worker, max_tasks, None);
         for execution in executions {
             assert_eq!(
                 ExecutionResult::Ok(SupportedFunctionResult::None),
-                execution.await.unwrap()
+                execution.await.unwrap_or_log()
             );
         }
     }
@@ -585,7 +592,7 @@ mod tests {
                 Params::from([wasmtime::component::Val::U64(max_duration_millis * 2)]),
             )
             .await
-            .unwrap();
+            .unwrap_or_log();
         assert_eq!(
             false,
             finished_check.load(std::sync::atomic::Ordering::SeqCst)
@@ -617,11 +624,11 @@ mod tests {
         );
         assert_eq!(
             ExecutionResult::Ok(SupportedFunctionResult::None),
-            fut_1.await.unwrap()
+            fut_1.await.unwrap_or_log()
         );
         assert_eq!(
             ExecutionResult::Ok(SupportedFunctionResult::None),
-            fut_2.await.unwrap()
+            fut_2.await.unwrap_or_log()
         );
         let stopwatch = Instant::now().duration_since(stopwatch);
         assert!(stopwatch < Duration::from_millis(sleep_millis) * 2,);
@@ -660,7 +667,7 @@ mod tests {
         );
         assert_eq!(
             oneshot::error::TryRecvError::Empty,
-            execution.try_recv().unwrap_err()
+            execution.try_recv().unwrap_err_or_log()
         );
         // Abandoned execution should be picked by another worker spawned the new executor.
         let _executor = db.spawn_executor(
@@ -671,7 +678,7 @@ mod tests {
         );
         assert_eq!(
             ExecutionResult::Ok(SupportedFunctionResult::None),
-            execution.await.unwrap()
+            execution.await.unwrap_or_log()
         );
         assert_eq!(
             true,
@@ -705,7 +712,7 @@ mod tests {
         );
         assert_eq!(
             ExecutionResult::Ok(SupportedFunctionResult::None),
-            execution.await.unwrap()
+            execution.await.unwrap_or_log()
         );
     }
 
@@ -735,12 +742,12 @@ mod tests {
         );
         assert_eq!(
             Some(ExecutionStatusInfo::Pending),
-            db.get_execution_status(&executions.last().unwrap().0)
+            db.get_execution_status(&executions.last().unwrap_or_log().0)
         );
         for execution in executions {
             assert_eq!(
                 ExecutionResult::Ok(SupportedFunctionResult::None),
-                execution.1.await.unwrap()
+                execution.1.await.unwrap_or_log()
             );
             assert_eq!(
                 Some(ExecutionStatusInfo::Finished(SupportedFunctionResult::None)),

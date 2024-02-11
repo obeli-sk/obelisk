@@ -8,6 +8,7 @@ use assert_matches::assert_matches;
 use concepts::FunctionFqnStr;
 use std::{sync::Arc, time::Duration};
 use tracing::instrument;
+use tracing_unwrap::OptionExt;
 use wasmtime::component::{Linker, Val};
 
 // generate Host trait
@@ -79,7 +80,7 @@ pub(crate) async fn execute_host_activity(
     if request.activity_fqn == HOST_ACTIVITY_SLEEP_FQN {
         // sleep implementation
         assert_eq!(request.params.len(), 1);
-        let duration = request.params.first().unwrap();
+        let duration = request.params.first().unwrap_or_log();
         let duration = *assert_matches!(duration, wasmtime::component::Val::U64(v) => v);
         tokio::time::sleep(Duration::from_millis(duration)).await;
         Ok(SupportedFunctionResult::None)

@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::AbortHandle;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
+use tracing_unwrap::ResultExt;
 use wasmtime::Engine;
 
 #[derive(Default)]
@@ -60,7 +61,7 @@ impl RuntimeBuilder {
             wasmtime_config.wasm_component_model(true);
             wasmtime_config.async_support(true);
             wasmtime_config.allocation_strategy(config.workflow_engine_config.allocation_strategy);
-            Arc::new(Engine::new(&wasmtime_config).unwrap())
+            Arc::new(Engine::new(&wasmtime_config).unwrap_or_log())
         };
         let activity_engine = {
             let mut wasmtime_config = wasmtime::Config::new();
@@ -69,7 +70,7 @@ impl RuntimeBuilder {
             wasmtime_config.wasm_component_model(true);
             wasmtime_config.async_support(true);
             wasmtime_config.allocation_strategy(config.activity_engine_config.allocation_strategy);
-            Arc::new(Engine::new(&wasmtime_config).unwrap())
+            Arc::new(Engine::new(&wasmtime_config).unwrap_or_log())
         };
         Self {
             workflow_engine,

@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail};
 use concepts::{FnName, FunctionFqn, FunctionMetadata, FunctionMetadataError, IfcFqnName};
 use std::collections::HashMap;
+use tracing_unwrap::OptionExt;
 use val_json::{TypeWrapper, UnsupportedTypeError};
 use wit_component::DecodedWasm;
 use wit_parser::{Resolve, WorldId, WorldItem, WorldKey};
@@ -48,7 +49,7 @@ fn ifc_fns<'a>(
 ) -> Result<Vec<PackageIfcFns<'a>>, anyhow::Error> {
     iter.filter_map(|(_, item)| match item {
         wit_parser::WorldItem::Interface(ifc) => {
-            let ifc = resolve.interfaces.get(*ifc).unwrap_or_else(|| panic!());
+            let ifc = resolve.interfaces.get(*ifc).unwrap_or_log();
             let Some(package_name) = ifc
                 .package
                 .and_then(|pkg| resolve.packages.get(pkg))

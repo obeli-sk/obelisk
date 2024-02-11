@@ -5,6 +5,7 @@ use std::{
     ops::Deref,
     sync::Arc,
 };
+use tracing_unwrap::OptionExt;
 use val_json::{TypeWrapper, UnsupportedTypeError, ValWrapper};
 
 #[derive(Hash, Clone, PartialEq, Eq)]
@@ -167,7 +168,7 @@ impl SupportedFunctionResult {
         if vec.is_empty() {
             Self::None
         } else if vec.len() == 1 {
-            Self::Single(vec.pop().unwrap())
+            Self::Single(vec.pop().unwrap_or_log())
         } else {
             unimplemented!("multi-value return types are not supported")
         }
@@ -223,12 +224,14 @@ impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
 pub mod workflow_id {
     use std::{str::FromStr, sync::Arc};
 
+    use tracing_unwrap::ResultExt;
+
     #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Hash)]
     pub struct WorkflowId(Arc<String>);
     impl WorkflowId {
         #[must_use]
         pub fn generate() -> WorkflowId {
-            ulid::Ulid::new().to_string().parse().unwrap() // ulid is 26 chars long
+            ulid::Ulid::new().to_string().parse().unwrap_or_log() // ulid is 26 chars long
         }
 
         #[must_use]

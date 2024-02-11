@@ -5,6 +5,7 @@ use crate::{
 use concepts::{workflow_id::WorkflowId, FunctionFqn};
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, trace};
+use tracing_unwrap::OptionExt;
 use wasmtime::component::Val;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -191,7 +192,7 @@ impl EventHistory {
         resp: ActivityResponse,
     ) {
         assert_eq!(self.vec.len() + 1, request_id);
-        let request = self.next_request.take().unwrap();
+        let request = self.next_request.take().unwrap_or_log();
         self.vec.push((request.activity_fqn, request.params, resp));
     }
 

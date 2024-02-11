@@ -8,6 +8,7 @@ use concepts::{FunctionFqn, FunctionMetadata};
 use std::{collections::HashMap, fmt::Debug, ops::DerefMut, sync::Arc};
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, trace};
+use tracing_unwrap::OptionExt;
 use wasmtime::{component::Val, Engine};
 
 mod http {
@@ -211,7 +212,7 @@ impl Activity {
         let results_len = self
             .functions_to_metadata
             .get(&request.activity_fqn)
-            .unwrap()
+            .unwrap_or_log()
             .results_len;
         trace!(
             "[{workflow_id}] Running {fqn}({params:?}) -> results_len:{results_len}",
