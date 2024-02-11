@@ -239,6 +239,9 @@ impl InMemoryDatabase {
     }
 
     #[instrument(skip_all)]
+    /// Responsible for
+    /// * purging finished executions from `inflight_executions`
+    /// * (re)enqueueing executions to the mpmc queue.
     fn listener_tick(
         inflight_executions: &std::sync::Mutex<HashMap<WorkflowId, InflightExecution>>,
         db_to_executor_mpmc_queues: &std::sync::Mutex<
@@ -456,7 +459,7 @@ mod tests {
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
-    use std::sync::atomic::AtomicBool;
+    use std::{sync::atomic::AtomicBool, time::Instant};
 
     static INIT: std::sync::Once = std::sync::Once::new();
     fn set_up() {
@@ -592,6 +595,36 @@ mod tests {
             Some(ExecutionStatusInfo::PermanentTimeout),
             db.get_execution_status(&workflow_id)
         );
+    }
+
+    #[tokio::test]
+    async fn two_executors_should_work_in_parallel() {
+        set_up();
+        let db = InMemoryDatabase::spawn_new(2);
+        let sleep_millis = 100;
+        let _executor_1 = db.spawn_executor(SOME_FFQN.to_owned(), SleepyWorker(None), 1, None);
+        let _executor_2 = db.spawn_executor(SOME_FFQN.to_owned(), SleepyWorker(None), 1, None);
+        let stopwatch = Instant::now();
+        let fut_1 = db.insert(
+            SOME_FFQN.to_owned(),
+            WorkflowId::generate(),
+            Params::from([wasmtime::component::Val::U64(sleep_millis)]),
+        );
+        let fut_2 = db.insert(
+            SOME_FFQN.to_owned(),
+            WorkflowId::generate(),
+            Params::from([wasmtime::component::Val::U64(sleep_millis)]),
+        );
+        assert_eq!(
+            ExecutionResult::Ok(SupportedFunctionResult::None),
+            fut_1.await.unwrap()
+        );
+        assert_eq!(
+            ExecutionResult::Ok(SupportedFunctionResult::None),
+            fut_2.await.unwrap()
+        );
+        let stopwatch = Instant::now().duration_since(stopwatch);
+        assert!(stopwatch < Duration::from_millis(sleep_millis) * 2,);
     }
 
     #[tokio::test]
