@@ -124,7 +124,7 @@ impl InMemoryDatabase {
         }
     }
 
-    #[instrument(skip_all, fields(ffqn = ffqn.to_string(), workflow_id = workflow_id.to_string()))]
+    #[instrument(skip_all, fields(%ffqn, %workflow_id))]
     pub fn insert(
         &self,
         ffqn: FunctionFqn,
@@ -255,7 +255,7 @@ impl InMemoryDatabase {
             .lock()
             .unwrap()
             .retain(|workflow_id, inflight_execution| {
-                info_span!("listener_tick", workflow_id = workflow_id.to_string()).in_scope(|| {
+                info_span!("listener_tick", %workflow_id).in_scope(|| {
                     match inflight_execution
                         .executor_db_receiver
                         .as_mut()
@@ -351,7 +351,7 @@ impl ExecutorAbortHandle {
     /// # Panics
     ///
     /// All senders must be closed, otherwise this function will panic.
-    #[instrument(skip_all, fields(ffqn = self.ffqn.to_string()))]
+    #[instrument(skip_all, fields(ffqn = %self.ffqn))]
     pub async fn close(self) {
         self.receiver.close();
         debug!("Gracefully closing");
@@ -363,7 +363,7 @@ impl ExecutorAbortHandle {
 }
 
 impl Drop for ExecutorAbortHandle {
-    #[instrument(skip_all, fields(ffqn = self.ffqn.to_string()))]
+    #[instrument(skip_all, fields(ffqn = %self.ffqn))]
     fn drop(&mut self) {
         if !self.executor_task.is_finished() {
             trace!("Aborting the executor task");
@@ -372,7 +372,7 @@ impl Drop for ExecutorAbortHandle {
     }
 }
 
-#[instrument(skip_all, fields(ffqn = ffqn.to_string()))]
+#[instrument(skip_all, fields(%ffqn))]
 fn spawn_executor<W: Worker + Send + Sync + 'static>(
     ffqn: FunctionFqn,
     receiver: Receiver<QueueEntry>,
@@ -413,7 +413,7 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
                         return;
                     };
                     let worker = worker.clone();
-                    let worker_span = info_span!("worker", workflow_id = workflow_id.to_string());
+                    let worker_span = info_span!("worker", %workflow_id);
                     worker_set.spawn(
                         async move {
                             debug!("Spawned worker");
