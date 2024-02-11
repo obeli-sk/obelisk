@@ -185,8 +185,6 @@ dependencies = [
  "test-programs-sleep-activity-builder",
  "test-programs-sleep-workflow-builder",
  "tokio",
- "tracing-chrome",
- "tracing-subscriber",
  "wasmtime",
  "wiremock",
 ]

@@ -24,8 +24,6 @@ hyper = { workspace = true, features = ["client", "http1"] }
 hyper-util = { workspace = true, features = ["full"] }
 lazy_static.workspace = true
 tokio = { workspace = true, features = ["full"] }
-tracing-chrome.workspace = true
-tracing-subscriber.workspace = true
 wasmtime.workspace = true
 wiremock.workspace = true
 
@@ -47,4 +45,3 @@ harness = false
 [[bench]]
 name = "sleep"
 harness = false
-

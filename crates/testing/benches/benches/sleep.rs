@@ -8,9 +8,8 @@ use runtime::{
     runtime::{Runtime, RuntimeBuilder},
     workflow::WORKFLOW_CONFIG_HOT,
 };
-use std::sync::{atomic::Ordering, Arc, Once};
+use std::sync::{atomic::Ordering, Arc};
 use tokio::{process::Command, sync::Mutex};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use wasmtime::component::Val;
 
 const DB_BUFFER_CAPACITY: usize = 100;
@@ -23,16 +22,6 @@ lazy_static! {
         .enable_io()
         .build()
         .expect("Should create a tokio runtime");
-}
-
-static INIT: Once = Once::new();
-fn set_up() {
-    INIT.call_once(|| {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer())
-            .with(tracing_subscriber::EnvFilter::from_default_env())
-            .init();
-    });
 }
 
 fn setup_runtime() -> Runtime {
@@ -58,7 +47,6 @@ fn setup_runtime() -> Runtime {
 static COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
 
 fn benchmark_sleep(criterion: &mut Criterion) {
-    set_up();
     let database = Database::new(DB_BUFFER_CAPACITY, DB_BUFFER_CAPACITY);
     let runtime = setup_runtime();
     let _abort_handle = RT.block_on(async { runtime.spawn(&database) });
@@ -101,7 +89,6 @@ fn benchmark_sleep(criterion: &mut Criterion) {
 }
 
 fn benchmark_sleep_process(criterion: &mut Criterion) {
-    set_up();
     let mut group = criterion.benchmark_group("sleep-process");
     group.throughput(Throughput::Elements(ELEMENTS_PER_ITERATION));
     let mut which = std::process::Command::new("which")

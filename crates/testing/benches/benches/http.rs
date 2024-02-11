@@ -6,11 +6,9 @@ use runtime::activity::ACTIVITY_CONFIG_HOT;
 use runtime::runtime::RuntimeBuilder;
 use runtime::workflow::WORKFLOW_CONFIG_HOT;
 use runtime::{database::Database, event_history::EventHistory, runtime::Runtime};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::sync::{atomic::Ordering, Once};
 use tokio::sync::Mutex;
-use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use wiremock::{
     matchers::{method, path},
     Mock, MockServer, ResponseTemplate,
@@ -22,35 +20,6 @@ lazy_static! {
         .enable_time()
         .build()
         .expect("Should create a tokio runtime");
-}
-
-static mut CHRMOE_TRACE_FILE_GUARD: Option<FlushGuard> = None;
-static INIT: Once = Once::new();
-
-fn set_up() -> Option<FlushGuard> {
-    INIT.call_once(|| {
-        let builder = tracing_subscriber::registry()
-            .with(fmt::layer())
-            .with(EnvFilter::from_default_env());
-        let enable_chrome_layer = std::env::var("CHRMOE_TRACE")
-            .ok()
-            .and_then(|val| val.parse::<bool>().ok())
-            .unwrap_or_default();
-
-        if enable_chrome_layer {
-            let (chrome_layer, guard) = ChromeLayerBuilder::new()
-                .trace_style(tracing_chrome::TraceStyle::Threaded)
-                .build();
-            unsafe {
-                CHRMOE_TRACE_FILE_GUARD = Some(guard);
-            }
-
-            builder.with(chrome_layer).init();
-        } else {
-            builder.init();
-        }
-    });
-    unsafe { CHRMOE_TRACE_FILE_GUARD.take() }
 }
 
 fn setup_runtime() -> Runtime {
@@ -80,7 +49,6 @@ static COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new
 const ELEMENTS: u64 = 10;
 
 fn benchmark_activity_client(criterion: &mut Criterion) {
-    let _guard = set_up();
     let database = Database::new(100, 100);
     let runtime = setup_runtime();
     let _abort_handle = RT.block_on(async { runtime.spawn(&database) });
@@ -152,10 +120,9 @@ fn benchmark_hyper_client(criterion: &mut Criterion) {
             .uri(path)
             .header(hyper::header::HOST, authority.as_str())
             .body(Empty::<Bytes>::new())?;
-        sender.send_request(req).await?;
+        assert!(sender.send_request(req).await?.status().is_success());
         Ok(())
     }
-    let _guard = set_up();
     let port = RT.block_on(async {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
