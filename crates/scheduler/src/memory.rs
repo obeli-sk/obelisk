@@ -144,24 +144,12 @@ impl InMemoryDatabase {
         let (db_client_sender, db_client_receiver) = oneshot::channel();
         // Attempt to enqueue the execution.
         let submitted = {
-            let (executor_db_sender, executor_db_receiver) = oneshot::channel();
-            let entry = QueueEntry {
-                workflow_id: workflow_id.clone(),
-                params: params.clone(),
-                executor_db_sender,
-            };
-            let (executor_db_receiver, status) = match db_to_executor_mpmc_sender.try_send(entry) {
-                Ok(()) => (
-                    Some(executor_db_receiver),
-                    InflightExecutionStatus::Enqueued,
-                ),
-                Err(async_channel::TrySendError::Full(_)) => {
-                    (None, InflightExecutionStatus::Pending)
-                }
-                Err(async_channel::TrySendError::Closed(_)) => {
-                    unreachable!("database holds a receiver")
-                }
-            };
+            let (executor_db_receiver, status) = Self::attempt_to_enqueue(
+                db_to_executor_mpmc_sender,
+                workflow_id.clone(),
+                params.clone(),
+                None,
+            );
             InflightExecution {
                 ffqn,
                 params,
@@ -171,16 +159,42 @@ impl InMemoryDatabase {
             }
         };
         // Save the execution
-        debug!(
-            "Inserting new execution with status {status}",
-            status = submitted.status
-        );
         self.inflight_executions
             .lock()
             .unwrap()
             .insert(workflow_id, submitted);
 
         db_client_receiver
+    }
+
+    fn attempt_to_enqueue(
+        db_to_executor_mpmc_sender: Sender<QueueEntry>,
+        workflow_id: WorkflowId,
+        params: Params,
+        old_status: Option<InflightExecutionStatus>,
+    ) -> (
+        Option<oneshot::Receiver<ExecutionResult>>,
+        InflightExecutionStatus,
+    ) {
+        let (executor_db_sender, executor_db_receiver) = oneshot::channel();
+        let entry = QueueEntry {
+            workflow_id,
+            params,
+            executor_db_sender,
+        };
+        let send_res = db_to_executor_mpmc_sender.try_send(entry);
+        let (executor_db_receiver, new_status) = match send_res {
+            Ok(()) => (
+                Some(executor_db_receiver),
+                InflightExecutionStatus::Enqueued,
+            ),
+            Err(async_channel::TrySendError::Full(_)) => (None, InflightExecutionStatus::Pending),
+            Err(async_channel::TrySendError::Closed(_)) => {
+                unreachable!("database holds a receiver")
+            }
+        };
+        debug!("Attempted to enqueue the execution, {old_status:?} -> {new_status}");
+        (executor_db_receiver, new_status)
     }
 
     fn spawn_executor<W: Worker + Send + Sync + 'static>(
@@ -201,7 +215,6 @@ impl InMemoryDatabase {
         spawn_executor(ffqn, receiver, worker, max_tasks, max_task_duration)
     }
 
-    #[instrument(skip_all)]
     fn spawn_listener(
         inflight_executions: Arc<std::sync::Mutex<HashMap<WorkflowId, InflightExecution>>>,
         db_to_executor_mpmc_queues: Arc<
@@ -209,7 +222,6 @@ impl InMemoryDatabase {
         >,
         finished_executions: Arc<std::sync::Mutex<HashMap<WorkflowId, FinishedExecutionStatus>>>,
     ) -> AbortHandle {
-        info!("Spawning");
         tokio::spawn(
             async move {
                 loop {
@@ -226,6 +238,7 @@ impl InMemoryDatabase {
         .abort_handle()
     }
 
+    #[instrument(skip_all)]
     fn listener_tick(
         inflight_executions: &std::sync::Mutex<HashMap<WorkflowId, InflightExecution>>,
         db_to_executor_mpmc_queues: &std::sync::Mutex<
@@ -235,79 +248,83 @@ impl InMemoryDatabase {
     ) {
         let mut finished = Vec::new();
 
-        inflight_executions.lock().unwrap().retain(|workflow_id, inflight_execution| {
-            info_span!("listener_tick", workflow_id=workflow_id.to_string()).in_scope(||
-            match inflight_execution
-                .executor_db_receiver
-                .as_mut()
-                .map(|rec| rec.try_recv())
-            {
-                Some(Ok(res)) => {
-                    assert_eq!(InflightExecutionStatus::Enqueued, inflight_execution.status);
-                    debug!("Received result, notifying client");
-                    let finished_status = match &res {
-                        Ok(supported_res) => FinishedExecutionStatus::Finished { result: supported_res.clone() },
-                        Err(WorkerError::Timeout) => FinishedExecutionStatus::PermanentTimeout,
-                    };
-                    finished.push((workflow_id.clone(), finished_status));
-                    // notify the client
-                    let db_client_sender = inflight_execution
-                        .db_client_sender
-                        .take()
-                        .expect("db_client_sender must have been set in insert");
-                    let _ = db_client_sender.send(res);
-                    false
-                }
-                Some(Err(oneshot::error::TryRecvError::Empty)) => {
-                    assert_eq!(InflightExecutionStatus::Enqueued, inflight_execution.status);
-                    // No response yet, keep the entry.
-                    true
-                }
-                recv @ Some(Err(oneshot::error::TryRecvError::Closed)) | recv @ None => {
-                    if recv.is_some() {
-                        // The executor was aborted while running the execution. Update the execution.
-                        assert_eq!(InflightExecutionStatus::Enqueued, inflight_execution.status);
-                    } else {
-                        assert_eq!(InflightExecutionStatus::Pending, inflight_execution.status);
-                    }
-                    let (executor_db_receiver, status) = {
-                        // Attempt to submit the execution to the mpmc channel.
-                        let db_to_executor_mpmc_sender = db_to_executor_mpmc_queues
-                            .lock()
-                            .unwrap()
-                            .get(&inflight_execution.ffqn)
-                            .expect("must be created in `insert`")
-                            .0
-                            .clone();
-                        let (executor_db_sender, executor_db_receiver) = oneshot::channel();
-                        let entry = QueueEntry {
-                            workflow_id: workflow_id.clone(),
-                            params: inflight_execution.params.clone(),
-                            executor_db_sender,
-                        };
-                        let send_res = db_to_executor_mpmc_sender.try_send(entry);
-                        debug!("Attempted to enqueue the execution with status {status}. Success: {send_res}",
-                            status = inflight_execution.status,
-                            send_res = send_res.is_ok());
-                        match send_res {
-                            Ok(()) => (
-                                Some(executor_db_receiver),
+        inflight_executions
+            .lock()
+            .unwrap()
+            .retain(|workflow_id, inflight_execution| {
+                info_span!("listener_tick", workflow_id = workflow_id.to_string()).in_scope(|| {
+                    match inflight_execution
+                        .executor_db_receiver
+                        .as_mut()
+                        .map(|rec| rec.try_recv())
+                    {
+                        Some(Ok(res)) => {
+                            assert_eq!(
                                 InflightExecutionStatus::Enqueued,
-                            ),
-                            Err(async_channel::TrySendError::Full(_)) => {
-                                (None, InflightExecutionStatus::Pending)
-                            }
-                            Err(async_channel::TrySendError::Closed(_)) => {
-                                unreachable!("database holds a receiver")
-                            }
+                                inflight_execution.status
+                            );
+                            debug!("Received result, notifying client");
+                            let finished_status = match &res {
+                                Ok(supported_res) => FinishedExecutionStatus::Finished {
+                                    result: supported_res.clone(),
+                                },
+                                Err(WorkerError::Timeout) => {
+                                    FinishedExecutionStatus::PermanentTimeout
+                                }
+                            };
+                            finished.push((workflow_id.clone(), finished_status));
+                            // notify the client
+                            let db_client_sender = inflight_execution
+                                .db_client_sender
+                                .take()
+                                .expect("db_client_sender must have been set in insert");
+                            let _ = db_client_sender.send(res);
+                            false
                         }
-                    };
-                    inflight_execution.executor_db_receiver = executor_db_receiver;
-                    inflight_execution.status = status;
-                    true
-                }
-            })
-        });
+                        Some(Err(oneshot::error::TryRecvError::Empty)) => {
+                            assert_eq!(
+                                InflightExecutionStatus::Enqueued,
+                                inflight_execution.status
+                            );
+                            // No response yet, keep the entry.
+                            true
+                        }
+                        recv @ Some(Err(oneshot::error::TryRecvError::Closed)) | recv @ None => {
+                            if recv.is_some() {
+                                // The executor was aborted while running the execution. Update the execution.
+                                assert_eq!(
+                                    InflightExecutionStatus::Enqueued,
+                                    inflight_execution.status
+                                );
+                            } else {
+                                assert_eq!(
+                                    InflightExecutionStatus::Pending,
+                                    inflight_execution.status
+                                );
+                            }
+                            let (executor_db_receiver, status) = {
+                                // Attempt to submit the execution to the mpmc channel.
+                                let db_to_executor_mpmc_sender = db_to_executor_mpmc_queues
+                                    .lock()
+                                    .unwrap()
+                                    .get(&inflight_execution.ffqn)
+                                    .expect("must be created in `insert`")
+                                    .0
+                                    .clone();
+                                Self::attempt_to_enqueue(
+                                    db_to_executor_mpmc_sender,
+                                    workflow_id.clone(),
+                                    inflight_execution.params.clone(),
+                                    Some(inflight_execution.status),
+                                )
+                            };
+                            inflight_execution.executor_db_receiver = executor_db_receiver;
+                            inflight_execution.status = status;
+                            true
+                        }
+                    }
+                })
+            });
         finished_executions
             .lock()
             .unwrap()
@@ -345,10 +362,13 @@ impl ExecutorAbortHandle {
 impl Drop for ExecutorAbortHandle {
     #[instrument(skip_all, fields(ffqn = self.ffqn.to_string()))]
     fn drop(&mut self) {
-        trace!("Aborting the executor task");
-        self.executor_task.abort();
+        if !self.executor_task.is_finished() {
+            trace!("Aborting the executor task");
+            self.executor_task.abort();
+        }
     }
 }
+
 #[instrument(skip_all, fields(ffqn = ffqn.to_string()))]
 fn spawn_executor<W: Worker + Send + Sync + 'static>(
     ffqn: FunctionFqn,
@@ -359,11 +379,11 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
 ) -> ExecutorAbortHandle {
     assert!(max_tasks > 0, "`max_tasks` must be greater than zero");
     let worker = Arc::new(worker);
-    info!("Spawning");
     let executor_task = {
         let receiver = receiver.clone();
         tokio::spawn(
             async move {
+                info!("Spawned executor");
                 let mut worker_set = JoinSet::new(); // All worker tasks are cancelled on drop.
                 let semaphore = Arc::new(tokio::sync::Semaphore::new(
                     usize::try_from(max_tasks).expect("usize from u32 should not fail"),
@@ -389,32 +409,33 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
                         trace!("All workers have finished");
                         return;
                     };
-                    trace!("Received {workflow_id}");
                     let worker = worker.clone();
                     let worker_span = info_span!("worker", workflow_id = workflow_id.to_string());
-                    worker_set.spawn(async move {
-                    debug!("Spawned");
-                    let execution_result_fut = worker.run(workflow_id.clone(), params);
-                    let execution_result = if let Some(max_task_duration) = max_task_duration {
-                        tokio::select! {
-                            res = execution_result_fut => res,
-                            _ = tokio::time::sleep(max_task_duration) => Err(WorkerError::Timeout)
+                    worker_set.spawn(
+                        async move {
+                            debug!("Spawned worker");
+                            let execution_result_fut = worker.run(workflow_id.clone(), params);
+                            let execution_result =
+                                if let Some(max_task_duration) = max_task_duration {
+                                    tokio::select! {
+                                        res = execution_result_fut => res,
+                                        _ = tokio::time::sleep(max_task_duration) => Err(WorkerError::Timeout)
+                                    }
+                                } else {
+                                    execution_result_fut.await
+                                };
+                            if tracing::enabled!(Level::TRACE) {
+                                trace!("Finished: {execution_result:?}");
+                            } else {
+                                debug!("Finished");
+                            }
+                            if executor_db_sender.send(execution_result).is_err() {
+                                debug!("Cannot send the result back to db");
+                            }
+                            drop(permit);
                         }
-                    } else {
-                        execution_result_fut.await
-                    };
-                    if tracing::enabled!(Level::TRACE) {
-                        trace!("Finished: {execution_result:?}");
-                    } else {
-                        debug!("Finished");
-                    }
-                    if executor_db_sender.send(execution_result).is_err() {
-                        debug!("Cannot send the result back to db");
-                    }
-                    drop(permit);
-                }
-                .instrument(worker_span)
-                );
+                        .instrument(worker_span),
+                    );
                 }
             }
             .instrument(info_span!("executor")),
@@ -434,10 +455,7 @@ mod tests {
     use crate::{ExecutionResult, Worker};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::{
-        workflow_id::{self, WorkflowId},
-        FunctionFqnStr, SupportedFunctionResult,
-    };
+    use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
     use std::sync::atomic::AtomicBool;
 
     static INIT: std::sync::Once = std::sync::Once::new();
