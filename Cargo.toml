@@ -103,7 +103,7 @@ ulid = "1.1.0"
 wasmtime = { version = "17.0", features = ["component-model"] }
 wasmtime-wasi = "17.0"
 wasmtime-wasi-http = "17.0"
-wiremock = "0.5"
+wiremock = "0.6"
 wit-bindgen = { version = "0.17.0", default-features = false, features = ["realloc"] }
 wit-component = "0.20"
 wit-parser = "0.13"
