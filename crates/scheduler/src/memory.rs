@@ -1,13 +1,14 @@
-use crate::{ExecutionResult, Worker, WorkerError};
+use crate::{ExecutionResult, PartialResult, Worker, WorkerError};
 use async_channel::{Receiver, Sender};
 use concepts::{workflow_id::WorkflowId, FunctionFqn, Params, SupportedFunctionResult};
+use either::Either;
 use indexmap::IndexMap;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     sync::oneshot,
     task::{AbortHandle, JoinSet},
 };
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Level};
 use tracing_unwrap::{OptionExt, ResultExt};
 
 /// Executor disconnect detection:
@@ -24,10 +25,10 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // Handling of panics in workers
 
 // TODO:
-// * feat: interrupts - partial progress + event history passing
-// * feat: Use workflow agnostic execution Id
+// * feat: workflow interrupts - event history passing
+// * feat: Use ExecutionId, with WorkflowId and ActivityId variants
 // * refactor: remove old db, runtime
-// * feat: dependent workflows (parent-child)
+// * feat: dependent executions: workflow-activity, parent-child workflows
 // * feat: retries on timeouts
 // * feat: retries on errors
 // * feat: schedule the execution into the future
@@ -76,6 +77,12 @@ pub enum ExecutionStatusInfo {
     Finished(SupportedFunctionResult),
     PermanentTimeout,
     Uncategorized,
+}
+
+impl ExecutionStatusInfo {
+    fn in_progress(&self) -> bool {
+        matches!(self, Self::Pending | Self::Enqueued)
+    }
 }
 
 #[derive(Debug)]
@@ -270,10 +277,31 @@ impl InMemoryDatabase {
     ) {
         let mut finished = Vec::new();
 
+        let reenqueue = |inflight_execution: &mut InflightExecution, workflow_id: WorkflowId| {
+            let (executor_db_receiver, status) = {
+                // Attempt to submit the execution to the mpmc channel.
+                let db_to_executor_mpmc_sender = db_to_executor_mpmc_queues
+                    .lock()
+                    .unwrap_or_log()
+                    .get(&inflight_execution.ffqn)
+                    .expect("must be created in `insert`")
+                    .0
+                    .clone();
+                Self::attempt_to_enqueue(
+                    db_to_executor_mpmc_sender,
+                    workflow_id,
+                    inflight_execution.params.clone(),
+                    Some(inflight_execution.status),
+                )
+            };
+            inflight_execution.executor_db_receiver = executor_db_receiver;
+            inflight_execution.status = status;
+        };
+
         inflight_executions
             .lock()
             .unwrap_or_log()
-            .retain(|workflow_id, inflight_execution| {
+            .retain(|workflow_id, mut inflight_execution| {
                 info_span!("listener_tick", %workflow_id).in_scope(|| {
                     match inflight_execution
                         .executor_db_receiver
@@ -285,26 +313,44 @@ impl InMemoryDatabase {
                                 InflightExecutionStatus::Enqueued,
                                 inflight_execution.status
                             );
-                            debug!("Received result, notifying client");
-                            let finished_status = match &res {
-                                Ok(supported_res) => FinishedExecutionStatus::Finished {
-                                    result: supported_res.clone(),
-                                },
+                            if tracing::enabled!(Level::TRACE) {
+                                trace!("Received result: {res:?}");
+                            } else {
+                                debug!("Received result");
+                            }
+                            let status = match &res {
+                                Ok(PartialResult::FinalResult(supported_res)) => {
+                                    Either::Left(FinishedExecutionStatus::Finished {
+                                        result: supported_res.clone(),
+                                    })
+                                }
+                                Ok(PartialResult::PartialProgress) => either::Either::Right(()),
                                 Err(WorkerError::Timeout) => {
-                                    FinishedExecutionStatus::PermanentTimeout
+                                    // TODO: reenqueue a retry.
+                                    Either::Left(FinishedExecutionStatus::PermanentTimeout)
                                 }
                                 Err(WorkerError::Uncategorized) => {
-                                    FinishedExecutionStatus::Uncategorized
+                                    Either::Left(FinishedExecutionStatus::Uncategorized)
                                 }
                             };
-                            finished.push((workflow_id.clone(), finished_status));
-                            // Attempt to notify the client.
-                            let db_client_sender = inflight_execution
-                                .db_client_sender
-                                .take()
-                                .expect("db_client_sender must have been set in insert");
-                            let _ = db_client_sender.send(res);
-                            false
+                            if let Either::Left(finished_status) = status {
+                                finished.push((workflow_id.clone(), finished_status));
+                                // Attempt to notify the client.
+                                let db_client_sender = inflight_execution
+                                    .db_client_sender
+                                    .take()
+                                    .expect("db_client_sender must have been set in insert");
+                                let _ = db_client_sender.send(res);
+                                false
+                            } else {
+                                // reenqueue
+                                assert_eq!(
+                                    InflightExecutionStatus::Enqueued,
+                                    inflight_execution.status
+                                );
+                                reenqueue(&mut inflight_execution, workflow_id.clone());
+                                true
+                            }
                         }
                         Some(Err(oneshot::error::TryRecvError::Empty)) => {
                             assert_eq!(
@@ -327,24 +373,7 @@ impl InMemoryDatabase {
                                     inflight_execution.status
                                 );
                             }
-                            let (executor_db_receiver, status) = {
-                                // Attempt to submit the execution to the mpmc channel.
-                                let db_to_executor_mpmc_sender = db_to_executor_mpmc_queues
-                                    .lock()
-                                    .unwrap_or_log()
-                                    .get(&inflight_execution.ffqn)
-                                    .expect("must be created in `insert`")
-                                    .0
-                                    .clone();
-                                Self::attempt_to_enqueue(
-                                    db_to_executor_mpmc_sender,
-                                    workflow_id.clone(),
-                                    inflight_execution.params.clone(),
-                                    Some(inflight_execution.status),
-                                )
-                            };
-                            inflight_execution.executor_db_receiver = executor_db_receiver;
-                            inflight_execution.status = status;
+                            reenqueue(&mut inflight_execution, workflow_id.clone());
                             true
                         }
                     }
@@ -542,7 +571,10 @@ mod tests {
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
-    use std::{sync::atomic::AtomicBool, time::Instant};
+    use std::{
+        sync::atomic::{AtomicBool, AtomicU8, Ordering},
+        time::Instant,
+    };
     use tracing_unwrap::OptionExt;
 
     static INIT: std::sync::Once = std::sync::Once::new();
@@ -568,7 +600,7 @@ mod tests {
         #[async_trait]
         impl Worker for SimpleWorker {
             async fn run(&self, _workflow_id: WorkflowId, _params: Params) -> ExecutionResult {
-                ExecutionResult::Ok(SupportedFunctionResult::None)
+                ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
             }
         }
 
@@ -578,7 +610,10 @@ mod tests {
         let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
         tokio::time::sleep(Duration::from_secs(1)).await;
         let resp = execution.await.unwrap_or_log();
-        assert_eq!(ExecutionResult::Ok(SupportedFunctionResult::None), resp);
+        assert_eq!(
+            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            resp
+        );
         assert_eq!(
             Some(ExecutionStatusInfo::Finished(SupportedFunctionResult::None)),
             db.get_execution_status(&workflow_id)
@@ -599,7 +634,7 @@ mod tests {
                 trace!("[{workflow_id}] sleeping");
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 trace!("[{workflow_id}] done!");
-                ExecutionResult::Ok(SupportedFunctionResult::None)
+                ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
             }
         }
 
@@ -621,7 +656,7 @@ mod tests {
             db.spawn_executor(SOME_FFQN.to_owned(), workflow_worker, max_tasks, None);
         for execution in executions {
             assert_eq!(
-                ExecutionResult::Ok(SupportedFunctionResult::None),
+                ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
                 execution.await.unwrap_or_log()
             );
         }
@@ -640,12 +675,9 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(millis)).await;
             trace!("done!");
             if let Some(finished_check) = &self.0 {
-                assert_eq!(
-                    false,
-                    finished_check.swap(true, std::sync::atomic::Ordering::SeqCst)
-                );
+                assert_eq!(false, finished_check.swap(true, Ordering::SeqCst));
             }
-            ExecutionResult::Ok(SupportedFunctionResult::None)
+            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
         }
     }
 
@@ -670,10 +702,7 @@ mod tests {
             )
             .await
             .unwrap_or_log();
-        assert_eq!(
-            false,
-            finished_check.load(std::sync::atomic::Ordering::SeqCst)
-        );
+        assert_eq!(false, finished_check.load(Ordering::SeqCst));
         assert_eq!(ExecutionResult::Err(WorkerError::Timeout), res);
         assert_eq!(
             Some(ExecutionStatusInfo::PermanentTimeout),
@@ -700,11 +729,11 @@ mod tests {
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
         );
         assert_eq!(
-            ExecutionResult::Ok(SupportedFunctionResult::None),
+            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
             fut_1.await.unwrap_or_log()
         );
         assert_eq!(
-            ExecutionResult::Ok(SupportedFunctionResult::None),
+            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
             fut_2.await.unwrap_or_log()
         );
         let stopwatch = Instant::now().duration_since(stopwatch);
@@ -738,10 +767,7 @@ mod tests {
         });
         // Make sure that the worker task was aborted and did not mark the execution as finished.
         tokio::time::sleep(Duration::from_millis(sleep_millis * 2)).await;
-        assert_eq!(
-            false,
-            finished_check.load(std::sync::atomic::Ordering::SeqCst)
-        );
+        assert_eq!(false, finished_check.load(Ordering::SeqCst));
         assert_eq!(
             oneshot::error::TryRecvError::Empty,
             execution.try_recv().unwrap_err_or_log()
@@ -754,13 +780,10 @@ mod tests {
             None,
         );
         assert_eq!(
-            ExecutionResult::Ok(SupportedFunctionResult::None),
+            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
             execution.await.unwrap_or_log()
         );
-        assert_eq!(
-            true,
-            finished_check.load(std::sync::atomic::Ordering::SeqCst)
-        );
+        assert_eq!(true, finished_check.load(Ordering::SeqCst));
     }
 
     #[tokio::test]
@@ -783,12 +806,9 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(sleep_millis / 2)).await;
         // Close should block until the execution is done.
         executor_abort_handle.close().await;
+        assert_eq!(true, finished_check.load(Ordering::SeqCst));
         assert_eq!(
-            true,
-            finished_check.load(std::sync::atomic::Ordering::SeqCst)
-        );
-        assert_eq!(
-            ExecutionResult::Ok(SupportedFunctionResult::None),
+            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
             execution.await.unwrap_or_log()
         );
     }
@@ -823,7 +843,7 @@ mod tests {
         );
         for execution in executions {
             assert_eq!(
-                ExecutionResult::Ok(SupportedFunctionResult::None),
+                ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
                 execution.1.await.unwrap_or_log()
             );
             assert_eq!(
@@ -851,8 +871,75 @@ mod tests {
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PanicingWorker, 1, None);
-        let execution: Result<SupportedFunctionResult, WorkerError> =
-            execution.await.unwrap_or_log();
+        let execution = execution.await.unwrap_or_log();
         assert_matches!(execution, Err(WorkerError::Uncategorized));
+    }
+
+    #[tokio::test]
+    async fn test_partial_progress() {
+        set_up();
+        struct PartialProgressWorker {
+            is_waiting: Arc<AtomicBool>,
+            should_finish: Arc<AtomicBool>,
+        };
+
+        #[async_trait]
+        impl Worker for PartialProgressWorker {
+            async fn run(&self, _workflow_id: WorkflowId, _params: Params) -> ExecutionResult {
+                if self.should_finish.load(Ordering::SeqCst) {
+                    trace!("Worker finished");
+                    ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
+                } else {
+                    trace!("Worker waiting");
+                    self.is_waiting.store(true, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    ExecutionResult::Ok(PartialResult::PartialProgress)
+                }
+            }
+        }
+
+        let db = InMemoryDatabase::spawn_new(1);
+        let workflow_id = WorkflowId::generate();
+        let execution = db.insert(SOME_FFQN.to_owned(), workflow_id.clone(), Params::default());
+        let is_waiting = Arc::new(AtomicBool::new(false));
+        let should_finish = Arc::new(AtomicBool::new(false));
+        let _executor_abort_handle = db.spawn_executor(
+            SOME_FFQN.to_owned(),
+            PartialProgressWorker {
+                is_waiting: is_waiting.clone(),
+                should_finish: should_finish.clone(),
+            },
+            1,
+            None,
+        );
+        loop {
+            if is_waiting.load(Ordering::SeqCst) {
+                break;
+            }
+            trace!("Waiting for in progress");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(db
+            .get_execution_status(&workflow_id)
+            .unwrap_or_log()
+            .in_progress());
+
+        should_finish.store(true, Ordering::SeqCst);
+        let status = loop {
+            let status = db.get_execution_status(&workflow_id).unwrap_or_log();
+            if !status.in_progress() {
+                break status;
+            }
+            trace!("Waiting to finish");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        assert_eq!(
+            ExecutionStatusInfo::Finished(SupportedFunctionResult::None),
+            status
+        );
+        assert_eq!(
+            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            execution.await.unwrap_or_log()
+        );
     }
 }

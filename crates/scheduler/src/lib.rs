@@ -3,7 +3,13 @@ use concepts::{workflow_id::WorkflowId, Params, SupportedFunctionResult};
 
 mod memory;
 
-pub type ExecutionResult = Result<SupportedFunctionResult, WorkerError>;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PartialResult {
+    FinalResult(SupportedFunctionResult),
+    PartialProgress,
+}
+
+pub type ExecutionResult = Result<PartialResult, WorkerError>;
 pub type ExecutionId = ulid::Ulid;
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]

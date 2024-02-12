@@ -19,6 +19,7 @@ tracing-unwrap.workspace = true
 tracing.workspace = true
 ulid.workspace = true
 wasmtime.workspace = true
+either = "1.10.0"
 
 [dev-dependencies]
 assert_matches.workspace = true
