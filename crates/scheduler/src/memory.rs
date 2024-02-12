@@ -3,7 +3,7 @@ use async_channel::{Receiver, Sender};
 use concepts::{workflow_id::WorkflowId, FunctionFqn, Params, SupportedFunctionResult};
 use either::Either;
 use indexmap::IndexMap;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 use tokio::{
     sync::oneshot,
     task::{AbortHandle, JoinSet},
@@ -25,7 +25,7 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // Handling of panics in workers
 
 // TODO:
-// * feat: workflow interrupts - event history passing
+// * fix: consistency between `inflight_executions` and `finished_executions`
 // * feat: Use ExecutionId, with WorkflowId and ActivityId variants
 // * refactor: remove old db, runtime
 // * feat: dependent executions: workflow-activity, parent-child workflows
@@ -38,16 +38,18 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // * resil: limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
 // * perf: wake up the listener by insertion and executor by pushing a workflow id to an mpsc channel.
 #[derive(Debug)]
-struct QueueEntry {
+struct QueueEntry<S: Debug> {
     workflow_id: WorkflowId,
     params: Params,
+    store: S,
     executor_db_sender: oneshot::Sender<ExecutionResult>,
 }
 
 #[derive(Debug)]
-struct InflightExecution {
+struct InflightExecution<S> {
     ffqn: FunctionFqn,
     params: Params,
+    store: S,
     db_client_sender: Option<oneshot::Sender<ExecutionResult>>, // Hack: Always present so it can be taken and used by the listener.
     executor_db_receiver: Option<oneshot::Receiver<ExecutionResult>>, // None if this entry needs to be submitted to the mpmc channel.
     status: InflightExecutionStatus,
@@ -86,21 +88,27 @@ impl ExecutionStatusInfo {
 }
 
 #[derive(Debug)]
-pub struct InMemoryDatabase {
+pub struct InMemoryDatabase<S: Debug> {
     queue_capacity: usize,
-    db_to_executor_mpmc_queues:
-        Arc<std::sync::Mutex<HashMap<FunctionFqn, (Sender<QueueEntry>, Receiver<QueueEntry>)>>>,
-    inflight_executions: Arc<std::sync::Mutex<IndexMap<WorkflowId, InflightExecution>>>,
+    // Single writer: `insert`. Read by db listener(reenqueue) and `spawn_executor`(receiver).
+    db_to_executor_mpmc_queues: Arc<
+        std::sync::Mutex<HashMap<FunctionFqn, (Sender<QueueEntry<S>>, Receiver<QueueEntry<S>>)>>,
+    >,
+    // Written by both `insert` and the listener (update status).
+    inflight_executions: Arc<std::sync::Mutex<IndexMap<WorkflowId, InflightExecution<S>>>>,
+    // Written by the listener.
     finished_executions: Arc<std::sync::Mutex<HashMap<WorkflowId, FinishedExecutionStatus>>>,
     listener: AbortHandle,
 }
 
-impl InMemoryDatabase {
+impl<S: Clone + Debug + Send + 'static> InMemoryDatabase<S> {
     pub fn spawn_new(queue_capacity: usize) -> Self {
-        let inflight_executions: Arc<std::sync::Mutex<IndexMap<WorkflowId, InflightExecution>>> =
+        let inflight_executions: Arc<std::sync::Mutex<IndexMap<WorkflowId, InflightExecution<S>>>> =
             Default::default();
         let db_to_executor_mpmc_queues: Arc<
-            std::sync::Mutex<HashMap<FunctionFqn, (Sender<QueueEntry>, Receiver<QueueEntry>)>>,
+            std::sync::Mutex<
+                HashMap<FunctionFqn, (Sender<QueueEntry<S>>, Receiver<QueueEntry<S>>)>,
+            >,
         > = Default::default();
         let finished_executions: Arc<
             std::sync::Mutex<HashMap<WorkflowId, FinishedExecutionStatus>>,
@@ -156,6 +164,7 @@ impl InMemoryDatabase {
         ffqn: FunctionFqn,
         workflow_id: WorkflowId,
         params: Params,
+        store: S,
     ) -> oneshot::Receiver<ExecutionResult> {
         // make sure the mpmc channel is created, obtain its sender
         let db_to_executor_mpmc_sender = self
@@ -174,6 +183,7 @@ impl InMemoryDatabase {
                 db_to_executor_mpmc_sender,
                 workflow_id.clone(),
                 params.clone(),
+                store.clone(),
                 None,
             );
             InflightExecution {
@@ -182,6 +192,7 @@ impl InMemoryDatabase {
                 executor_db_receiver,
                 status,
                 db_client_sender: Some(db_client_sender),
+                store,
             }
         };
         // Save the execution
@@ -194,9 +205,10 @@ impl InMemoryDatabase {
     }
 
     fn attempt_to_enqueue(
-        db_to_executor_mpmc_sender: Sender<QueueEntry>,
+        db_to_executor_mpmc_sender: Sender<QueueEntry<S>>,
         workflow_id: WorkflowId,
         params: Params,
+        store: S,
         old_status: Option<InflightExecutionStatus>,
     ) -> (
         Option<oneshot::Receiver<ExecutionResult>>,
@@ -206,6 +218,7 @@ impl InMemoryDatabase {
         let entry = QueueEntry {
             workflow_id,
             params,
+            store,
             executor_db_sender,
         };
         let send_res = db_to_executor_mpmc_sender.try_send(entry);
@@ -223,13 +236,13 @@ impl InMemoryDatabase {
         (executor_db_receiver, new_status)
     }
 
-    fn spawn_executor<W: Worker + Send + Sync + 'static>(
+    fn spawn_executor<W: Worker<S> + Send + Sync + 'static>(
         &self,
         ffqn: FunctionFqn,
         worker: W,
         max_tasks: u32,
         max_task_duration: Option<Duration>,
-    ) -> ExecutorAbortHandle {
+    ) -> ExecutorAbortHandle<S> {
         let receiver = self
             .db_to_executor_mpmc_queues
             .lock()
@@ -242,9 +255,11 @@ impl InMemoryDatabase {
     }
 
     fn spawn_listener(
-        inflight_executions: Arc<std::sync::Mutex<IndexMap<WorkflowId, InflightExecution>>>,
+        inflight_executions: Arc<std::sync::Mutex<IndexMap<WorkflowId, InflightExecution<S>>>>,
         db_to_executor_mpmc_queues: Arc<
-            std::sync::Mutex<HashMap<FunctionFqn, (Sender<QueueEntry>, Receiver<QueueEntry>)>>,
+            std::sync::Mutex<
+                HashMap<FunctionFqn, (Sender<QueueEntry<S>>, Receiver<QueueEntry<S>>)>,
+            >,
         >,
         finished_executions: Arc<std::sync::Mutex<HashMap<WorkflowId, FinishedExecutionStatus>>>,
     ) -> AbortHandle {
@@ -269,15 +284,17 @@ impl InMemoryDatabase {
     /// * purging finished executions from `inflight_executions`
     /// * (re)enqueueing executions to the mpmc queue.
     fn listener_tick(
-        inflight_executions: &std::sync::Mutex<IndexMap<WorkflowId, InflightExecution>>,
+        inflight_executions: &std::sync::Mutex<IndexMap<WorkflowId, InflightExecution<S>>>,
         db_to_executor_mpmc_queues: &std::sync::Mutex<
-            HashMap<FunctionFqn, (Sender<QueueEntry>, Receiver<QueueEntry>)>,
+            HashMap<FunctionFqn, (Sender<QueueEntry<S>>, Receiver<QueueEntry<S>>)>,
         >,
         finished_executions: &std::sync::Mutex<HashMap<WorkflowId, FinishedExecutionStatus>>,
     ) {
         let mut finished = Vec::new();
 
-        let reenqueue = |inflight_execution: &mut InflightExecution, workflow_id: WorkflowId| {
+        // let db_lock = ... // FIXME needed for consistency
+
+        let reenqueue = |inflight_execution: &mut InflightExecution<S>, workflow_id: WorkflowId| {
             let (executor_db_receiver, status) = {
                 // Attempt to submit the execution to the mpmc channel.
                 let db_to_executor_mpmc_sender = db_to_executor_mpmc_queues
@@ -291,6 +308,7 @@ impl InMemoryDatabase {
                     db_to_executor_mpmc_sender,
                     workflow_id,
                     inflight_execution.params.clone(),
+                    inflight_execution.store.clone(),
                     Some(inflight_execution.status),
                 )
             };
@@ -391,13 +409,13 @@ impl InMemoryDatabase {
     }
 }
 
-pub struct ExecutorAbortHandle {
+pub struct ExecutorAbortHandle<S: Debug> {
     ffqn: FunctionFqn,
     executor_task: AbortHandle,
-    receiver: Receiver<QueueEntry>,
+    receiver: Receiver<QueueEntry<S>>,
 }
 
-impl ExecutorAbortHandle {
+impl<S: Debug> ExecutorAbortHandle<S> {
     /// Graceful shutdown. Waits until all workers terminate.
     ///
     /// # Panics
@@ -415,7 +433,7 @@ impl ExecutorAbortHandle {
     }
 }
 
-impl Drop for ExecutorAbortHandle {
+impl<S: Debug> Drop for ExecutorAbortHandle<S> {
     #[instrument(skip_all, fields(ffqn = %self.ffqn))]
     fn drop(&mut self) {
         if !self.executor_task.is_finished() {
@@ -426,13 +444,13 @@ impl Drop for ExecutorAbortHandle {
 }
 
 #[instrument(skip_all, fields(%ffqn))]
-fn spawn_executor<W: Worker + Send + Sync + 'static>(
+fn spawn_executor<S: Debug + Send + 'static, W: Worker<S> + Send + Sync + 'static>(
     ffqn: FunctionFqn,
-    receiver: Receiver<QueueEntry>,
+    receiver: Receiver<QueueEntry<S>>,
     worker: W,
     max_tasks: u32,
     max_task_duration: Option<Duration>,
-) -> ExecutorAbortHandle {
+) -> ExecutorAbortHandle<S> {
     assert!(max_tasks > 0, "`max_tasks` must be greater than zero");
     let worker = Arc::new(worker);
     let executor_task = {
@@ -510,6 +528,7 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
                     let Ok(QueueEntry {
                         workflow_id,
                         params,
+                        store,
                         executor_db_sender,
                     }) = recv
                     else {
@@ -530,7 +549,7 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
                         worker_set.spawn(
                             async move {
                                 debug!("Spawned worker");
-                                let execution_result_fut = worker.run(workflow_id, params);
+                                let execution_result_fut = worker.run(workflow_id, params, store);
                                 let execution_result =
                                     if let Some(max_task_duration) = max_task_duration {
                                         tokio::select! {
@@ -573,7 +592,7 @@ mod tests {
     use async_trait::async_trait;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
     use std::{
-        sync::atomic::{AtomicBool, AtomicU8, Ordering},
+        sync::atomic::{AtomicBool, Ordering},
         time::Instant,
     };
     use tracing_unwrap::OptionExt;
@@ -599,15 +618,25 @@ mod tests {
         struct SimpleWorker;
 
         #[async_trait]
-        impl Worker for SimpleWorker {
-            async fn run(&self, _workflow_id: WorkflowId, _params: Params) -> ExecutionResult {
+        impl Worker<()> for SimpleWorker {
+            async fn run(
+                &self,
+                _workflow_id: WorkflowId,
+                _params: Params,
+                store: (),
+            ) -> ExecutionResult {
                 ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
             }
         }
 
         let db = InMemoryDatabase::spawn_new(1);
         let workflow_id = WorkflowId::generate();
-        let execution = db.insert(SOME_FFQN.to_owned(), workflow_id.clone(), Params::default());
+        let execution = db.insert(
+            SOME_FFQN.to_owned(),
+            workflow_id.clone(),
+            Params::default(),
+            (),
+        );
         let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
         tokio::time::sleep(Duration::from_secs(1)).await;
         let resp = execution.await.unwrap_or_log();
@@ -628,8 +657,13 @@ mod tests {
         struct SemaphoreWorker(tokio::sync::Semaphore);
 
         #[async_trait]
-        impl Worker for SemaphoreWorker {
-            async fn run(&self, workflow_id: WorkflowId, _params: Params) -> ExecutionResult {
+        impl Worker<()> for SemaphoreWorker {
+            async fn run(
+                &self,
+                workflow_id: WorkflowId,
+                _params: Params,
+                _store: (),
+            ) -> ExecutionResult {
                 trace!("[{workflow_id}] acquiring");
                 let _permit = self.0.try_acquire().unwrap_or_log();
                 trace!("[{workflow_id}] sleeping");
@@ -647,6 +681,7 @@ mod tests {
                     SOME_FFQN.to_owned(),
                     WorkflowId::generate(),
                     Params::default(),
+                    (),
                 )
             })
             .collect::<Vec<_>>();
@@ -666,9 +701,14 @@ mod tests {
     struct SleepyWorker(Option<Arc<AtomicBool>>);
 
     #[async_trait]
-    impl Worker for SleepyWorker {
+    impl Worker<()> for SleepyWorker {
         #[instrument(skip_all)]
-        async fn run(&self, _workflow_id: WorkflowId, params: Params) -> ExecutionResult {
+        async fn run(
+            &self,
+            _workflow_id: WorkflowId,
+            params: Params,
+            _store: (),
+        ) -> ExecutionResult {
             assert_eq!(params.len(), 1);
             let millis = params[0].clone();
             let millis = assert_matches!(millis, wasmtime::component::Val::U64(millis) => millis);
@@ -700,6 +740,7 @@ mod tests {
                 SOME_FFQN.to_owned(),
                 workflow_id.clone(),
                 Params::from([wasmtime::component::Val::U64(max_duration_millis * 2)]),
+                (),
             )
             .await
             .unwrap_or_log();
@@ -723,11 +764,13 @@ mod tests {
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
+            (),
         );
         let fut_2 = db.insert(
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
+            (),
         );
         assert_eq!(
             ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
@@ -760,6 +803,7 @@ mod tests {
             SOME_FFQN.to_owned(),
             workflow_id,
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
+            (),
         );
         // Drop the executor after 10ms.
         tokio::spawn(async move {
@@ -796,6 +840,7 @@ mod tests {
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
+            (),
         );
         let finished_check = Arc::new(AtomicBool::new(false));
         let executor_abort_handle = db.spawn_executor(
@@ -828,6 +873,7 @@ mod tests {
                     SOME_FFQN.to_owned(),
                     workflow_id,
                     Params::from([wasmtime::component::Val::U64(max_duration_millis)]),
+                    (),
                 ),
             )
         };
@@ -859,8 +905,13 @@ mod tests {
         set_up();
         struct PanicingWorker;
         #[async_trait]
-        impl Worker for PanicingWorker {
-            async fn run(&self, _workflow_id: WorkflowId, _params: Params) -> ExecutionResult {
+        impl Worker<()> for PanicingWorker {
+            async fn run(
+                &self,
+                _workflow_id: WorkflowId,
+                _params: Params,
+                _store: (),
+            ) -> ExecutionResult {
                 panic!();
             }
         }
@@ -869,6 +920,7 @@ mod tests {
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::default(),
+            (),
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PanicingWorker, 1, None);
@@ -882,11 +934,16 @@ mod tests {
         struct PartialProgressWorker {
             is_waiting: Arc<AtomicBool>,
             should_finish: Arc<AtomicBool>,
-        };
+        }
 
         #[async_trait]
-        impl Worker for PartialProgressWorker {
-            async fn run(&self, _workflow_id: WorkflowId, _params: Params) -> ExecutionResult {
+        impl Worker<()> for PartialProgressWorker {
+            async fn run(
+                &self,
+                _workflow_id: WorkflowId,
+                _params: Params,
+                _store: (),
+            ) -> ExecutionResult {
                 if self.should_finish.load(Ordering::SeqCst) {
                     trace!("Worker finished");
                     ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
@@ -901,7 +958,12 @@ mod tests {
 
         let db = InMemoryDatabase::spawn_new(1);
         let workflow_id = WorkflowId::generate();
-        let execution = db.insert(SOME_FFQN.to_owned(), workflow_id.clone(), Params::default());
+        let execution = db.insert(
+            SOME_FFQN.to_owned(),
+            workflow_id.clone(),
+            Params::default(),
+            (),
+        );
         let is_waiting = Arc::new(AtomicBool::new(false));
         let should_finish = Arc::new(AtomicBool::new(false));
         let _executor_abort_handle = db.spawn_executor(
@@ -932,6 +994,80 @@ mod tests {
                 break status;
             }
             trace!("Waiting to finish");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        assert_eq!(
+            ExecutionStatusInfo::Finished(SupportedFunctionResult::None),
+            status
+        );
+        assert_eq!(
+            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            execution.await.unwrap_or_log()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_partial_progress_with_store() {
+        set_up();
+        struct PartialProgressWorker;
+
+        #[derive(Default, Debug, Clone)]
+        struct PartialStore {
+            is_waiting: Arc<AtomicBool>,
+            should_finish: Arc<AtomicBool>,
+        }
+        let store = PartialStore::default();
+        let is_waiting = store.is_waiting.clone();
+        let should_finish = store.should_finish.clone();
+
+        #[async_trait]
+        impl Worker<PartialStore> for PartialProgressWorker {
+            async fn run(
+                &self,
+                _workflow_id: WorkflowId,
+                _params: Params,
+                store: PartialStore,
+            ) -> ExecutionResult {
+                if store.should_finish.load(Ordering::SeqCst) {
+                    trace!("Worker finished");
+                    ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
+                } else {
+                    trace!("Worker waiting");
+                    store.is_waiting.store(true, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    ExecutionResult::Ok(PartialResult::PartialProgress)
+                }
+            }
+        }
+        let db = InMemoryDatabase::spawn_new(1);
+        let workflow_id = WorkflowId::generate();
+        let execution = db.insert(
+            SOME_FFQN.to_owned(),
+            workflow_id.clone(),
+            Params::default(),
+            store,
+        );
+        let _executor_abort_handle =
+            db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
+        loop {
+            if is_waiting.load(Ordering::SeqCst) {
+                break;
+            }
+            debug!("Waiting for in progress");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(db
+            .get_execution_status(&workflow_id)
+            .unwrap_or_log()
+            .in_progress());
+
+        should_finish.store(true, Ordering::SeqCst);
+        let status = loop {
+            let status = db.get_execution_status(&workflow_id).unwrap_or_log();
+            if !status.in_progress() {
+                break status;
+            }
+            debug!("Waiting to finish");
             tokio::time::sleep(Duration::from_millis(100)).await;
         };
         assert_eq!(

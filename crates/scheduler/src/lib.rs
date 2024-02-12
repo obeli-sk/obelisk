@@ -21,6 +21,6 @@ pub enum WorkerError {
 }
 
 #[async_trait]
-pub trait Worker {
-    async fn run(&self, workflow_id: WorkflowId, params: Params) -> ExecutionResult;
+pub trait Worker<S> {
+    async fn run(&self, workflow_id: WorkflowId, params: Params, store: S) -> ExecutionResult;
 }
