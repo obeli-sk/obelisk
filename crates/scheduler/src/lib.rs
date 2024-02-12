@@ -10,6 +10,8 @@ pub type ExecutionId = ulid::Ulid;
 pub enum WorkerError {
     #[error("worker timed out")]
     Timeout,
+    #[error("worker failed")]
+    Uncategorized,
 }
 
 #[async_trait]

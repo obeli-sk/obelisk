@@ -12,16 +12,16 @@ val-json.workspace = true
 async-channel.workspace = true
 async-trait.workspace = true
 derive_more.workspace = true
+indexmap.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+tracing-unwrap.workspace = true
 tracing.workspace = true
 ulid.workspace = true
 wasmtime.workspace = true
-tracing-unwrap.workspace = true
 
 [dev-dependencies]
 assert_matches.workspace = true
-tokio = { workspace = true, features = ["rt", "macros", "time"] }
 tracing-subscriber.workspace = true
 
 [lints]

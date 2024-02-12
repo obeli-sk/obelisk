@@ -1,13 +1,20 @@
 use crate::{ExecutionResult, Worker, WorkerError};
 use async_channel::{Receiver, Sender};
 use concepts::{workflow_id::WorkflowId, FunctionFqn, Params, SupportedFunctionResult};
+use indexmap::IndexMap;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     sync::oneshot,
     task::{AbortHandle, JoinSet},
 };
-use tracing::{debug, info, info_span, instrument, trace, Instrument, Level};
-use tracing_unwrap::ResultExt;
+use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
+use tracing_unwrap::{OptionExt, ResultExt};
+
+/// Executor disconnect detection:
+/// This implementation relies on oneshot channels, which simulate a TCP connection in a way.
+/// When the oneshot channel is closed, we know we need to re-enqueue the execution.
+/// An alternate implementation might exist where we would use
+/// versioning, health checks and timeouts to detect when an executor got stuck or disconnected.
 
 // Done:
 // Execution insertion, enqueueing, executing on a worker.
@@ -58,6 +65,7 @@ enum InflightExecutionStatus {
 enum FinishedExecutionStatus {
     Finished { result: SupportedFunctionResult },
     PermanentTimeout,
+    Uncategorized,
 }
 
 #[derive(Debug, PartialEq, Clone, Eq)]
@@ -66,6 +74,7 @@ pub enum ExecutionStatusInfo {
     Enqueued,
     Finished(SupportedFunctionResult),
     PermanentTimeout,
+    Uncategorized,
 }
 
 #[derive(Debug)]
@@ -114,6 +123,9 @@ impl InMemoryDatabase {
             }
             Some(FinishedExecutionStatus::PermanentTimeout) => {
                 return Some(ExecutionStatusInfo::PermanentTimeout)
+            }
+            Some(FinishedExecutionStatus::Uncategorized) => {
+                return Some(ExecutionStatusInfo::Uncategorized);
             }
             None => {}
         };
@@ -280,9 +292,12 @@ impl InMemoryDatabase {
                                 Err(WorkerError::Timeout) => {
                                     FinishedExecutionStatus::PermanentTimeout
                                 }
+                                Err(WorkerError::Uncategorized) => {
+                                    FinishedExecutionStatus::Uncategorized
+                                }
                             };
                             finished.push((workflow_id.clone(), finished_status));
-                            // notify the client
+                            // Attempt to notify the client.
                             let db_client_sender = inflight_execution
                                 .db_client_sender
                                 .take()
@@ -359,6 +374,7 @@ impl ExecutorAbortHandle {
     /// All senders must be closed, otherwise this function will panic.
     #[instrument(skip_all, fields(ffqn = %self.ffqn))]
     pub async fn close(self) {
+        // Signal to the executor task.
         self.receiver.close();
         debug!("Gracefully closing");
         while !self.executor_task.is_finished() {
@@ -394,22 +410,77 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
             async move {
                 info!("Spawned executor");
                 let mut worker_set = JoinSet::new(); // All worker tasks are cancelled on drop.
+
+                // Add a dummy task so that worker_set.join never returns None
+                worker_set.spawn(async {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(u64::MAX)).await
+                    }
+                });
+
                 let semaphore = Arc::new(tokio::sync::Semaphore::new(
                     usize::try_from(max_tasks).expect("usize from u32 should not fail"),
                 ));
+                type WorkerTaskVal = (oneshot::Sender<ExecutionResult>, WorkflowId);
+                let mut worker_ids_to_worker_task_vals = IndexMap::new();
+
+                let handle_joined = |worker_ids_to_oneshot_senders: &mut IndexMap<_, _>, joined: Result<_, tokio::task::JoinError>| {
+                    match joined {
+                        Ok((worker_id, execution_result)) => {
+                            let (executor_db_sender, workflow_id): WorkerTaskVal = worker_ids_to_oneshot_senders.swap_remove(&worker_id).unwrap_or_log();
+                            info_span!("joined", %workflow_id).in_scope(|| {
+                                let send_res = executor_db_sender.send(execution_result);
+                                if send_res.is_err() {
+                                    debug!("Cannot send the result back to db");
+                                }
+                            });
+                        },
+                        Err(join_error) => {
+                            let (executor_db_sender, workflow_id): WorkerTaskVal = worker_ids_to_oneshot_senders.swap_remove(&join_error.id()).unwrap_or_log();
+                            info_span!("joined_error", %workflow_id).in_scope(|| {
+                                error!("Got uncategorized worker join error. Panic: {panic}", panic = join_error.is_panic());
+                                let send_res = executor_db_sender.send(Err(WorkerError::Uncategorized));
+                                if send_res.is_err() {
+                                    debug!("Cannot send the worker failure back to db");
+                                }
+                            });
+                        }
+                    }
+                };
+
                 loop {
                     trace!(
                         "Available permits: {permits}",
                         permits = semaphore.available_permits()
                     );
-                    // The permit to be moved to the new task or to grace shutdown.
-                    let permit = semaphore.clone().acquire_owned().await.unwrap_or_log();
-                    // receive next entry
+
+                    let permit = loop {
+                        let joined = tokio::select! {
+                            joined = worker_set.join_next_with_id() => {
+                                joined.expect_or_log("dummy task never finishes")
+                            },
+                            permit = semaphore.clone().acquire_owned() => {
+                                // The permit to be moved to the new task or to grace shutdown.
+                                break permit.unwrap_or_log()
+                            },
+                        };
+                        handle_joined(&mut worker_ids_to_worker_task_vals, joined);
+                    };
+                    trace!("Got permit to receive");
+                    let recv = loop {
+                        let joined = tokio::select!(
+                            joined = worker_set.join_next_with_id() => {
+                                joined.expect_or_log("dummy task never finishes")
+                            },
+                            recv = receiver.recv() => break recv,
+                        );
+                        handle_joined(&mut worker_ids_to_worker_task_vals, joined);
+                    };
                     let Ok(QueueEntry {
                         workflow_id,
                         params,
                         executor_db_sender,
-                    }) = receiver.recv().await
+                    }) = recv
                     else {
                         info!("Graceful shutdown detected, waiting for inflight workers");
                         // We already have `permit`. Acquiring all other permits.
@@ -420,31 +491,34 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
                     };
                     let worker = worker.clone();
                     let worker_span = info_span!("worker", %workflow_id);
-                    worker_set.spawn(
-                        async move {
-                            debug!("Spawned worker");
-                            let execution_result_fut = worker.run(workflow_id.clone(), params);
-                            let execution_result =
-                                if let Some(max_task_duration) = max_task_duration {
-                                    tokio::select! {
-                                        res = execution_result_fut => res,
-                                        _ = tokio::time::sleep(max_task_duration) => Err(WorkerError::Timeout)
-                                    }
+                    worker_span.in_scope(|| debug!("Spawning worker"));
+                    let worker_id = {
+                        let workflow_id = workflow_id.clone();
+                        worker_set.spawn(
+                            async move {
+                                debug!("Spawned worker");
+                                let execution_result_fut = worker.run(workflow_id, params);
+                                let execution_result =
+                                    if let Some(max_task_duration) = max_task_duration {
+                                        tokio::select! {
+                                            res = execution_result_fut => res,
+                                            _ = tokio::time::sleep(max_task_duration) => Err(WorkerError::Timeout)
+                                        }
+                                    } else {
+                                        execution_result_fut.await
+                                    };
+                                if tracing::enabled!(tracing::Level::TRACE) {
+                                    trace!("Finished: {execution_result:?}");
                                 } else {
-                                    execution_result_fut.await
-                                };
-                            if tracing::enabled!(Level::TRACE) {
-                                trace!("Finished: {execution_result:?}");
-                            } else {
-                                debug!("Finished");
+                                    debug!("Finished");
+                                }
+                                drop(permit);
+                                execution_result
                             }
-                            if executor_db_sender.send(execution_result).is_err() {
-                                debug!("Cannot send the result back to db");
-                            }
-                            drop(permit);
-                        }
-                        .instrument(worker_span),
-                    );
+                            .instrument(worker_span)
+                        ).id()
+                    };
+                    worker_ids_to_worker_task_vals.insert(worker_id, (executor_db_sender, workflow_id));
                 }
             }
             .instrument(info_span!("executor")),
@@ -754,5 +828,28 @@ mod tests {
                 db.get_execution_status(&execution.0)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_panic_in_worker() {
+        set_up();
+        struct PanicingWorker;
+        #[async_trait]
+        impl Worker for PanicingWorker {
+            async fn run(&self, _workflow_id: WorkflowId, _params: Params) -> ExecutionResult {
+                panic!();
+            }
+        }
+        let db = InMemoryDatabase::spawn_new(10);
+        let execution = db.insert(
+            SOME_FFQN.to_owned(),
+            WorkflowId::generate(),
+            Params::default(),
+        );
+        let _executor_abort_handle =
+            db.spawn_executor(SOME_FFQN.to_owned(), PanicingWorker, 1, None);
+        let execution: Result<SupportedFunctionResult, WorkerError> =
+            execution.await.unwrap_or_log();
+        assert_matches!(execution, Err(WorkerError::Uncategorized));
     }
 }
