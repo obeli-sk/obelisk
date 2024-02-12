@@ -21,11 +21,12 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // Timeouts (permanent)
 // Handling executor abortion (re-enqueueing)
 // Enqueueing in the background when a queue is full during insertion.
+// Handling of panics in workers
 
 // TODO:
 // * feat: interrupts - partial progress + event history passing
+// * feat: Use workflow agnostic execution Id
 // * refactor: remove old db, runtime
-// * fix: detect worker corruption e.g. after panic
 // * feat: dependent workflows (parent-child)
 // * feat: retries on timeouts
 // * feat: retries on errors
@@ -483,9 +484,11 @@ fn spawn_executor<W: Worker + Send + Sync + 'static>(
                     }) = recv
                     else {
                         info!("Graceful shutdown detected, waiting for inflight workers");
-                        // We already have `permit`. Acquiring all other permits.
-                        let _blocking_permits =
-                            semaphore.acquire_many(max_tasks - 1).await.unwrap_or_log();
+                        // Drain the worker set, except for the dummy task.
+                        while worker_set.len() > 1 {
+                            let joined = worker_set.join_next_with_id().await.unwrap_or_log();
+                            handle_joined(&mut worker_ids_to_worker_task_vals, joined);
+                        }
                         trace!("All workers have finished");
                         return;
                     };
