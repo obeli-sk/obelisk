@@ -112,7 +112,7 @@ impl Workflow {
                         ifc_fqn: ifc_fqn.clone(),
                         function_name: function_name.clone(),
                     };
-                    let is_activity = is_activity_fn(&ffqn);
+                    let _is_activity = is_activity_fn(&ffqn);
                     trace!("Adding imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(
                         &component,
