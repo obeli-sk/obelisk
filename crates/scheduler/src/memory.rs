@@ -90,14 +90,14 @@ pub struct InMemoryDatabase {
     queue_capacity: usize,
     db_to_executor_mpmc_queues:
         Arc<std::sync::Mutex<HashMap<FunctionFqn, (Sender<QueueEntry>, Receiver<QueueEntry>)>>>,
-    inflight_executions: Arc<std::sync::Mutex<HashMap<WorkflowId, InflightExecution>>>,
+    inflight_executions: Arc<std::sync::Mutex<IndexMap<WorkflowId, InflightExecution>>>,
     finished_executions: Arc<std::sync::Mutex<HashMap<WorkflowId, FinishedExecutionStatus>>>,
     listener: AbortHandle,
 }
 
 impl InMemoryDatabase {
     pub fn spawn_new(queue_capacity: usize) -> Self {
-        let inflight_executions: Arc<std::sync::Mutex<HashMap<WorkflowId, InflightExecution>>> =
+        let inflight_executions: Arc<std::sync::Mutex<IndexMap<WorkflowId, InflightExecution>>> =
             Default::default();
         let db_to_executor_mpmc_queues: Arc<
             std::sync::Mutex<HashMap<FunctionFqn, (Sender<QueueEntry>, Receiver<QueueEntry>)>>,
@@ -242,7 +242,7 @@ impl InMemoryDatabase {
     }
 
     fn spawn_listener(
-        inflight_executions: Arc<std::sync::Mutex<HashMap<WorkflowId, InflightExecution>>>,
+        inflight_executions: Arc<std::sync::Mutex<IndexMap<WorkflowId, InflightExecution>>>,
         db_to_executor_mpmc_queues: Arc<
             std::sync::Mutex<HashMap<FunctionFqn, (Sender<QueueEntry>, Receiver<QueueEntry>)>>,
         >,
@@ -269,7 +269,7 @@ impl InMemoryDatabase {
     /// * purging finished executions from `inflight_executions`
     /// * (re)enqueueing executions to the mpmc queue.
     fn listener_tick(
-        inflight_executions: &std::sync::Mutex<HashMap<WorkflowId, InflightExecution>>,
+        inflight_executions: &std::sync::Mutex<IndexMap<WorkflowId, InflightExecution>>,
         db_to_executor_mpmc_queues: &std::sync::Mutex<
             HashMap<FunctionFqn, (Sender<QueueEntry>, Receiver<QueueEntry>)>,
         >,
@@ -296,6 +296,7 @@ impl InMemoryDatabase {
             };
             inflight_execution.executor_db_receiver = executor_db_receiver;
             inflight_execution.status = status;
+            // FIXME: Fairness: reenqueue should push the execution to the end of `inflight_executions`
         };
 
         inflight_executions
