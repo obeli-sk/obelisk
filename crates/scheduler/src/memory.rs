@@ -623,7 +623,7 @@ mod tests {
                 &self,
                 _workflow_id: WorkflowId,
                 _params: Params,
-                store: (),
+                _store: (),
             ) -> ExecutionResult {
                 ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
             }
@@ -635,7 +635,7 @@ mod tests {
             SOME_FFQN.to_owned(),
             workflow_id.clone(),
             Params::default(),
-            (),
+            Default::default(),
         );
         let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -681,7 +681,7 @@ mod tests {
                     SOME_FFQN.to_owned(),
                     WorkflowId::generate(),
                     Params::default(),
-                    (),
+                    Default::default(),
                 )
             })
             .collect::<Vec<_>>();
@@ -740,7 +740,7 @@ mod tests {
                 SOME_FFQN.to_owned(),
                 workflow_id.clone(),
                 Params::from([wasmtime::component::Val::U64(max_duration_millis * 2)]),
-                (),
+                Default::default(),
             )
             .await
             .unwrap_or_log();
@@ -764,13 +764,13 @@ mod tests {
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
-            (),
+            Default::default(),
         );
         let fut_2 = db.insert(
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
-            (),
+            Default::default(),
         );
         assert_eq!(
             ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
@@ -803,7 +803,7 @@ mod tests {
             SOME_FFQN.to_owned(),
             workflow_id,
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
-            (),
+            Default::default(),
         );
         // Drop the executor after 10ms.
         tokio::spawn(async move {
@@ -840,7 +840,7 @@ mod tests {
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
-            (),
+            Default::default(),
         );
         let finished_check = Arc::new(AtomicBool::new(false));
         let executor_abort_handle = db.spawn_executor(
@@ -873,7 +873,7 @@ mod tests {
                     SOME_FFQN.to_owned(),
                     workflow_id,
                     Params::from([wasmtime::component::Val::U64(max_duration_millis)]),
-                    (),
+                    Default::default(),
                 ),
             )
         };
@@ -920,7 +920,7 @@ mod tests {
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::default(),
-            (),
+            Default::default(),
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PanicingWorker, 1, None);
@@ -962,7 +962,7 @@ mod tests {
             SOME_FFQN.to_owned(),
             workflow_id.clone(),
             Params::default(),
-            (),
+            Default::default(),
         );
         let is_waiting = Arc::new(AtomicBool::new(false));
         let should_finish = Arc::new(AtomicBool::new(false));
@@ -1007,7 +1007,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_partial_progress_with_store() {
+    async fn test_partial_progress_with_store_and_shared_atomics() {
         set_up();
         struct PartialProgressWorker;
 
@@ -1062,21 +1062,13 @@ mod tests {
             .in_progress());
 
         should_finish.store(true, Ordering::SeqCst);
-        let status = loop {
-            let status = db.get_execution_status(&workflow_id).unwrap_or_log();
-            if !status.in_progress() {
-                break status;
-            }
-            debug!("Waiting to finish");
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        };
-        assert_eq!(
-            ExecutionStatusInfo::Finished(SupportedFunctionResult::None),
-            status
-        );
         assert_eq!(
             ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
             execution.await.unwrap_or_log()
+        );
+        assert_eq!(
+            ExecutionStatusInfo::Finished(SupportedFunctionResult::None),
+            db.get_execution_status(&workflow_id).unwrap_or_log()
         );
     }
 }
