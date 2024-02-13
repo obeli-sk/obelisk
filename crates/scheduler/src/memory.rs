@@ -46,7 +46,7 @@ struct QueueEntry<S: Debug, E: ExecutionId> {
     execution_id: E,
     params: Params,
     store: S,
-    executor_db_sender: oneshot::Sender<WorkerExecutionResult>,
+    executor_to_db_sender: oneshot::Sender<WorkerExecutionResult>,
 }
 
 #[derive(Debug)]
@@ -54,7 +54,7 @@ struct InflightExecution<S> {
     ffqn: FunctionFqn,
     params: Params,
     store: S,
-    db_client_sender: Option<oneshot::Sender<FinishedExecutionResult>>, // Hack: Always present so it can be taken and used by the listener.
+    db_to_client_sender: Option<oneshot::Sender<FinishedExecutionResult>>, // Hack: Always present so it can be taken and used by the listener.
     status: InflightExecutionStatus,
 }
 
@@ -155,7 +155,7 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
             .0
             .clone();
 
-        let (db_client_sender, db_client_receiver) = oneshot::channel();
+        let (db_to_client_sender, db_to_client_receiver) = oneshot::channel();
         // Attempt to enqueue the execution.
         let submitted = {
             let status = if let Some(delay) = delayed_until {
@@ -173,7 +173,7 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                 ffqn,
                 params,
                 status,
-                db_client_sender: Some(db_client_sender),
+                db_to_client_sender: Some(db_to_client_sender),
                 store,
             }
         };
@@ -183,7 +183,7 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
             .unwrap_or_log()
             .insert(execution_id, submitted);
 
-        db_client_receiver
+        db_to_client_receiver
     }
 
     fn attempt_to_enqueue(
@@ -193,16 +193,16 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
         store: S,
         old_status: Option<&InflightExecutionStatus>,
     ) -> InflightExecutionStatus {
-        let (executor_db_sender, executor_db_receiver) = oneshot::channel();
+        let (executor_to_db_sender, executor_to_db_receiver) = oneshot::channel();
         let entry = QueueEntry {
             execution_id,
             params,
             store,
-            executor_db_sender,
+            executor_to_db_sender,
         };
         let send_res = db_to_executor_mpmc_sender.try_send(entry);
         let new_status = match send_res {
-            Ok(()) => InflightExecutionStatus::Enqueued(executor_db_receiver),
+            Ok(()) => InflightExecutionStatus::Enqueued(executor_to_db_receiver),
             Err(async_channel::TrySendError::Full(_)) => InflightExecutionStatus::Pending,
             Err(async_channel::TrySendError::Closed(_)) => {
                 unreachable!("database holds a receiver")
@@ -325,8 +325,10 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                                                 finished_status.clone(),
                                             ));
                                             // Attempt to notify the client.
-                                            let db_client_sender =
-                                                inflight_execution.db_client_sender.take().expect(
+                                            let db_client_sender = inflight_execution
+                                                .db_to_client_sender
+                                                .take()
+                                                .expect(
                                                     "db_client_sender must have been set in insert",
                                                 );
                                             let _ = db_client_sender.send(finished_status);
@@ -340,8 +342,10 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                                                 finished_status.clone(),
                                             ));
                                             // Attempt to notify the client.
-                                            let db_client_sender =
-                                                inflight_execution.db_client_sender.take().expect(
+                                            let db_client_sender = inflight_execution
+                                                .db_to_client_sender
+                                                .take()
+                                                .expect(
                                                     "db_client_sender must have been set in insert",
                                                 );
                                             let _ = db_client_sender.send(finished_status);
@@ -356,8 +360,10 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                                                 finished_status.clone(),
                                             ));
                                             // Attempt to notify the client.
-                                            let db_client_sender =
-                                                inflight_execution.db_client_sender.take().expect(
+                                            let db_client_sender = inflight_execution
+                                                .db_to_client_sender
+                                                .take()
+                                                .expect(
                                                     "db_client_sender must have been set in insert",
                                                 );
                                             let _ = db_client_sender.send(finished_status);
@@ -503,19 +509,19 @@ fn spawn_executor<
                 let handle_joined = |worker_ids_to_oneshot_senders: &mut IndexMap<_, _>, joined: Result<_, tokio::task::JoinError>| {
                     match joined {
                         Ok((worker_id, execution_result)) => {
-                            let (executor_db_sender, execution_id): (oneshot::Sender<WorkerExecutionResult>, E) = worker_ids_to_oneshot_senders.swap_remove(&worker_id).unwrap_or_log();
+                            let (executor_to_db_sender, execution_id): (oneshot::Sender<WorkerExecutionResult>, E) = worker_ids_to_oneshot_senders.swap_remove(&worker_id).unwrap_or_log();
                             info_span!("joined", %execution_id).in_scope(|| {
-                                let send_res = executor_db_sender.send(execution_result);
+                                let send_res = executor_to_db_sender.send(execution_result);
                                 if send_res.is_err() {
                                     debug!("Cannot send the result back to db");
                                 }
                             });
                         },
                         Err(join_error) => {
-                            let (executor_db_sender, execution_id): (oneshot::Sender<WorkerExecutionResult>, E) = worker_ids_to_oneshot_senders.swap_remove(&join_error.id()).unwrap_or_log();
+                            let (executor_to_db_sender, execution_id): (oneshot::Sender<WorkerExecutionResult>, E) = worker_ids_to_oneshot_senders.swap_remove(&join_error.id()).unwrap_or_log();
                             info_span!("joined_error", %execution_id).in_scope(|| {
                                 error!("Got uncategorized worker join error. Panic: {panic}", panic = join_error.is_panic());
-                                let send_res = executor_db_sender.send(Err(WorkerError::Uncategorized));
+                                let send_res = executor_to_db_sender.send(Err(WorkerError::Uncategorized));
                                 if send_res.is_err() {
                                     debug!("Cannot send the worker failure back to db");
                                 }
@@ -556,7 +562,7 @@ fn spawn_executor<
                         execution_id,
                         params,
                         store,
-                        executor_db_sender,
+                        executor_to_db_sender,
                     }) = recv
                     else {
                         info!("Graceful shutdown detected, waiting for inflight workers");
@@ -597,7 +603,7 @@ fn spawn_executor<
                             .instrument(worker_span)
                         ).id()
                     };
-                    worker_ids_to_worker_task_vals.insert(worker_id, (executor_db_sender, execution_id));
+                    worker_ids_to_worker_task_vals.insert(worker_id, (executor_to_db_sender, execution_id));
                 }
             }
             .instrument(info_span!("executor")),
