@@ -13,9 +13,7 @@ pub enum WorkerCommand {
     DelayUntil(DateTime<Utc>),
 }
 
-// FIXME: clients are interested in `FinishedExecutionStatus`
-// Rename to WorkerExecutionResult
-pub type ExecutionResult = Result<WorkerCommand, WorkerError>;
+pub type WorkerExecutionResult = Result<WorkerCommand, WorkerError>;
 pub type RunId = ulid::Ulid; // TODO
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
@@ -28,9 +26,29 @@ pub enum WorkerError {
 
 #[async_trait]
 pub trait Worker<S, E: ExecutionId> {
-    async fn run(&self, workflow_id: E, params: Params, store: S) -> ExecutionResult;
+    async fn run(&self, workflow_id: E, params: Params, store: S) -> WorkerExecutionResult;
 }
 
 pub trait ExecutionId: Clone + Hash + Display + Eq + PartialEq + Send + 'static {}
 
 impl<T> ExecutionId for T where T: Clone + Hash + Display + Eq + PartialEq + Send + 'static {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FinishedExecutionStatus {
+    Success(SupportedFunctionResult),
+    PermanentTimeout,
+    UncategorizedError,
+}
+
+#[derive(Debug, PartialEq, Clone, Eq)]
+pub enum ExecutionStatusInfo {
+    Pending,
+    Enqueued,
+    DelayedUntil(DateTime<Utc>),
+    Finished(FinishedExecutionStatus),
+}
+impl ExecutionStatusInfo {
+    pub fn is_finished(&self) -> bool {
+        matches!(self, Self::Finished(_))
+    }
+}
