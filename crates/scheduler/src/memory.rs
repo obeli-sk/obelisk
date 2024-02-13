@@ -1,7 +1,7 @@
-use crate::{ExecutionId, ExecutionResult, PartialResult, Worker, WorkerError};
+use crate::{ExecutionId, ExecutionResult, Worker, WorkerCommand, WorkerError};
 use async_channel::{Receiver, Sender};
+use chrono::{DateTime, Utc};
 use concepts::{FunctionFqn, Params, SupportedFunctionResult};
-use either::Either;
 use indexmap::IndexMap;
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 use tokio::{
@@ -25,9 +25,10 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // Handling of panics in workers
 
 // TODO:
-// * fix: consistency between `inflight_executions` and `finished_executions`
-// * refactor: remove old db, runtime
+// * feat: WorkerCommand::DelayUntil
 // * feat: dependent executions: workflow-activity, parent-child workflows
+// * refactor: remove old db, runtime
+// * fix: consistency between `inflight_executions` and `finished_executions`
 // * feat: retries on timeouts
 // * feat: retries on errors
 // * feat: schedule the execution into the future
@@ -35,6 +36,7 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // * feat: execution id, regenerate between retries
 // * feat: execution history - 1.pending, 2. enqueued..
 // * resil: limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
+// * resil: Fairness: reenqueue should push the execution to the end of `inflight_executions`
 // * perf: wake up the listener by insertion and executor by pushing a workflow id to an mpsc channel.
 #[derive(Debug)]
 struct QueueEntry<S: Debug, E: ExecutionId> {
@@ -50,6 +52,7 @@ struct InflightExecution<S> {
     params: Params,
     store: S,
     db_client_sender: Option<oneshot::Sender<ExecutionResult>>, // Hack: Always present so it can be taken and used by the listener.
+    // FIXME: Move to InflightExecutionStatus::Enqueued
     executor_db_receiver: Option<oneshot::Receiver<ExecutionResult>>, // None if this entry needs to be submitted to the mpmc channel.
     status: InflightExecutionStatus,
 }
@@ -58,6 +61,7 @@ struct InflightExecution<S> {
 enum InflightExecutionStatus {
     Pending,
     Enqueued,
+    DelayedUntil(DateTime<Utc>),
     // #[display(fmt = "IntermittentTimeout({retry_index})")]
     // IntermittentTimeout {
     //     retry_index: usize,
@@ -68,16 +72,17 @@ enum InflightExecutionStatus {
 enum FinishedExecutionStatus {
     Finished { result: SupportedFunctionResult },
     PermanentTimeout,
-    Uncategorized,
+    UncategorizedError,
 }
 
 #[derive(Debug, PartialEq, Clone, Eq)]
 pub enum ExecutionStatusInfo {
     Pending,
     Enqueued,
+    DelayedUntil(DateTime<Utc>),
     Finished(SupportedFunctionResult),
     PermanentTimeout,
-    Uncategorized,
+    UncategorizedError,
 }
 
 impl ExecutionStatusInfo {
@@ -140,8 +145,8 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
             Some(FinishedExecutionStatus::PermanentTimeout) => {
                 return Some(ExecutionStatusInfo::PermanentTimeout)
             }
-            Some(FinishedExecutionStatus::Uncategorized) => {
-                return Some(ExecutionStatusInfo::Uncategorized);
+            Some(FinishedExecutionStatus::UncategorizedError) => {
+                return Some(ExecutionStatusInfo::UncategorizedError);
             }
             None => {}
         };
@@ -154,17 +159,21 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
         {
             Some(InflightExecutionStatus::Pending) => Some(ExecutionStatusInfo::Pending),
             Some(InflightExecutionStatus::Enqueued) => Some(ExecutionStatusInfo::Enqueued),
+            Some(InflightExecutionStatus::DelayedUntil(delay)) => {
+                Some(ExecutionStatusInfo::DelayedUntil(delay))
+            }
             None => None,
         }
     }
 
     #[instrument(skip_all, fields(%ffqn, %execution_id))]
-    pub fn insert(
+    pub fn insert_or_schedule(
         &self,
         ffqn: FunctionFqn,
         execution_id: E,
         params: Params,
         store: S,
+        delayed_until: Option<DateTime<Utc>>,
     ) -> oneshot::Receiver<ExecutionResult> {
         // make sure the mpmc channel is created, obtain its sender
         let db_to_executor_mpmc_sender = self
@@ -179,13 +188,17 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
         let (db_client_sender, db_client_receiver) = oneshot::channel();
         // Attempt to enqueue the execution.
         let submitted = {
-            let (executor_db_receiver, status) = Self::attempt_to_enqueue(
-                db_to_executor_mpmc_sender,
-                execution_id.clone(),
-                params.clone(),
-                store.clone(),
-                None,
-            );
+            let (executor_db_receiver, status) = if let Some(delay) = delayed_until {
+                (None, InflightExecutionStatus::DelayedUntil(delay))
+            } else {
+                Self::attempt_to_enqueue(
+                    db_to_executor_mpmc_sender,
+                    execution_id.clone(),
+                    params.clone(),
+                    store.clone(),
+                    None,
+                )
+            };
             InflightExecution {
                 ffqn,
                 params,
@@ -292,30 +305,40 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
     ) {
         let mut finished = Vec::new();
 
-        // let db_lock = ... // FIXME needed for consistency
-
-        let reenqueue = |inflight_execution: &mut InflightExecution<S>, execution_id: E| {
-            let (executor_db_receiver, status) = {
-                // Attempt to submit the execution to the mpmc channel.
-                let db_to_executor_mpmc_sender = db_to_executor_mpmc_queues
-                    .lock()
-                    .unwrap_or_log()
-                    .get(&inflight_execution.ffqn)
-                    .expect("must be created in `insert`")
-                    .0
-                    .clone();
-                Self::attempt_to_enqueue(
-                    db_to_executor_mpmc_sender,
-                    execution_id,
-                    inflight_execution.params.clone(),
-                    inflight_execution.store.clone(),
-                    Some(inflight_execution.status),
-                )
+        // Set the execution to Pending,Enqueued or DelayedUntil.
+        let attempt_to_enqueue =
+            |inflight_execution: &mut InflightExecution<S>,
+             execution_id: E,
+             mut delay: Option<DateTime<Utc>>| {
+                if let Some(delay_inner) = delay {
+                    if delay_inner <= Utc::now() {
+                        delay = None;
+                    }
+                }
+                let (executor_db_receiver, status) = {
+                    if let Some(delay) = delay {
+                        (None, InflightExecutionStatus::DelayedUntil(delay))
+                    } else {
+                        // Attempt to submit the execution to the mpmc channel.
+                        let db_to_executor_mpmc_sender = db_to_executor_mpmc_queues
+                            .lock()
+                            .unwrap_or_log()
+                            .get(&inflight_execution.ffqn)
+                            .expect("must be created in `insert`")
+                            .0
+                            .clone();
+                        Self::attempt_to_enqueue(
+                            db_to_executor_mpmc_sender,
+                            execution_id,
+                            inflight_execution.params.clone(),
+                            inflight_execution.store.clone(),
+                            Some(inflight_execution.status),
+                        )
+                    }
+                };
+                inflight_execution.executor_db_receiver = executor_db_receiver;
+                inflight_execution.status = status;
             };
-            inflight_execution.executor_db_receiver = executor_db_receiver;
-            inflight_execution.status = status;
-            // FIXME: Fairness: reenqueue should push the execution to the end of `inflight_executions`
-        };
 
         inflight_executions.lock().unwrap_or_log().retain(
             |execution_id, mut inflight_execution| {
@@ -335,38 +358,70 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                             } else {
                                 debug!("Received result");
                             }
-                            let status = match &res {
-                                Ok(PartialResult::FinalResult(supported_res)) => {
-                                    Either::Left(FinishedExecutionStatus::Finished {
+                            match &res {
+                                Ok(WorkerCommand::PublishResult(supported_res)) => {
+                                    let finished_status = FinishedExecutionStatus::Finished {
                                         result: supported_res.clone(),
-                                    })
-                                }
-                                Ok(PartialResult::PartialProgress) => either::Either::Right(()),
-                                Err(WorkerError::Timeout) => {
-                                    // TODO: reenqueue a retry.
-                                    Either::Left(FinishedExecutionStatus::PermanentTimeout)
+                                    };
+                                    finished.push((execution_id.clone(), finished_status));
+                                    // Attempt to notify the client.
+                                    let db_client_sender = inflight_execution
+                                        .db_client_sender
+                                        .take()
+                                        .expect("db_client_sender must have been set in insert");
+                                    let _ = db_client_sender.send(res);
+                                    false
                                 }
                                 Err(WorkerError::Uncategorized) => {
-                                    Either::Left(FinishedExecutionStatus::Uncategorized)
+                                    let finished_status =
+                                        FinishedExecutionStatus::UncategorizedError;
+                                    finished.push((execution_id.clone(), finished_status));
+                                    // Attempt to notify the client.
+                                    let db_client_sender = inflight_execution
+                                        .db_client_sender
+                                        .take()
+                                        .expect("db_client_sender must have been set in insert");
+                                    let _ = db_client_sender.send(res);
+                                    false
                                 }
-                            };
-                            if let Either::Left(finished_status) = status {
-                                finished.push((execution_id.clone(), finished_status));
-                                // Attempt to notify the client.
-                                let db_client_sender = inflight_execution
-                                    .db_client_sender
-                                    .take()
-                                    .expect("db_client_sender must have been set in insert");
-                                let _ = db_client_sender.send(res);
-                                false
-                            } else {
-                                // reenqueue
-                                assert_eq!(
-                                    InflightExecutionStatus::Enqueued,
-                                    inflight_execution.status
-                                );
-                                reenqueue(&mut inflight_execution, execution_id.clone());
-                                true
+                                Err(WorkerError::Timeout) => {
+                                    // TODO: reenqueue a retry.
+                                    let finished_status = FinishedExecutionStatus::PermanentTimeout;
+                                    finished.push((execution_id.clone(), finished_status));
+                                    // Attempt to notify the client.
+                                    let db_client_sender = inflight_execution
+                                        .db_client_sender
+                                        .take()
+                                        .expect("db_client_sender must have been set in insert");
+                                    let _ = db_client_sender.send(res);
+                                    false
+                                }
+                                Ok(WorkerCommand::EnqueueNow) => {
+                                    // reenqueue now
+                                    assert_eq!(
+                                        InflightExecutionStatus::Enqueued,
+                                        inflight_execution.status
+                                    );
+                                    attempt_to_enqueue(
+                                        &mut inflight_execution,
+                                        execution_id.clone(),
+                                        None,
+                                    );
+                                    true
+                                }
+                                Ok(WorkerCommand::DelayUntil(delay)) => {
+                                    // reenqueue later
+                                    assert_eq!(
+                                        InflightExecutionStatus::Enqueued,
+                                        inflight_execution.status
+                                    );
+                                    attempt_to_enqueue(
+                                        &mut inflight_execution,
+                                        execution_id.clone(),
+                                        Some(delay.clone()),
+                                    );
+                                    true
+                                }
                             }
                         }
                         Some(Err(oneshot::error::TryRecvError::Empty)) => {
@@ -377,20 +432,28 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                             // No response yet, keep the entry.
                             true
                         }
-                        recv @ Some(Err(oneshot::error::TryRecvError::Closed)) | recv @ None => {
-                            if recv.is_some() {
-                                // The executor was aborted while running the execution. Update the execution.
-                                assert_eq!(
-                                    InflightExecutionStatus::Enqueued,
-                                    inflight_execution.status
-                                );
-                            } else {
-                                assert_eq!(
-                                    InflightExecutionStatus::Pending,
-                                    inflight_execution.status
-                                );
-                            }
-                            reenqueue(&mut inflight_execution, execution_id.clone());
+                        Some(Err(oneshot::error::TryRecvError::Closed)) => {
+                            // The executor was aborted while running the execution. Reenqueue.
+                            assert_eq!(
+                                InflightExecutionStatus::Enqueued,
+                                inflight_execution.status
+                            );
+                            attempt_to_enqueue(&mut inflight_execution, execution_id.clone(), None);
+                            true
+                        }
+                        None => {
+                            let delayed = match inflight_execution.status {
+                                InflightExecutionStatus::Pending => None,
+                                InflightExecutionStatus::DelayedUntil(delay) => Some(delay),
+                                InflightExecutionStatus::Enqueued => {
+                                    unreachable!()
+                                }
+                            };
+                            attempt_to_enqueue(
+                                &mut inflight_execution,
+                                execution_id.clone(),
+                                delayed,
+                            );
                             true
                         }
                     }
@@ -628,23 +691,23 @@ mod tests {
                 _params: Params,
                 _store: (),
             ) -> ExecutionResult {
-                ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
+                ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
             }
         }
 
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
-        let execution = db.insert(
+        let execution = db.insert_or_schedule(
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
             Default::default(),
+            None,
         );
         let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
-        tokio::time::sleep(Duration::from_secs(1)).await;
         let resp = execution.await.unwrap_or_log();
         assert_eq!(
-            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
             resp
         );
         assert_eq!(
@@ -672,7 +735,7 @@ mod tests {
                 trace!("sleeping");
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 trace!("done!");
-                ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
+                ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
             }
         }
 
@@ -680,11 +743,12 @@ mod tests {
         let max_tasks = 3;
         let executions = (0..max_tasks * 2)
             .map(|_| {
-                db.insert(
+                db.insert_or_schedule(
                     SOME_FFQN.to_owned(),
                     WorkflowId::generate(),
                     Params::default(),
                     Default::default(),
+                    None,
                 )
             })
             .collect::<Vec<_>>();
@@ -695,7 +759,7 @@ mod tests {
             db.spawn_executor(SOME_FFQN.to_owned(), workflow_worker, max_tasks, None);
         for execution in executions {
             assert_eq!(
-                ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+                ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
                 execution.await.unwrap_or_log()
             );
         }
@@ -721,7 +785,7 @@ mod tests {
             if let Some(finished_check) = &self.0 {
                 assert_eq!(false, finished_check.swap(true, Ordering::SeqCst));
             }
-            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
+            ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
         }
     }
 
@@ -739,11 +803,12 @@ mod tests {
         );
         let execution_id = WorkflowId::generate();
         let res = db
-            .insert(
+            .insert_or_schedule(
                 SOME_FFQN.to_owned(),
                 execution_id.clone(),
                 Params::from([wasmtime::component::Val::U64(max_duration_millis * 2)]),
                 Default::default(),
+                None,
             )
             .await
             .unwrap_or_log();
@@ -763,24 +828,26 @@ mod tests {
         let _executor_1 = db.spawn_executor(SOME_FFQN.to_owned(), SleepyWorker(None), 1, None);
         let _executor_2 = db.spawn_executor(SOME_FFQN.to_owned(), SleepyWorker(None), 1, None);
         let stopwatch = Instant::now();
-        let fut_1 = db.insert(
+        let fut_1 = db.insert_or_schedule(
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
             Default::default(),
+            None,
         );
-        let fut_2 = db.insert(
+        let fut_2 = db.insert_or_schedule(
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
             Default::default(),
+            None,
         );
         assert_eq!(
-            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
             fut_1.await.unwrap_or_log()
         );
         assert_eq!(
-            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
             fut_2.await.unwrap_or_log()
         );
         let stopwatch = Instant::now().duration_since(stopwatch);
@@ -802,11 +869,12 @@ mod tests {
 
         let sleep_millis = 100;
         let execution_id = WorkflowId::generate();
-        let mut execution = db.insert(
+        let mut execution = db.insert_or_schedule(
             SOME_FFQN.to_owned(),
             execution_id,
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
             Default::default(),
+            None,
         );
         // Drop the executor after 10ms.
         tokio::spawn(async move {
@@ -828,7 +896,7 @@ mod tests {
             None,
         );
         assert_eq!(
-            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
             execution.await.unwrap_or_log()
         );
         assert_eq!(true, finished_check.load(Ordering::SeqCst));
@@ -839,11 +907,12 @@ mod tests {
         set_up();
         let db = InMemoryDatabase::spawn_new(1);
         let sleep_millis = 100;
-        let execution = db.insert(
+        let execution = db.insert_or_schedule(
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
             Default::default(),
+            None,
         );
         let finished_check = Arc::new(AtomicBool::new(false));
         let executor_abort_handle = db.spawn_executor(
@@ -857,7 +926,7 @@ mod tests {
         executor_abort_handle.close().await;
         assert_eq!(true, finished_check.load(Ordering::SeqCst));
         assert_eq!(
-            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
             execution.await.unwrap_or_log()
         );
     }
@@ -872,11 +941,12 @@ mod tests {
         let execute = |execution_id: WorkflowId| {
             (
                 execution_id.clone(),
-                db.insert(
+                db.insert_or_schedule(
                     SOME_FFQN.to_owned(),
                     execution_id,
                     Params::from([wasmtime::component::Val::U64(max_duration_millis)]),
                     Default::default(),
+                    None,
                 ),
             )
         };
@@ -893,7 +963,7 @@ mod tests {
         );
         for execution in executions {
             assert_eq!(
-                ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+                ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
                 execution.1.await.unwrap_or_log()
             );
             assert_eq!(
@@ -919,11 +989,12 @@ mod tests {
             }
         }
         let db = InMemoryDatabase::spawn_new(10);
-        let execution = db.insert(
+        let execution = db.insert_or_schedule(
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::default(),
             Default::default(),
+            None,
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PanicingWorker, 1, None);
@@ -949,23 +1020,24 @@ mod tests {
             ) -> ExecutionResult {
                 if self.should_finish.load(Ordering::SeqCst) {
                     trace!("Worker finished");
-                    ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
+                    ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
                 } else {
                     trace!("Worker waiting");
                     self.is_waiting.store(true, Ordering::SeqCst);
                     tokio::time::sleep(Duration::from_millis(100)).await;
-                    ExecutionResult::Ok(PartialResult::PartialProgress)
+                    ExecutionResult::Ok(WorkerCommand::EnqueueNow)
                 }
             }
         }
 
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
-        let execution = db.insert(
+        let execution = db.insert_or_schedule(
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
             Default::default(),
+            None,
         );
         let is_waiting = Arc::new(AtomicBool::new(false));
         let should_finish = Arc::new(AtomicBool::new(false));
@@ -1004,7 +1076,7 @@ mod tests {
             status
         );
         assert_eq!(
-            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
             execution.await.unwrap_or_log()
         );
     }
@@ -1033,22 +1105,23 @@ mod tests {
             ) -> ExecutionResult {
                 if store.should_finish.load(Ordering::SeqCst) {
                     trace!("Worker finished");
-                    ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
+                    ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
                 } else {
                     trace!("Worker waiting");
                     store.is_waiting.store(true, Ordering::SeqCst);
                     tokio::time::sleep(Duration::from_millis(100)).await;
-                    ExecutionResult::Ok(PartialResult::PartialProgress)
+                    ExecutionResult::Ok(WorkerCommand::EnqueueNow)
                 }
             }
         }
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
-        let execution = db.insert(
+        let execution = db.insert_or_schedule(
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
             store,
+            None,
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
@@ -1066,7 +1139,7 @@ mod tests {
 
         should_finish.store(true, Ordering::SeqCst);
         assert_eq!(
-            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
             execution.await.unwrap_or_log()
         );
         assert_eq!(
@@ -1098,22 +1171,23 @@ mod tests {
                 let mut store = store.lock().await;
                 if store.should_finish {
                     trace!("Worker finished");
-                    ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
+                    ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
                 } else {
                     trace!("Worker waiting");
                     store.is_waiting = true;
                     tokio::time::sleep(Duration::from_millis(100)).await;
-                    ExecutionResult::Ok(PartialResult::PartialProgress)
+                    ExecutionResult::Ok(WorkerCommand::EnqueueNow)
                 }
             }
         }
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
-        let execution = db.insert(
+        let execution = db.insert_or_schedule(
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
             store.clone(),
+            None,
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
@@ -1132,12 +1206,63 @@ mod tests {
 
         store.lock().await.should_finish = true;
         assert_eq!(
-            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
             execution.await.unwrap_or_log()
         );
         assert_eq!(
             ExecutionStatusInfo::Finished(SupportedFunctionResult::None),
             db.get_execution_status(&execution_id).unwrap_or_log()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_simple_scheduled_workflow() {
+        let delay = Duration::from_millis(500);
+        let max_accepted_delay = delay * 2;
+        set_up();
+        struct SimpleWorker;
+        #[async_trait]
+        impl Worker<(), WorkflowId> for SimpleWorker {
+            async fn run(
+                &self,
+                _execution_id: WorkflowId,
+                _params: Params,
+                _store: (),
+            ) -> ExecutionResult {
+                ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
+            }
+        }
+
+        let db = InMemoryDatabase::spawn_new(1);
+        let execution_id = WorkflowId::generate();
+        let now = Utc::now();
+        let delay = now + delay;
+        let execution = db.insert_or_schedule(
+            SOME_FFQN.to_owned(),
+            execution_id.clone(),
+            Params::default(),
+            Default::default(),
+            Some(delay),
+        );
+        let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
+        // check that it is scheduled.
+        let status = loop {
+            if let Some(status) = db.get_execution_status(&execution_id) {
+                break status;
+            }
+            debug!("Waiting for in progress");
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        };
+        assert_matches!(status, ExecutionStatusInfo::DelayedUntil(found_delay) if found_delay == delay);
+        let stopwatch = Instant::now();
+        assert_eq!(
+            ExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
+            execution.await.unwrap_or_log()
+        );
+        let stopwatch = Instant::now().duration_since(stopwatch);
+        assert!(
+            stopwatch < max_accepted_delay,
+            "Scheduled execution exceeded accepted delay: {stopwatch:?}"
         );
     }
 }

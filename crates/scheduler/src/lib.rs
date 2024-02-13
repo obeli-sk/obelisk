@@ -1,17 +1,21 @@
 use std::{fmt::Display, hash::Hash};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use concepts::{Params, SupportedFunctionResult};
 
 mod memory;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PartialResult {
-    FinalResult(SupportedFunctionResult),
-    PartialProgress,
+pub enum WorkerCommand {
+    PublishResult(SupportedFunctionResult),
+    EnqueueNow,
+    DelayUntil(DateTime<Utc>),
 }
 
-pub type ExecutionResult = Result<PartialResult, WorkerError>;
+// FIXME: clients are interested in `FinishedExecutionStatus`
+// Rename to WorkerExecutionResult
+pub type ExecutionResult = Result<WorkerCommand, WorkerError>;
 pub type RunId = ulid::Ulid; // TODO
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
