@@ -1,5 +1,7 @@
+use std::{fmt::Display, hash::Hash};
+
 use async_trait::async_trait;
-use concepts::{workflow_id::WorkflowId, Params, SupportedFunctionResult};
+use concepts::{Params, SupportedFunctionResult};
 
 mod memory;
 
@@ -10,7 +12,7 @@ pub enum PartialResult {
 }
 
 pub type ExecutionResult = Result<PartialResult, WorkerError>;
-pub type ExecutionId = ulid::Ulid;
+pub type RunId = ulid::Ulid; // TODO
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
 pub enum WorkerError {
@@ -21,6 +23,10 @@ pub enum WorkerError {
 }
 
 #[async_trait]
-pub trait Worker<S> {
-    async fn run(&self, workflow_id: WorkflowId, params: Params, store: S) -> ExecutionResult;
+pub trait Worker<S, E: ExecutionId> {
+    async fn run(&self, workflow_id: E, params: Params, store: S) -> ExecutionResult;
 }
+
+pub trait ExecutionId: Clone + Hash + Display + Eq + PartialEq + Send + 'static {}
+
+impl<T> ExecutionId for T where T: Clone + Hash + Display + Eq + PartialEq + Send + 'static {}
