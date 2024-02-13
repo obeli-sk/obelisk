@@ -63,6 +63,40 @@ struct InflightExecution<S> {
     status: InflightExecutionStatus,
 }
 
+impl<S: Clone + Send + 'static> InflightExecution<S> {
+    // Set the status to Pending or Enqueued, unless the execution needs to wait until `delay`.
+    fn update_status<E: ExecutionId>(
+        &mut self,
+        db_to_executor_mpmc_queues: &std::sync::Mutex<
+            HashMap<FunctionFqn, (Sender<QueueEntry<S, E>>, Receiver<QueueEntry<S, E>>)>,
+        >,
+        execution_id: E,
+        delay: Option<DateTime<Utc>>,
+    ) {
+        if let Some(delay) = delay {
+            if delay > Utc::now() {
+                // keep waiting, do not change the status.
+                return;
+            }
+        }
+        // Attempt to submit the execution to the mpmc channel.
+        let db_to_executor_mpmc_sender = db_to_executor_mpmc_queues
+            .lock()
+            .unwrap_or_log()
+            .get(&self.ffqn)
+            .expect("must be created in `insert`")
+            .0
+            .clone();
+        self.status = InflightExecutionStatus::attempt_to_enqueue(
+            Some(&self.status),
+            db_to_executor_mpmc_sender,
+            execution_id,
+            self.params.clone(),
+            self.store.clone(),
+        );
+    }
+}
+
 #[derive(Debug, derive_more::Display)]
 enum InflightExecutionStatus {
     #[display(fmt = "Pending")]
@@ -92,6 +126,36 @@ impl InflightExecutionStatus {
             Self::DelayedUntil { retry_index, .. } => *retry_index,
             Self::IntermittentTimeout { retry_index, .. } => *retry_index,
         }
+    }
+
+    fn attempt_to_enqueue<S: Clone + Send + 'static, E: ExecutionId>(
+        old_status: Option<&Self>,
+        db_to_executor_mpmc_sender: Sender<QueueEntry<S, E>>,
+        execution_id: E,
+        params: Params,
+        store: S,
+    ) -> Self {
+        let (executor_to_db_sender, executor_to_db_receiver) = oneshot::channel();
+        let entry = QueueEntry {
+            execution_id,
+            params,
+            store,
+            executor_to_db_sender,
+        };
+        let send_res = db_to_executor_mpmc_sender.try_send(entry);
+        let retry_index = old_status.map(|s| s.retry_index()).unwrap_or_default();
+        let new_status = match send_res {
+            Ok(()) => Self::Enqueued {
+                executor_to_db_receiver,
+                retry_index,
+            },
+            Err(async_channel::TrySendError::Full(_)) => Self::Pending { retry_index },
+            Err(async_channel::TrySendError::Closed(_)) => {
+                unreachable!("database holds a receiver")
+            }
+        };
+        debug!("Attempted to enqueue the execution, {old_status:?} -> {new_status:?}");
+        new_status
     }
 }
 
@@ -211,12 +275,12 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                 retry_index: 0,
             }
         } else {
-            Self::attempt_to_enqueue(
+            InflightExecutionStatus::attempt_to_enqueue(
+                None,
                 db_to_executor_mpmc_sender,
                 execution_id.clone(),
                 params.clone(),
                 store.clone(),
-                None,
             )
         };
         info!("Persisting execution with status {status}");
@@ -234,38 +298,6 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
             .insert(execution_id, submitted);
 
         db_to_client_receiver
-    }
-
-    fn attempt_to_enqueue(
-        db_to_executor_mpmc_sender: Sender<QueueEntry<S, E>>,
-        execution_id: E,
-        params: Params,
-        store: S,
-        old_status: Option<&InflightExecutionStatus>,
-    ) -> InflightExecutionStatus {
-        let (executor_to_db_sender, executor_to_db_receiver) = oneshot::channel();
-        let entry = QueueEntry {
-            execution_id,
-            params,
-            store,
-            executor_to_db_sender,
-        };
-        let send_res = db_to_executor_mpmc_sender.try_send(entry);
-        let retry_index = old_status.map(|s| s.retry_index()).unwrap_or_default();
-        let new_status = match send_res {
-            Ok(()) => InflightExecutionStatus::Enqueued {
-                executor_to_db_receiver,
-                retry_index,
-            },
-            Err(async_channel::TrySendError::Full(_)) => {
-                InflightExecutionStatus::Pending { retry_index }
-            }
-            Err(async_channel::TrySendError::Closed(_)) => {
-                unreachable!("database holds a receiver")
-            }
-        };
-        debug!("Attempted to enqueue the execution, {old_status:?} -> {new_status:?}");
-        new_status
     }
 
     fn spawn_executor<W: Worker<S, E> + Send + Sync + 'static>(
@@ -311,38 +343,6 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
         .abort_handle()
     }
 
-    // Utility of `listener_tick`. Set the status to Pending or Enqueued, unless the execution needs to wait until `delay`.
-    fn update_execution_status(
-        db_to_executor_mpmc_queues: &std::sync::Mutex<
-            HashMap<FunctionFqn, (Sender<QueueEntry<S, E>>, Receiver<QueueEntry<S, E>>)>,
-        >,
-        inflight_execution: &mut InflightExecution<S>,
-        execution_id: E,
-        delay: Option<DateTime<Utc>>,
-    ) {
-        if let Some(delay) = delay {
-            if delay > Utc::now() {
-                // keep waiting, do not change the status.
-                return;
-            }
-        }
-        // Attempt to submit the execution to the mpmc channel.
-        let db_to_executor_mpmc_sender = db_to_executor_mpmc_queues
-            .lock()
-            .unwrap_or_log()
-            .get(&inflight_execution.ffqn)
-            .expect("must be created in `insert`")
-            .0
-            .clone();
-        inflight_execution.status = Self::attempt_to_enqueue(
-            db_to_executor_mpmc_sender,
-            execution_id,
-            inflight_execution.params.clone(),
-            inflight_execution.store.clone(),
-            Some(&inflight_execution.status),
-        );
-    }
-
     #[instrument(skip_all)]
     /// Responsible for
     /// * purging finished executions from `inflight_executions`
@@ -356,7 +356,7 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
     ) {
         let mut finished = Vec::new();
         inflight_executions.lock().unwrap_or_log().retain(
-            |execution_id, mut inflight_execution| {
+            |execution_id, inflight_execution| {
                 info_span!("listener_tick", %execution_id).in_scope(|| {
                     match inflight_execution {
                         InflightExecution {
@@ -435,9 +435,8 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                                                         delay,
                                                         retry_index,
                                                     };
-                                                Self::update_execution_status(
+                                                inflight_execution.update_status(
                                                     db_to_executor_mpmc_queues,
-                                                    &mut inflight_execution,
                                                     execution_id.clone(),
                                                     Some(delay.clone()),
                                                 );
@@ -447,9 +446,8 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                                         Ok(WorkerCommand::EnqueueNow) => {
                                             // reenqueue now
                                             debug!("Execution continues now");
-                                            Self::update_execution_status(
+                                            inflight_execution.update_status(
                                                 db_to_executor_mpmc_queues,
-                                                &mut inflight_execution,
                                                 execution_id.clone(),
                                                 None,
                                             );
@@ -465,9 +463,8 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                                                         .status
                                                         .retry_index(),
                                                 };
-                                            Self::update_execution_status(
+                                            inflight_execution.update_status(
                                                 db_to_executor_mpmc_queues,
-                                                &mut inflight_execution,
                                                 execution_id.clone(),
                                                 Some(delay.clone()),
                                             );
@@ -481,9 +478,8 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                                 }
                                 Err(oneshot::error::TryRecvError::Closed) => {
                                     // The executor was aborted while running the execution. Reenqueue.
-                                    Self::update_execution_status(
+                                    inflight_execution.update_status(
                                         db_to_executor_mpmc_queues,
-                                        &mut inflight_execution,
                                         execution_id.clone(),
                                         None,
                                     );
@@ -495,9 +491,8 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                             status: InflightExecutionStatus::Pending { .. },
                             ..
                         } => {
-                            Self::update_execution_status(
+                            inflight_execution.update_status(
                                 db_to_executor_mpmc_queues,
-                                &mut inflight_execution,
                                 execution_id.clone(),
                                 None,
                             );
@@ -509,9 +504,8 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                         } => {
                             let delay = delay.clone();
                             // keep the same status until the time runs out
-                            Self::update_execution_status(
+                            inflight_execution.update_status(
                                 db_to_executor_mpmc_queues,
-                                &mut inflight_execution,
                                 execution_id.clone(),
                                 Some(delay),
                             );
@@ -523,9 +517,8 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                         } => {
                             let delay = delay.clone();
                             // keep the same status until the time runs out
-                            Self::update_execution_status(
+                            inflight_execution.update_status(
                                 db_to_executor_mpmc_queues,
-                                &mut inflight_execution,
                                 execution_id.clone(),
                                 Some(delay),
                             );
