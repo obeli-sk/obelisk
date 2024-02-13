@@ -42,15 +42,13 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // * perf: wake up the listener by insertion and executor by pushing a workflow id to an mpsc channel.
 // * tracing: Add task names
 
-#[derive(Debug)]
-struct QueueEntry<S: Debug, E: ExecutionId> {
+struct QueueEntry<S, E: ExecutionId> {
     execution_id: E,
     params: Params,
     store: S,
     executor_to_db_sender: oneshot::Sender<WorkerExecutionResult>,
 }
 
-#[derive(Debug)]
 struct InflightExecution<S> {
     ffqn: FunctionFqn,
     params: Params,
@@ -71,8 +69,7 @@ enum InflightExecutionStatus {
     // },
 }
 
-#[derive(Debug)]
-pub struct InMemoryDatabase<S: Debug, E: ExecutionId> {
+pub struct InMemoryDatabase<S, E: ExecutionId> {
     queue_capacity: usize,
     // Single writer: `insert`. Read by db listener(reenqueue) and `spawn_executor`(receiver).
     db_to_executor_mpmc_queues: Arc<
@@ -87,7 +84,7 @@ pub struct InMemoryDatabase<S: Debug, E: ExecutionId> {
     listener: AbortHandle,
 }
 
-impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
+impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
     pub fn spawn_new(queue_capacity: usize) -> Self {
         let inflight_executions: Arc<std::sync::Mutex<IndexMap<E, InflightExecution<S>>>> =
             Default::default();
@@ -460,7 +457,7 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
     }
 }
 
-pub struct ExecutorAbortHandle<S: Debug, E: ExecutionId> {
+pub struct ExecutorAbortHandle<S, E: ExecutionId> {
     ffqn: FunctionFqn,
     executor_task: AbortHandle,
     receiver: Receiver<QueueEntry<S, E>>,
@@ -484,7 +481,7 @@ impl<S: Debug, E: ExecutionId> ExecutorAbortHandle<S, E> {
     }
 }
 
-impl<S: Debug, E: ExecutionId> Drop for ExecutorAbortHandle<S, E> {
+impl<S, E: ExecutionId> Drop for ExecutorAbortHandle<S, E> {
     #[instrument(skip_all, fields(ffqn = %self.ffqn))]
     fn drop(&mut self) {
         if !self.executor_task.is_finished() {
@@ -495,11 +492,7 @@ impl<S: Debug, E: ExecutionId> Drop for ExecutorAbortHandle<S, E> {
 }
 
 #[instrument(skip_all, fields(%ffqn))]
-fn spawn_executor<
-    S: Debug + Send + 'static,
-    W: Worker<S, E> + Send + Sync + 'static,
-    E: ExecutionId,
->(
+fn spawn_executor<S: Send + 'static, W: Worker<S, E> + Send + Sync + 'static, E: ExecutionId>(
     ffqn: FunctionFqn,
     receiver: Receiver<QueueEntry<S, E>>,
     worker: W,
