@@ -3,7 +3,7 @@ use crate::{
     WorkerCommand, WorkerError, WorkerExecutionResult,
 };
 use async_channel::{Receiver, Sender};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use concepts::{FunctionFqn, Params};
 use indexmap::IndexMap;
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
@@ -46,8 +46,8 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // * tracing: Add task names
 
 const LISTENER_TICK_MICROS: u64 = 10;
-const TIMEOUT_DELAY_MICROS: u64 = 100_000; // FIXME: duration
-const TIMEOUT_MAX_RETRY_COUNT: u32 = 5;
+const TIMEOUT_DELAY: TimeDelta = TimeDelta::milliseconds(100);
+const TIMEOUT_MAX_RETRY_COUNT: u16 = 5;
 struct QueueEntry<S, E: ExecutionId> {
     execution_id: E,
     params: Params,
@@ -66,24 +66,24 @@ struct InflightExecution<S> {
 #[derive(Debug)]
 enum InflightExecutionStatus {
     Pending {
-        retry_index: u32,
+        retry_index: u16,
     },
     Enqueued {
         executor_to_db_receiver: oneshot::Receiver<WorkerExecutionResult>,
-        retry_index: u32,
+        retry_index: u16,
     },
     DelayedUntil {
         delay: DateTime<Utc>,
-        retry_index: u32,
+        retry_index: u16,
     },
     IntermittentTimeout {
         delay: DateTime<Utc>,
-        retry_index: u32,
+        retry_index: u16,
     },
 }
 
 impl InflightExecutionStatus {
-    fn retry_index(&self) -> u32 {
+    fn retry_index(&self) -> u16 {
         match self {
             Self::Pending { retry_index } => *retry_index,
             Self::Enqueued { retry_index, .. } => *retry_index,
@@ -427,9 +427,7 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                                                 false
                                             } else {
                                                 // reenqueue after exponential backoff
-                                                let duration = Duration::from_micros(
-                                                    TIMEOUT_DELAY_MICROS * 2_u64.pow(retry_index - 1),
-                                                );
+                                                let duration = TIMEOUT_DELAY * 2_i32.pow(u32::from(retry_index) - 1);
                                                 let delay = Utc::now() + duration;
                                                 debug!("Retry {retry_index} after timeout is scheduled after {duration:?} at `{delay}`");
                                                 inflight_execution.status =
@@ -866,8 +864,8 @@ mod tests {
 
     #[tokio::test]
     async fn long_execution_should_timeout() {
-        const LEEWAY: Duration = Duration::from_secs(1);
-        const EXECUTION_SLEEP: Duration = Duration::from_millis(100);
+        const LEEWAY: TimeDelta = TimeDelta::seconds(1);
+        const MAX_EXECUTION_DURATION: TimeDelta = TimeDelta::milliseconds(100);
         set_up();
         let db = InMemoryDatabase::spawn_new(1);
         let finished_check = Arc::new(AtomicBool::new(false));
@@ -875,7 +873,7 @@ mod tests {
             SOME_FFQN.to_owned(),
             SleepyWorker(Some(finished_check.clone())),
             1,
-            Some(EXECUTION_SLEEP),
+            Some(MAX_EXECUTION_DURATION.to_std().unwrap_or_log()),
         );
         let execution_id = WorkflowId::generate();
         let stopwatch = Instant::now();
@@ -884,13 +882,14 @@ mod tests {
                 SOME_FFQN.to_owned(),
                 execution_id.clone(),
                 Params::from([wasmtime::component::Val::U64(
-                    EXECUTION_SLEEP.as_millis() as u64 * 2,
+                    MAX_EXECUTION_DURATION.num_milliseconds() as u64 * 2,
                 )]),
                 Default::default(),
             )
             .await
             .unwrap_or_log();
-        let stopwatch = dbg!(Instant::now().duration_since(stopwatch));
+        let stopwatch =
+            TimeDelta::from_std(Instant::now().duration_since(stopwatch)).unwrap_or_log();
         assert_eq!(false, finished_check.load(Ordering::SeqCst));
         assert_eq!(Err(FinishedExecutionError::PermanentTimeout), res);
         assert_eq!(
@@ -899,9 +898,8 @@ mod tests {
             ))),
             db.get_execution_status(&execution_id)
         );
-        let expected =
-            Duration::from_micros(TIMEOUT_DELAY_MICROS * (2_u64.pow(TIMEOUT_MAX_RETRY_COUNT) - 1)); // expected backoff
-        let expected = expected + EXECUTION_SLEEP * TIMEOUT_MAX_RETRY_COUNT;
+        let expected = TIMEOUT_DELAY * (2_i32.pow(u32::from(TIMEOUT_MAX_RETRY_COUNT)) - 1); // expected backoff
+        let expected = expected + MAX_EXECUTION_DURATION * i32::from(TIMEOUT_MAX_RETRY_COUNT);
         assert_between(stopwatch, expected, LEEWAY);
     }
 
@@ -1294,8 +1292,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_simple_scheduled_workflow() {
-        const DELAY: Duration = Duration::from_millis(500);
-        const LEEWAY_DELAY: Duration = Duration::from_millis(100);
+        const DELAY: TimeDelta = TimeDelta::milliseconds(500);
+        const LEEWAY_DELAY: TimeDelta = TimeDelta::milliseconds(100);
         set_up();
         struct SimpleWorker;
         #[async_trait]
@@ -1329,7 +1327,8 @@ mod tests {
             Ok(SupportedFunctionResult::None),
             execution.await.unwrap_or_log()
         );
-        let stopwatch = Instant::now().duration_since(stopwatch);
+        let stopwatch =
+            TimeDelta::from_std(Instant::now().duration_since(stopwatch)).unwrap_or_log();
         assert_between(stopwatch, DELAY, LEEWAY_DELAY);
     }
 
@@ -1349,7 +1348,7 @@ mod tests {
         }
     }
 
-    fn assert_between(actual: Duration, expected: Duration, leeway: Duration) {
+    fn assert_between(actual: TimeDelta, expected: TimeDelta, leeway: TimeDelta) {
         assert!(
             actual <= expected + leeway,
             "exceeded accepted delay. Got: {actual:?}, expected <= {:?}",
@@ -1364,8 +1363,8 @@ mod tests {
 
     #[tokio::test]
     async fn worker_delay_until() {
-        const DELAY: Duration = Duration::from_millis(500);
-        const LEEWAY_DELAY: Duration = Duration::from_millis(100);
+        const DELAY: TimeDelta = TimeDelta::milliseconds(500);
+        const LEEWAY_DELAY: TimeDelta = TimeDelta::milliseconds(100);
         set_up();
         struct PartialProgressWorker;
 
@@ -1411,7 +1410,8 @@ mod tests {
             Ok(SupportedFunctionResult::None),
             execution.await.unwrap_or_log()
         );
-        let stopwatch = Instant::now().duration_since(stopwatch);
+        let stopwatch =
+            TimeDelta::from_std(Instant::now().duration_since(stopwatch)).unwrap_or_log();
         assert_between(stopwatch, DELAY, LEEWAY_DELAY);
     }
 }
