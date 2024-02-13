@@ -1,6 +1,6 @@
 use crate::{
-    ExecutionId, ExecutionStatusInfo, FinishedExecutionStatus, Worker, WorkerCommand, WorkerError,
-    WorkerExecutionResult,
+    ExecutionId, ExecutionStatusInfo, FinishedExecutionError, FinishedExecutionResult, Worker,
+    WorkerCommand, WorkerError, WorkerExecutionResult,
 };
 use async_channel::{Receiver, Sender};
 use chrono::{DateTime, Utc};
@@ -54,7 +54,7 @@ struct InflightExecution<S> {
     ffqn: FunctionFqn,
     params: Params,
     store: S,
-    db_client_sender: Option<oneshot::Sender<WorkerExecutionResult>>, // Hack: Always present so it can be taken and used by the listener.
+    db_client_sender: Option<oneshot::Sender<FinishedExecutionResult>>, // Hack: Always present so it can be taken and used by the listener.
     // FIXME: Move to InflightExecutionStatus::Enqueued
     executor_db_receiver: Option<oneshot::Receiver<WorkerExecutionResult>>, // None if this entry needs to be submitted to the mpmc channel.
     status: InflightExecutionStatus,
@@ -83,7 +83,7 @@ pub struct InMemoryDatabase<S: Debug, E: ExecutionId> {
     // Written by both `insert` and the listener (update status).
     inflight_executions: Arc<std::sync::Mutex<IndexMap<E, InflightExecution<S>>>>,
     // Written by the listener.
-    finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionStatus>>>,
+    finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionResult>>>,
     listener: AbortHandle,
 }
 
@@ -96,7 +96,7 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                 HashMap<FunctionFqn, (Sender<QueueEntry<S, E>>, Receiver<QueueEntry<S, E>>)>,
             >,
         > = Default::default();
-        let finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionStatus>>> =
+        let finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionResult>>> =
             Default::default();
         let listener = Self::spawn_listener(
             inflight_executions.clone(),
@@ -113,28 +113,13 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
     }
 
     pub fn get_execution_status(&self, execution_id: &E) -> Option<ExecutionStatusInfo> {
-        match self
+        if let Some(res) = self
             .finished_executions
             .lock()
             .unwrap_or_log()
             .get(execution_id)
         {
-            Some(FinishedExecutionStatus::Success(result)) => {
-                return Some(ExecutionStatusInfo::Finished(
-                    FinishedExecutionStatus::Success(result.clone()),
-                ))
-            }
-            Some(FinishedExecutionStatus::PermanentTimeout) => {
-                return Some(ExecutionStatusInfo::Finished(
-                    FinishedExecutionStatus::PermanentTimeout,
-                ))
-            }
-            Some(FinishedExecutionStatus::UncategorizedError) => {
-                return Some(ExecutionStatusInfo::Finished(
-                    FinishedExecutionStatus::UncategorizedError,
-                ));
-            }
-            None => {}
+            return Some(ExecutionStatusInfo::Finished(res.clone()));
         };
         match self
             .inflight_executions
@@ -160,7 +145,7 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
         params: Params,
         store: S,
         delayed_until: Option<DateTime<Utc>>,
-    ) -> oneshot::Receiver<WorkerExecutionResult> {
+    ) -> oneshot::Receiver<FinishedExecutionResult> {
         // make sure the mpmc channel is created, obtain its sender
         let db_to_executor_mpmc_sender = self
             .db_to_executor_mpmc_queues
@@ -260,7 +245,7 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                 HashMap<FunctionFqn, (Sender<QueueEntry<S, E>>, Receiver<QueueEntry<S, E>>)>,
             >,
         >,
-        finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionStatus>>>,
+        finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionResult>>>,
     ) -> AbortHandle {
         tokio::spawn(
             async move {
@@ -287,7 +272,7 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
         db_to_executor_mpmc_queues: &std::sync::Mutex<
             HashMap<FunctionFqn, (Sender<QueueEntry<S, E>>, Receiver<QueueEntry<S, E>>)>,
         >,
-        finished_executions: &std::sync::Mutex<HashMap<E, FinishedExecutionStatus>>,
+        finished_executions: &std::sync::Mutex<HashMap<E, FinishedExecutionResult>>,
     ) {
         let mut finished = Vec::new();
 
@@ -344,41 +329,41 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                             } else {
                                 debug!("Received result");
                             }
-                            match &res {
+                            match res {
                                 Ok(WorkerCommand::PublishResult(supported_res)) => {
-                                    let finished_status =
-                                        FinishedExecutionStatus::Success(supported_res.clone());
-                                    finished.push((execution_id.clone(), finished_status));
+                                    let finished_status = Ok(supported_res);
+                                    finished.push((execution_id.clone(), finished_status.clone()));
                                     // Attempt to notify the client.
                                     let db_client_sender = inflight_execution
                                         .db_client_sender
                                         .take()
                                         .expect("db_client_sender must have been set in insert");
-                                    let _ = db_client_sender.send(res);
+                                    let _ = db_client_sender.send(finished_status);
                                     false
                                 }
                                 Err(WorkerError::Uncategorized) => {
                                     let finished_status =
-                                        FinishedExecutionStatus::UncategorizedError;
-                                    finished.push((execution_id.clone(), finished_status));
+                                        Err(FinishedExecutionError::UncategorizedError);
+                                    finished.push((execution_id.clone(), finished_status.clone()));
                                     // Attempt to notify the client.
                                     let db_client_sender = inflight_execution
                                         .db_client_sender
                                         .take()
                                         .expect("db_client_sender must have been set in insert");
-                                    let _ = db_client_sender.send(res);
+                                    let _ = db_client_sender.send(finished_status);
                                     false
                                 }
                                 Err(WorkerError::Timeout) => {
                                     // TODO: reenqueue a retry.
-                                    let finished_status = FinishedExecutionStatus::PermanentTimeout;
-                                    finished.push((execution_id.clone(), finished_status));
+                                    let finished_status =
+                                        Err(FinishedExecutionError::PermanentTimeout);
+                                    finished.push((execution_id.clone(), finished_status.clone()));
                                     // Attempt to notify the client.
                                     let db_client_sender = inflight_execution
                                         .db_client_sender
                                         .take()
                                         .expect("db_client_sender must have been set in insert");
-                                    let _ = db_client_sender.send(res);
+                                    let _ = db_client_sender.send(finished_status);
                                     false
                                 }
                                 Ok(WorkerCommand::EnqueueNow) => {
@@ -638,7 +623,7 @@ fn spawn_executor<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ExecutionStatusInfo, Worker, WorkerExecutionResult};
+    use crate::{ExecutionStatusInfo, FinishedExecutionError, Worker, WorkerExecutionResult};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
@@ -693,14 +678,11 @@ mod tests {
         );
         let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
         let resp = execution.await.unwrap_or_log();
+        assert_eq!(Ok(SupportedFunctionResult::None), resp);
         assert_eq!(
-            WorkerExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
-            resp
-        );
-        assert_eq!(
-            Some(ExecutionStatusInfo::Finished(
-                FinishedExecutionStatus::Success(SupportedFunctionResult::None)
-            )),
+            Some(ExecutionStatusInfo::Finished(Ok(
+                SupportedFunctionResult::None
+            ))),
             db.get_execution_status(&execution_id)
         );
     }
@@ -750,9 +732,7 @@ mod tests {
             db.spawn_executor(SOME_FFQN.to_owned(), workflow_worker, max_tasks, None);
         for execution in executions {
             assert_eq!(
-                WorkerExecutionResult::Ok(WorkerCommand::PublishResult(
-                    SupportedFunctionResult::None
-                )),
+                Ok(SupportedFunctionResult::None),
                 execution.await.unwrap_or_log()
             );
         }
@@ -806,11 +786,11 @@ mod tests {
             .await
             .unwrap_or_log();
         assert_eq!(false, finished_check.load(Ordering::SeqCst));
-        assert_eq!(WorkerExecutionResult::Err(WorkerError::Timeout), res);
+        assert_eq!(Err(FinishedExecutionError::PermanentTimeout), res);
         assert_eq!(
-            Some(ExecutionStatusInfo::Finished(
-                FinishedExecutionStatus::PermanentTimeout
-            )),
+            Some(ExecutionStatusInfo::Finished(Err(
+                FinishedExecutionError::PermanentTimeout
+            ))),
             db.get_execution_status(&execution_id)
         );
     }
@@ -838,11 +818,11 @@ mod tests {
             None,
         );
         assert_eq!(
-            WorkerExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
+            Ok(SupportedFunctionResult::None),
             fut_1.await.unwrap_or_log()
         );
         assert_eq!(
-            WorkerExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
+            Ok(SupportedFunctionResult::None),
             fut_2.await.unwrap_or_log()
         );
         let stopwatch = Instant::now().duration_since(stopwatch);
@@ -891,7 +871,7 @@ mod tests {
             None,
         );
         assert_eq!(
-            WorkerExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
+            Ok(SupportedFunctionResult::None),
             execution.await.unwrap_or_log()
         );
         assert_eq!(true, finished_check.load(Ordering::SeqCst));
@@ -921,7 +901,7 @@ mod tests {
         executor_abort_handle.close().await;
         assert_eq!(true, finished_check.load(Ordering::SeqCst));
         assert_eq!(
-            WorkerExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
+            Ok(SupportedFunctionResult::None),
             execution.await.unwrap_or_log()
         );
     }
@@ -958,15 +938,13 @@ mod tests {
         );
         for execution in executions {
             assert_eq!(
-                WorkerExecutionResult::Ok(WorkerCommand::PublishResult(
-                    SupportedFunctionResult::None
-                )),
+                Ok(SupportedFunctionResult::None),
                 execution.1.await.unwrap_or_log()
             );
             assert_eq!(
-                Some(ExecutionStatusInfo::Finished(
-                    FinishedExecutionStatus::Success(SupportedFunctionResult::None)
-                )),
+                Some(ExecutionStatusInfo::Finished(Ok(
+                    SupportedFunctionResult::None
+                ))),
                 db.get_execution_status(&execution.0)
             );
         }
@@ -998,7 +976,7 @@ mod tests {
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PanicingWorker, 1, None);
         let execution = execution.await.unwrap_or_log();
-        assert_matches!(execution, Err(WorkerError::Uncategorized));
+        assert_matches!(execution, Err(FinishedExecutionError::UncategorizedError));
     }
 
     #[tokio::test]
@@ -1073,13 +1051,11 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         };
         assert_eq!(
-            ExecutionStatusInfo::Finished(FinishedExecutionStatus::Success(
-                SupportedFunctionResult::None
-            )),
+            ExecutionStatusInfo::Finished(Ok(SupportedFunctionResult::None)),
             status
         );
         assert_eq!(
-            WorkerExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
+            Ok(SupportedFunctionResult::None),
             execution.await.unwrap_or_log()
         );
     }
@@ -1144,13 +1120,11 @@ mod tests {
 
         should_finish.store(true, Ordering::SeqCst);
         assert_eq!(
-            WorkerExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
+            Ok(SupportedFunctionResult::None),
             execution.await.unwrap_or_log()
         );
         assert_eq!(
-            ExecutionStatusInfo::Finished(FinishedExecutionStatus::Success(
-                SupportedFunctionResult::None
-            )),
+            ExecutionStatusInfo::Finished(Ok(SupportedFunctionResult::None)),
             db.get_execution_status(&execution_id).unwrap_or_log()
         );
     }
@@ -1215,13 +1189,11 @@ mod tests {
 
         store.lock().await.should_finish = true;
         assert_eq!(
-            WorkerExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
+            Ok(SupportedFunctionResult::None),
             execution.await.unwrap_or_log()
         );
         assert_eq!(
-            ExecutionStatusInfo::Finished(FinishedExecutionStatus::Success(
-                SupportedFunctionResult::None
-            )),
+            ExecutionStatusInfo::Finished(Ok(SupportedFunctionResult::None)),
             db.get_execution_status(&execution_id).unwrap_or_log()
         );
     }
@@ -1269,7 +1241,7 @@ mod tests {
         assert_matches!(status, ExecutionStatusInfo::DelayedUntil(found_delay) if found_delay == delay);
         let stopwatch = Instant::now();
         assert_eq!(
-            WorkerExecutionResult::Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None)),
+            Ok(SupportedFunctionResult::None),
             execution.await.unwrap_or_log()
         );
         let stopwatch = Instant::now().duration_since(stopwatch);

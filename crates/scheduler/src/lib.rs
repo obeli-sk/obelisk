@@ -33,10 +33,13 @@ pub trait ExecutionId: Clone + Hash + Display + Eq + PartialEq + Send + 'static 
 
 impl<T> ExecutionId for T where T: Clone + Hash + Display + Eq + PartialEq + Send + 'static {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FinishedExecutionStatus {
-    Success(SupportedFunctionResult),
+type FinishedExecutionResult = Result<SupportedFunctionResult, FinishedExecutionError>;
+
+#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
+pub enum FinishedExecutionError {
+    #[error("permanent timeout")]
     PermanentTimeout,
+    #[error("uncategorized error")]
     UncategorizedError,
 }
 
@@ -45,7 +48,7 @@ pub enum ExecutionStatusInfo {
     Pending,
     Enqueued,
     DelayedUntil(DateTime<Utc>),
-    Finished(FinishedExecutionStatus),
+    Finished(FinishedExecutionResult),
 }
 impl ExecutionStatusInfo {
     pub fn is_finished(&self) -> bool {
