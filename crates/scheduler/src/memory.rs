@@ -41,7 +41,7 @@ use tracing_unwrap::{OptionExt, ResultExt};
 struct QueueEntry<S: Debug> {
     workflow_id: WorkflowId,
     params: Params,
-    store: Arc<tokio::sync::Mutex<S>>,
+    store: S,
     executor_db_sender: oneshot::Sender<ExecutionResult>,
 }
 
@@ -49,7 +49,7 @@ struct QueueEntry<S: Debug> {
 struct InflightExecution<S> {
     ffqn: FunctionFqn,
     params: Params,
-    store: Arc<tokio::sync::Mutex<S>>,
+    store: S,
     db_client_sender: Option<oneshot::Sender<ExecutionResult>>, // Hack: Always present so it can be taken and used by the listener.
     executor_db_receiver: Option<oneshot::Receiver<ExecutionResult>>, // None if this entry needs to be submitted to the mpmc channel.
     status: InflightExecutionStatus,
@@ -101,7 +101,7 @@ pub struct InMemoryDatabase<S: Debug> {
     listener: AbortHandle,
 }
 
-impl<S: Debug + Send + 'static> InMemoryDatabase<S> {
+impl<S: Clone + Debug + Send + 'static> InMemoryDatabase<S> {
     pub fn spawn_new(queue_capacity: usize) -> Self {
         let inflight_executions: Arc<std::sync::Mutex<IndexMap<WorkflowId, InflightExecution<S>>>> =
             Default::default();
@@ -164,7 +164,7 @@ impl<S: Debug + Send + 'static> InMemoryDatabase<S> {
         ffqn: FunctionFqn,
         workflow_id: WorkflowId,
         params: Params,
-        store: Arc<tokio::sync::Mutex<S>>,
+        store: S,
     ) -> oneshot::Receiver<ExecutionResult> {
         // make sure the mpmc channel is created, obtain its sender
         let db_to_executor_mpmc_sender = self
@@ -208,7 +208,7 @@ impl<S: Debug + Send + 'static> InMemoryDatabase<S> {
         db_to_executor_mpmc_sender: Sender<QueueEntry<S>>,
         workflow_id: WorkflowId,
         params: Params,
-        store: Arc<tokio::sync::Mutex<S>>,
+        store: S,
         old_status: Option<InflightExecutionStatus>,
     ) -> (
         Option<oneshot::Receiver<ExecutionResult>>,
@@ -549,7 +549,6 @@ fn spawn_executor<S: Debug + Send + 'static, W: Worker<S> + Send + Sync + 'stati
                         worker_set.spawn(
                             async move {
                                 debug!("Spawned worker");
-                                let store = store.lock().await;
                                 let execution_result_fut = worker.run(workflow_id, params, store);
                                 let execution_result =
                                     if let Some(max_task_duration) = max_task_duration {
@@ -620,11 +619,11 @@ mod tests {
 
         #[async_trait]
         impl Worker<()> for SimpleWorker {
-            async fn run<'a>(
-                &'a self,
+            async fn run(
+                &self,
                 _workflow_id: WorkflowId,
                 _params: Params,
-                _store: tokio::sync::MutexGuard<'a, ()>,
+                _store: (),
             ) -> ExecutionResult {
                 ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
             }
@@ -659,11 +658,11 @@ mod tests {
 
         #[async_trait]
         impl Worker<()> for SemaphoreWorker {
-            async fn run<'a>(
-                &'a self,
+            async fn run(
+                &self,
                 workflow_id: WorkflowId,
                 _params: Params,
-                _store: tokio::sync::MutexGuard<'a, ()>,
+                _store: (),
             ) -> ExecutionResult {
                 trace!("[{workflow_id}] acquiring");
                 let _permit = self.0.try_acquire().unwrap_or_log();
@@ -704,11 +703,11 @@ mod tests {
     #[async_trait]
     impl Worker<()> for SleepyWorker {
         #[instrument(skip_all)]
-        async fn run<'a>(
-            &'a self,
+        async fn run(
+            &self,
             _workflow_id: WorkflowId,
             params: Params,
-            _store: tokio::sync::MutexGuard<'a, ()>,
+            _store: (),
         ) -> ExecutionResult {
             assert_eq!(params.len(), 1);
             let millis = params[0].clone();
@@ -907,11 +906,11 @@ mod tests {
         struct PanicingWorker;
         #[async_trait]
         impl Worker<()> for PanicingWorker {
-            async fn run<'a>(
-                &'a self,
+            async fn run(
+                &self,
                 _workflow_id: WorkflowId,
                 _params: Params,
-                _store: tokio::sync::MutexGuard<'a, ()>,
+                _store: (),
             ) -> ExecutionResult {
                 panic!();
             }
@@ -939,11 +938,11 @@ mod tests {
 
         #[async_trait]
         impl Worker<()> for PartialProgressWorker {
-            async fn run<'a>(
-                &'a self,
+            async fn run(
+                &self,
                 _workflow_id: WorkflowId,
                 _params: Params,
-                _store: tokio::sync::MutexGuard<'a, ()>,
+                _store: (),
             ) -> ExecutionResult {
                 if self.should_finish.load(Ordering::SeqCst) {
                     trace!("Worker finished");
@@ -1012,7 +1011,7 @@ mod tests {
         set_up();
         struct PartialProgressWorker;
 
-        #[derive(Default, Debug)]
+        #[derive(Default, Debug, Clone)]
         struct PartialStore {
             is_waiting: Arc<AtomicBool>,
             should_finish: Arc<AtomicBool>,
@@ -1023,11 +1022,11 @@ mod tests {
 
         #[async_trait]
         impl Worker<PartialStore> for PartialProgressWorker {
-            async fn run<'a>(
-                &'a self,
+            async fn run(
+                &self,
                 _workflow_id: WorkflowId,
                 _params: Params,
-                store: tokio::sync::MutexGuard<'a, PartialStore>,
+                store: PartialStore,
             ) -> ExecutionResult {
                 if store.should_finish.load(Ordering::SeqCst) {
                     trace!("Worker finished");
@@ -1046,7 +1045,7 @@ mod tests {
             SOME_FFQN.to_owned(),
             workflow_id.clone(),
             Params::default(),
-            Arc::new(tokio::sync::Mutex::new(store)),
+            store,
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
@@ -1063,71 +1062,6 @@ mod tests {
             .in_progress());
 
         should_finish.store(true, Ordering::SeqCst);
-        assert_eq!(
-            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
-            execution.await.unwrap_or_log()
-        );
-        assert_eq!(
-            ExecutionStatusInfo::Finished(SupportedFunctionResult::None),
-            db.get_execution_status(&workflow_id).unwrap_or_log()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_partial_progress_with_store() {
-        set_up();
-        struct PartialProgressWorker;
-
-        #[derive(Default, Debug)]
-        struct PartialStore {
-            is_waiting: bool,
-            should_finish: bool,
-        }
-        let store = Arc::new(tokio::sync::Mutex::new(PartialStore::default()));
-
-        #[async_trait]
-        impl Worker<PartialStore> for PartialProgressWorker {
-            async fn run<'a>(
-                &'a self,
-                _workflow_id: WorkflowId,
-                _params: Params,
-                mut store: tokio::sync::MutexGuard<'a, PartialStore>,
-            ) -> ExecutionResult {
-                if store.should_finish {
-                    trace!("Worker finished");
-                    ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
-                } else {
-                    trace!("Worker waiting");
-                    store.is_waiting = true;
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    ExecutionResult::Ok(PartialResult::PartialProgress)
-                }
-            }
-        }
-        let db = InMemoryDatabase::spawn_new(1);
-        let workflow_id = WorkflowId::generate();
-        let execution = db.insert(
-            SOME_FFQN.to_owned(),
-            workflow_id.clone(),
-            Params::default(),
-            store.clone(),
-        );
-        let _executor_abort_handle =
-            db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
-        loop {
-            let store = store.lock().await;
-            if store.is_waiting {
-                break;
-            }
-            debug!("Waiting for in progress");
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        assert!(db
-            .get_execution_status(&workflow_id)
-            .unwrap_or_log()
-            .in_progress());
-
-        store.lock().await.should_finish = true;
         assert_eq!(
             ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
             execution.await.unwrap_or_log()

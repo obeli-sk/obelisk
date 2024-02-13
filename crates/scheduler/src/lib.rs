@@ -22,10 +22,5 @@ pub enum WorkerError {
 
 #[async_trait]
 pub trait Worker<S> {
-    async fn run<'a>(
-        &'a self,
-        workflow_id: WorkflowId,
-        params: Params,
-        store: tokio::sync::MutexGuard<'a, S>,
-    ) -> ExecutionResult;
+    async fn run(&self, workflow_id: WorkflowId, params: Params, store: S) -> ExecutionResult;
 }
