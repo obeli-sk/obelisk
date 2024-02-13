@@ -1071,4 +1071,70 @@ mod tests {
             db.get_execution_status(&workflow_id).unwrap_or_log()
         );
     }
+
+    #[tokio::test]
+    async fn test_partial_progress_with_arc_mutex_store() {
+        set_up();
+        struct PartialProgressWorker;
+
+        #[derive(Default, Debug)]
+        struct PartialStore {
+            is_waiting: bool,
+            should_finish: bool,
+        }
+        let store = Arc::new(tokio::sync::Mutex::new(PartialStore::default()));
+
+        #[async_trait]
+        impl Worker<Arc<tokio::sync::Mutex<PartialStore>>> for PartialProgressWorker {
+            async fn run(
+                &self,
+                _workflow_id: WorkflowId,
+                _params: Params,
+                store: Arc<tokio::sync::Mutex<PartialStore>>,
+            ) -> ExecutionResult {
+                let mut store = store.lock().await;
+                if store.should_finish {
+                    trace!("Worker finished");
+                    ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None))
+                } else {
+                    trace!("Worker waiting");
+                    store.is_waiting = true;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    ExecutionResult::Ok(PartialResult::PartialProgress)
+                }
+            }
+        }
+        let db = InMemoryDatabase::spawn_new(1);
+        let workflow_id = WorkflowId::generate();
+        let execution = db.insert(
+            SOME_FFQN.to_owned(),
+            workflow_id.clone(),
+            Params::default(),
+            store.clone(),
+        );
+        let _executor_abort_handle =
+            db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
+        loop {
+            let store = store.lock().await;
+            if store.is_waiting {
+                break;
+            }
+            debug!("Waiting for in progress");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(db
+            .get_execution_status(&workflow_id)
+            .unwrap_or_log()
+            .in_progress());
+
+        store.lock().await.should_finish = true;
+        assert_eq!(
+            ExecutionResult::Ok(PartialResult::FinalResult(SupportedFunctionResult::None)),
+            execution.await.unwrap_or_log()
+        );
+        assert_eq!(
+            ExecutionStatusInfo::Finished(SupportedFunctionResult::None),
+            db.get_execution_status(&workflow_id).unwrap_or_log()
+        );
+    }
 }
