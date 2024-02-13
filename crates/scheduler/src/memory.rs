@@ -28,7 +28,6 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // Handling of panics in workers
 
 // TODO:
-// * feat: WorkerCommand::DelayUntil
 // * feat: dependent executions: workflow-activity, parent-child workflows
 // * refactor: remove old db, runtime
 // * fix: consistency between `inflight_executions` and `finished_executions`
@@ -41,6 +40,8 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // * resil: limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
 // * resil: Fairness: reenqueue should push the execution to the end of `inflight_executions`
 // * perf: wake up the listener by insertion and executor by pushing a workflow id to an mpsc channel.
+// * tracing: Add task names
+
 #[derive(Debug)]
 struct QueueEntry<S: Debug, E: ExecutionId> {
     execution_id: E,
@@ -136,6 +137,27 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
         }
     }
 
+    pub fn insert(
+        &self,
+        ffqn: FunctionFqn,
+        execution_id: E,
+        params: Params,
+        store: S,
+    ) -> oneshot::Receiver<FinishedExecutionResult> {
+        self.insert_or_schedule(ffqn, execution_id, params, store, None)
+    }
+
+    pub fn schedule(
+        &self,
+        ffqn: FunctionFqn,
+        execution_id: E,
+        params: Params,
+        store: S,
+        delay: DateTime<Utc>,
+    ) -> oneshot::Receiver<FinishedExecutionResult> {
+        self.insert_or_schedule(ffqn, execution_id, params, store, Some(delay))
+    }
+
     #[instrument(skip_all, fields(%ffqn, %execution_id))]
     pub fn insert_or_schedule(
         &self,
@@ -143,7 +165,7 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
         execution_id: E,
         params: Params,
         store: S,
-        delayed_until: Option<DateTime<Utc>>,
+        delay: Option<DateTime<Utc>>,
     ) -> oneshot::Receiver<FinishedExecutionResult> {
         // make sure the mpmc channel is created, obtain its sender
         let db_to_executor_mpmc_sender = self
@@ -158,7 +180,7 @@ impl<S: Clone + Debug + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
         let (db_to_client_sender, db_to_client_receiver) = oneshot::channel();
         // Attempt to enqueue the execution.
         let submitted = {
-            let status = if let Some(delay) = delayed_until {
+            let status = if let Some(delay) = delay {
                 InflightExecutionStatus::DelayedUntil(delay)
             } else {
                 Self::attempt_to_enqueue(
@@ -666,12 +688,11 @@ mod tests {
 
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
-        let execution = db.insert_or_schedule(
+        let execution = db.insert(
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
             Default::default(),
-            None,
         );
         let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
         let resp = execution.await.unwrap_or_log();
@@ -713,12 +734,11 @@ mod tests {
         let max_tasks = 3;
         let executions = (0..max_tasks * 2)
             .map(|_| {
-                db.insert_or_schedule(
+                db.insert(
                     SOME_FFQN.to_owned(),
                     WorkflowId::generate(),
                     Params::default(),
                     Default::default(),
-                    None,
                 )
             })
             .collect::<Vec<_>>();
@@ -773,12 +793,11 @@ mod tests {
         );
         let execution_id = WorkflowId::generate();
         let res = db
-            .insert_or_schedule(
+            .insert(
                 SOME_FFQN.to_owned(),
                 execution_id.clone(),
                 Params::from([wasmtime::component::Val::U64(max_duration_millis * 2)]),
                 Default::default(),
-                None,
             )
             .await
             .unwrap_or_log();
@@ -800,19 +819,17 @@ mod tests {
         let _executor_1 = db.spawn_executor(SOME_FFQN.to_owned(), SleepyWorker(None), 1, None);
         let _executor_2 = db.spawn_executor(SOME_FFQN.to_owned(), SleepyWorker(None), 1, None);
         let stopwatch = Instant::now();
-        let fut_1 = db.insert_or_schedule(
+        let fut_1 = db.insert(
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
             Default::default(),
-            None,
         );
-        let fut_2 = db.insert_or_schedule(
+        let fut_2 = db.insert(
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
             Default::default(),
-            None,
         );
         assert_eq!(
             Ok(SupportedFunctionResult::None),
@@ -841,12 +858,11 @@ mod tests {
 
         let sleep_millis = 100;
         let execution_id = WorkflowId::generate();
-        let mut execution = db.insert_or_schedule(
+        let mut execution = db.insert(
             SOME_FFQN.to_owned(),
             execution_id,
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
             Default::default(),
-            None,
         );
         // Drop the executor after 10ms.
         tokio::spawn(async move {
@@ -879,12 +895,11 @@ mod tests {
         set_up();
         let db = InMemoryDatabase::spawn_new(1);
         let sleep_millis = 100;
-        let execution = db.insert_or_schedule(
+        let execution = db.insert(
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
             Default::default(),
-            None,
         );
         let finished_check = Arc::new(AtomicBool::new(false));
         let executor_abort_handle = db.spawn_executor(
@@ -913,12 +928,11 @@ mod tests {
         let execute = |execution_id: WorkflowId| {
             (
                 execution_id.clone(),
-                db.insert_or_schedule(
+                db.insert(
                     SOME_FFQN.to_owned(),
                     execution_id,
                     Params::from([wasmtime::component::Val::U64(max_duration_millis)]),
                     Default::default(),
-                    None,
                 ),
             )
         };
@@ -963,12 +977,11 @@ mod tests {
             }
         }
         let db = InMemoryDatabase::spawn_new(10);
-        let execution = db.insert_or_schedule(
+        let execution = db.insert(
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::default(),
             Default::default(),
-            None,
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PanicingWorker, 1, None);
@@ -1008,12 +1021,11 @@ mod tests {
 
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
-        let execution = db.insert_or_schedule(
+        let execution = db.insert(
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
             Default::default(),
-            None,
         );
         let is_waiting = Arc::new(AtomicBool::new(false));
         let should_finish = Arc::new(AtomicBool::new(false));
@@ -1094,12 +1106,11 @@ mod tests {
         }
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
-        let execution = db.insert_or_schedule(
+        let execution = db.insert(
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
             store,
-            None,
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
@@ -1162,12 +1173,11 @@ mod tests {
         }
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
-        let execution = db.insert_or_schedule(
+        let execution = db.insert(
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
             store.clone(),
-            None,
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
@@ -1197,8 +1207,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_simple_scheduled_workflow() {
-        let delay = Duration::from_millis(500);
-        let max_accepted_delay = delay * 2;
+        const DELAY: Duration = Duration::from_millis(500);
+        const MAX_ACCEPTED_DELAY: Duration = Duration::from_millis(1000);
         set_up();
         struct SimpleWorker;
         #[async_trait]
@@ -1218,13 +1228,13 @@ mod tests {
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
         let now = Utc::now();
-        let delay = now + delay;
-        let execution = db.insert_or_schedule(
+        let delay = now + DELAY;
+        let execution = db.schedule(
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
             Default::default(),
-            Some(delay),
+            delay,
         );
         let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
         // check that it is scheduled.
@@ -1243,7 +1253,7 @@ mod tests {
         );
         let stopwatch = Instant::now().duration_since(stopwatch);
         assert!(
-            stopwatch < max_accepted_delay,
+            stopwatch < MAX_ACCEPTED_DELAY,
             "Scheduled execution exceeded accepted delay: {stopwatch:?}"
         );
     }
