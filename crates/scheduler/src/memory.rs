@@ -21,11 +21,14 @@ use tracing_unwrap::{OptionExt, ResultExt};
 /// versioning, health checks and timeouts to detect when an executor got stuck or disconnected.
 
 // Done:
-// Execution insertion, enqueueing, executing on a worker.
+// Execution insertion, enqueueing, executing on a worker
 // Timeouts (permanent)
 // Handling executor abortion (re-enqueueing)
-// Enqueueing in the background when a queue is full during insertion.
+// Enqueueing in the background when a queue is full during insertion
 // Handling of panics in workers
+// Partial execution results, i.e. worker requesting to be reenqueued
+// Worker store
+// Scheduling - delaying during insertion, inflight requested by the worker
 
 // TODO:
 // * feat: dependent executions: workflow-activity, parent-child workflows
@@ -42,6 +45,7 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // * perf: wake up the listener by insertion signal and executor by pushing a workflow id to an mpsc channel.
 // * tracing: Add task names
 
+const LISTENER_TICK_MICROS: u64 = 10;
 struct QueueEntry<S, E: ExecutionId> {
     execution_id: E,
     params: Params,
@@ -266,7 +270,7 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
                         &db_to_executor_mpmc_queues,
                         &finished_executions,
                     );
-                    tokio::time::sleep(Duration::from_micros(10)).await;
+                    tokio::time::sleep(Duration::from_micros(LISTENER_TICK_MICROS)).await;
                 }
             }
             .instrument(info_span!("db_listener")),
@@ -506,7 +510,7 @@ fn spawn_executor<S: Send + 'static, W: Worker<S, E> + Send + Sync + 'static, E:
         tokio::spawn(
             async move {
                 info!("Spawned executor");
-                let mut worker_set = JoinSet::new(); // All worker tasks are cancelled on drop.
+                let mut worker_set = JoinSet::new(); // All worker tasks are aborted when this task exits.
 
                 // Add a dummy task so that worker_set.join never returns None
                 worker_set.spawn(async {
@@ -518,13 +522,13 @@ fn spawn_executor<S: Send + 'static, W: Worker<S, E> + Send + Sync + 'static, E:
                 let semaphore = Arc::new(tokio::sync::Semaphore::new(
                     usize::try_from(max_tasks).expect("usize from u32 should not fail"),
                 ));
-                // type WorkerTaskVal = (oneshot::Sender<ExecutionResult>, WorkflowId);
                 let mut worker_ids_to_worker_task_vals = IndexMap::new();
 
                 let handle_joined = |worker_ids_to_oneshot_senders: &mut IndexMap<_, _>, joined: Result<_, tokio::task::JoinError>| {
                     match joined {
                         Ok((worker_id, execution_result)) => {
-                            let (executor_to_db_sender, execution_id): (oneshot::Sender<WorkerExecutionResult>, E) = worker_ids_to_oneshot_senders.swap_remove(&worker_id).unwrap_or_log();
+                            let (executor_to_db_sender, execution_id): (oneshot::Sender<WorkerExecutionResult>, E) =
+                                worker_ids_to_oneshot_senders.swap_remove(&worker_id).unwrap_or_log();
                             info_span!("joined", %execution_id).in_scope(|| {
                                 let send_res = executor_to_db_sender.send(execution_result);
                                 if send_res.is_err() {
@@ -533,7 +537,8 @@ fn spawn_executor<S: Send + 'static, W: Worker<S, E> + Send + Sync + 'static, E:
                             });
                         },
                         Err(join_error) => {
-                            let (executor_to_db_sender, execution_id): (oneshot::Sender<WorkerExecutionResult>, E) = worker_ids_to_oneshot_senders.swap_remove(&join_error.id()).unwrap_or_log();
+                            let (executor_to_db_sender, execution_id): (oneshot::Sender<WorkerExecutionResult>, E) =
+                                worker_ids_to_oneshot_senders.swap_remove(&join_error.id()).unwrap_or_log();
                             info_span!("joined_error", %execution_id).in_scope(|| {
                                 error!("Got uncategorized worker join error. Panic: {panic}", panic = join_error.is_panic());
                                 let send_res = executor_to_db_sender.send(Err(WorkerError::Uncategorized));
