@@ -452,7 +452,7 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
         worker: W,
         max_tasks: u32,
         max_task_duration: Option<Duration>,
-    ) -> ExecutorAbortHandle<S, E> {
+    ) -> Executor<S, E> {
         let receiver = self
             .db_to_executor_mpmc_queues
             .lock()
@@ -461,7 +461,7 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
             .or_insert_with(|| async_channel::bounded(self.queue_capacity))
             .1
             .clone();
-        spawn_executor(ffqn, receiver, worker, max_tasks, max_task_duration)
+        Executor::spawn_new(ffqn, receiver, worker, max_tasks, max_task_duration)
     }
 
     fn spawn_listener(
@@ -535,57 +535,29 @@ impl<S, E: ExecutionId> Drop for InMemoryDatabase<S, E> {
     }
 }
 
-pub struct ExecutorAbortHandle<S, E: ExecutionId> {
+pub struct Executor<S, E: ExecutionId> {
     ffqn: FunctionFqn,
     executor_task: AbortHandle,
     receiver: Receiver<QueueEntry<S, E>>,
 }
 
-impl<S: Debug, E: ExecutionId> ExecutorAbortHandle<S, E> {
-    /// Graceful shutdown. Waits until all workers terminate.
-    ///
-    /// # Panics
-    ///
-    /// All senders must be closed, otherwise this function will panic.
-    #[instrument(skip_all, fields(ffqn = %self.ffqn))]
-    pub async fn close(self) {
-        // Signal to the executor task.
-        self.receiver.close();
-        debug!("Gracefully closing");
-        while !self.executor_task.is_finished() {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-        info!("Gracefully closed");
-    }
-}
-
-impl<S, E: ExecutionId> Drop for ExecutorAbortHandle<S, E> {
-    #[instrument(skip_all, fields(ffqn = %self.ffqn))]
-    fn drop(&mut self) {
-        if !self.executor_task.is_finished() {
-            warn!("Aborting the executor task");
-            self.executor_task.abort();
-        }
-    }
-}
-
-#[instrument(skip_all, fields(%ffqn))]
-fn spawn_executor<S: Send + 'static, W: Worker<S, E> + Send + Sync + 'static, E: ExecutionId>(
-    ffqn: FunctionFqn,
-    receiver: Receiver<QueueEntry<S, E>>,
-    worker: W,
-    max_tasks: u32,
-    max_task_duration: Option<Duration>,
-) -> ExecutorAbortHandle<S, E> {
-    assert!(max_tasks > 0, "`max_tasks` must be greater than zero");
-    let worker = Arc::new(worker);
-    let executor_task = {
-        let receiver = receiver.clone();
-        tokio::spawn(
+impl<S: Send + 'static, E: ExecutionId> Executor<S, E> {
+    #[instrument(skip_all, fields(%ffqn))]
+    fn spawn_new<W: Worker<S, E> + Send + Sync + 'static>(
+        ffqn: FunctionFqn,
+        receiver: Receiver<QueueEntry<S, E>>,
+        worker: W,
+        max_tasks: u32,
+        max_task_duration: Option<Duration>,
+    ) -> Executor<S, E> {
+        assert!(max_tasks > 0, "`max_tasks` must be greater than zero");
+        let worker = Arc::new(worker);
+        let executor_task = {
+            let receiver = receiver.clone();
+            tokio::spawn(
             async move {
                 info!("Spawned executor");
                 let mut worker_set = JoinSet::new(); // All worker tasks are aborted when this task exits.
-
                 // Add a dummy task so that worker_set.join never returns None
                 worker_set.spawn(async {
                     loop {
@@ -597,33 +569,6 @@ fn spawn_executor<S: Send + 'static, W: Worker<S, E> + Send + Sync + 'static, E:
                     usize::try_from(max_tasks).expect("usize from u32 should not fail"),
                 ));
                 let mut worker_ids_to_worker_task_vals = IndexMap::new();
-
-                let handle_joined = |worker_ids_to_oneshot_senders: &mut IndexMap<_, _>, joined: Result<_, tokio::task::JoinError>| {
-                    match joined {
-                        Ok((worker_id, execution_result)) => {
-                            let (executor_to_db_sender, execution_id): (oneshot::Sender<WorkerExecutionResult>, E) =
-                                worker_ids_to_oneshot_senders.swap_remove(&worker_id).unwrap_or_log();
-                            info_span!("joined", %execution_id).in_scope(|| {
-                                let send_res = executor_to_db_sender.send(execution_result);
-                                if send_res.is_err() {
-                                    debug!("Cannot send the result back to db");
-                                }
-                            });
-                        },
-                        Err(join_error) => {
-                            let (executor_to_db_sender, execution_id): (oneshot::Sender<WorkerExecutionResult>, E) =
-                                worker_ids_to_oneshot_senders.swap_remove(&join_error.id()).unwrap_or_log();
-                            info_span!("joined_error", %execution_id).in_scope(|| {
-                                error!("Got uncategorized worker join error. Panic: {panic}", panic = join_error.is_panic());
-                                let send_res = executor_to_db_sender.send(Err(WorkerError::Uncategorized));
-                                if send_res.is_err() {
-                                    debug!("Cannot send the worker failure back to db");
-                                }
-                            });
-                        }
-                    }
-                };
-
                 loop {
                     trace!(
                         "Available permits: {permits}",
@@ -640,7 +585,7 @@ fn spawn_executor<S: Send + 'static, W: Worker<S, E> + Send + Sync + 'static, E:
                                 break permit.unwrap_or_log()
                             },
                         };
-                        handle_joined(&mut worker_ids_to_worker_task_vals, joined);
+                        Self::handle_joined(&mut worker_ids_to_worker_task_vals, joined);
                     };
                     trace!("Got permit to receive");
                     let recv = loop {
@@ -650,7 +595,7 @@ fn spawn_executor<S: Send + 'static, W: Worker<S, E> + Send + Sync + 'static, E:
                             },
                             recv = receiver.recv() => break recv,
                         );
-                        handle_joined(&mut worker_ids_to_worker_task_vals, joined);
+                        Self::handle_joined(&mut worker_ids_to_worker_task_vals, joined);
                     };
                     let Ok(QueueEntry {
                         execution_id,
@@ -663,7 +608,7 @@ fn spawn_executor<S: Send + 'static, W: Worker<S, E> + Send + Sync + 'static, E:
                         // Drain the worker set, except for the dummy task.
                         while worker_set.len() > 1 {
                             let joined = worker_set.join_next_with_id().await.unwrap_or_log();
-                            handle_joined(&mut worker_ids_to_worker_task_vals, joined);
+                            Self::handle_joined(&mut worker_ids_to_worker_task_vals, joined);
                         }
                         trace!("All workers have finished");
                         return;
@@ -703,11 +648,84 @@ fn spawn_executor<S: Send + 'static, W: Worker<S, E> + Send + Sync + 'static, E:
             .instrument(info_span!("executor")),
         )
         .abort_handle()
-    };
-    ExecutorAbortHandle {
-        ffqn,
-        executor_task,
-        receiver,
+        };
+        Executor {
+            ffqn,
+            executor_task,
+            receiver,
+        }
+    }
+
+    fn handle_joined(
+        worker_ids_to_oneshot_senders: &mut IndexMap<
+            tokio::task::Id,
+            (oneshot::Sender<Result<WorkerCommand, WorkerError>>, E),
+        >,
+        joined: Result<
+            (tokio::task::Id, Result<WorkerCommand, WorkerError>),
+            tokio::task::JoinError,
+        >,
+    ) {
+        match joined {
+            Ok((worker_id, execution_result)) => {
+                let (executor_to_db_sender, execution_id): (
+                    oneshot::Sender<WorkerExecutionResult>,
+                    E,
+                ) = worker_ids_to_oneshot_senders
+                    .swap_remove(&worker_id)
+                    .unwrap_or_log();
+                info_span!("joined", %execution_id).in_scope(|| {
+                    let send_res = executor_to_db_sender.send(execution_result);
+                    if send_res.is_err() {
+                        debug!("Cannot send the result back to db");
+                    }
+                });
+            }
+            Err(join_error) => {
+                let (executor_to_db_sender, execution_id): (
+                    oneshot::Sender<WorkerExecutionResult>,
+                    E,
+                ) = worker_ids_to_oneshot_senders
+                    .swap_remove(&join_error.id())
+                    .unwrap_or_log();
+                info_span!("joined_error", %execution_id).in_scope(|| {
+                    error!(
+                        "Got uncategorized worker join error. Panic: {panic}",
+                        panic = join_error.is_panic()
+                    );
+                    let send_res = executor_to_db_sender.send(Err(WorkerError::Uncategorized));
+                    if send_res.is_err() {
+                        debug!("Cannot send the worker failure back to db");
+                    }
+                });
+            }
+        }
+    }
+
+    /// Graceful shutdown. Waits until all workers terminate.
+    ///
+    /// # Panics
+    ///
+    /// All senders must be closed, otherwise this function will panic.
+    #[instrument(skip_all, fields(ffqn = %self.ffqn))]
+    pub async fn close(self) {
+        // Signal to the executor task.
+        self.receiver.close();
+        debug!("Gracefully closing");
+        while !self.executor_task.is_finished() {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        info!("Gracefully closed");
+    }
+}
+
+impl<S, E: ExecutionId> Drop for Executor<S, E> {
+    #[instrument(skip_all, fields(ffqn = %self.ffqn))]
+    fn drop(&mut self) {
+        if !self.executor_task.is_finished() {
+            warn!("Aborting the executor task");
+            self.executor_task.abort();
+        }
     }
 }
 
