@@ -39,7 +39,7 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // * feat: execution history - 1.pending, 2. enqueued..
 // * resil: limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
 // * resil: Fairness: reenqueue should push the execution to the end of `inflight_executions`
-// * perf: wake up the listener by insertion and executor by pushing a workflow id to an mpsc channel.
+// * perf: wake up the listener by insertion signal and executor by pushing a workflow id to an mpsc channel.
 // * tracing: Add task names
 
 struct QueueEntry<S, E: ExecutionId> {
@@ -1044,14 +1044,7 @@ mod tests {
             .is_finished());
 
         should_finish.store(true, Ordering::SeqCst);
-        let status = loop {
-            let status = db.get_execution_status(&execution_id).unwrap_or_log();
-            if status.is_finished() {
-                break status;
-            }
-            trace!("Waiting to finish");
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        };
+        let status = wait_for_status(&db, &execution_id, |status| status.is_finished()).await;
         assert_eq!(
             ExecutionStatusInfo::Finished(Ok(SupportedFunctionResult::None)),
             status
@@ -1201,7 +1194,7 @@ mod tests {
     #[tokio::test]
     async fn test_simple_scheduled_workflow() {
         const DELAY: Duration = Duration::from_millis(500);
-        const MAX_ACCEPTED_DELAY: Duration = Duration::from_millis(1000);
+        const LEEWAY_DELAY: Duration = Duration::from_millis(100);
         set_up();
         struct SimpleWorker;
         #[async_trait]
@@ -1217,7 +1210,6 @@ mod tests {
                 ))
             }
         }
-
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
         let now = Utc::now();
@@ -1229,25 +1221,96 @@ mod tests {
             Default::default(),
             delay,
         );
+        assert_matches!(db.get_execution_status(&execution_id).unwrap_or_log(), ExecutionStatusInfo::DelayedUntil(found_delay) if found_delay == delay);
         let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
-        // check that it is scheduled.
-        let status = loop {
-            if let Some(status) = db.get_execution_status(&execution_id) {
-                break status;
-            }
-            debug!("Waiting for in progress");
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        };
-        assert_matches!(status, ExecutionStatusInfo::DelayedUntil(found_delay) if found_delay == delay);
         let stopwatch = Instant::now();
         assert_eq!(
             Ok(SupportedFunctionResult::None),
             execution.await.unwrap_or_log()
         );
         let stopwatch = Instant::now().duration_since(stopwatch);
+        assert_between(stopwatch, DELAY, LEEWAY_DELAY);
+    }
+
+    async fn wait_for_status<S: Clone + Send + 'static, E: ExecutionId>(
+        db: &InMemoryDatabase<S, E>,
+        execution_id: &E,
+        predicate: fn(&ExecutionStatusInfo) -> bool,
+    ) -> ExecutionStatusInfo {
+        loop {
+            if let Some(status) = db.get_execution_status(execution_id) {
+                if predicate(&status) {
+                    return status;
+                }
+            }
+            trace!("Waiting for status change");
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+
+    fn assert_between(actual: Duration, expected: Duration, leeway: Duration) {
         assert!(
-            stopwatch < MAX_ACCEPTED_DELAY,
-            "Scheduled execution exceeded accepted delay: {stopwatch:?}"
+            actual <= expected + leeway,
+            "exceeded accepted delay. Got: {actual:?}, expected <= {:?}",
+            expected + leeway
         );
+        assert!(
+            actual >= expected - leeway,
+            "below accepted delay. Got: {actual:?}, expected <= {:?}",
+            expected - leeway
+        );
+    }
+
+    #[tokio::test]
+    async fn worker_delay_until() {
+        const DELAY: Duration = Duration::from_millis(500);
+        const LEEWAY_DELAY: Duration = Duration::from_millis(100);
+        set_up();
+        struct PartialProgressWorker;
+
+        #[async_trait]
+        impl Worker<Arc<AtomicBool>, WorkflowId> for PartialProgressWorker {
+            async fn run(
+                &self,
+                _execution_id: WorkflowId,
+                _params: Params,
+                was_delayed: Arc<AtomicBool>,
+            ) -> WorkerExecutionResult {
+                if was_delayed
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    let delay = Utc::now() + DELAY;
+                    trace!("Worker is requesting a delay until {delay}");
+                    WorkerExecutionResult::Ok(WorkerCommand::DelayUntil(delay))
+                } else {
+                    trace!("Worker is done");
+                    WorkerExecutionResult::Ok(WorkerCommand::PublishResult(
+                        SupportedFunctionResult::None,
+                    ))
+                }
+            }
+        }
+        let db = InMemoryDatabase::spawn_new(1);
+        let execution_id = WorkflowId::generate();
+        let execution = db.insert(
+            SOME_FFQN.to_owned(),
+            execution_id.clone(),
+            Params::default(),
+            Default::default(),
+        );
+        let _executor_abort_handle =
+            db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
+        wait_for_status(&db, &execution_id, |status| {
+            matches!(status, ExecutionStatusInfo::DelayedUntil(_))
+        })
+        .await;
+        let stopwatch = Instant::now();
+        assert_eq!(
+            Ok(SupportedFunctionResult::None),
+            execution.await.unwrap_or_log()
+        );
+        let stopwatch = Instant::now().duration_since(stopwatch);
+        assert_between(stopwatch, DELAY, LEEWAY_DELAY);
     }
 }
