@@ -95,6 +95,152 @@ impl<S: Clone + Send + 'static> InflightExecution<S> {
             self.store.clone(),
         );
     }
+
+    fn transition<E: ExecutionId>(
+        &mut self,
+        execution_id: &E,
+        db_to_executor_mpmc_queues: &std::sync::Mutex<
+            HashMap<FunctionFqn, (Sender<QueueEntry<S, E>>, Receiver<QueueEntry<S, E>>)>,
+        >,
+    ) -> Option<FinishedExecutionResult> {
+        match self {
+            InflightExecution {
+                status:
+                    InflightExecutionStatus::Enqueued {
+                        executor_to_db_receiver,
+                        ..
+                    },
+                ..
+            } => {
+                match executor_to_db_receiver.try_recv() {
+                    Ok(res) => {
+                        match res {
+                            Ok(WorkerCommand::PublishResult(supported_res)) => {
+                                let finished_status = Ok(supported_res);
+                                info!("Execution finished successfuly");
+                                // Attempt to notify the client.
+                                let db_client_sender = self
+                                    .db_to_client_sender
+                                    .take()
+                                    .expect("db_client_sender must have been set in insert");
+                                let _ = db_client_sender.send(finished_status.clone());
+                                Some(finished_status)
+                            }
+                            Err(WorkerError::Uncategorized) => {
+                                let finished_status =
+                                    Err(FinishedExecutionError::UncategorizedError);
+                                warn!("Execution finished with UncategorizedError");
+                                // Attempt to notify the client.
+                                let db_client_sender = self
+                                    .db_to_client_sender
+                                    .take()
+                                    .expect("db_client_sender must have been set in insert");
+                                let _ = db_client_sender.send(finished_status.clone());
+                                Some(finished_status)
+                            }
+                            Err(WorkerError::Timeout) => {
+                                let retry_index = self.status.retry_index() + 1;
+                                if retry_index > TIMEOUT_MAX_RETRY_COUNT {
+                                    let finished_status =
+                                        Err(FinishedExecutionError::PermanentTimeout);
+                                    info!("Execution finished with PermanentTimeout");
+                                    // Attempt to notify the client.
+                                    let db_client_sender =
+                                        self.db_to_client_sender.take().expect_or_log(
+                                            "db_client_sender must have been set in insert",
+                                        );
+                                    let _ = db_client_sender.send(finished_status.clone());
+                                    Some(finished_status)
+                                } else {
+                                    // reenqueue after exponential backoff
+                                    let duration =
+                                        TIMEOUT_DELAY * 2_i32.pow(u32::from(retry_index) - 1);
+                                    let delay = Utc::now() + duration;
+                                    debug!("Retry {retry_index} after timeout is scheduled after {duration:?} at `{delay}`");
+                                    self.status = InflightExecutionStatus::DelayedUntil {
+                                        delay,
+                                        retry_index,
+                                    };
+                                    self.update_status(
+                                        db_to_executor_mpmc_queues,
+                                        execution_id.clone(),
+                                        Some(delay.clone()),
+                                    );
+                                    None
+                                }
+                            }
+                            Ok(WorkerCommand::EnqueueNow) => {
+                                // reenqueue now
+                                debug!("Execution continues now");
+                                self.update_status(
+                                    db_to_executor_mpmc_queues,
+                                    execution_id.clone(),
+                                    None,
+                                );
+                                None
+                            }
+                            Ok(WorkerCommand::DelayUntil(delay)) => {
+                                // reenqueue later
+                                debug!("Execution continues at `{delay}`");
+                                self.status = InflightExecutionStatus::DelayedUntil {
+                                    delay,
+                                    retry_index: self.status.retry_index(),
+                                };
+                                self.update_status(
+                                    db_to_executor_mpmc_queues,
+                                    execution_id.clone(),
+                                    Some(delay.clone()),
+                                );
+                                None
+                            }
+                        }
+                    }
+                    Err(oneshot::error::TryRecvError::Empty) => {
+                        // No response yet, keep the entry.
+                        None
+                    }
+                    Err(oneshot::error::TryRecvError::Closed) => {
+                        // The executor was aborted while running the execution. Reenqueue.
+                        self.update_status(db_to_executor_mpmc_queues, execution_id.clone(), None);
+                        None
+                    }
+                }
+            }
+            InflightExecution {
+                status: InflightExecutionStatus::Pending { .. },
+                ..
+            } => {
+                self.update_status(db_to_executor_mpmc_queues, execution_id.clone(), None);
+                None
+            }
+            InflightExecution {
+                status: InflightExecutionStatus::DelayedUntil { delay, .. },
+                ..
+            } => {
+                let delay = delay.clone();
+                // keep the same status until the time runs out
+                self.update_status(
+                    db_to_executor_mpmc_queues,
+                    execution_id.clone(),
+                    Some(delay),
+                );
+                None
+            }
+            InflightExecution {
+                status: InflightExecutionStatus::IntermittentTimeout { delay, .. },
+                ..
+            } => {
+                let delay = delay.clone();
+                // keep the same status until the time runs out
+                self.update_status(
+                    db_to_executor_mpmc_queues,
+                    execution_id.clone(),
+                    Some(delay),
+                );
+                None
+            }
+        }
+    }
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -355,179 +501,20 @@ impl<S: Clone + Send + 'static, E: ExecutionId> InMemoryDatabase<S, E> {
         finished_executions: &std::sync::Mutex<HashMap<E, FinishedExecutionResult>>,
     ) {
         let mut finished = Vec::new();
-        inflight_executions.lock().unwrap_or_log().retain(
-            |execution_id, inflight_execution| {
+        inflight_executions
+            .lock()
+            .unwrap_or_log()
+            .retain(|execution_id, inflight_execution| {
                 info_span!("listener_tick", %execution_id).in_scope(|| {
-                    match inflight_execution {
-                        InflightExecution {
-                            status:
-                                InflightExecutionStatus::Enqueued {
-                                    executor_to_db_receiver,
-                                    ..
-                                },
-                            ..
-                        } => {
-                            match executor_to_db_receiver.try_recv() {
-                                Ok(res) => {
-                                    match res {
-                                        Ok(WorkerCommand::PublishResult(supported_res)) => {
-                                            let finished_status = Ok(supported_res);
-                                            info!("Execution finished successfuly");
-                                            finished.push((
-                                                execution_id.clone(),
-                                                finished_status.clone(),
-                                            ));
-                                            // Attempt to notify the client.
-                                            let db_client_sender = inflight_execution
-                                                .db_to_client_sender
-                                                .take()
-                                                .expect(
-                                                    "db_client_sender must have been set in insert",
-                                                );
-                                            let _ = db_client_sender.send(finished_status);
-                                            false
-                                        }
-                                        Err(WorkerError::Uncategorized) => {
-                                            let finished_status =
-                                                Err(FinishedExecutionError::UncategorizedError);
-                                            warn!("Execution finished with UncategorizedError");
-                                            finished.push((
-                                                execution_id.clone(),
-                                                finished_status.clone(),
-                                            ));
-                                            // Attempt to notify the client.
-                                            let db_client_sender = inflight_execution
-                                                .db_to_client_sender
-                                                .take()
-                                                .expect(
-                                                    "db_client_sender must have been set in insert",
-                                                );
-                                            let _ = db_client_sender.send(finished_status);
-                                            false
-                                        }
-                                        Err(WorkerError::Timeout) => {
-                                            let retry_index =
-                                                inflight_execution.status.retry_index() + 1;
-                                            if retry_index > TIMEOUT_MAX_RETRY_COUNT {
-                                                let finished_status =
-                                                    Err(FinishedExecutionError::PermanentTimeout);
-                                                info!("Execution finished with PermanentTimeout");
-                                                finished.push((
-                                                    execution_id.clone(),
-                                                    finished_status.clone(),
-                                                ));
-                                                // Attempt to notify the client.
-                                                let db_client_sender = inflight_execution
-                                                .db_to_client_sender
-                                                .take()
-                                                .expect_or_log(
-                                                    "db_client_sender must have been set in insert",
-                                                );
-                                                let _ = db_client_sender.send(finished_status);
-                                                false
-                                            } else {
-                                                // reenqueue after exponential backoff
-                                                let duration = TIMEOUT_DELAY * 2_i32.pow(u32::from(retry_index) - 1);
-                                                let delay = Utc::now() + duration;
-                                                debug!("Retry {retry_index} after timeout is scheduled after {duration:?} at `{delay}`");
-                                                inflight_execution.status =
-                                                    InflightExecutionStatus::DelayedUntil {
-                                                        delay,
-                                                        retry_index,
-                                                    };
-                                                inflight_execution.update_status(
-                                                    db_to_executor_mpmc_queues,
-                                                    execution_id.clone(),
-                                                    Some(delay.clone()),
-                                                );
-                                                true
-                                            }
-                                        }
-                                        Ok(WorkerCommand::EnqueueNow) => {
-                                            // reenqueue now
-                                            debug!("Execution continues now");
-                                            inflight_execution.update_status(
-                                                db_to_executor_mpmc_queues,
-                                                execution_id.clone(),
-                                                None,
-                                            );
-                                            true
-                                        }
-                                        Ok(WorkerCommand::DelayUntil(delay)) => {
-                                            // reenqueue later
-                                            debug!("Execution continues at `{delay}`");
-                                            inflight_execution.status =
-                                                InflightExecutionStatus::DelayedUntil {
-                                                    delay,
-                                                    retry_index: inflight_execution
-                                                        .status
-                                                        .retry_index(),
-                                                };
-                                            inflight_execution.update_status(
-                                                db_to_executor_mpmc_queues,
-                                                execution_id.clone(),
-                                                Some(delay.clone()),
-                                            );
-                                            true
-                                        }
-                                    }
-                                }
-                                Err(oneshot::error::TryRecvError::Empty) => {
-                                    // No response yet, keep the entry.
-                                    true
-                                }
-                                Err(oneshot::error::TryRecvError::Closed) => {
-                                    // The executor was aborted while running the execution. Reenqueue.
-                                    inflight_execution.update_status(
-                                        db_to_executor_mpmc_queues,
-                                        execution_id.clone(),
-                                        None,
-                                    );
-                                    true
-                                }
-                            }
+                    match inflight_execution.transition(execution_id, db_to_executor_mpmc_queues) {
+                        Some(finished_execution) => {
+                            finished.push((execution_id.clone(), finished_execution));
+                            false
                         }
-                        InflightExecution {
-                            status: InflightExecutionStatus::Pending { .. },
-                            ..
-                        } => {
-                            inflight_execution.update_status(
-                                db_to_executor_mpmc_queues,
-                                execution_id.clone(),
-                                None,
-                            );
-                            true
-                        }
-                        InflightExecution {
-                            status: InflightExecutionStatus::DelayedUntil { delay, .. },
-                            ..
-                        } => {
-                            let delay = delay.clone();
-                            // keep the same status until the time runs out
-                            inflight_execution.update_status(
-                                db_to_executor_mpmc_queues,
-                                execution_id.clone(),
-                                Some(delay),
-                            );
-                            true
-                        }
-                        InflightExecution {
-                            status: InflightExecutionStatus::IntermittentTimeout { delay, .. },
-                            ..
-                        } => {
-                            let delay = delay.clone();
-                            // keep the same status until the time runs out
-                            inflight_execution.update_status(
-                                db_to_executor_mpmc_queues,
-                                execution_id.clone(),
-                                Some(delay),
-                            );
-                            true
-                        }
+                        None => true,
                     }
                 })
-            },
-        );
+            });
         finished_executions
             .lock()
             .unwrap_or_log()
