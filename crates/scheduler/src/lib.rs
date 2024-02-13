@@ -21,7 +21,7 @@ pub enum WorkerError {
     #[error("worker timed out")]
     Timeout,
     #[error("worker failed")]
-    Uncategorized,
+    Uncategorized, // Panic, cancellation
 }
 
 #[async_trait]
@@ -47,7 +47,7 @@ pub enum FinishedExecutionError {
 pub enum ExecutionStatusInfo {
     Pending,
     Enqueued,
-    DelayedUntil(DateTime<Utc>),
+    DelayedUntil(DateTime<Utc>), // TODO: Add a reason: worker request, worker timed out, intermittent failure
     Finished(FinishedExecutionResult),
 }
 impl ExecutionStatusInfo {
