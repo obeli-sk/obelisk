@@ -1,32 +1,35 @@
-use std::{fmt::Display, hash::Hash};
-
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{Params, SupportedFunctionResult};
+use std::{fmt::Display, hash::Hash};
 
 mod memory;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum WorkerCommand {
-    PublishResult(SupportedFunctionResult),
-    EnqueueNow,
-    DelayUntil(DateTime<Utc>),
-}
+mod worker {
+    use super::*;
+    /// Worker commands sent to the worker executor.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum WorkerCommand {
+        PublishResult(SupportedFunctionResult),
+        EnqueueNow,
+        DelayUntil(DateTime<Utc>),
+    }
 
-pub type WorkerExecutionResult = Result<WorkerCommand, WorkerError>;
-pub type RunId = ulid::Ulid; // TODO
+    pub type WorkerExecutionResult = Result<WorkerCommand, WorkerError>;
+    pub type RunId = ulid::Ulid; // TODO
 
-#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-pub enum WorkerError {
-    #[error("worker timed out")]
-    Timeout,
-    #[error("worker failed")]
-    Uncategorized, // Panic, cancellation
-}
+    #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
+    pub enum WorkerError {
+        #[error("worker timed out")]
+        Timeout,
+        #[error("worker failed")]
+        Uncategorized, // Panic, cancellation
+    }
 
-#[async_trait]
-pub trait Worker<S, E: ExecutionId> {
-    async fn run(&self, workflow_id: E, params: Params, store: S) -> WorkerExecutionResult;
+    #[async_trait]
+    pub trait Worker<S, E: ExecutionId> {
+        async fn run(&self, workflow_id: E, params: Params, store: S) -> WorkerExecutionResult;
+    }
 }
 
 pub trait ExecutionId: Clone + Hash + Display + Eq + PartialEq + Send + 'static {}

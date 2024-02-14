@@ -1,6 +1,6 @@
 use crate::{
-    ExecutionId, ExecutionStatusInfo, FinishedExecutionError, FinishedExecutionResult, Worker,
-    WorkerCommand, WorkerError, WorkerExecutionResult,
+    worker::Worker, worker::WorkerCommand, worker::WorkerError, worker::WorkerExecutionResult,
+    ExecutionId, ExecutionStatusInfo, FinishedExecutionError, FinishedExecutionResult,
 };
 use async_channel::{Receiver, Sender};
 use chrono::{DateTime, TimeDelta, Utc};
@@ -32,8 +32,9 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // Retries on timeouts
 
 // TODO:
-// * feat: dependent executions: workflow-activity, parent-child workflows
-// * refactor: remove old db, runtime
+// * feat: Dependent executions: WorkerCommand::ExecuteBlocking
+// * refactor: remove old db, runtime, event history
+// * feat: Dependent executions: async executions
 // * fix: Consistency between `inflight_executions` and `finished_executions`
 // * feat: Run id, regenerate between retries
 // * feat: Execution history - 1.pending, 2. enqueued..
@@ -171,7 +172,7 @@ impl<S: Clone + Send + 'static> InflightExecution<S> {
                             }
                             Ok(WorkerCommand::EnqueueNow) => {
                                 // reenqueue now
-                                debug!("Execution continues now");
+                                debug!("Worker issued EnqueueNow");
                                 self.update_status(
                                     db_to_executor_mpmc_queues,
                                     execution_id.clone(),
@@ -181,7 +182,7 @@ impl<S: Clone + Send + 'static> InflightExecution<S> {
                             }
                             Ok(WorkerCommand::DelayUntil(delay)) => {
                                 // reenqueue later
-                                debug!("Execution continues at `{delay}`");
+                                debug!("Worker issued DelayUntil(`{delay}`)");
                                 self.status = InflightExecutionStatus::DelayedUntil {
                                     delay,
                                     retry_index: self.status.retry_index(),
@@ -732,7 +733,9 @@ impl<S, E: ExecutionId> Drop for Executor<S, E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ExecutionStatusInfo, FinishedExecutionError, Worker, WorkerExecutionResult};
+    use crate::{
+        worker::Worker, worker::WorkerExecutionResult, ExecutionStatusInfo, FinishedExecutionError,
+    };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, SupportedFunctionResult};
