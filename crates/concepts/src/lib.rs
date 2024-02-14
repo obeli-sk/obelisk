@@ -1,6 +1,7 @@
 use std::{
     borrow::Borrow,
     fmt::{Debug, Display},
+    hash::Hash,
     marker::PhantomData,
     ops::Deref,
     sync::Arc,
@@ -200,7 +201,7 @@ impl IntoIterator for SupportedFunctionResult {
     }
 }
 
-#[derive(Debug, Clone, Default, derive_more::Deref)]
+#[derive(Debug, Clone, Default, derive_more::Deref, PartialEq, Eq)]
 pub struct Params(Arc<Vec<wasmtime::component::Val>>);
 
 impl Params {
@@ -221,22 +222,36 @@ impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
     }
 }
 
+pub trait ExecutionId: Clone + Hash + Display + Debug + Eq + PartialEq + Send + 'static {
+    #[must_use]
+    fn generate() -> Self;
+}
+
 pub mod workflow_id {
     use std::{str::FromStr, sync::Arc};
 
     use tracing_unwrap::ResultExt;
+
+    use crate::ExecutionId;
 
     #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Hash)]
     pub struct WorkflowId(Arc<String>);
     impl WorkflowId {
         #[must_use]
         pub fn generate() -> WorkflowId {
-            ulid::Ulid::new().to_string().parse().unwrap_or_log() // ulid is 26 chars long
+            ExecutionId::generate()
         }
 
         #[must_use]
         pub fn new(s: String) -> Self {
             Self(Arc::new(s))
+        }
+    }
+
+    impl ExecutionId for WorkflowId {
+        #[must_use]
+        fn generate() -> WorkflowId {
+            ulid::Ulid::new().to_string().parse().unwrap_or_log() // ulid is 26 chars long
         }
     }
 

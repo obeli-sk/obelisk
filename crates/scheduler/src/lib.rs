@@ -1,40 +1,91 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
-use std::{fmt::Display, hash::Hash};
+use std::time::Duration;
 
 mod memory;
 
 mod worker {
+
     use super::*;
     /// Worker commands sent to the worker executor.
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub enum WorkerCommand {
+    pub enum WorkerCommand<E: ExecutionId> {
+        EnqueueNow, //FIXME: deprecated
+        DelayFor(Duration),
+        ExecuteBlocking {
+            ffqn: FunctionFqn,
+            params: Params,
+            child_execution_id: E,
+        },
         PublishResult(SupportedFunctionResult),
-        EnqueueNow,
-        DelayUntil(DateTime<Utc>),
     }
-
-    pub type WorkerExecutionResult = Result<WorkerCommand, WorkerError>;
-    pub type RunId = ulid::Ulid; // TODO
 
     #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
     pub enum WorkerError {
         #[error("worker timed out")]
         Timeout,
+        #[error("non-determinism detected, reason: `{0}`")]
+        NonDeterminismDetected(String),
         #[error("worker failed")]
         Uncategorized, // Panic, cancellation
     }
 
     #[async_trait]
-    pub trait Worker<S, E: ExecutionId> {
-        async fn run(&self, workflow_id: E, params: Params, store: S) -> WorkerExecutionResult;
+    pub trait Worker<S: WorkerStore<E>, E: ExecutionId> {
+        async fn run(
+            &self,
+            workflow_id: E,
+            params: Params,
+            store: S,
+        ) -> Result<WorkerCommand<E>, WorkerError>;
+    }
+
+    #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
+    #[error("non-determinism detected, reason: `{0}`")]
+    pub(crate) struct NonDeterminismError(pub(crate) String);
+
+    impl From<NonDeterminismError> for WorkerError {
+        fn from(value: NonDeterminismError) -> Self {
+            Self::NonDeterminismDetected(value.0)
+        }
+    }
+
+    #[derive(Debug)]
+    pub(crate) enum MaybeReplayResponse<E: ExecutionId> {
+        ReplayResponse(ReplayResponse<E>),
+        MissingResponse,
+    }
+
+    #[derive(Debug)]
+    pub(crate) enum ReplayResponse<E: ExecutionId> {
+        Completed,
+        CompletedWithResult {
+            child_execution_id: E,
+            result: FinishedExecutionResult,
+        },
+    }
+
+    pub(crate) trait WorkerStore<E: ExecutionId> {
+        fn next_id(&mut self) -> Result<E, NonDeterminismError>;
+
+        fn next_event(
+            &mut self,
+            command: &WorkerCommand<E>,
+        ) -> Result<MaybeReplayResponse<E>, NonDeterminismError>;
+    }
+
+    pub(crate) trait WriteableWorkerStore<E: ExecutionId>:
+        WorkerStore<E> + Clone + Default + Send + 'static
+    {
+        fn restart(&mut self);
+
+        fn persist_child_result(&mut self, child_execution_id: E, result: FinishedExecutionResult);
+
+        fn persist_delay_passed(&mut self, duration: Duration);
     }
 }
-
-pub trait ExecutionId: Clone + Hash + Display + Eq + PartialEq + Send + 'static {}
-
-impl<T> ExecutionId for T where T: Clone + Hash + Display + Eq + PartialEq + Send + 'static {}
 
 type FinishedExecutionResult = Result<SupportedFunctionResult, FinishedExecutionError>;
 
@@ -42,6 +93,8 @@ type FinishedExecutionResult = Result<SupportedFunctionResult, FinishedExecution
 pub enum FinishedExecutionError {
     #[error("permanent timeout")]
     PermanentTimeout,
+    #[error("non-determinism detected, reason: `{0}`")]
+    NonDeterminismDetected(String),
     #[error("uncategorized error")]
     UncategorizedError,
 }
@@ -51,6 +104,7 @@ pub enum ExecutionStatusInfo {
     Pending,
     Enqueued,
     DelayedUntil(DateTime<Utc>), // TODO: Add a reason: worker request, worker timed out, intermittent failure
+    Blocked,
     Finished(FinishedExecutionResult),
 }
 impl ExecutionStatusInfo {
