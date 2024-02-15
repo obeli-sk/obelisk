@@ -34,7 +34,6 @@ use tracing_unwrap::{OptionExt, ResultExt};
 
 // TODO:
 // * refactor: remove old db, runtime, event history
-// * refactor: Remove store from `insert`, `schedule` methods.
 // * fix: Consistency between `inflight_executions` and `finished_executions`
 // * feat: Run id, regenerate between retries
 // * feat: Execution journal - 1.pending, 2. enqueued, timed out, retried, etc.
@@ -425,7 +424,6 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
         ffqn: FunctionFqn,
         execution_id: E,
         params: Params,
-        store: Arc<tokio::sync::Mutex<S>>,
     ) -> oneshot::Receiver<FinishedExecutionResult> {
         Self::insert_or_schedule(
             &mut self.inflight_executions.lock().unwrap_or_log(),
@@ -434,7 +432,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
             ffqn,
             execution_id,
             params,
-            store,
+            Default::default(),
             None,
         )
     }
@@ -444,7 +442,6 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
         ffqn: FunctionFqn,
         execution_id: E,
         params: Params,
-        store: Arc<tokio::sync::Mutex<S>>,
         delay: DateTime<Utc>,
     ) -> oneshot::Receiver<FinishedExecutionResult> {
         Self::insert_or_schedule(
@@ -454,13 +451,13 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
             ffqn,
             execution_id,
             params,
-            store,
+            Default::default(),
             Some(delay),
         )
     }
 
     #[instrument(skip_all, fields(%ffqn, %execution_id))]
-    fn insert_or_schedule(
+    pub(crate) fn insert_or_schedule(
         inflight_executions: &mut std::sync::MutexGuard<IndexMap<E, InflightExecution<S, E>>>,
         db_to_executor_mpmc_queues: &mut std::sync::MutexGuard<
             HashMap<FunctionFqn, (Sender<QueueEntry<S, E>>, Receiver<QueueEntry<S, E>>)>,
@@ -901,7 +898,6 @@ mod tests {
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
-            Default::default(),
         );
         let _executor_abort_handle = db.spawn_executor(SOME_FFQN.to_owned(), SimpleWorker, 1, None);
         let resp = execution.await.unwrap_or_log();
@@ -945,7 +941,6 @@ mod tests {
                     SOME_FFQN.to_owned(),
                     WorkflowId::generate(),
                     Params::default(),
-                    Default::default(),
                 )
             })
             .collect::<Vec<_>>();
@@ -1007,7 +1002,6 @@ mod tests {
             Params::from([wasmtime::component::Val::U64(
                 MAX_EXECUTION_DURATION.as_millis() as u64 * 2,
             )]),
-            Default::default(),
         );
         wait_for_status(&db, &execution_id, |status| {
             matches!(status, ExecutionStatusInfo::IntermittentTimeout(..))
@@ -1042,13 +1036,11 @@ mod tests {
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
-            Default::default(),
         );
         let fut_2 = db.insert(
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
-            Default::default(),
         );
         assert_eq!(
             Ok(SupportedFunctionResult::None),
@@ -1081,7 +1073,6 @@ mod tests {
             SOME_FFQN.to_owned(),
             execution_id,
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
-            Default::default(),
         );
         // Drop the executor after 10ms.
         tokio::spawn(async move {
@@ -1118,7 +1109,6 @@ mod tests {
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::from([wasmtime::component::Val::U64(sleep_millis)]),
-            Default::default(),
         );
         let finished_check = Arc::new(AtomicBool::new(false));
         let executor_abort_handle = db.spawn_executor(
@@ -1151,7 +1141,6 @@ mod tests {
                     SOME_FFQN.to_owned(),
                     execution_id,
                     Params::from([wasmtime::component::Val::U64(max_duration_millis)]),
-                    Default::default(),
                 ),
             )
         };
@@ -1192,7 +1181,6 @@ mod tests {
             SOME_FFQN.to_owned(),
             WorkflowId::generate(),
             Params::default(),
-            Default::default(),
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PanicingWorker, 1, None);
@@ -1233,7 +1221,6 @@ mod tests {
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
-            Default::default(),
         );
         let is_waiting = Arc::new(AtomicBool::new(false));
         let should_finish = Arc::new(AtomicBool::new(false));
@@ -1333,11 +1320,15 @@ mod tests {
         }
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
-        let execution = db.insert(
+        let execution = InMemoryDatabase::insert_or_schedule(
+            &mut db.inflight_executions.lock().unwrap_or_log(),
+            &mut db.db_to_executor_mpmc_queues.lock().unwrap_or_log(),
+            db.queue_capacity,
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
             Arc::new(tokio::sync::Mutex::new(StoreWrapper(store.clone()))),
+            None,
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
@@ -1390,7 +1381,6 @@ mod tests {
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
-            Default::default(),
             delay, // Testing this feature
         );
         assert_matches!(db.get_execution_status(&execution_id).unwrap_or_log(), ExecutionStatusInfo::DelayedUntil(found_delay) if found_delay == delay);
@@ -1470,7 +1460,6 @@ mod tests {
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
-            Default::default(),
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
@@ -1752,7 +1741,6 @@ mod tests {
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
-            Default::default(),
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
