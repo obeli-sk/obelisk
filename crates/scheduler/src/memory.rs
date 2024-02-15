@@ -34,9 +34,7 @@ use tracing_unwrap::{OptionExt, ResultExt};
 
 // TODO:
 // * refactor: remove old db, runtime, event history
-// * refactor: Make store wrap Arc<Mutex>, investigate row based locking instead of store cloning
-// * refactor: Remove store from public insert, schedule
-// * feat: Dependent executions: async executions
+// * refactor: Remove store from `insert`, `schedule` methods.
 // * fix: Consistency between `inflight_executions` and `finished_executions`
 // * feat: Run id, regenerate between retries
 // * feat: Execution journal - 1.pending, 2. enqueued, timed out, retried, etc.
@@ -44,9 +42,10 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // * resil: Fairness: reenqueue should push the execution to the end of `inflight_executions`
 // * perf: Wake up the listener by insertion, executor emitting an event (+ waking up parent) by pushing a workflow id to an mpsc channel.
 // * tracing: Add task names
-// * feat: Retries on UncategorizedError - respawn executor? Create new worker using a factory?
+// * feat: Retries on UncategorizedError - respawn executor? Create new worker using a factory? Use case: panic in wasm
 // * feat: Retries on SupportedFunctionResult::Single(Result::Err) - configurable by worker
 // * feat: Configure db
+// * feat: Dependent executions: background executions
 
 const LISTENER_TICK_MICROS: u64 = 10;
 const TIMEOUT_DELAY: TimeDelta = TimeDelta::milliseconds(100);
@@ -54,14 +53,14 @@ const TIMEOUT_MAX_RETRY_COUNT: u16 = 5;
 struct QueueEntry<S, E: ExecutionId> {
     execution_id: E,
     params: Params,
-    store: S,
+    store: Arc<tokio::sync::Mutex<S>>,
     executor_to_db_sender: oneshot::Sender<Result<WorkerCommand<E>, WorkerError>>,
 }
 
 struct InflightExecution<S: WriteableWorkerStore<E>, E: ExecutionId> {
     ffqn: FunctionFqn,
     params: Params,
-    store: S,
+    store: Arc<tokio::sync::Mutex<S>>,
     db_to_client_sender: Option<oneshot::Sender<FinishedExecutionResult>>, // Hack: Always present so it can be taken and used by the listener.
     status: InflightExecutionStatus<E>,
 }
@@ -95,7 +94,11 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InflightExecution<S, E> {
             InflightExecutionStatus::DelayedUntil {
                 delay_command_identifier: Some(delay_command_identifier),
                 ..
-            } => self.store.persist_delay_passed(delay_command_identifier),
+            } => self
+                .store
+                .try_lock()
+                .expect_or_log("store must be unlocked in InflightExecutionStatus::DelayedUntil")
+                .persist_delay_passed(delay_command_identifier),
             _ => {}
         }
         // Attempt to submit the execution to the mpmc channel.
@@ -292,6 +295,8 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InflightExecution<S, E> {
                 {
                     let child_execution_id = child_execution_id.clone();
                     self.store
+                        .try_lock()
+                        .expect_or_log("store must be unlocked in InflightExecutionStatus::Blocked")
                         .persist_child_result(child_execution_id, res.clone());
                     self.delayed_attempt_to_enqueue(
                         db_to_executor_mpmc_queues,
@@ -420,7 +425,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
         ffqn: FunctionFqn,
         execution_id: E,
         params: Params,
-        store: S,
+        store: Arc<tokio::sync::Mutex<S>>,
     ) -> oneshot::Receiver<FinishedExecutionResult> {
         Self::insert_or_schedule(
             &mut self.inflight_executions.lock().unwrap_or_log(),
@@ -439,7 +444,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
         ffqn: FunctionFqn,
         execution_id: E,
         params: Params,
-        store: S,
+        store: Arc<tokio::sync::Mutex<S>>,
         delay: DateTime<Utc>,
     ) -> oneshot::Receiver<FinishedExecutionResult> {
         Self::insert_or_schedule(
@@ -464,7 +469,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
         ffqn: FunctionFqn,
         execution_id: E,
         params: Params,
-        store: S,
+        store: Arc<tokio::sync::Mutex<S>>,
         delay: Option<DateTime<Utc>>,
     ) -> oneshot::Receiver<FinishedExecutionResult> {
         trace!(?delay, ?params, "insert_or_schedule");
@@ -575,7 +580,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
                         ffqn,
                         params,
                     } => {
-                        debug!(%child_execution_id, "Requested blocking execution");
+                        debug!(%child_execution_id, "Requested blocking child execution");
                         inserted.push((ffqn, params, child_execution_id));
                         true
                     }
@@ -591,7 +596,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
                 ffqn,
                 child_execution_id,
                 params,
-                S::default(),
+                Default::default(),
                 None,
             );
         }
@@ -681,7 +686,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> Executor<S, E> {
                     let Ok(QueueEntry {
                         execution_id,
                         params,
-                        mut store,
+                        store,
                         executor_to_db_sender,
                     }) = recv
                     else {
@@ -702,6 +707,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> Executor<S, E> {
                         worker_set.spawn(
                             async move {
                                 debug!("Spawned worker");
+                                let mut store = store.try_lock_owned().expect_or_log("store must be unlocked while executing");
                                 store.restart();
                                 let execution_result_fut = worker.run(execution_id, params, store);
                                 let execution_result: Result<WorkerCommand<E>, WorkerError> =
@@ -883,7 +889,7 @@ mod tests {
                 &self,
                 _execution_id: WorkflowId,
                 _params: Params,
-                _store: DummyStore,
+                _store: tokio::sync::OwnedMutexGuard<DummyStore>,
             ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
                 Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
             }
@@ -920,7 +926,7 @@ mod tests {
                 &self,
                 _execution_id: WorkflowId,
                 _params: Params,
-                _store: DummyStore,
+                _store: tokio::sync::OwnedMutexGuard<DummyStore>,
             ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
                 trace!("acquiring");
                 let _permit = self.0.try_acquire().unwrap_or_log();
@@ -965,7 +971,7 @@ mod tests {
             &self,
             _execution_id: WorkflowId,
             params: Params,
-            _store: DummyStore,
+            _store: tokio::sync::OwnedMutexGuard<DummyStore>,
         ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
             assert_eq!(params.len(), 1);
             let millis = params[0].clone();
@@ -1176,7 +1182,7 @@ mod tests {
                 &self,
                 _execution_id: WorkflowId,
                 _params: Params,
-                _store: DummyStore,
+                _store: tokio::sync::OwnedMutexGuard<DummyStore>,
             ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
                 panic!();
             }
@@ -1208,7 +1214,7 @@ mod tests {
                 &self,
                 _execution_id: WorkflowId,
                 _params: Params,
-                _store: DummyStore,
+                _store: tokio::sync::OwnedMutexGuard<DummyStore>,
             ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
                 if self.should_finish.load(Ordering::SeqCst) {
                     trace!("Worker finished");
@@ -1266,11 +1272,6 @@ mod tests {
 
     #[derive(Default)]
     struct StoreWrapper<T>(Arc<tokio::sync::Mutex<T>>);
-    impl<T> Clone for StoreWrapper<T> {
-        fn clone(&self) -> Self {
-            Self(self.0.clone())
-        }
-    }
 
     impl<T> WorkerStore<WorkflowId> for StoreWrapper<T> {
         fn next_id(&mut self) -> Result<WorkflowId, NonDeterminismError> {
@@ -1296,7 +1297,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn persist_delay_passed(&mut self, delay: Duration) {}
+        fn persist_delay_passed(&mut self, _delay: Duration) {}
     }
 
     #[tokio::test]
@@ -1317,7 +1318,7 @@ mod tests {
                 &self,
                 _execution_id: WorkflowId,
                 _params: Params,
-                store: StoreWrapper<PartialStore>,
+                store: tokio::sync::OwnedMutexGuard<StoreWrapper<PartialStore>>,
             ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
                 let mut store = store.0.lock().await;
                 if store.should_finish {
@@ -1336,7 +1337,7 @@ mod tests {
             SOME_FFQN.to_owned(),
             execution_id.clone(),
             Params::default(),
-            StoreWrapper(store.clone()),
+            Arc::new(tokio::sync::Mutex::new(StoreWrapper(store.clone()))),
         );
         let _executor_abort_handle =
             db.spawn_executor(SOME_FFQN.to_owned(), PartialProgressWorker, 1, None);
@@ -1376,7 +1377,7 @@ mod tests {
                 &self,
                 _execution_id: WorkflowId,
                 _params: Params,
-                _store: DummyStore,
+                _store: tokio::sync::OwnedMutexGuard<DummyStore>,
             ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
                 Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
             }
@@ -1450,7 +1451,7 @@ mod tests {
                 &self,
                 _execution_id: WorkflowId,
                 _params: Params,
-                store: StoreWrapper<StoreInner>,
+                store: tokio::sync::OwnedMutexGuard<StoreWrapper<StoreInner>>,
             ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
                 let mut store = store.0.lock().await;
                 if !store.was_delayed {
@@ -1498,53 +1499,40 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct VecStoreInner {
+    struct VecStore {
         idx: usize,
         events: Vec<VecStoreEvent>,
         corrupted: Option<()>,
     }
 
-    #[derive(Default, Clone)]
-    struct VecStore(Arc<std::sync::Mutex<VecStoreInner>>);
-
     impl VecStore {
-        fn assert_not_corrupted(store: &VecStoreInner) {
-            store
-                .corrupted
+        fn assert_not_corrupted(&self) {
+            self.corrupted
                 .expect_none_or_log("store consitency is corrupted");
         }
 
-        fn non_determinism_detected(
-            corrupted: &mut Option<()>,
-            reason: String,
-        ) -> NonDeterminismError {
-            *corrupted = Some(());
+        fn non_determinism_detected(&mut self, reason: String) -> NonDeterminismError {
+            self.corrupted = Some(());
             NonDeterminismError(reason)
         }
 
-        fn push(
-            store: &mut std::sync::MutexGuard<VecStoreInner>,
-            event: VecStoreEvent,
-        ) -> Result<(), NonDeterminismError> {
-            Self::assert_not_corrupted(&store);
-            if store.idx == store.events.len() {
-                store.idx += 1;
-                store.events.push(event);
+        fn push(&mut self, event: VecStoreEvent) -> Result<(), NonDeterminismError> {
+            self.assert_not_corrupted();
+            if self.idx == self.events.len() {
+                self.idx += 1;
+                self.events.push(event);
                 Ok(())
             } else {
-                Err(Self::non_determinism_detected(
-                    &mut store.corrupted,
-                    "not all events were replayed".to_string(),
-                ))
+                Err(self.non_determinism_detected("not all events were replayed".to_string()))
             }
         }
 
-        fn next_event(store: &mut std::sync::MutexGuard<VecStoreInner>) -> Option<VecStoreEvent> {
-            Self::assert_not_corrupted(&store);
-            match store.events.get(store.idx) {
+        fn maybe_next_event(&mut self) -> Option<VecStoreEvent> {
+            self.assert_not_corrupted();
+            match self.events.get(self.idx) {
                 Some(result) => {
                     let result = Some(result.clone());
-                    store.idx += 1;
+                    self.idx += 1;
                     result
                 }
                 None => None,
@@ -1555,44 +1543,42 @@ mod tests {
         /// If found matching GotChildResult, increment `idx` and return the result.
         /// If there is nothing in the history, return `None`.
         fn get_child_result(
-            store: &mut std::sync::MutexGuard<VecStoreInner>,
+            &mut self,
             requested_id: &WorkflowId,
         ) -> Result<Option<FinishedExecutionResult>, NonDeterminismError> {
-            match store.events.get(store.idx) {
+            match self.events.get(self.idx) {
                 Some(VecStoreEvent::GotChildResult {
                     child_execution_id: found,
                     result,
                 }) if requested_id == found => {
                     let result = result.clone();
-                    store.idx += 1;
+                    self.idx += 1;
                     Ok(Some(result))
                 }
                 None => return Ok(None),
                 Some(other) => {
-                    let reason = format!(
+                    return Err(self.non_determinism_detected(format!(
                         "unexpected event, requested GotChildResult({requested_id}), history contains {other:?}"
-                    );
-                    return Err(Self::non_determinism_detected(&mut store.corrupted, reason));
+                    )));
                 }
             }
         }
 
         /// Get the delay result from the next event.
         fn get_delay_passed(
-            store: &mut std::sync::MutexGuard<VecStoreInner>,
+            &mut self,
             requested_duration: Duration,
         ) -> Result<bool, NonDeterminismError> {
-            match store.events.get(store.idx) {
+            match self.events.get(self.idx) {
                 Some(VecStoreEvent::DelayPassed(found)) if requested_duration == *found => {
-                    store.idx += 1;
+                    self.idx += 1;
                     Ok(true)
                 }
                 None => return Ok(false),
                 Some(other) => {
-                    let reason = format!(
+                    return Err(self.non_determinism_detected(format!(
                         "unexpected event, expected DelayPassed(`{requested_duration:?}`), history contains {other:?}"
-                    );
-                    return Err(Self::non_determinism_detected(&mut store.corrupted, reason));
+                    )));
                 }
             }
         }
@@ -1601,16 +1587,14 @@ mod tests {
     impl WorkerStore<WorkflowId> for VecStore {
         #[instrument(skip(self))]
         fn next_id(&mut self) -> Result<WorkflowId, NonDeterminismError> {
-            let mut store = self.0.lock().unwrap_or_log();
-            match Self::next_event(&mut store) {
+            match self.maybe_next_event() {
                 Some(VecStoreEvent::IdGenerated(id)) => Ok(id),
-                Some(other) => Err(Self::non_determinism_detected(
-                    &mut store.corrupted,
-                    format!("unexpected event during id generation, expected {other:?}"),
-                )),
+                Some(other) => Err(self.non_determinism_detected(format!(
+                    "unexpected event during id generation, expected {other:?}"
+                ))),
                 None => {
                     let id = WorkflowId::generate();
-                    Self::push(&mut store, VecStoreEvent::IdGenerated(id.clone()))
+                    self.push(VecStoreEvent::IdGenerated(id.clone()))
                         .expect_or_log("this must be a new event");
                     Ok(id)
                 }
@@ -1622,17 +1606,14 @@ mod tests {
             &mut self,
             request: &WorkerCommand<WorkflowId>,
         ) -> Result<MaybeReplayResponse<WorkflowId>, NonDeterminismError> {
-            let mut store = self.0.lock().unwrap_or_log();
-            match Self::next_event(&mut store) {
+            match self.maybe_next_event() {
                 Some(VecStoreEvent::Command(found)) if *request == found => {
                     match request {
                         WorkerCommand::ExecuteBlocking {
                             child_execution_id, ..
                         } => {
                             // do we have the child execution result next?
-                            if let Some(result) =
-                                Self::get_child_result(&mut store, &child_execution_id)?
-                            {
+                            if let Some(result) = self.get_child_result(&child_execution_id)? {
                                 Ok(MaybeReplayResponse::ReplayResponse(
                                     ReplayResponse::CompletedWithResult {
                                         child_execution_id: child_execution_id.clone(),
@@ -1647,7 +1628,7 @@ mod tests {
                         }
                         WorkerCommand::DelayFor(duration) => {
                             // do we have the delay done next?
-                            if Self::get_delay_passed(&mut store, *duration)? {
+                            if self.get_delay_passed(*duration)? {
                                 Ok(MaybeReplayResponse::ReplayResponse(
                                     ReplayResponse::Completed,
                                 ))
@@ -1661,21 +1642,19 @@ mod tests {
                     }
                 }
                 None => {
-                    Self::push(&mut store, VecStoreEvent::Command(request.clone()))?;
+                    self.push(VecStoreEvent::Command(request.clone()))?;
                     Ok(MaybeReplayResponse::MissingResponse)
                 }
-                Some(other) => Err(Self::non_determinism_detected(
-                    &mut store.corrupted,
-                    format!("unexpected event during handling of {request:?}, expected: {other:?}"),
-                )),
+                Some(other) => Err(self.non_determinism_detected(format!(
+                    "unexpected event during handling of {request:?}, expected: {other:?}"
+                ))),
             }
         }
     }
 
     impl WriteableWorkerStore<WorkflowId> for VecStore {
         fn restart(&mut self) {
-            let mut store = self.0.lock().unwrap_or_log();
-            store.idx = 0;
+            self.idx = 0;
         }
 
         #[instrument(skip(self))]
@@ -1684,44 +1663,38 @@ mod tests {
             child_execution_id: WorkflowId,
             result: FinishedExecutionResult,
         ) {
-            let mut store = self.0.lock().unwrap_or_log();
-            let last_event = store
+            let last_event = self
                 .events
                 .last()
-                .expect_or_log("persist_delay_passed must be called on a non-empty history");
+                .expect_or_log("must be called on a non-empty history");
             if !matches!(
                 last_event,
                 VecStoreEvent::Command(WorkerCommand::ExecuteBlocking { child_execution_id: found, .. } ) if child_execution_id == *found
             ) {
-                error!(%child_execution_id, "Broken contract: `persist_child_result` does not match the last event: {last_event:?}");
-                panic!("Broken contract: `persist_child_result`(`{child_execution_id}`) does not match the last event: {last_event:?}");
+                error!(%child_execution_id, "Broken contract: `WorkerCommand::ExecuteBlocking`(`child_execution_id`) does not match the last event: {last_event:?}");
+                panic!("Broken contract: `WorkerCommand::ExecuteBlocking`(`child_execution_id`) does not match the last event: {last_event:?}");
             }
-
-            Self::push(
-                &mut store,
-                VecStoreEvent::GotChildResult {
-                    child_execution_id,
-                    result,
-                },
-            )
+            self.push(VecStoreEvent::GotChildResult {
+                child_execution_id,
+                result,
+            })
             .expect_or_log("Broken contract: unprocessed events")
         }
 
         #[instrument(skip(self))]
         fn persist_delay_passed(&mut self, duration: Duration) {
-            let mut store = self.0.lock().unwrap_or_log();
-            let last_event = store
+            let last_event = self
                 .events
                 .last()
-                .expect_or_log("persist_delay_passed must be called on a non-empty history");
+                .expect_or_log("must be called on a non-empty history");
             if !matches!(
                 last_event,
                 VecStoreEvent::Command(WorkerCommand::DelayFor(found) ) if duration == *found
             ) {
-                error!("Broken contract: `persist_delay_passed`(`{duration:?}`) does not match the last event: {last_event:?}");
-                panic!("Broken contract: `persist_delay_passed`(`{duration:?}`) does not match the last event: {last_event:?}");
+                error!("Broken contract: `WorkerCommand::DelayFor`(`{duration:?}`) does not match the last event: {last_event:?}");
+                panic!("Broken contract: `WorkerCommand::DelayFor`(`{duration:?}`) does not match the last event: {last_event:?}");
             }
-            Self::push(&mut store, VecStoreEvent::DelayPassed(duration))
+            self.push(VecStoreEvent::DelayPassed(duration))
                 .expect_or_log("Broken contract: unprocessed events")
         }
     }
@@ -1739,7 +1712,7 @@ mod tests {
                 &self,
                 _execution_id: WorkflowId,
                 _params: Params,
-                mut store: VecStore,
+                mut store: tokio::sync::OwnedMutexGuard<VecStore>,
             ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
                 let command = WorkerCommand::DelayFor(DELAY);
                 match store.next_event(&command)? {

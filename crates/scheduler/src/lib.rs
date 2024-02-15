@@ -7,7 +7,6 @@ use std::time::Duration;
 mod memory;
 
 mod worker {
-
     use super::*;
     /// Worker commands sent to the worker executor.
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,7 +36,7 @@ mod worker {
             &self,
             workflow_id: E,
             params: Params,
-            store: S,
+            store: tokio::sync::OwnedMutexGuard<S>,
         ) -> Result<WorkerCommand<E>, WorkerError>;
     }
 
@@ -76,7 +75,7 @@ mod worker {
     }
 
     pub(crate) trait WriteableWorkerStore<E: ExecutionId>:
-        WorkerStore<E> + Clone + Default + Send + 'static
+        WorkerStore<E> + Default + Send + 'static
     {
         fn restart(&mut self);
 
