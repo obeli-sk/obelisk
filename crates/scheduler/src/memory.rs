@@ -214,15 +214,6 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InflightExecution<S, E> {
                                     InflightExecutionTransition::KeepInflight
                                 }
                             }
-                            Ok(WorkerCommand::EnqueueNow) => {
-                                debug!("Worker issued EnqueueNow");
-                                // already enqueued but we need a new oneshot channel.
-                                self.delayed_attempt_to_enqueue(
-                                    db_to_executor_mpmc_queues,
-                                    execution_id.clone(),
-                                );
-                                InflightExecutionTransition::KeepInflight
-                            }
                             Ok(WorkerCommand::DelayFor(duration)) => {
                                 let delay = Utc::now() + duration;
                                 debug!(
@@ -877,9 +868,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn persist_delay_passed(&mut self, delay: Duration) {
-            unimplemented!()
-        }
+        fn persist_delay_passed(&mut self, _delay: Duration) {}
     }
 
     #[tokio::test]
@@ -1227,8 +1216,7 @@ mod tests {
                 } else {
                     trace!("Worker waiting");
                     self.is_waiting.store(true, Ordering::SeqCst);
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    Ok(WorkerCommand::EnqueueNow)
+                    Ok(WorkerCommand::DelayFor(Duration::from_millis(100)))
                 }
             }
         }
@@ -1338,9 +1326,7 @@ mod tests {
                 } else {
                     trace!("Worker waiting");
                     store.is_waiting = true;
-                    // avoid busy loop
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    Ok(WorkerCommand::EnqueueNow)
+                    Ok(WorkerCommand::DelayFor(Duration::from_millis(100)))
                 }
             }
         }
@@ -1669,9 +1655,9 @@ mod tests {
                                 Ok(MaybeReplayResponse::MissingResponse)
                             }
                         }
-                        WorkerCommand::EnqueueNow | WorkerCommand::PublishResult(_) => Ok(
-                            MaybeReplayResponse::ReplayResponse(ReplayResponse::Completed),
-                        ),
+                        WorkerCommand::PublishResult(_) => Ok(MaybeReplayResponse::ReplayResponse(
+                            ReplayResponse::Completed,
+                        )),
                     }
                 }
                 None => {
