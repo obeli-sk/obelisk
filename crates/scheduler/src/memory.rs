@@ -417,7 +417,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
                 Some(ExecutionStatusInfo::DelayedUntil(delay.clone()))
             }
             Some(InflightExecutionStatus::IntermittentTimeout { delay, .. }) => {
-                Some(ExecutionStatusInfo::DelayedUntil(delay.clone()))
+                Some(ExecutionStatusInfo::IntermittentTimeout(delay.clone()))
             }
             Some(InflightExecutionStatus::Blocked { .. }) => Some(ExecutionStatusInfo::Blocked),
             None => None,
@@ -1006,20 +1006,22 @@ mod tests {
         );
         let execution_id = WorkflowId::generate();
         let stopwatch = Instant::now();
-        let res = db
-            .insert(
-                SOME_FFQN.to_owned(),
-                execution_id.clone(),
-                Params::from([wasmtime::component::Val::U64(
-                    MAX_EXECUTION_DURATION.as_millis() as u64 * 2,
-                )]),
-                Default::default(),
-            )
-            .await
-            .unwrap_or_log();
+        let execution = db.insert(
+            SOME_FFQN.to_owned(),
+            execution_id.clone(),
+            Params::from([wasmtime::component::Val::U64(
+                MAX_EXECUTION_DURATION.as_millis() as u64 * 2,
+            )]),
+            Default::default(),
+        );
+        wait_for_status(&db, &execution_id, |status| {
+            matches!(status, ExecutionStatusInfo::IntermittentTimeout(..))
+        })
+        .await;
+        let execution = execution.await.unwrap_or_log();
         let stopwatch = Instant::now().duration_since(stopwatch);
         assert_eq!(false, finished_check.load(Ordering::SeqCst));
-        assert_eq!(Err(FinishedExecutionError::PermanentTimeout), res);
+        assert_eq!(Err(FinishedExecutionError::PermanentTimeout), execution);
         assert_eq!(
             Some(ExecutionStatusInfo::Finished(Err(
                 FinishedExecutionError::PermanentTimeout
@@ -1031,7 +1033,6 @@ mod tests {
             + TimeDelta::from_std(MAX_EXECUTION_DURATION).unwrap_or_log()
                 * i32::from(TIMEOUT_MAX_RETRY_COUNT);
         assert_between(stopwatch, expected.to_std().unwrap_or_log(), LEEWAY);
-        // FIXME: check entering IntermittentTimeout
     }
 
     #[tokio::test]

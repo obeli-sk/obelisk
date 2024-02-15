@@ -103,8 +103,9 @@ pub enum FinishedExecutionError {
 pub enum ExecutionStatusInfo {
     Pending,
     Enqueued,
-    DelayedUntil(DateTime<Utc>), // TODO: Add a reason: worker request, worker timed out, intermittent failure
+    DelayedUntil(DateTime<Utc>),
     Blocked,
+    IntermittentTimeout(DateTime<Utc>),
     Finished(FinishedExecutionResult),
 }
 impl ExecutionStatusInfo {
