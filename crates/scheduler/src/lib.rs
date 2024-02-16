@@ -11,6 +11,7 @@ mod worker {
     /// Worker commands sent to the worker executor.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub enum WorkerCommand<E: ExecutionId> {
+        Yield,
         DelayFor(Duration),
         ExecuteBlocking {
             ffqn: FunctionFqn,

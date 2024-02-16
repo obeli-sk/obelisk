@@ -33,6 +33,7 @@ use tracing_unwrap::{OptionExt, ResultExt};
 // Dependent executions: WorkerCommand::ExecuteBlocking
 
 // TODO:
+// * refactor: Change signature of worker - MutexGuard<S> -> Context<S> with get, get_mut?
 // * refactor: remove old db, runtime, event history
 // * fix: Consistency between `inflight_executions` and `finished_executions`
 // * feat: Run id, regenerate between retries
@@ -215,6 +216,12 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InflightExecution<S, E> {
                                     };
                                     InflightExecutionTransition::KeepInflight
                                 }
+                            }
+                            Ok(WorkerCommand::Yield) => {
+                                self.status = InflightExecutionStatus::Pending {
+                                    retry_index: self.status.retry_index(),
+                                };
+                                InflightExecutionTransition::KeepInflight
                             }
                             Ok(WorkerCommand::DelayFor(duration)) => {
                                 let delay = Utc::now() + duration;
@@ -1210,7 +1217,7 @@ mod tests {
                 } else {
                     trace!("Worker waiting");
                     self.is_waiting.store(true, Ordering::SeqCst);
-                    Ok(WorkerCommand::DelayFor(Duration::from_millis(100)))
+                    Ok(WorkerCommand::Yield)
                 }
             }
         }
@@ -1625,9 +1632,9 @@ mod tests {
                                 Ok(MaybeReplayResponse::MissingResponse)
                             }
                         }
-                        WorkerCommand::PublishResult(_) => Ok(MaybeReplayResponse::ReplayResponse(
-                            ReplayResponse::Completed,
-                        )),
+                        WorkerCommand::PublishResult(_) | WorkerCommand::Yield => Ok(
+                            MaybeReplayResponse::ReplayResponse(ReplayResponse::Completed),
+                        ),
                     }
                 }
                 None => {
