@@ -5,6 +5,7 @@ use concepts::{Params, SupportedFunctionResult};
 use std::time::Duration;
 
 mod memory;
+mod storage;
 
 mod worker {
     use super::*;
@@ -62,7 +63,7 @@ mod worker {
         Completed,
         CompletedWithResult {
             child_execution_id: E,
-            result: FinishedExecutionResult,
+            result: FinishedExecutionResult<E>,
         },
     }
 
@@ -80,34 +81,48 @@ mod worker {
     {
         fn restart(&mut self);
 
-        fn persist_child_result(&mut self, child_execution_id: E, result: FinishedExecutionResult);
+        fn persist_child_result(
+            &mut self,
+            child_execution_id: E,
+            result: FinishedExecutionResult<E>,
+        );
 
         fn persist_delay_passed(&mut self, duration: Duration);
     }
 }
 
-type FinishedExecutionResult = Result<SupportedFunctionResult, FinishedExecutionError>;
+type FinishedExecutionResult<ID> = Result<SupportedFunctionResult, FinishedExecutionError<ID>>;
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-pub enum FinishedExecutionError {
+pub enum FinishedExecutionError<ID: ExecutionId> {
     #[error("permanent timeout")]
     PermanentTimeout,
+    // TODO PermanentFailure when error retries are implemented
     #[error("non-determinism detected, reason: `{0}`")]
     NonDeterminismDetected(String),
     #[error("uncategorized error")]
-    UncategorizedError,
+    UncategorizedError, //TODO: add reason?
+    #[error("cancelled, reason: `{0}`")]
+    Cancelled(String),
+    #[error("continuing as {execution_id}")]
+    ContinueAsNew {
+        // TODO: Move to the OK part of the result
+        execution_id: ID,
+    },
+    #[error("cancelled and starting {execution_id}")]
+    CancelledWithNew { execution_id: ID },
 }
 
 #[derive(Debug, PartialEq, Clone, Eq)]
-pub enum ExecutionStatusInfo {
+pub enum ExecutionStatusInfo<ID: ExecutionId> {
     Pending,
     Enqueued,
     DelayedUntil(DateTime<Utc>),
     Blocked,
     IntermittentTimeout(DateTime<Utc>),
-    Finished(FinishedExecutionResult),
+    Finished(FinishedExecutionResult<ID>),
 }
-impl ExecutionStatusInfo {
+impl<ID: ExecutionId> ExecutionStatusInfo<ID> {
     pub fn is_finished(&self) -> bool {
         matches!(self, Self::Finished(_))
     }

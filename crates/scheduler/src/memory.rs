@@ -63,12 +63,12 @@ struct InflightExecution<S: WriteableWorkerStore<E>, E: ExecutionId> {
     ffqn: FunctionFqn,
     params: Params,
     store: Arc<tokio::sync::Mutex<S>>,
-    db_to_client_sender: Option<oneshot::Sender<FinishedExecutionResult>>, // Hack: Always present so it can be taken and used by the listener.
+    db_to_client_sender: Option<oneshot::Sender<FinishedExecutionResult<E>>>, // Hack: Always present so it can be taken and used by the listener.
     status: InflightExecutionStatus<E>,
 }
 
 enum InflightExecutionTransition<E: ExecutionId> {
-    MoveToFinished(FinishedExecutionResult),
+    MoveToFinished(FinishedExecutionResult<E>),
     ExecuteBlocking {
         child_execution_id: E,
         ffqn: FunctionFqn,
@@ -143,7 +143,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InflightExecution<S, E> {
         db_to_executor_mpmc_queues: &std::sync::Mutex<
             HashMap<FunctionFqn, (Sender<QueueEntry<S, E>>, Receiver<QueueEntry<S, E>>)>,
         >, // read write
-        finished_executions: &std::sync::Mutex<HashMap<E, FinishedExecutionResult>>, // read only
+        finished_executions: &std::sync::Mutex<HashMap<E, FinishedExecutionResult<E>>>, // read only
     ) -> InflightExecutionTransition<E> {
         match self {
             InflightExecution {
@@ -370,7 +370,7 @@ pub struct InMemoryDatabase<S: WriteableWorkerStore<E>, E: ExecutionId> {
     // Written by both `insert` and the listener (update status).
     inflight_executions: Arc<std::sync::Mutex<IndexMap<E, InflightExecution<S, E>>>>,
     // Written by the listener.
-    finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionResult>>>,
+    finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionResult<E>>>>,
     listener: AbortHandle,
 }
 
@@ -383,7 +383,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
                 HashMap<FunctionFqn, (Sender<QueueEntry<S, E>>, Receiver<QueueEntry<S, E>>)>,
             >,
         > = Default::default();
-        let finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionResult>>> =
+        let finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionResult<E>>>> =
             Default::default();
         let listener = Self::spawn_listener(
             inflight_executions.clone(),
@@ -400,7 +400,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
         }
     }
 
-    pub fn get_execution_status(&self, execution_id: &E) -> Option<ExecutionStatusInfo> {
+    pub fn get_execution_status(&self, execution_id: &E) -> Option<ExecutionStatusInfo<E>> {
         if let Some(res) = self
             .finished_executions
             .lock()
@@ -434,7 +434,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
         ffqn: FunctionFqn,
         execution_id: E,
         params: Params,
-    ) -> oneshot::Receiver<FinishedExecutionResult> {
+    ) -> oneshot::Receiver<FinishedExecutionResult<E>> {
         Self::insert_or_schedule(
             &mut self.inflight_executions.lock().unwrap_or_log(),
             &mut self.db_to_executor_mpmc_queues.lock().unwrap_or_log(),
@@ -453,7 +453,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
         execution_id: E,
         params: Params,
         delay: DateTime<Utc>,
-    ) -> oneshot::Receiver<FinishedExecutionResult> {
+    ) -> oneshot::Receiver<FinishedExecutionResult<E>> {
         Self::insert_or_schedule(
             &mut self.inflight_executions.lock().unwrap_or_log(),
             &mut self.db_to_executor_mpmc_queues.lock().unwrap_or_log(),
@@ -478,7 +478,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
         params: Params,
         store: Arc<tokio::sync::Mutex<S>>,
         delay: Option<DateTime<Utc>>,
-    ) -> oneshot::Receiver<FinishedExecutionResult> {
+    ) -> oneshot::Receiver<FinishedExecutionResult<E>> {
         trace!(?delay, ?params, "insert_or_schedule");
         // make sure the mpmc channel is created, obtain its sender
         db_to_executor_mpmc_queues
@@ -534,7 +534,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
                 HashMap<FunctionFqn, (Sender<QueueEntry<S, E>>, Receiver<QueueEntry<S, E>>)>,
             >,
         >,
-        finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionResult>>>,
+        finished_executions: Arc<std::sync::Mutex<HashMap<E, FinishedExecutionResult<E>>>>,
         queue_capacity: usize,
     ) -> AbortHandle {
         tokio::spawn(
@@ -563,7 +563,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InMemoryDatabase<S, E> {
         db_to_executor_mpmc_queues: &std::sync::Mutex<
             HashMap<FunctionFqn, (Sender<QueueEntry<S, E>>, Receiver<QueueEntry<S, E>>)>,
         >,
-        finished_executions: &std::sync::Mutex<HashMap<E, FinishedExecutionResult>>,
+        finished_executions: &std::sync::Mutex<HashMap<E, FinishedExecutionResult<E>>>,
         queue_capacity: usize,
     ) {
         let mut finished = Vec::new();
@@ -876,7 +876,7 @@ mod tests {
         fn persist_child_result(
             &mut self,
             _child_execution_id: E,
-            _result: FinishedExecutionResult,
+            _result: FinishedExecutionResult<E>,
         ) {
             unimplemented!()
         }
@@ -1287,7 +1287,7 @@ mod tests {
         fn persist_child_result(
             &mut self,
             _child_execution_id: WorkflowId,
-            _result: FinishedExecutionResult,
+            _result: FinishedExecutionResult<WorkflowId>,
         ) {
             unimplemented!()
         }
@@ -1393,8 +1393,8 @@ mod tests {
     async fn wait_for_status<S: WriteableWorkerStore<E>, E: ExecutionId>(
         db: &InMemoryDatabase<S, E>,
         execution_id: &E,
-        predicate: fn(&ExecutionStatusInfo) -> bool,
-    ) -> ExecutionStatusInfo {
+        predicate: fn(&ExecutionStatusInfo<E>) -> bool,
+    ) -> ExecutionStatusInfo<E> {
         loop {
             if let Some(status) = db.get_execution_status(execution_id) {
                 if predicate(&status) {
@@ -1478,7 +1478,7 @@ mod tests {
         Command(WorkerCommand<WorkflowId>),
         GotChildResult {
             child_execution_id: WorkflowId,
-            result: FinishedExecutionResult,
+            result: FinishedExecutionResult<WorkflowId>,
         },
         DelayPassed(Duration),
     }
@@ -1530,7 +1530,7 @@ mod tests {
         fn get_child_result(
             &mut self,
             requested_id: &WorkflowId,
-        ) -> Result<Option<FinishedExecutionResult>, NonDeterminismError> {
+        ) -> Result<Option<FinishedExecutionResult<WorkflowId>>, NonDeterminismError> {
             match self.events.get(self.idx) {
                 Some(VecStoreEvent::GotChildResult {
                     child_execution_id: found,
@@ -1646,7 +1646,7 @@ mod tests {
         fn persist_child_result(
             &mut self,
             child_execution_id: WorkflowId,
-            result: FinishedExecutionResult,
+            result: FinishedExecutionResult<WorkflowId>,
         ) {
             let last_event = self
                 .events
@@ -1801,26 +1801,27 @@ mod tests {
                     params,
                     child_execution_id: child_execution_id.clone(),
                 };
-                let result: Result<SupportedFunctionResult, FinishedExecutionError> = match store
-                    .next_event(&execute_blocking)?
-                {
-                    MaybeReplayResponse::MissingResponse => {
-                        trace!("ExecuteBlocking was missing in the history, issuing");
-                        return Ok(execute_blocking);
-                    }
-                    MaybeReplayResponse::ReplayResponse(ReplayResponse::CompletedWithResult {
-                        child_execution_id: obtained_child_execution_id,
-                        result,
-                    }) => {
-                        assert_eq!(child_execution_id, obtained_child_execution_id);
-                        trace!("ReplayResponse is already completed");
-                        result
-                    }
-                    other => {
-                        error!("Broken contract: Unexpected store response {other:?} to request {execute_blocking:?}");
-                        panic!("Broken contract: Unexpected store response {other:?} to request {execute_blocking:?}")
-                    }
-                };
+                let result: Result<SupportedFunctionResult, FinishedExecutionError<WorkflowId>> =
+                    match store.next_event(&execute_blocking)? {
+                        MaybeReplayResponse::MissingResponse => {
+                            trace!("ExecuteBlocking was missing in the history, issuing");
+                            return Ok(execute_blocking);
+                        }
+                        MaybeReplayResponse::ReplayResponse(
+                            ReplayResponse::CompletedWithResult {
+                                child_execution_id: obtained_child_execution_id,
+                                result,
+                            },
+                        ) => {
+                            assert_eq!(child_execution_id, obtained_child_execution_id);
+                            trace!("ReplayResponse is already completed");
+                            result
+                        }
+                        other => {
+                            error!("Broken contract: Unexpected store response {other:?} to request {execute_blocking:?}");
+                            panic!("Broken contract: Unexpected store response {other:?} to request {execute_blocking:?}")
+                        }
+                    };
                 trace!("Child worker returned {result:?}");
                 let result = result.unwrap_or_log();
                 let result =
