@@ -34,13 +34,15 @@ use tracing_unwrap::{OptionExt, ResultExt};
 
 // TODO:
 // * refactor: Change signature of worker - MutexGuard<S> -> Context<S> with get, get_mut?
+// * refactor: Make <S> parameter of executor only, split its database away from the scheduler, allowing activities
 // * refactor: remove old db, runtime, event history
 // * fix: Consistency between `inflight_executions` and `finished_executions`
 // * feat: Run id, regenerate between retries
 // * feat: Execution journal - 1.pending, 2. enqueued, timed out, retried, etc.
 // * resil: Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
+// * feat: multiple schedulers talking to the same db
 // * resil: Fairness: reenqueue should push the execution to the end of `inflight_executions`
-// * perf: Wake up the listener by insertion, executor emitting an event (+ waking up parent) by pushing a workflow id to an mpsc channel.
+// * perf: Wake up the listener by insertion, executor emitting an event (+ waking up parent) by pushing a workflow id to an mpsc channel, or make db emit change notifications
 // * tracing: Add task names
 // * feat: Retries on UncategorizedError - respawn executor? Create new worker using a factory? Use case: panic in wasm
 // * feat: Retries on SupportedFunctionResult::Single(Result::Err) - configurable by worker
@@ -300,6 +302,7 @@ impl<S: WriteableWorkerStore<E>, E: ExecutionId> InflightExecution<S, E> {
                     .get(&child_execution_id)
                 {
                     let child_execution_id = child_execution_id.clone();
+                    info!(%child_execution_id, "Child execution finished");
                     self.store
                         .try_lock()
                         .expect_or_log("store must be unlocked in InflightExecutionStatus::Blocked")
@@ -881,24 +884,22 @@ mod tests {
         fn persist_delay_passed(&mut self, _delay: Duration) {}
     }
 
-    #[tokio::test]
-    async fn test_simple_workflow() {
-        set_up();
-
-        struct SimpleWorker;
-
-        #[async_trait]
-        impl Worker<DummyStore, WorkflowId> for SimpleWorker {
-            async fn run(
-                &self,
-                _execution_id: WorkflowId,
-                _params: Params,
-                _store: tokio::sync::OwnedMutexGuard<DummyStore>,
-            ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
-                Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
-            }
+    struct SimpleWorker;
+    #[async_trait]
+    impl Worker<DummyStore, WorkflowId> for SimpleWorker {
+        async fn run(
+            &self,
+            _execution_id: WorkflowId,
+            _params: Params,
+            _store: tokio::sync::OwnedMutexGuard<DummyStore>,
+        ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
+            Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
         }
+    }
 
+    #[tokio::test]
+    async fn test_publish_result() {
+        set_up();
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
         let execution = db.insert(
@@ -1368,18 +1369,6 @@ mod tests {
         const DELAY: Duration = Duration::from_millis(500);
         const LEEWAY_DELAY: Duration = Duration::from_millis(100);
         set_up();
-        struct SimpleWorker;
-        #[async_trait]
-        impl Worker<DummyStore, WorkflowId> for SimpleWorker {
-            async fn run(
-                &self,
-                _execution_id: WorkflowId,
-                _params: Params,
-                _store: tokio::sync::OwnedMutexGuard<DummyStore>,
-            ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
-                Ok(WorkerCommand::PublishResult(SupportedFunctionResult::None))
-            }
-        }
         let db = InMemoryDatabase::spawn_new(1);
         let execution_id = WorkflowId::generate();
         let now = Utc::now();
@@ -1762,5 +1751,128 @@ mod tests {
         );
         let stopwatch = Instant::now().duration_since(stopwatch);
         assert_between(stopwatch, DELAY, LEEWAY_DELAY);
+    }
+
+    #[tokio::test]
+    async fn execute_blocking() {
+        const CHILD_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "child");
+        const PARENT_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "parent");
+        const TEST_NUMBER: u64 = 1;
+        set_up();
+
+        let unblock_test_latch = Arc::new(tokio::sync::Semaphore::new(0));
+        let unblock_child_latch = Arc::new(tokio::sync::Semaphore::new(0));
+        struct ChildWorker {
+            unblock_test_latch: Arc<tokio::sync::Semaphore>,
+            unblock_child_latch: Arc<tokio::sync::Semaphore>,
+        }
+        #[async_trait]
+        impl Worker<VecStore, WorkflowId> for ChildWorker {
+            async fn run(
+                &self,
+                _execution_id: WorkflowId,
+                params: Params,
+                _store: tokio::sync::OwnedMutexGuard<VecStore>,
+            ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
+                debug!("child started");
+                self.unblock_test_latch.add_permits(1);
+                debug!("waiting for `unblock_child_latch`");
+                let _ = self.unblock_child_latch.acquire().await.unwrap_or_log();
+                let first_param = params.get(0).map(Clone::clone).unwrap_or_log();
+                Ok(WorkerCommand::PublishResult(
+                    SupportedFunctionResult::Single(first_param),
+                ))
+            }
+        }
+
+        struct ParentWorker;
+        #[async_trait]
+        impl Worker<VecStore, WorkflowId> for ParentWorker {
+            async fn run(
+                &self,
+                _execution_id: WorkflowId,
+                params: Params,
+                mut store: tokio::sync::OwnedMutexGuard<VecStore>,
+            ) -> Result<WorkerCommand<WorkflowId>, WorkerError> {
+                let child_execution_id = store.next_id()?;
+                debug!(%child_execution_id, "generated/obtained id");
+                let execute_blocking = WorkerCommand::ExecuteBlocking {
+                    ffqn: CHILD_FFQN.to_owned(),
+                    params,
+                    child_execution_id: child_execution_id.clone(),
+                };
+                let result: Result<SupportedFunctionResult, FinishedExecutionError> = match store
+                    .next_event(&execute_blocking)?
+                {
+                    MaybeReplayResponse::MissingResponse => {
+                        trace!("ExecuteBlocking was missing in the history, issuing");
+                        return Ok(execute_blocking);
+                    }
+                    MaybeReplayResponse::ReplayResponse(ReplayResponse::CompletedWithResult {
+                        child_execution_id: obtained_child_execution_id,
+                        result,
+                    }) => {
+                        assert_eq!(child_execution_id, obtained_child_execution_id);
+                        trace!("ReplayResponse is already completed");
+                        result
+                    }
+                    other => {
+                        error!("Broken contract: Unexpected store response {other:?} to request {execute_blocking:?}");
+                        panic!("Broken contract: Unexpected store response {other:?} to request {execute_blocking:?}")
+                    }
+                };
+                trace!("Child worker returned {result:?}");
+                let result = result.unwrap_or_log();
+                let result =
+                    assert_matches!(result, SupportedFunctionResult::Single(result) => result);
+                let publish_result =
+                    WorkerCommand::PublishResult(SupportedFunctionResult::Single(result));
+                match store.next_event(&publish_result)? {
+                    MaybeReplayResponse::MissingResponse => {
+                        trace!("Final response was missing in the history, issuing");
+                        return Ok(publish_result);
+                    }
+                    MaybeReplayResponse::ReplayResponse(ReplayResponse::Completed) => {
+                        trace!("Final result was acked");
+                        return Ok(publish_result);
+                    }
+                    other => {
+                        error!("Broken contract: Unexpected store response {other:?} to request {publish_result:?}");
+                        panic!("Broken contract: Unexpected store response {other:?} to request {publish_result:?}")
+                    }
+                }
+            }
+        }
+        let db = InMemoryDatabase::spawn_new(1);
+        let parent_execution_id = WorkflowId::generate();
+        let execution = db.insert(
+            PARENT_FFQN.to_owned(),
+            parent_execution_id.clone(),
+            Params::from([wasmtime::component::Val::U64(TEST_NUMBER)]),
+        );
+        let _executor_child = db.spawn_executor(
+            CHILD_FFQN.to_owned(),
+            ChildWorker {
+                unblock_test_latch: unblock_test_latch.clone(),
+                unblock_child_latch: unblock_child_latch.clone(),
+            },
+            1,
+            None,
+        );
+        let _executor_parent = db.spawn_executor(PARENT_FFQN.to_owned(), ParentWorker, 1, None);
+        debug!("waiting for `unblock_test_latch`");
+        let _ = unblock_test_latch.acquire().await.unwrap_or_log();
+        assert_matches!(
+            db.get_execution_status(&parent_execution_id),
+            Some(ExecutionStatusInfo::Blocked)
+        );
+        debug!("Unblocking the child");
+        unblock_child_latch.add_permits(1);
+        assert_eq!(
+            Ok(SupportedFunctionResult::Single(
+                wasmtime::component::Val::U64(TEST_NUMBER)
+            )),
+            execution.await.unwrap_or_log()
+        );
     }
 }
