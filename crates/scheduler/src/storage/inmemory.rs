@@ -19,15 +19,14 @@
 
 use crate::FinishedExecutionResult;
 use chrono::{DateTime, Utc};
-use concepts::{ExecutionId, FunctionFqn, Params};
+use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     sync::Arc,
-    time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
-use tracing_unwrap::{OptionExt, ResultExt};
+use tracing::{debug, error, instrument, trace, warn, Level};
+use tracing_unwrap::OptionExt;
 
 use self::{
     api::{DbRequest, DbTickRequest, ExecutionSpecificRequest, GeneralRequest, Version},
@@ -238,8 +237,9 @@ mod api {
         ExecutionSpecific(ExecutionSpecificRequest<ID>),
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, derive_more::Display)]
     pub(crate) enum ExecutionSpecificRequest<ID: ExecutionId> {
+        #[display(fmt = "Create({ffqn})")]
         Create {
             execution_id: ID,
             ffqn: FunctionFqn,
@@ -248,6 +248,7 @@ mod api {
             parent: Option<ID>,
             resp_sender: oneshot::Sender<Result<(), ()>>, // PersistResult
         },
+        #[display(fmt = "Lock")]
         Lock {
             execution_id: ID,
             version: Version,
@@ -255,10 +256,19 @@ mod api {
             expires_at: DateTime<Utc>,
             resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, ()>>,
         },
+        #[display(fmt = "IntermittentTimeout")]
         IntermittentTimeout {
             execution_id: ID,
             version: Version,
             expires_at: DateTime<Utc>,
+            resp_sender: oneshot::Sender<Result<(), ()>>,
+        },
+        #[display(fmt = "IntermittentFailure")]
+        IntermittentFailure {
+            execution_id: ID,
+            version: Version,
+            expires_at: DateTime<Utc>,
+            reason: String,
             resp_sender: oneshot::Sender<Result<(), ()>>,
         },
     }
@@ -337,6 +347,7 @@ mod index {
             }
             let journal = journals.get(&execution_id).unwrap_or_log();
             match last_event_excluding_async_responses(journal) {
+                // pending immediately
                 (
                     0,
                     ExecutionEvent::Created {
@@ -345,27 +356,24 @@ mod index {
                 ) => {
                     self.pending.insert(execution_id);
                 }
+                // events with an expiry before pending
                 (
                     0,
                     ExecutionEvent::Created {
-                        scheduled_at: Some(scheduled_at),
+                        scheduled_at: Some(expires_at),
                         ..
                     },
-                ) => {
-                    self.pending_scheduled
-                        .entry(*scheduled_at)
-                        .or_default()
-                        .insert(execution_id.clone());
-                    self.pending_scheduled_rev
-                        .insert(execution_id, *scheduled_at);
-                }
-                (_, ExecutionEvent::Locked { expires_at, .. }) => {
+                )
+                | (_, ExecutionEvent::Locked { expires_at, .. })
+                | (_, ExecutionEvent::IntermittentTimeout { expires_at, .. })
+                | (_, ExecutionEvent::IntermittentFailure { expires_at, .. }) => {
                     self.pending_scheduled
                         .entry(*expires_at)
                         .or_default()
                         .insert(execution_id.clone());
                     self.pending_scheduled_rev.insert(execution_id, *expires_at);
                 }
+
                 (_idx, event) => panic!("Not implemented yet: {event:?}"),
             }
         }
@@ -501,6 +509,7 @@ impl<ID: ExecutionId> ExecutionSpecificRequest<ID> {
             ExecutionSpecificRequest::Create { execution_id, .. } => execution_id,
             ExecutionSpecificRequest::Lock { execution_id, .. } => execution_id,
             ExecutionSpecificRequest::IntermittentTimeout { execution_id, .. } => execution_id,
+            ExecutionSpecificRequest::IntermittentFailure { execution_id, .. } => execution_id,
         }
     }
 }
@@ -539,7 +548,6 @@ impl<ID: ExecutionId> DbTask<ID> {
             request,
             received_at,
         } = request;
-        trace!("Tick {request:?}");
         match request {
             DbRequest::ExecutionSpecific(request) => self.handle_specific(request, received_at),
             DbRequest::General(request) => self.handle_general(request, received_at),
@@ -551,6 +559,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         request: GeneralRequest<ID>,
         received_at: DateTime<Utc>,
     ) -> TickResponse<ID> {
+        trace!("Received General event {request:?} at `{received_at}`");
         match request {
             GeneralRequest::FetchPending {
                 batch_size,
@@ -602,6 +611,11 @@ impl<ID: ExecutionId> DbTask<ID> {
         request: ExecutionSpecificRequest<ID>,
         received_at: DateTime<Utc>,
     ) -> TickResponse<ID> {
+        if tracing::enabled!(Level::TRACE) {
+            trace!("Received {request:?} at `{received_at}`");
+        } else {
+            debug!("Received {request} at `{received_at}`");
+        }
         match request {
             ExecutionSpecificRequest::Create {
                 ffqn,
@@ -643,6 +657,20 @@ impl<ID: ExecutionId> DbTask<ID> {
                 execution_id,
                 version,
                 expires_at,
+                resp_sender,
+            ),
+            ExecutionSpecificRequest::IntermittentFailure {
+                execution_id,
+                version,
+                expires_at,
+                reason,
+                resp_sender,
+            } => self.intermittent_failure(
+                received_at,
+                execution_id,
+                version,
+                expires_at,
+                reason,
                 resp_sender,
             ),
         }
@@ -776,6 +804,46 @@ impl<ID: ExecutionId> DbTask<ID> {
             created_at: received_at,
         };
         journal.events.push_back(event);
+        self.index.update(execution_id, &self.journals);
+
+        TickResponse::PersistResult {
+            resp_sender,
+            result: Ok(()),
+        }
+    }
+
+    fn intermittent_failure(
+        &mut self,
+        received_at: DateTime<Utc>,
+        execution_id: ID,
+        version: Version,
+        expires_at: DateTime<Utc>,
+        reason: String,
+        resp_sender: oneshot::Sender<Result<(), ()>>,
+    ) -> TickResponse<ID> {
+        // Check version
+        let Some(journal) = self.journals.get_mut(&execution_id) else {
+            warn!("Not found");
+            return TickResponse::PersistResult {
+                resp_sender,
+                result: Err(()),
+            };
+        };
+        if version != journal.version() {
+            warn!("Wrong version");
+            return TickResponse::PersistResult {
+                resp_sender,
+                result: Err(()),
+            };
+        }
+        let event = ExecutionEvent::IntermittentFailure {
+            expires_at,
+            reason,
+            created_at: received_at,
+        };
+        journal.events.push_back(event);
+        self.index.update(execution_id, &self.journals);
+
         TickResponse::PersistResult {
             resp_sender,
             result: Ok(()),
@@ -789,6 +857,8 @@ mod tests {
     use assert_matches::assert_matches;
     use chrono::{NaiveDate, TimeZone};
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
+    use std::time::Duration;
+    use tracing::info;
 
     static INIT: std::sync::Once = std::sync::Once::new();
     fn set_up() {
@@ -803,6 +873,52 @@ mod tests {
     }
 
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
+
+    fn request_pending<ID: ExecutionId>(
+        db_task: &mut DbTask<ID>,
+        at: DateTime<Utc>,
+    ) -> Vec<(ID, Version, Option<DateTime<Utc>>)> {
+        let request = DbRequest::General(GeneralRequest::FetchPending {
+            batch_size: 1,
+            resp_sender: oneshot::channel().0,
+            expiring_before: at + Duration::from_secs(1),
+            created_since: None,
+            ffqns: vec![SOME_FFQN.to_owned()],
+        });
+        let actual = db_task.tick(DbTickRequest {
+            request,
+            received_at: at,
+        });
+        assert_matches!(
+            actual,
+            TickResponse::FetchPending {
+                message,
+                ..
+            } => message
+        )
+    }
+
+    fn lock<ID: ExecutionId>(
+        db_task: &mut DbTask<ID>,
+        at: DateTime<Utc>,
+        exec: ExecutorName,
+        execution_id: ID,
+        lock_expiry: Duration,
+        version: Version,
+    ) -> Vec<EventHistory<ID>> {
+        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
+            execution_id,
+            version,
+            executor_name: exec,
+            expires_at: at + lock_expiry,
+            resp_sender: oneshot::channel().0,
+        });
+        let actual = db_task.tick(DbTickRequest {
+            request,
+            received_at: at,
+        });
+        assert_matches!(actual, TickResponse::Lock { result: Ok(event_history), .. } => event_history)
+    }
 
     #[test]
     fn lock_batch() {
@@ -819,7 +935,10 @@ mod tests {
             .unwrap();
 
         info!("Now: {created_at}");
-        // 1. Create
+        assert_eq!(0, request_pending(&mut db_task, created_at).len());
+        let exec = Arc::new("exec1".to_string());
+        let lock_expiry = Duration::from_millis(500);
+        // Create
         {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Create {
                 ffqn: SOME_FFQN.to_owned(),
@@ -835,75 +954,50 @@ mod tests {
             });
             assert_matches!(actual, TickResponse::PersistResult { result: Ok(()), .. });
         }
-        // 2. FetchPending
+        // FetchPending
         {
             created_at += Duration::from_secs(1);
             info!("Now: {created_at}");
-            let request = DbRequest::General(GeneralRequest::FetchPending {
-                batch_size: 1,
-                resp_sender: oneshot::channel().0,
-                expiring_before: created_at + Duration::from_secs(1),
-                created_since: None,
-                ffqns: vec![SOME_FFQN.to_owned()],
-            });
-            let actual = db_task.tick(DbTickRequest {
-                request,
-                received_at: created_at,
-            });
-            let pending = assert_matches!(
-                actual,
-                TickResponse::FetchPending {
-                    message,
-                    ..
-                } => message
-            );
+            let pending = request_pending(&mut db_task, created_at);
             assert_eq!(1, pending.len());
             assert_eq!((execution_id.clone(), 1_usize, None), pending[0]);
         }
-        // 3. Lock
-        let lock_expiry = Duration::from_millis(500);
+        // Lock
         {
             created_at += Duration::from_secs(1);
             info!("Now: {created_at}");
-            let exec = Arc::new("exec1".to_string());
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
-                execution_id: execution_id.clone(),
-                version: 1,
-                executor_name: exec.clone(),
-                expires_at: created_at + lock_expiry,
-                resp_sender: oneshot::channel().0,
-            });
-            let actual = db_task.tick(DbTickRequest {
-                request,
-                received_at: created_at,
-            });
-            assert_matches!(actual, TickResponse::Lock { result: Ok(event_history), .. } if event_history.is_empty());
+            let event_history = lock(
+                &mut db_task,
+                created_at,
+                exec.clone(),
+                execution_id.clone(),
+                lock_expiry,
+                1,
+            );
+            assert_eq!(0, event_history.len());
+            assert_eq!(0, request_pending(&mut db_task, created_at).len());
         }
-        // 4. lock expired, another executor issues Lock
+        // lock expired, another executor issues Lock
         {
             created_at += lock_expiry + Duration::from_millis(1);
             info!("Now: {created_at}");
-            let exec = Arc::new("exec2".to_string());
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
-                execution_id: execution_id.clone(),
-                version: 2,
-                executor_name: exec.clone(),
-                expires_at: created_at + lock_expiry,
-                resp_sender: oneshot::channel().0,
-            });
-            let actual = db_task.tick(DbTickRequest {
-                request,
-                received_at: created_at,
-            });
-            assert_matches!(actual, TickResponse::Lock { result: Ok(event_history), .. } if event_history.is_empty());
+            let event_history = lock(
+                &mut db_task,
+                created_at,
+                exec.clone(),
+                execution_id.clone(),
+                lock_expiry,
+                2,
+            );
+            assert_eq!(0, event_history.len());
         }
-        // 5. intermittent timeout
+        // intermittent timeout
         {
             created_at += Duration::from_millis(499);
             info!("Now: {created_at}");
             let request =
                 DbRequest::ExecutionSpecific(ExecutionSpecificRequest::IntermittentTimeout {
-                    execution_id,
+                    execution_id: execution_id.clone(),
                     version: 3,
                     expires_at: created_at + lock_expiry,
                     resp_sender: oneshot::channel().0,
@@ -913,6 +1007,67 @@ mod tests {
                 received_at: created_at,
             });
             assert_matches!(actual, TickResponse::PersistResult { result: Ok(()), .. });
+            assert_eq!(0, request_pending(&mut db_task, created_at).len());
+        }
+        // Attempt to lock while in a timeout
+        {
+            created_at += Duration::from_millis(300);
+            info!("Now: {created_at}");
+            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
+                execution_id: execution_id.clone(),
+                version: 4,
+                executor_name: exec.clone(),
+                expires_at: created_at + lock_expiry,
+                resp_sender: oneshot::channel().0,
+            });
+            let actual = db_task.tick(DbTickRequest {
+                request,
+                received_at: created_at,
+            });
+            assert_matches!(
+                actual,
+                TickResponse::Lock {
+                    result: Err(()),
+                    ..
+                }
+            )
+        }
+        // Lock again
+        {
+            created_at += Duration::from_millis(200);
+            info!("Now: {created_at}");
+            let event_history = lock(
+                &mut db_task,
+                created_at,
+                exec.clone(),
+                execution_id.clone(),
+                lock_expiry,
+                4,
+            );
+            assert_eq!(0, event_history.len());
+        }
+        // Finished
+        {
+            created_at += Duration::from_millis(300);
+            info!("Now: {created_at}");
+            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
+                execution_id: execution_id.clone(),
+                version: 4,
+                executor_name: exec.clone(),
+                expires_at: created_at + lock_expiry,
+                resp_sender: oneshot::channel().0,
+            });
+            let actual = db_task.tick(DbTickRequest {
+                request,
+                received_at: created_at,
+            });
+            assert_matches!(
+                actual,
+                TickResponse::Lock {
+                    result: Err(()),
+                    ..
+                }
+            )
         }
     }
 }
