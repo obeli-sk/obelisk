@@ -91,11 +91,11 @@ enum ExecutionEvent<ID: ExecutionId> {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum EventHistory<ID: ExecutionId> {
     // Created by the executor holding last lock.
     // Interpreted as pending.
-    Yield {},
+    Yield,
     // Created by the executor holding last lock.
     // Does not block the execution
     JoinSet {
@@ -140,7 +140,7 @@ enum EventHistory<ID: ExecutionId> {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum EventHistoryAsyncResponse<ID: ExecutionId> {
     // Created by a scheduler sometime after DelayedUntilAsyncRequest.
     DelayFinishedAsyncResponse {
@@ -280,6 +280,12 @@ mod api {
             result: FinishedExecutionResult<ID>,
             resp_sender: oneshot::Sender<Result<(), ()>>,
         },
+        #[display(fmt = "Yield")]
+        Yield {
+            execution_id: ID,
+            version: Version,
+            resp_sender: oneshot::Sender<Result<(), ()>>,
+        },
     }
 
     #[derive(Debug)]
@@ -362,6 +368,13 @@ mod index {
                     ExecutionEvent::Created {
                         scheduled_at: None, ..
                     },
+                )
+                | (
+                    _,
+                    ExecutionEvent::EventHistory {
+                        event: EventHistory::Yield { .. },
+                        ..
+                    },
                 ) => {
                     self.pending.insert(execution_id);
                 }
@@ -383,7 +396,8 @@ mod index {
                     self.pending_scheduled_rev.insert(execution_id, *expires_at);
                 }
                 (_, ExecutionEvent::Finished { .. }) => {}
-                (_idx, event) => panic!("Not implemented yet: {event:?}"),
+
+                (_, event) => panic!("Not implemented yet: {event:?}"),
             }
         }
     }
@@ -520,6 +534,7 @@ impl<ID: ExecutionId> ExecutionSpecificRequest<ID> {
             ExecutionSpecificRequest::IntermittentTimeout { execution_id, .. } => execution_id,
             ExecutionSpecificRequest::IntermittentFailure { execution_id, .. } => execution_id,
             ExecutionSpecificRequest::Finish { execution_id, .. } => execution_id,
+            ExecutionSpecificRequest::Yield { execution_id, .. } => execution_id,
         }
     }
 }
@@ -689,6 +704,11 @@ impl<ID: ExecutionId> DbTask<ID> {
                 result,
                 resp_sender,
             } => self.finish(received_at, execution_id, version, result, resp_sender),
+            ExecutionSpecificRequest::Yield {
+                execution_id,
+                version,
+                resp_sender,
+            } => self.yield_now(received_at, execution_id, version, resp_sender),
         }
     }
 
@@ -902,6 +922,42 @@ impl<ID: ExecutionId> DbTask<ID> {
             result: Ok(()),
         }
     }
+
+    fn yield_now(
+        &mut self,
+        received_at: DateTime<Utc>,
+        execution_id: ID,
+        version: Version,
+        resp_sender: oneshot::Sender<Result<(), ()>>,
+    ) -> TickResponse<ID> {
+        // Check version
+        let Some(journal) = self.journals.get_mut(&execution_id) else {
+            warn!("Not found");
+            return TickResponse::PersistResult {
+                resp_sender,
+                result: Err(()),
+            };
+        };
+        if version != journal.version() {
+            warn!("Wrong version");
+            return TickResponse::PersistResult {
+                resp_sender,
+                result: Err(()),
+            };
+        }
+        let event = ExecutionEvent::EventHistory {
+            event: EventHistory::Yield,
+            created_at: received_at,
+        };
+
+        journal.events.push_back(event);
+        self.index.update(execution_id, &self.journals);
+
+        TickResponse::PersistResult {
+            resp_sender,
+            result: Ok(()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -991,6 +1047,7 @@ mod tests {
         assert_eq!(0, request_pending(&mut db_task, created_at).len());
         let exec = Arc::new("exec1".to_string());
         let lock_expiry = Duration::from_millis(500);
+        let mut version = 0;
         // Create
         {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Create {
@@ -1006,6 +1063,7 @@ mod tests {
                 received_at: created_at,
             });
             assert_matches!(actual, TickResponse::PersistResult { result: Ok(()), .. });
+            version += 1;
         }
         // FetchPending
         {
@@ -1025,10 +1083,11 @@ mod tests {
                 exec.clone(),
                 execution_id.clone(),
                 lock_expiry,
-                1,
+                version,
             );
             assert_eq!(0, event_history.len());
             assert_eq!(0, request_pending(&mut db_task, created_at).len());
+            version += 1;
         }
         // lock expired, another executor issues Lock
         {
@@ -1040,9 +1099,10 @@ mod tests {
                 exec.clone(),
                 execution_id.clone(),
                 lock_expiry,
-                2,
+                version,
             );
             assert_eq!(0, event_history.len());
+            version += 1;
         }
         // intermittent timeout
         {
@@ -1051,7 +1111,7 @@ mod tests {
             let request =
                 DbRequest::ExecutionSpecific(ExecutionSpecificRequest::IntermittentTimeout {
                     execution_id: execution_id.clone(),
-                    version: 3,
+                    version,
                     expires_at: created_at + lock_expiry,
                     resp_sender: oneshot::channel().0,
                 });
@@ -1061,6 +1121,7 @@ mod tests {
             });
             assert_matches!(actual, TickResponse::PersistResult { result: Ok(()), .. });
             assert_eq!(0, request_pending(&mut db_task, created_at).len());
+            version += 1;
         }
         // Attempt to lock while in a timeout
         {
@@ -1068,7 +1129,7 @@ mod tests {
             info!("Now: {created_at}");
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
                 execution_id: execution_id.clone(),
-                version: 4,
+                version,
                 executor_name: exec.clone(),
                 expires_at: created_at + lock_expiry,
                 resp_sender: oneshot::channel().0,
@@ -1083,7 +1144,8 @@ mod tests {
                     result: Err(()),
                     ..
                 }
-            )
+            );
+            // Version is not changed
         }
         // Lock again
         {
@@ -1095,9 +1157,43 @@ mod tests {
                 exec.clone(),
                 execution_id.clone(),
                 lock_expiry,
-                4,
+                version,
             );
             assert_eq!(0, event_history.len());
+            version += 1;
+        }
+        // Yield
+        {
+            created_at += Duration::from_millis(200);
+            info!("Now: {created_at}");
+
+            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Yield {
+                execution_id: execution_id.clone(),
+                version,
+                resp_sender: oneshot::channel().0,
+            });
+            let actual = db_task.tick(DbTickRequest {
+                request,
+                received_at: created_at,
+            });
+            assert_matches!(actual, TickResponse::PersistResult { result: Ok(()), .. });
+            version += 1;
+        }
+        // Lock again
+        {
+            created_at += Duration::from_millis(200);
+            info!("Now: {created_at}");
+            let event_history = lock(
+                &mut db_task,
+                created_at,
+                exec.clone(),
+                execution_id.clone(),
+                lock_expiry,
+                version,
+            );
+            assert_eq!(1, event_history.len());
+            assert_eq!(vec![EventHistory::Yield], event_history);
+            version += 1;
         }
         // Finish
         {
@@ -1105,7 +1201,7 @@ mod tests {
             info!("Now: {created_at}");
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Finish {
                 execution_id: execution_id.clone(),
-                version: 5,
+                version,
                 result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
                 resp_sender: oneshot::channel().0,
             });
