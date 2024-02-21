@@ -287,7 +287,7 @@ mod index {
     #[derive(Debug)]
     pub(crate) struct JournalsIndex<ID: ExecutionId> {
         pending: HashSet<ID>,
-        pending_scheduled: BTreeMap<DateTime<Utc>, Vec<ID>>,
+        pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ID>>,
         pending_scheduled_rev: HashMap<ID, DateTime<Utc>>,
     }
 
@@ -332,7 +332,8 @@ mod index {
             // Remove the ID first (if exists)
             self.pending.remove(&execution_id);
             if let Some(schedule) = self.pending_scheduled_rev.remove(&execution_id) {
-                self.pending_scheduled.remove(&schedule).unwrap_or_log();
+                let ids = self.pending_scheduled.get_mut(&schedule).unwrap_or_log();
+                ids.remove(&execution_id);
             }
             let journal = journals.get(&execution_id).unwrap_or_log();
             match last_event_excluding_async_responses(journal) {
@@ -354,7 +355,7 @@ mod index {
                     self.pending_scheduled
                         .entry(*scheduled_at)
                         .or_default()
-                        .push(execution_id.clone());
+                        .insert(execution_id.clone());
                     self.pending_scheduled_rev
                         .insert(execution_id, *scheduled_at);
                 }
@@ -362,7 +363,7 @@ mod index {
                     self.pending_scheduled
                         .entry(*expires_at)
                         .or_default()
-                        .push(execution_id.clone());
+                        .insert(execution_id.clone());
                     self.pending_scheduled_rev.insert(execution_id, *expires_at);
                 }
                 (_idx, event) => panic!("Not implemented yet: {event:?}"),
