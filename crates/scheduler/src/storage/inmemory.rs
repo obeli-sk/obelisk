@@ -711,8 +711,8 @@ impl<ID: ExecutionId> DbTask<ID> {
 
         match index::assert_pending_get_expires_at(journal) {
             PotentiallyPending::PendingNow => {}
-            PotentiallyPending::PendingAfterExpiry(pending_after)
-                if pending_after < received_at => {}
+            PotentiallyPending::PendingAfterExpiry(pending_start)
+                if pending_start <= received_at => {}
             other => {
                 warn!("Not pending yet: {other:?}");
                 return TickResponse::Lock {
@@ -739,7 +739,7 @@ impl<ID: ExecutionId> DbTask<ID> {
                 }
             })
             .collect();
-        // Materialize views
+
         self.index.update(execution_id, &self.journals);
 
         TickResponse::Lock {
