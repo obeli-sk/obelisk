@@ -19,7 +19,7 @@
 
 use crate::FinishedExecutionResult;
 use chrono::{DateTime, Utc};
-use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
+use concepts::{ExecutionId, FunctionFqn, Params};
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
@@ -218,6 +218,8 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
 }
 
 mod api {
+    use crate::FinishedExecutionResult;
+
     use super::{EventHistory, ExecutorName};
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn, Params};
@@ -269,6 +271,13 @@ mod api {
             version: Version,
             expires_at: DateTime<Utc>,
             reason: String,
+            resp_sender: oneshot::Sender<Result<(), ()>>,
+        },
+        #[display(fmt = "Finish")]
+        Finish {
+            execution_id: ID,
+            version: Version,
+            result: FinishedExecutionResult<ID>,
             resp_sender: oneshot::Sender<Result<(), ()>>,
         },
     }
@@ -373,7 +382,7 @@ mod index {
                         .insert(execution_id.clone());
                     self.pending_scheduled_rev.insert(execution_id, *expires_at);
                 }
-
+                (_, ExecutionEvent::Finished { .. }) => {}
                 (_idx, event) => panic!("Not implemented yet: {event:?}"),
             }
         }
@@ -484,7 +493,7 @@ mod index {
             .iter()
             .enumerate()
             .rev()
-            .find(|(idx, event)| {
+            .find(|(_idx, event)| {
                 !matches!(
                     event,
                     ExecutionEvent::EventHistory {
@@ -510,6 +519,7 @@ impl<ID: ExecutionId> ExecutionSpecificRequest<ID> {
             ExecutionSpecificRequest::Lock { execution_id, .. } => execution_id,
             ExecutionSpecificRequest::IntermittentTimeout { execution_id, .. } => execution_id,
             ExecutionSpecificRequest::IntermittentFailure { execution_id, .. } => execution_id,
+            ExecutionSpecificRequest::Finish { execution_id, .. } => execution_id,
         }
     }
 }
@@ -673,6 +683,12 @@ impl<ID: ExecutionId> DbTask<ID> {
                 reason,
                 resp_sender,
             ),
+            ExecutionSpecificRequest::Finish {
+                execution_id,
+                version,
+                result,
+                resp_sender,
+            } => self.finish(received_at, execution_id, version, result, resp_sender),
         }
     }
 
@@ -841,6 +857,43 @@ impl<ID: ExecutionId> DbTask<ID> {
             reason,
             created_at: received_at,
         };
+        journal.events.push_back(event);
+        self.index.update(execution_id, &self.journals);
+
+        TickResponse::PersistResult {
+            resp_sender,
+            result: Ok(()),
+        }
+    }
+
+    fn finish(
+        &mut self,
+        received_at: DateTime<Utc>,
+        execution_id: ID,
+        version: Version,
+        result: FinishedExecutionResult<ID>,
+        resp_sender: oneshot::Sender<Result<(), ()>>,
+    ) -> TickResponse<ID> {
+        // Check version
+        let Some(journal) = self.journals.get_mut(&execution_id) else {
+            warn!("Not found");
+            return TickResponse::PersistResult {
+                resp_sender,
+                result: Err(()),
+            };
+        };
+        if version != journal.version() {
+            warn!("Wrong version");
+            return TickResponse::PersistResult {
+                resp_sender,
+                result: Err(()),
+            };
+        }
+        let event = ExecutionEvent::Finished {
+            result,
+            created_at: received_at,
+        };
+
         journal.events.push_back(event);
         self.index.update(execution_id, &self.journals);
 
@@ -1046,28 +1099,22 @@ mod tests {
             );
             assert_eq!(0, event_history.len());
         }
-        // Finished
+        // Finish
         {
             created_at += Duration::from_millis(300);
             info!("Now: {created_at}");
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
+            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Finish {
                 execution_id: execution_id.clone(),
-                version: 4,
-                executor_name: exec.clone(),
-                expires_at: created_at + lock_expiry,
+                version: 5,
+                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
                 resp_sender: oneshot::channel().0,
             });
+
             let actual = db_task.tick(DbTickRequest {
                 request,
                 received_at: created_at,
             });
-            assert_matches!(
-                actual,
-                TickResponse::Lock {
-                    result: Err(()),
-                    ..
-                }
-            )
+            assert_matches!(actual, TickResponse::PersistResult { result: Ok(()), .. })
         }
     }
 }
