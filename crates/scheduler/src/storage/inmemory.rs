@@ -338,7 +338,17 @@ mod index {
                 },
             ));
             // filter by currently pending
-            pending.retain(|(journal, _)| is_pending(journal, received_at));
+            pending.retain(|(journal, _)| match potentially_pending(journal) {
+                PotentiallyPending::PendingNow => true,
+                PotentiallyPending::PendingAfterExpiry(pending_after) => {
+                    pending_after < received_at
+                }
+                PotentiallyPending::PendingAfterExternalEvent => false,
+                PotentiallyPending::NotPending => {
+                    error!("Expected pending event in {journal:?}");
+                    false
+                }
+            });
             // filter by ffqn
             pending.retain(|(journal, _)| ffqns.contains(journal.ffqn()));
             // filter out older than `created_since`
@@ -354,50 +364,26 @@ mod index {
             execution_id: ID,
             journals: &HashMap<ID, ExecutionJournal<ID>>,
         ) {
-            // Remove the ID first (if exists)
+            // Remove the ID from the index (if exists)
             self.pending.remove(&execution_id);
             if let Some(schedule) = self.pending_scheduled_rev.remove(&execution_id) {
                 let ids = self.pending_scheduled.get_mut(&schedule).unwrap_or_log();
                 ids.remove(&execution_id);
             }
             let journal = journals.get(&execution_id).unwrap_or_log();
-            match last_event_excluding_async_responses(journal) {
-                // pending immediately
-                (
-                    0,
-                    ExecutionEvent::Created {
-                        scheduled_at: None, ..
-                    },
-                )
-                | (
-                    _,
-                    ExecutionEvent::EventHistory {
-                        event: EventHistory::Yield { .. },
-                        ..
-                    },
-                ) => {
+            // Add it again if needed
+            match potentially_pending(journal) {
+                PotentiallyPending::PendingNow => {
                     self.pending.insert(execution_id);
                 }
-                // events with an expiry before pending
-                (
-                    0,
-                    ExecutionEvent::Created {
-                        scheduled_at: Some(expires_at),
-                        ..
-                    },
-                )
-                | (_, ExecutionEvent::Locked { expires_at, .. })
-                | (_, ExecutionEvent::IntermittentTimeout { expires_at, .. })
-                | (_, ExecutionEvent::IntermittentFailure { expires_at, .. }) => {
+                PotentiallyPending::PendingAfterExpiry(expires_at) => {
                     self.pending_scheduled
-                        .entry(*expires_at)
+                        .entry(expires_at)
                         .or_default()
                         .insert(execution_id.clone());
-                    self.pending_scheduled_rev.insert(execution_id, *expires_at);
+                    self.pending_scheduled_rev.insert(execution_id, expires_at);
                 }
-                (_, ExecutionEvent::Finished { .. }) => {}
-
-                (_, event) => panic!("Not implemented yet: {event:?}"),
+                PotentiallyPending::PendingAfterExternalEvent | PotentiallyPending::NotPending => {}
             }
         }
     }
@@ -417,21 +403,10 @@ mod index {
         PendingNow,
         PendingAfterExpiry(DateTime<Utc>),
         PendingAfterExternalEvent,
+        NotPending,
     }
 
-    pub(crate) fn is_pending<ID: ExecutionId>(
-        journal: &ExecutionJournal<ID>,
-        now: DateTime<Utc>,
-    ) -> bool {
-        match assert_pending_get_expires_at(journal) {
-            PotentiallyPending::PendingNow => true,
-            PotentiallyPending::PendingAfterExpiry(pending_after) => pending_after < now,
-            PotentiallyPending::PendingAfterExternalEvent => false,
-        }
-    }
-
-    /// Asserts that the journal is in potentially pending state, returning the expiry if any.
-    pub(crate) fn assert_pending_get_expires_at<ID: ExecutionId>(
+    pub(crate) fn potentially_pending<ID: ExecutionId>(
         journal: &ExecutionJournal<ID>,
     ) -> PotentiallyPending {
         match last_event_excluding_async_responses(journal) {
@@ -492,10 +467,7 @@ mod index {
                     PotentiallyPending::PendingAfterExternalEvent
                 }
             }
-            other => {
-                error!("Expected pending event, got {other:?}");
-                panic!("expected pending event, got {other:?}");
-            }
+            _ => PotentiallyPending::NotPending,
         }
     }
 
@@ -740,8 +712,8 @@ impl<ID: ExecutionId> DbTask<ID> {
         self.journals
             .insert(execution_id.clone(), journal)
             .expect_none_or_log("journals cannot contain the new execution");
-        // Materialize views
         self.index.update(execution_id, &self.journals);
+
         TickResponse::PersistResult {
             resp_sender,
             result: Ok(()),
@@ -773,12 +745,12 @@ impl<ID: ExecutionId> DbTask<ID> {
             };
         }
 
-        match index::assert_pending_get_expires_at(journal) {
+        match index::potentially_pending(journal) {
             PotentiallyPending::PendingNow => {}
             PotentiallyPending::PendingAfterExpiry(pending_start)
                 if pending_start <= received_at => {}
             other => {
-                warn!("Not pending yet: {other:?}");
+                warn!("Cannot be locked: {other:?}");
                 return TickResponse::Lock {
                     resp_sender,
                     result: Err(()),
