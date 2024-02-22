@@ -663,15 +663,17 @@ impl<ID: ExecutionId> DbTask<ID> {
                 scheduled_at,
                 parent,
                 resp_sender,
-            } => self.create(
-                received_at,
-                execution_id,
-                ffqn,
-                params,
-                scheduled_at,
-                parent,
+            } => TickResponse::PersistResult {
                 resp_sender,
-            ),
+                result: self.create(
+                    received_at,
+                    execution_id,
+                    ffqn,
+                    params,
+                    scheduled_at,
+                    parent,
+                ),
+            },
             ExecutionSpecificRequest::Insert {
                 execution_id,
                 version,
@@ -706,14 +708,10 @@ impl<ID: ExecutionId> DbTask<ID> {
         params: Params,
         scheduled_at: Option<DateTime<Utc>>,
         parent: Option<ID>,
-        resp_sender: oneshot::Sender<Result<(), ()>>,
-    ) -> TickResponse<ID> {
+    ) -> Result<(), ()> {
         if self.journals.contains_key(&execution_id) {
             debug!("Execution is already initialized");
-            return TickResponse::PersistResult {
-                resp_sender,
-                result: Err(()),
-            };
+            return Err(());
         }
         let journal = ExecutionJournal::new(
             execution_id.clone(),
@@ -727,11 +725,7 @@ impl<ID: ExecutionId> DbTask<ID> {
             .insert(execution_id.clone(), journal)
             .expect_none_or_log("journals cannot contain the new execution");
         self.index.update(execution_id, &self.journals);
-
-        TickResponse::PersistResult {
-            resp_sender,
-            result: Ok(()),
-        }
+        Ok(())
     }
 
     fn lock(
@@ -776,6 +770,28 @@ impl<ID: ExecutionId> DbTask<ID> {
         version: Version,
         event: ExecutionEventInner<ID>,
     ) -> Result<(), ()> {
+        if let ExecutionEventInner::Created {
+            execution_id,
+            ffqn,
+            params,
+            parent,
+            scheduled_at,
+        } = event
+        {
+            return if version == 0 {
+                self.create(
+                    received_at,
+                    execution_id,
+                    ffqn,
+                    params,
+                    scheduled_at,
+                    parent,
+                )
+            } else {
+                warn!("Wrong version");
+                return Err(());
+            };
+        }
         // Check version
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             warn!("Not found");
