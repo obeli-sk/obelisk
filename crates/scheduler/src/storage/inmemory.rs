@@ -35,63 +35,63 @@ use self::{
 
 type ExecutorName = Arc<String>;
 
-#[derive(Clone, Debug)]
-enum ExecutionEvent<ID: ExecutionId> {
+#[derive(Clone, Debug, derive_more::Display)]
+#[display(fmt = "{event}")]
+struct ExecutionEvent<ID: ExecutionId> {
+    created_at: DateTime<Utc>,
+    event: ExecutionEventInner<ID>,
+}
+
+#[derive(Clone, Debug, derive_more::Display)]
+enum ExecutionEventInner<ID: ExecutionId> {
     /// Created by an external system or a scheduler when requesting a child execution or
-    /// an executor when continuing as new (`FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
+    /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
     // After optional expiry(`scheduled_at`) interpreted as pending.
+    #[display(fmt = "Created({ffqn})")]
     Created {
         execution_id: ID,
         ffqn: FunctionFqn,
         params: Params,
         parent: Option<ID>,
         scheduled_at: Option<DateTime<Utc>>,
-        created_at: DateTime<Utc>,
     },
     // Created by an executor.
     // Either immediately followed by an execution request by an executor or
     // after expiry immediately followed by WaitingForExecutor by a scheduler.
+    #[display(fmt = "Locked")]
     Locked {
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
-        created_at: DateTime<Utc>,
     },
     // Created by the executor holding last lock.
     // Processed by a scheduler.
     // After expiry interpreted as pending.
+    #[display(fmt = "IntermittentFailure")]
     IntermittentFailure {
         expires_at: DateTime<Utc>,
         reason: String,
-        created_at: DateTime<Utc>,
     },
     // Created by the executor holding last lock.
     // Processed by a scheduler.
     // After expiry interpreted as pending.
-    IntermittentTimeout {
-        expires_at: DateTime<Utc>,
-        created_at: DateTime<Utc>,
-    },
+    #[display(fmt = "IntermittentTimeout")]
+    IntermittentTimeout { expires_at: DateTime<Utc> },
     // Created by the executor holding last lock.
     // Processed by a scheduler if a parent execution needs to be notified,
     // also when
-    Finished {
-        result: FinishedExecutionResult<ID>,
-        created_at: DateTime<Utc>,
-    },
+    #[display(fmt = "Finished")]
+    Finished { result: FinishedExecutionResult<ID> },
     // Created by an external system or a scheduler during a race.
     // Processed by the executor holding the last Lock.
     // Imediately followed by Finished by a scheduler.
-    CancelRequest {
-        created_at: DateTime<Utc>,
-    },
+    #[display(fmt = "CancelRequest")]
+    CancelRequest,
 
-    EventHistory {
-        event: EventHistory<ID>,
-        created_at: DateTime<Utc>,
-    },
+    #[display(fmt = "EventHistory({event})")]
+    EventHistory { event: EventHistory<ID> },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 enum EventHistory<ID: ExecutionId> {
     // Created by the executor holding last lock.
     // Interpreted as pending.
@@ -104,6 +104,7 @@ enum EventHistory<ID: ExecutionId> {
     // Created by an executor
     // Processed by a scheduler
     // Later followed by DelayFinished
+    #[display(fmt = "DelayedUntilAsyncRequest({joinset_id})")]
     DelayedUntilAsyncRequest {
         joinset_id: ID,
         delay_id: ID,
@@ -112,6 +113,7 @@ enum EventHistory<ID: ExecutionId> {
     // Created by an executor
     // Processed by a scheduler - new execution must be scheduled
     // Immediately followed by ChildExecutionRequested
+    #[display(fmt = "ChildExecutionAsyncRequest({joinset_id})")]
     ChildExecutionAsyncRequest {
         joinset_id: ID,
         child_execution_id: ID,
@@ -128,6 +130,7 @@ enum EventHistory<ID: ExecutionId> {
     JoinNextFetched {
         joinset_id: ID,
     },
+    #[display(fmt = "EventHistoryAsyncResponse({joinset_id})")]
     EventHistoryAsyncResponse {
         joinset_id: ID,
         response: EventHistoryAsyncResponse<ID>,
@@ -167,12 +170,14 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
         parent: Option<ID>,
         created_at: DateTime<Utc>,
     ) -> Self {
-        let event = ExecutionEvent::Created {
-            execution_id,
-            ffqn,
-            params,
-            scheduled_at,
-            parent,
+        let event = ExecutionEvent {
+            event: ExecutionEventInner::Created {
+                execution_id,
+                ffqn,
+                params,
+                scheduled_at,
+                parent,
+            },
             created_at,
         };
         Self {
@@ -185,20 +190,15 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
     }
 
     fn created_at(&self) -> DateTime<Utc> {
-        match self.events.iter().rev().next().unwrap_or_log() {
-            ExecutionEvent::Created { created_at, .. } => *created_at,
-            ExecutionEvent::Locked { created_at, .. } => *created_at,
-            ExecutionEvent::IntermittentFailure { created_at, .. } => *created_at,
-            ExecutionEvent::IntermittentTimeout { created_at, .. } => *created_at,
-            ExecutionEvent::Finished { created_at, .. } => *created_at,
-            ExecutionEvent::CancelRequest { created_at } => *created_at,
-            ExecutionEvent::EventHistory { created_at, .. } => *created_at,
-        }
+        self.events.iter().rev().next().unwrap_or_log().created_at
     }
 
     fn ffqn(&self) -> &FunctionFqn {
         match self.events.get(0) {
-            Some(ExecutionEvent::Created { ffqn, .. }) => ffqn,
+            Some(ExecutionEvent {
+                event: ExecutionEventInner::Created { ffqn, .. },
+                ..
+            }) => ffqn,
             _ => panic!("first event must be `Created`"),
         }
     }
@@ -208,19 +208,51 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
     }
 
     fn id(&self) -> &ID {
-        let ExecutionEvent::Created { execution_id, .. } = self.events.get(0).unwrap_or_log()
+        let ExecutionEventInner::Created { execution_id, .. } =
+            &self.events.get(0).unwrap_or_log().event
         else {
             error!("First event must be `Created`");
             panic!("first event must be `Created`");
         };
         execution_id
     }
+
+    fn validate_push(
+        &mut self,
+        event: ExecutionEventInner<ID>,
+        created_at: DateTime<Utc>,
+    ) -> Result<(), ()> {
+        if let ExecutionEventInner::Locked { .. } = event {
+            match index::potentially_pending(self) {
+                PotentiallyPending::PendingNow => {}
+                PotentiallyPending::PendingAfterExpiry(pending_start)
+                    if pending_start <= created_at => {}
+                other => {
+                    warn!("Cannot be locked: {other:?}");
+                    return Err(());
+                }
+            }
+        }
+        self.events.push_back(ExecutionEvent { event, created_at });
+        Ok(())
+    }
+
+    fn event_history(&self) -> Vec<EventHistory<ID>> {
+        self.events
+            .iter()
+            .filter_map(|event| {
+                if let ExecutionEventInner::EventHistory { event: eh, .. } = &event.event {
+                    Some(eh.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 mod api {
-    use crate::FinishedExecutionResult;
-
-    use super::{EventHistory, ExecutorName};
+    use super::{EventHistory, ExecutionEventInner, ExecutorName};
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn, Params};
     use tokio::sync::oneshot;
@@ -241,14 +273,14 @@ mod api {
 
     #[derive(Debug, derive_more::Display)]
     pub(crate) enum ExecutionSpecificRequest<ID: ExecutionId> {
-        #[display(fmt = "Create({ffqn})")]
+        #[display(fmt = "Create")]
         Create {
             execution_id: ID,
             ffqn: FunctionFqn,
             params: Params,
             scheduled_at: Option<DateTime<Utc>>,
             parent: Option<ID>,
-            resp_sender: oneshot::Sender<Result<(), ()>>, // PersistResult
+            resp_sender: oneshot::Sender<Result<(), ()>>,
         },
         #[display(fmt = "Lock")]
         Lock {
@@ -258,32 +290,11 @@ mod api {
             expires_at: DateTime<Utc>,
             resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, ()>>,
         },
-        #[display(fmt = "IntermittentTimeout")]
-        IntermittentTimeout {
+        #[display(fmt = "Insert({event})")]
+        Insert {
             execution_id: ID,
             version: Version,
-            expires_at: DateTime<Utc>,
-            resp_sender: oneshot::Sender<Result<(), ()>>,
-        },
-        #[display(fmt = "IntermittentFailure")]
-        IntermittentFailure {
-            execution_id: ID,
-            version: Version,
-            expires_at: DateTime<Utc>,
-            reason: String,
-            resp_sender: oneshot::Sender<Result<(), ()>>,
-        },
-        #[display(fmt = "Finish")]
-        Finish {
-            execution_id: ID,
-            version: Version,
-            result: FinishedExecutionResult<ID>,
-            resp_sender: oneshot::Sender<Result<(), ()>>,
-        },
-        #[display(fmt = "Yield")]
-        Yield {
-            execution_id: ID,
-            version: Version,
+            event: ExecutionEventInner<ID>,
             resp_sender: oneshot::Sender<Result<(), ()>>,
         },
     }
@@ -301,7 +312,7 @@ mod api {
 }
 
 mod index {
-    use super::{EventHistory, ExecutionJournal};
+    use super::{EventHistory, ExecutionEventInner, ExecutionJournal};
     use crate::storage::inmemory::ExecutionEvent;
     use chrono::{DateTime, Utc};
     use concepts::ExecutionId;
@@ -412,39 +423,67 @@ mod index {
         match last_event_excluding_async_responses(journal) {
             (
                 _,
-                ExecutionEvent::Created {
-                    scheduled_at: None, ..
+                ExecutionEvent {
+                    event:
+                        ExecutionEventInner::Created {
+                            scheduled_at: None, ..
+                        },
+                    ..
                 },
             ) => PotentiallyPending::PendingNow,
             (
                 _,
-                ExecutionEvent::Created {
-                    scheduled_at: Some(scheduled_at),
+                ExecutionEvent {
+                    event:
+                        ExecutionEventInner::Created {
+                            scheduled_at: Some(scheduled_at),
+                            ..
+                        },
                     ..
                 },
             ) => PotentiallyPending::PendingAfterExpiry(scheduled_at.clone()),
-            (_, ExecutionEvent::Locked { expires_at, .. }) => {
-                PotentiallyPending::PendingAfterExpiry(*expires_at)
-            }
-            (_, ExecutionEvent::IntermittentFailure { expires_at, .. }) => {
-                PotentiallyPending::PendingAfterExpiry(*expires_at)
-            }
-            (_, ExecutionEvent::IntermittentTimeout { expires_at, .. }) => {
-                PotentiallyPending::PendingAfterExpiry(*expires_at)
-            }
             (
                 _,
-                ExecutionEvent::EventHistory {
-                    event: EventHistory::Yield { .. },
+                ExecutionEvent {
+                    event: ExecutionEventInner::Locked { expires_at, .. },
+                    ..
+                },
+            ) => PotentiallyPending::PendingAfterExpiry(*expires_at),
+            (
+                _,
+                ExecutionEvent {
+                    event: ExecutionEventInner::IntermittentFailure { expires_at, .. },
+                    ..
+                },
+            ) => PotentiallyPending::PendingAfterExpiry(*expires_at),
+            (
+                _,
+                ExecutionEvent {
+                    event: ExecutionEventInner::IntermittentTimeout { expires_at, .. },
+                    ..
+                },
+            ) => PotentiallyPending::PendingAfterExpiry(*expires_at),
+            (
+                _,
+                ExecutionEvent {
+                    event:
+                        ExecutionEventInner::EventHistory {
+                            event: EventHistory::Yield { .. },
+                            ..
+                        },
                     ..
                 },
             ) => PotentiallyPending::PendingNow,
             (
                 idx,
-                ExecutionEvent::EventHistory {
+                ExecutionEvent {
                     event:
-                        EventHistory::JoinNextBlocking {
-                            joinset_id: expected_join_set_id,
+                        ExecutionEventInner::EventHistory {
+                            event:
+                                EventHistory::JoinNextBlocking {
+                                    joinset_id: expected_join_set_id,
+                                    ..
+                                },
                             ..
                         },
                     ..
@@ -456,8 +495,12 @@ mod index {
                     .iter()
                     .skip(idx + 1)
                     .find(|event| {
-                        matches!(event, ExecutionEvent::EventHistory{event:
-                        EventHistory::EventHistoryAsyncResponse { joinset_id, .. }, ..}
+                        matches!(event, ExecutionEvent {
+                            event:
+                                ExecutionEventInner::EventHistory{event:
+                                    EventHistory::EventHistoryAsyncResponse { joinset_id, .. },
+                                .. },
+                        .. }
                         if joinset_id == expected_join_set_id)
                     })
                     .is_some()
@@ -482,8 +525,11 @@ mod index {
             .find(|(_idx, event)| {
                 !matches!(
                     event,
-                    ExecutionEvent::EventHistory {
-                        event: EventHistory::EventHistoryAsyncResponse { .. },
+                    ExecutionEvent {
+                        event: ExecutionEventInner::EventHistory {
+                            event: EventHistory::EventHistoryAsyncResponse { .. },
+                            ..
+                        },
                         ..
                     }
                 )
@@ -503,10 +549,7 @@ impl<ID: ExecutionId> ExecutionSpecificRequest<ID> {
         match self {
             ExecutionSpecificRequest::Create { execution_id, .. } => execution_id,
             ExecutionSpecificRequest::Lock { execution_id, .. } => execution_id,
-            ExecutionSpecificRequest::IntermittentTimeout { execution_id, .. } => execution_id,
-            ExecutionSpecificRequest::IntermittentFailure { execution_id, .. } => execution_id,
-            ExecutionSpecificRequest::Finish { execution_id, .. } => execution_id,
-            ExecutionSpecificRequest::Yield { execution_id, .. } => execution_id,
+            ExecutionSpecificRequest::Insert { execution_id, .. } => execution_id,
         }
     }
 }
@@ -521,7 +564,6 @@ enum TickResponse<ID: ExecutionId> {
         resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, ()>>,
         result: Result<Vec<EventHistory<ID>>, ()>,
     },
-    ScheduleNextTickAt(DateTime<Utc>),
     PersistResult {
         resp_sender: oneshot::Sender<Result<(), ()>>,
         result: Result<(), ()>,
@@ -615,11 +657,11 @@ impl<ID: ExecutionId> DbTask<ID> {
         }
         match request {
             ExecutionSpecificRequest::Create {
+                execution_id,
                 ffqn,
                 params,
                 scheduled_at,
                 parent,
-                execution_id,
                 resp_sender,
             } => self.create(
                 received_at,
@@ -630,6 +672,15 @@ impl<ID: ExecutionId> DbTask<ID> {
                 parent,
                 resp_sender,
             ),
+            ExecutionSpecificRequest::Insert {
+                execution_id,
+                version,
+                event,
+                resp_sender,
+            } => TickResponse::PersistResult {
+                resp_sender,
+                result: self.insert(received_at, execution_id, version, event),
+            },
             ExecutionSpecificRequest::Lock {
                 execution_id,
                 version,
@@ -644,43 +695,6 @@ impl<ID: ExecutionId> DbTask<ID> {
                 expires_at,
                 resp_sender,
             ),
-            ExecutionSpecificRequest::IntermittentTimeout {
-                execution_id,
-                version,
-                expires_at,
-                resp_sender,
-            } => self.intermittent_timeout(
-                received_at,
-                execution_id,
-                version,
-                expires_at,
-                resp_sender,
-            ),
-            ExecutionSpecificRequest::IntermittentFailure {
-                execution_id,
-                version,
-                expires_at,
-                reason,
-                resp_sender,
-            } => self.intermittent_failure(
-                received_at,
-                execution_id,
-                version,
-                expires_at,
-                reason,
-                resp_sender,
-            ),
-            ExecutionSpecificRequest::Finish {
-                execution_id,
-                version,
-                result,
-                resp_sender,
-            } => self.finish(received_at, execution_id, version, result, resp_sender),
-            ExecutionSpecificRequest::Yield {
-                execution_id,
-                version,
-                resp_sender,
-            } => self.yield_now(received_at, execution_id, version, resp_sender),
         }
     }
 
@@ -729,206 +743,55 @@ impl<ID: ExecutionId> DbTask<ID> {
         expires_at: DateTime<Utc>,
         resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, ()>>,
     ) -> TickResponse<ID> {
-        // Check version
-        let Some(journal) = self.journals.get_mut(&execution_id) else {
-            warn!("Not found");
-            return TickResponse::Lock {
-                resp_sender,
-                result: Err(()),
-            };
+        let event = ExecutionEventInner::Locked {
+            executor_name,
+            expires_at,
         };
-        if version != journal.version() {
-            warn!("Wrong version");
-            return TickResponse::Lock {
+
+        if self
+            .insert(received_at, execution_id.clone(), version, event)
+            .is_ok()
+        {
+            let event_history = self
+                .journals
+                .get(&execution_id)
+                .unwrap_or_log()
+                .event_history();
+            TickResponse::Lock {
+                resp_sender,
+                result: Ok(event_history),
+            }
+        } else {
+            TickResponse::Lock {
                 resp_sender,
                 result: Err(()),
-            };
-        }
-
-        match index::potentially_pending(journal) {
-            PotentiallyPending::PendingNow => {}
-            PotentiallyPending::PendingAfterExpiry(pending_start)
-                if pending_start <= received_at => {}
-            other => {
-                warn!("Cannot be locked: {other:?}");
-                return TickResponse::Lock {
-                    resp_sender,
-                    result: Err(()),
-                };
             }
         }
-        let event = ExecutionEvent::Locked {
-            executor_name,
-            created_at: received_at,
-            expires_at,
-        };
-        journal.events.push_back(event);
-
-        let event_history = journal
-            .events
-            .iter()
-            .filter_map(|event| {
-                if let ExecutionEvent::EventHistory { event: eh, .. } = event {
-                    Some(eh.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        self.index.update(execution_id, &self.journals);
-
-        TickResponse::Lock {
-            resp_sender,
-            result: Ok(event_history),
-        }
     }
 
-    fn intermittent_timeout(
+    fn insert(
         &mut self,
         received_at: DateTime<Utc>,
         execution_id: ID,
         version: Version,
-        expires_at: DateTime<Utc>,
-        resp_sender: oneshot::Sender<Result<(), ()>>,
-    ) -> TickResponse<ID> {
+        event: ExecutionEventInner<ID>,
+    ) -> Result<(), ()> {
         // Check version
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             warn!("Not found");
-            return TickResponse::PersistResult {
-                resp_sender,
-                result: Err(()),
-            };
+            return Err(());
         };
         if version != journal.version() {
             warn!("Wrong version");
-            return TickResponse::PersistResult {
-                resp_sender,
-                result: Err(()),
-            };
+            return Err(());
         }
-        let event = ExecutionEvent::IntermittentTimeout {
-            expires_at,
-            created_at: received_at,
-        };
-        journal.events.push_back(event);
+
+        if journal.validate_push(event, received_at).is_err() {
+            warn!("Validation failed");
+            return Err(());
+        }
         self.index.update(execution_id, &self.journals);
-
-        TickResponse::PersistResult {
-            resp_sender,
-            result: Ok(()),
-        }
-    }
-
-    fn intermittent_failure(
-        &mut self,
-        received_at: DateTime<Utc>,
-        execution_id: ID,
-        version: Version,
-        expires_at: DateTime<Utc>,
-        reason: String,
-        resp_sender: oneshot::Sender<Result<(), ()>>,
-    ) -> TickResponse<ID> {
-        // Check version
-        let Some(journal) = self.journals.get_mut(&execution_id) else {
-            warn!("Not found");
-            return TickResponse::PersistResult {
-                resp_sender,
-                result: Err(()),
-            };
-        };
-        if version != journal.version() {
-            warn!("Wrong version");
-            return TickResponse::PersistResult {
-                resp_sender,
-                result: Err(()),
-            };
-        }
-        let event = ExecutionEvent::IntermittentFailure {
-            expires_at,
-            reason,
-            created_at: received_at,
-        };
-        journal.events.push_back(event);
-        self.index.update(execution_id, &self.journals);
-
-        TickResponse::PersistResult {
-            resp_sender,
-            result: Ok(()),
-        }
-    }
-
-    fn finish(
-        &mut self,
-        received_at: DateTime<Utc>,
-        execution_id: ID,
-        version: Version,
-        result: FinishedExecutionResult<ID>,
-        resp_sender: oneshot::Sender<Result<(), ()>>,
-    ) -> TickResponse<ID> {
-        // Check version
-        let Some(journal) = self.journals.get_mut(&execution_id) else {
-            warn!("Not found");
-            return TickResponse::PersistResult {
-                resp_sender,
-                result: Err(()),
-            };
-        };
-        if version != journal.version() {
-            warn!("Wrong version");
-            return TickResponse::PersistResult {
-                resp_sender,
-                result: Err(()),
-            };
-        }
-        let event = ExecutionEvent::Finished {
-            result,
-            created_at: received_at,
-        };
-
-        journal.events.push_back(event);
-        self.index.update(execution_id, &self.journals);
-
-        TickResponse::PersistResult {
-            resp_sender,
-            result: Ok(()),
-        }
-    }
-
-    fn yield_now(
-        &mut self,
-        received_at: DateTime<Utc>,
-        execution_id: ID,
-        version: Version,
-        resp_sender: oneshot::Sender<Result<(), ()>>,
-    ) -> TickResponse<ID> {
-        // Check version
-        let Some(journal) = self.journals.get_mut(&execution_id) else {
-            warn!("Not found");
-            return TickResponse::PersistResult {
-                resp_sender,
-                result: Err(()),
-            };
-        };
-        if version != journal.version() {
-            warn!("Wrong version");
-            return TickResponse::PersistResult {
-                resp_sender,
-                result: Err(()),
-            };
-        }
-        let event = ExecutionEvent::EventHistory {
-            event: EventHistory::Yield,
-            created_at: received_at,
-        };
-
-        journal.events.push_back(event);
-        self.index.update(execution_id, &self.journals);
-
-        TickResponse::PersistResult {
-            resp_sender,
-            result: Ok(()),
-        }
+        Ok(())
     }
 }
 
@@ -1080,13 +943,14 @@ mod tests {
         {
             created_at += Duration::from_millis(499);
             info!("Now: {created_at}");
-            let request =
-                DbRequest::ExecutionSpecific(ExecutionSpecificRequest::IntermittentTimeout {
-                    execution_id: execution_id.clone(),
-                    version,
+            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
+                execution_id: execution_id.clone(),
+                version,
+                event: ExecutionEventInner::IntermittentTimeout {
                     expires_at: created_at + lock_expiry,
-                    resp_sender: oneshot::channel().0,
-                });
+                },
+                resp_sender: oneshot::channel().0,
+            });
             let actual = db_task.tick(DbTickRequest {
                 request,
                 received_at: created_at,
@@ -1139,9 +1003,12 @@ mod tests {
             created_at += Duration::from_millis(200);
             info!("Now: {created_at}");
 
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Yield {
+            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
                 execution_id: execution_id.clone(),
                 version,
+                event: ExecutionEventInner::EventHistory {
+                    event: EventHistory::Yield,
+                },
                 resp_sender: oneshot::channel().0,
             });
             let actual = db_task.tick(DbTickRequest {
@@ -1171,10 +1038,12 @@ mod tests {
         {
             created_at += Duration::from_millis(300);
             info!("Now: {created_at}");
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Finish {
+            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
                 execution_id: execution_id.clone(),
                 version,
-                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
+                event: ExecutionEventInner::Finished {
+                    result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
+                },
                 resp_sender: oneshot::channel().0,
             });
 
