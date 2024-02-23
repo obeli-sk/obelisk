@@ -1,1 +1,1 @@
-mod inmemory;
+mod inmemory_dao;

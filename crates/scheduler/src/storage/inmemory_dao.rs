@@ -313,7 +313,7 @@ mod api {
 
 mod index {
     use super::{EventHistory, ExecutionEventInner, ExecutionJournal};
-    use crate::storage::inmemory::ExecutionEvent;
+    use crate::storage::inmemory_dao::ExecutionEvent;
     use chrono::{DateTime, Utc};
     use concepts::ExecutionId;
     use std::collections::{BTreeMap, HashMap, HashSet};
