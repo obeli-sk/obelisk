@@ -1,1 +1,1 @@
-mod inmemory_dao;
+pub(crate) mod inmemory_dao;

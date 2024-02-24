@@ -1,21 +1,14 @@
-//! Append only database containing executions and their state changes.
-//! Current execution state can be obtained by a materialized view that listens
-//! to all changes.
-//! External listeners can subscribe to execution changes using selectors
-//! in a work-stealing fashion, meaning change will be delivered to a single
-//! listener. If the change is not processed within an expiry duration,
-//! the listener will be invalidated and the change will be delivered to another
-//! listener.
+//! Append only database containing executions and their state changes - execution journal.
+//! Current execution state can be obtained by getting the last (non-async-response)
+//! state from the execution journal.
 //!
-//! Each row is keyed by execution id and version that is incremented by 1 on
-//! every new change. First change with the expected version wins.
+//! When inserting, the row in the journal must contain a version that must be equal
+//! to the current number of events in the journal. First change with the expected version wins.
 //!
 //! There can be many schedulers and executors operating on the same execution.
 //!
-//! Executors subscribe to changes by a list of supported `ffqn`s.
-//! Schedulers subscribe to changes belonging to them, e.g. `Requested`
-//!
-//! For any given tuple (execution_id, version), first write with the next version wins.
+//! Schedulers subscribe to pending executions using `FetchPending` with a list of
+//! fully qualified function names that are supported.
 
 use crate::FinishedExecutionResult;
 use chrono::{DateTime, Utc};
@@ -94,8 +87,14 @@ enum ExecutionEventInner<ID: ExecutionId> {
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 enum EventHistory<ID: ExecutionId> {
     // Created by the executor holding last lock.
-    // Interpreted as pending.
+    // Interpreted as lock being ended.
     Yield,
+    #[display(fmt = "Persist")]
+    // Created by the executor holding last lock.
+    // Does not block the execution
+    Persist {
+        value: Vec<u8>,
+    },
     // Created by the executor holding last lock.
     // Does not block the execution
     JoinSet {
@@ -251,7 +250,7 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
     }
 }
 
-mod api {
+pub(crate) mod api {
     use super::{EventHistory, ExecutionEventInner, ExecutorName};
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn, Params};
@@ -321,14 +320,14 @@ mod index {
     use tracing_unwrap::OptionExt;
 
     #[derive(Debug)]
-    pub(crate) struct JournalsIndex<ID: ExecutionId> {
+    pub(super) struct JournalsIndex<ID: ExecutionId> {
         pending: HashSet<ID>,
         pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ID>>,
         pending_scheduled_rev: HashMap<ID, DateTime<Utc>>,
     }
 
     impl<ID: ExecutionId> JournalsIndex<ID> {
-        pub(crate) fn fetch_pending<'a>(
+        pub(super) fn fetch_pending<'a>(
             &self,
             journals: &'a HashMap<ID, ExecutionJournal<ID>>,
             received_at: DateTime<Utc>,
@@ -370,7 +369,7 @@ mod index {
             pending
         }
 
-        pub(crate) fn update(
+        pub(super) fn update(
             &mut self,
             execution_id: ID,
             journals: &HashMap<ID, ExecutionJournal<ID>>,
@@ -410,14 +409,14 @@ mod index {
     }
 
     #[derive(Debug)]
-    pub(crate) enum PotentiallyPending {
+    pub(super) enum PotentiallyPending {
         PendingNow,
         PendingAfterExpiry(DateTime<Utc>),
         PendingAfterExternalEvent,
         NotPending,
     }
 
-    pub(crate) fn potentially_pending<ID: ExecutionId>(
+    pub(super) fn potentially_pending<ID: ExecutionId>(
         journal: &ExecutionJournal<ID>,
     ) -> PotentiallyPending {
         match last_event_excluding_async_responses(journal) {
@@ -539,7 +538,7 @@ mod index {
 }
 
 #[derive(Debug)]
-struct DbTask<ID: ExecutionId> {
+pub(crate) struct DbTask<ID: ExecutionId> {
     journals: HashMap<ID, ExecutionJournal<ID>>,
     index: JournalsIndex<ID>,
 }
@@ -555,7 +554,7 @@ impl<ID: ExecutionId> ExecutionSpecificRequest<ID> {
 }
 
 #[derive(Debug)]
-enum TickResponse<ID: ExecutionId> {
+pub(crate) enum DbTickResponse<ID: ExecutionId> {
     FetchPending {
         resp_sender: oneshot::Sender<Vec<(ID, Version, Option<DateTime<Utc>>)>>,
         message: Vec<(ID, Version, Option<DateTime<Utc>>)>,
@@ -570,8 +569,27 @@ enum TickResponse<ID: ExecutionId> {
     },
 }
 
+impl<ID: ExecutionId> DbTickResponse<ID> {
+    pub(crate) fn send(self) -> Result<(), ()> {
+        match self {
+            DbTickResponse::FetchPending {
+                resp_sender,
+                message,
+            } => resp_sender.send(message).map_err(|_| ()),
+            DbTickResponse::Lock {
+                resp_sender,
+                result,
+            } => resp_sender.send(result).map_err(|_| ()),
+            DbTickResponse::PersistResult {
+                resp_sender,
+                result,
+            } => resp_sender.send(result).map_err(|_| ()),
+        }
+    }
+}
+
 impl<ID: ExecutionId> DbTask<ID> {
-    fn new(rpc_capacity: usize) -> (Self, mpsc::Sender<DbRequest<ID>>) {
+    pub(crate) fn new(rpc_capacity: usize) -> (Self, mpsc::Sender<DbRequest<ID>>) {
         let (client_to_store_req_sender, client_to_store_receiver) =
             mpsc::channel::<DbRequest<ID>>(rpc_capacity);
 
@@ -582,7 +600,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         (task, client_to_store_req_sender)
     }
 
-    fn tick(&mut self, request: DbTickRequest<ID>) -> TickResponse<ID> {
+    pub(crate) fn tick(&mut self, request: DbTickRequest<ID>) -> DbTickResponse<ID> {
         let DbTickRequest {
             request,
             received_at,
@@ -597,7 +615,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         &mut self,
         request: GeneralRequest<ID>,
         received_at: DateTime<Utc>,
-    ) -> TickResponse<ID> {
+    ) -> DbTickResponse<ID> {
         trace!("Received General event {request:?} at `{received_at}`");
         match request {
             GeneralRequest::FetchPending {
@@ -625,7 +643,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         created_since: Option<DateTime<Utc>>,
         ffqns: Vec<FunctionFqn>,
         resp_sender: oneshot::Sender<Vec<(ID, Version, Option<DateTime<Utc>>)>>,
-    ) -> TickResponse<ID> {
+    ) -> DbTickResponse<ID> {
         let pending = self.index.fetch_pending(
             &self.journals,
             received_at,
@@ -638,7 +656,7 @@ impl<ID: ExecutionId> DbTask<ID> {
             .into_iter()
             .map(|(journal, scheduled_at)| (journal.id().clone(), journal.version(), scheduled_at))
             .collect();
-        TickResponse::FetchPending {
+        DbTickResponse::FetchPending {
             resp_sender,
             message: pending,
         }
@@ -649,7 +667,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         &mut self,
         request: ExecutionSpecificRequest<ID>,
         received_at: DateTime<Utc>,
-    ) -> TickResponse<ID> {
+    ) -> DbTickResponse<ID> {
         if tracing::enabled!(Level::TRACE) {
             trace!("Received {request:?} at `{received_at}`");
         } else {
@@ -663,7 +681,7 @@ impl<ID: ExecutionId> DbTask<ID> {
                 scheduled_at,
                 parent,
                 resp_sender,
-            } => TickResponse::PersistResult {
+            } => DbTickResponse::PersistResult {
                 resp_sender,
                 result: self.create(
                     received_at,
@@ -679,7 +697,7 @@ impl<ID: ExecutionId> DbTask<ID> {
                 version,
                 event,
                 resp_sender,
-            } => TickResponse::PersistResult {
+            } => DbTickResponse::PersistResult {
                 resp_sender,
                 result: self.insert(received_at, execution_id, version, event),
             },
@@ -736,7 +754,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
         resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, ()>>,
-    ) -> TickResponse<ID> {
+    ) -> DbTickResponse<ID> {
         let event = ExecutionEventInner::Locked {
             executor_name,
             expires_at,
@@ -751,12 +769,12 @@ impl<ID: ExecutionId> DbTask<ID> {
                 .get(&execution_id)
                 .unwrap_or_log()
                 .event_history();
-            TickResponse::Lock {
+            DbTickResponse::Lock {
                 resp_sender,
                 result: Ok(event_history),
             }
         } else {
-            TickResponse::Lock {
+            DbTickResponse::Lock {
                 resp_sender,
                 result: Err(()),
             }
@@ -851,7 +869,7 @@ mod tests {
         });
         assert_matches!(
             actual,
-            TickResponse::FetchPending {
+            DbTickResponse::FetchPending {
                 message,
                 ..
             } => message
@@ -877,7 +895,7 @@ mod tests {
             request,
             received_at: at,
         });
-        assert_matches!(actual, TickResponse::Lock { result: Ok(event_history), .. } => event_history)
+        assert_matches!(actual, DbTickResponse::Lock { result: Ok(event_history), .. } => event_history)
     }
 
     #[test]
@@ -885,7 +903,7 @@ mod tests {
         set_up();
         let (mut db_task, _request_sender) = DbTask::new(1);
         let execution_id = WorkflowId::generate();
-        let mut created_at = Utc
+        let mut now = Utc
             .from_local_datetime(
                 &NaiveDate::from_ymd_opt(1970, 1, 1)
                     .unwrap()
@@ -894,8 +912,8 @@ mod tests {
             )
             .unwrap();
 
-        info!("Now: {created_at}");
-        assert_eq!(0, request_pending(&mut db_task, created_at).len());
+        info!("Now: {now}");
+        assert_eq!(0, request_pending(&mut db_task, now).len());
         let exec = Arc::new("exec1".to_string());
         let lock_expiry = Duration::from_millis(500);
         let mut version = 0;
@@ -911,42 +929,42 @@ mod tests {
             });
             let actual = db_task.tick(DbTickRequest {
                 request,
-                received_at: created_at,
+                received_at: now,
             });
-            assert_matches!(actual, TickResponse::PersistResult { result: Ok(()), .. });
+            assert_matches!(actual, DbTickResponse::PersistResult { result: Ok(()), .. });
             version += 1;
         }
         // FetchPending
         {
-            created_at += Duration::from_secs(1);
-            info!("Now: {created_at}");
-            let pending = request_pending(&mut db_task, created_at);
+            now += Duration::from_secs(1);
+            info!("Now: {now}");
+            let pending = request_pending(&mut db_task, now);
             assert_eq!(1, pending.len());
             assert_eq!((execution_id.clone(), 1_usize, None), pending[0]);
         }
         // Lock
         {
-            created_at += Duration::from_secs(1);
-            info!("Now: {created_at}");
+            now += Duration::from_secs(1);
+            info!("Now: {now}");
             let event_history = lock(
                 &mut db_task,
-                created_at,
+                now,
                 exec.clone(),
                 execution_id.clone(),
                 lock_expiry,
                 version,
             );
             assert_eq!(0, event_history.len());
-            assert_eq!(0, request_pending(&mut db_task, created_at).len());
+            assert_eq!(0, request_pending(&mut db_task, now).len());
             version += 1;
         }
         // lock expired, another executor issues Lock
         {
-            created_at += lock_expiry + Duration::from_millis(1);
-            info!("Now: {created_at}");
+            now += lock_expiry + Duration::from_millis(1);
+            info!("Now: {now}");
             let event_history = lock(
                 &mut db_task,
-                created_at,
+                now,
                 exec.clone(),
                 execution_id.clone(),
                 lock_expiry,
@@ -957,42 +975,42 @@ mod tests {
         }
         // intermittent timeout
         {
-            created_at += Duration::from_millis(499);
-            info!("Now: {created_at}");
+            now += Duration::from_millis(499);
+            info!("Now: {now}");
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
                 execution_id: execution_id.clone(),
                 version,
                 event: ExecutionEventInner::IntermittentTimeout {
-                    expires_at: created_at + lock_expiry,
+                    expires_at: now + lock_expiry,
                 },
                 resp_sender: oneshot::channel().0,
             });
             let actual = db_task.tick(DbTickRequest {
                 request,
-                received_at: created_at,
+                received_at: now,
             });
-            assert_matches!(actual, TickResponse::PersistResult { result: Ok(()), .. });
-            assert_eq!(0, request_pending(&mut db_task, created_at).len());
+            assert_matches!(actual, DbTickResponse::PersistResult { result: Ok(()), .. });
+            assert_eq!(0, request_pending(&mut db_task, now).len());
             version += 1;
         }
         // Attempt to lock while in a timeout
         {
-            created_at += Duration::from_millis(300);
-            info!("Now: {created_at}");
+            now += Duration::from_millis(300);
+            info!("Now: {now}");
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
                 execution_id: execution_id.clone(),
                 version,
                 executor_name: exec.clone(),
-                expires_at: created_at + lock_expiry,
+                expires_at: now + lock_expiry,
                 resp_sender: oneshot::channel().0,
             });
             let actual = db_task.tick(DbTickRequest {
                 request,
-                received_at: created_at,
+                received_at: now,
             });
             assert_matches!(
                 actual,
-                TickResponse::Lock {
+                DbTickResponse::Lock {
                     result: Err(()),
                     ..
                 }
@@ -1001,11 +1019,11 @@ mod tests {
         }
         // Lock again
         {
-            created_at += Duration::from_millis(200);
-            info!("Now: {created_at}");
+            now += Duration::from_millis(200);
+            info!("Now: {now}");
             let event_history = lock(
                 &mut db_task,
-                created_at,
+                now,
                 exec.clone(),
                 execution_id.clone(),
                 lock_expiry,
@@ -1016,8 +1034,8 @@ mod tests {
         }
         // Yield
         {
-            created_at += Duration::from_millis(200);
-            info!("Now: {created_at}");
+            now += Duration::from_millis(200);
+            info!("Now: {now}");
 
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
                 execution_id: execution_id.clone(),
@@ -1029,18 +1047,18 @@ mod tests {
             });
             let actual = db_task.tick(DbTickRequest {
                 request,
-                received_at: created_at,
+                received_at: now,
             });
-            assert_matches!(actual, TickResponse::PersistResult { result: Ok(()), .. });
+            assert_matches!(actual, DbTickResponse::PersistResult { result: Ok(()), .. });
             version += 1;
         }
         // Lock again
         {
-            created_at += Duration::from_millis(200);
-            info!("Now: {created_at}");
+            now += Duration::from_millis(200);
+            info!("Now: {now}");
             let event_history = lock(
                 &mut db_task,
-                created_at,
+                now,
                 exec.clone(),
                 execution_id.clone(),
                 lock_expiry,
@@ -1052,8 +1070,8 @@ mod tests {
         }
         // Finish
         {
-            created_at += Duration::from_millis(300);
-            info!("Now: {created_at}");
+            now += Duration::from_millis(300);
+            info!("Now: {now}");
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
                 execution_id: execution_id.clone(),
                 version,
@@ -1065,9 +1083,9 @@ mod tests {
 
             let actual = db_task.tick(DbTickRequest {
                 request,
-                received_at: created_at,
+                received_at: now,
             });
-            assert_matches!(actual, TickResponse::PersistResult { result: Ok(()), .. })
+            assert_matches!(actual, DbTickResponse::PersistResult { result: Ok(()), .. })
         }
     }
 }

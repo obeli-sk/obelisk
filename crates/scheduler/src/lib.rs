@@ -5,6 +5,7 @@ use concepts::{Params, SupportedFunctionResult};
 use std::time::Duration;
 
 mod memory;
+mod scheduler;
 mod storage;
 
 mod worker {

@@ -223,7 +223,9 @@ impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
 }
 
 // FIXME: rename to UniqueId
-pub trait ExecutionId: Clone + Hash + Display + Debug + Eq + PartialEq + Send + 'static {
+pub trait ExecutionId:
+    Clone + Hash + Display + Debug + Eq + PartialEq + Send + Sync + 'static
+{
     #[must_use]
     fn generate() -> Self;
 }
