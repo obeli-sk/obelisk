@@ -50,6 +50,14 @@ mod worker {
         ) -> Result<WorkerCommand<ID>, WorkerError>;
     }
 
+    #[derive(thiserror::Error, Clone, Debug)]
+    pub enum DbError {
+        #[error("send error")]
+        SendError,
+        #[error("receive error")]
+        RecvError,
+    }
+
     #[async_trait]
     pub trait DbConnection<ID: ExecutionId> {
         async fn fetch_pending(
@@ -58,20 +66,20 @@ mod worker {
             expiring_before: DateTime<Utc>,
             created_since: Option<DateTime<Utc>>,
             ffqns: Vec<FunctionFqn>,
-        ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, ()>;
+        ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, DbError>;
         async fn lock(
             &self,
             execution_id: ID,
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-        ) -> Result<Vec<EventHistory<ID>>, ()>;
+        ) -> Result<Result<Vec<EventHistory<ID>>, ()>, DbError>;
         async fn insert(
             &self,
             execution_id: ID,
             version: Version,
             event: ExecutionEventInner<ID>,
-        ) -> Result<(), ()>;
+        ) -> Result<Result<(), ()>, DbError>;
     }
 
     #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
