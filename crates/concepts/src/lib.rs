@@ -224,7 +224,7 @@ impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
 
 // FIXME: rename to UniqueId
 pub trait ExecutionId:
-    Clone + Hash + Display + Debug + Eq + PartialEq + Send + Sync + 'static
+    Clone + Hash + Display + Debug + Eq + PartialEq + Send + Sync + std::cmp::Ord + 'static
 {
     #[must_use]
     fn generate() -> Self;
@@ -237,7 +237,7 @@ pub mod workflow_id {
 
     use crate::ExecutionId;
 
-    #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Hash)]
+    #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Hash, PartialOrd, Ord)]
     pub struct WorkflowId(Arc<String>);
     impl WorkflowId {
         #[must_use]

@@ -10,7 +10,9 @@
 //! Schedulers subscribe to pending executions using `FetchPending` with a list of
 //! fully qualified function names that are supported.
 
-use crate::FinishedExecutionResult;
+use crate::{worker::DbConnection, FinishedExecutionResult};
+use assert_matches::assert_matches;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn, Params};
 use std::{
@@ -19,14 +21,14 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, instrument, trace, warn, Level};
-use tracing_unwrap::OptionExt;
+use tracing_unwrap::{OptionExt, ResultExt};
 
 use self::{
     api::{DbRequest, DbTickRequest, ExecutionSpecificRequest, GeneralRequest, Version},
     index::{JournalsIndex, PotentiallyPending},
 };
 
-type ExecutorName = Arc<String>;
+pub type ExecutorName = Arc<String>;
 
 #[derive(Clone, Debug, derive_more::Display)]
 #[display(fmt = "{event}")]
@@ -36,7 +38,7 @@ struct ExecutionEvent<ID: ExecutionId> {
 }
 
 #[derive(Clone, Debug, derive_more::Display)]
-enum ExecutionEventInner<ID: ExecutionId> {
+pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
     // After optional expiry(`scheduled_at`) interpreted as pending.
@@ -85,7 +87,7 @@ enum ExecutionEventInner<ID: ExecutionId> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-enum EventHistory<ID: ExecutionId> {
+pub(crate) enum EventHistory<ID: ExecutionId> {
     // Created by the executor holding last lock.
     // Interpreted as lock being ended.
     Yield,
@@ -304,8 +306,8 @@ pub(crate) mod api {
             batch_size: usize,
             expiring_before: DateTime<Utc>,
             created_since: Option<DateTime<Utc>>,
-            resp_sender: oneshot::Sender<Vec<(ID, Version, Option<DateTime<Utc>>)>>,
             ffqns: Vec<FunctionFqn>,
+            resp_sender: oneshot::Sender<Vec<(ID, Version, Option<DateTime<Utc>>)>>,
         },
     }
 }
@@ -315,14 +317,14 @@ mod index {
     use crate::storage::inmemory_dao::ExecutionEvent;
     use chrono::{DateTime, Utc};
     use concepts::ExecutionId;
-    use std::collections::{BTreeMap, HashMap, HashSet};
+    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
     use tracing::error;
     use tracing_unwrap::OptionExt;
 
     #[derive(Debug)]
     pub(super) struct JournalsIndex<ID: ExecutionId> {
-        pending: HashSet<ID>,
-        pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ID>>,
+        pending: BTreeSet<ID>,
+        pending_scheduled: BTreeMap<DateTime<Utc>, BTreeSet<ID>>,
         pending_scheduled_rev: HashMap<ID, DateTime<Utc>>,
     }
 
@@ -829,79 +831,167 @@ impl<ID: ExecutionId> DbTask<ID> {
     }
 }
 
+struct TickBasedDbConnection<ID: ExecutionId> {
+    db_task: Arc<std::sync::Mutex<DbTask<ID>>>,
+    received_at: Arc<std::sync::Mutex<VecDeque<DateTime<Utc>>>>,
+}
+
+impl<ID: ExecutionId> TickBasedDbConnection<ID> {
+    fn next_received_at(&self) -> DateTime<Utc> {
+        self.received_at
+            .lock()
+            .unwrap_or_log()
+            .pop_front()
+            .expect_or_log("missing `received_at`")
+    }
+}
+
+#[async_trait]
+impl<ID: ExecutionId> DbConnection<ID> for TickBasedDbConnection<ID> {
+    async fn fetch_pending(
+        &self,
+        batch_size: usize,
+        expiring_before: DateTime<Utc>,
+        created_since: Option<DateTime<Utc>>,
+        ffqns: Vec<FunctionFqn>,
+    ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, ()> {
+        let received_at = self.next_received_at();
+        let request = DbRequest::General(GeneralRequest::FetchPending {
+            batch_size,
+            expiring_before,
+            created_since,
+            ffqns,
+            resp_sender: oneshot::channel().0,
+        });
+        let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
+            request,
+            received_at,
+        });
+        Ok(assert_matches!(response, DbTickResponse::FetchPending {  message, .. } => message))
+    }
+
+    async fn lock(
+        &self,
+        execution_id: ID,
+        version: Version,
+        executor_name: ExecutorName,
+        expires_at: DateTime<Utc>,
+    ) -> Result<Vec<EventHistory<ID>>, ()> {
+        let received_at = self.next_received_at();
+        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
+            execution_id,
+            version,
+            executor_name,
+            expires_at,
+            resp_sender: oneshot::channel().0,
+        });
+        let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
+            request,
+            received_at,
+        });
+        assert_matches!(response, DbTickResponse::Lock { result, .. } => result)
+    }
+    async fn insert(
+        &self,
+        execution_id: ID,
+        version: Version,
+        event: ExecutionEventInner<ID>,
+    ) -> Result<(), ()> {
+        let received_at = self.next_received_at();
+
+        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
+            execution_id,
+            version,
+            event,
+            resp_sender: oneshot::channel().0,
+        });
+        let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
+            request,
+            received_at,
+        });
+        assert_matches!(response, DbTickResponse::PersistResult { result, .. } => result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assert_matches::assert_matches;
     use chrono::{NaiveDate, TimeZone};
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
     use std::time::Duration;
     use tracing::info;
 
-    static INIT: std::sync::Once = std::sync::Once::new();
     fn set_up() {
-        INIT.call_once(|| {
-            use tracing_subscriber::layer::SubscriberExt;
-            use tracing_subscriber::util::SubscriberInitExt;
-            tracing_subscriber::registry()
-                .with(tracing_subscriber::fmt::layer().without_time())
-                .with(tracing_subscriber::EnvFilter::from_default_env())
-                .init();
-        });
+        crate::testing::set_up();
     }
 
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
 
-    fn request_pending<ID: ExecutionId>(
-        db_task: &mut DbTask<ID>,
-        at: DateTime<Utc>,
+    async fn request_pending<ID: ExecutionId>(
+        db_connection: &impl DbConnection<ID>,
+        now: DateTime<Utc>,
+        received_at: &std::sync::Mutex<VecDeque<DateTime<Utc>>>,
     ) -> Vec<(ID, Version, Option<DateTime<Utc>>)> {
-        let request = DbRequest::General(GeneralRequest::FetchPending {
-            batch_size: 1,
-            resp_sender: oneshot::channel().0,
-            expiring_before: at + Duration::from_secs(1),
-            created_since: None,
-            ffqns: vec![SOME_FFQN.to_owned()],
-        });
-        let actual = db_task.tick(DbTickRequest {
-            request,
-            received_at: at,
-        });
-        assert_matches!(
-            actual,
-            DbTickResponse::FetchPending {
-                message,
-                ..
-            } => message
-        )
+        assert!(received_at.lock().unwrap_or_log().is_empty());
+        received_at.lock().unwrap_or_log().push_back(now);
+        let pending = db_connection
+            .fetch_pending(
+                1,
+                now + Duration::from_secs(1),
+                None,
+                vec![SOME_FFQN.to_owned()],
+            )
+            .await
+            .unwrap_or_log();
+        assert!(received_at.lock().unwrap_or_log().is_empty());
+        pending
     }
 
-    fn lock<ID: ExecutionId>(
-        db_task: &mut DbTask<ID>,
-        at: DateTime<Utc>,
-        exec: ExecutorName,
+    async fn lock<ID: ExecutionId>(
+        db_connection: &impl DbConnection<ID>,
+        now: DateTime<Utc>,
+        received_at: &std::sync::Mutex<VecDeque<DateTime<Utc>>>,
         execution_id: ID,
-        lock_expiry: Duration,
         version: Version,
-    ) -> Vec<EventHistory<ID>> {
-        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
-            execution_id,
-            version,
-            executor_name: exec,
-            expires_at: at + lock_expiry,
-            resp_sender: oneshot::channel().0,
-        });
-        let actual = db_task.tick(DbTickRequest {
-            request,
-            received_at: at,
-        });
-        assert_matches!(actual, DbTickResponse::Lock { result: Ok(event_history), .. } => event_history)
+        executor_name: ExecutorName,
+        lock_expiry: Duration,
+    ) -> Result<Vec<EventHistory<ID>>, ()> {
+        assert!(received_at.lock().unwrap_or_log().is_empty());
+        received_at.lock().unwrap_or_log().push_back(now);
+        let res = db_connection
+            .lock(execution_id, version, executor_name, now + lock_expiry)
+            .await;
+        assert!(received_at.lock().unwrap_or_log().is_empty());
+        res
     }
 
-    #[test]
-    fn lock_batch() {
+    async fn insert<ID: ExecutionId>(
+        db_connection: &impl DbConnection<ID>,
+        now: DateTime<Utc>,
+        received_at: &std::sync::Mutex<VecDeque<DateTime<Utc>>>,
+        execution_id: ID,
+        version: Version,
+        event: ExecutionEventInner<ID>,
+    ) {
+        assert!(received_at.lock().unwrap_or_log().is_empty());
+        received_at.lock().unwrap_or_log().push_back(now);
+        db_connection
+            .insert(execution_id, version, event)
+            .await
+            .unwrap_or_log();
+        assert!(received_at.lock().unwrap_or_log().is_empty());
+    }
+
+    #[tokio::test]
+    async fn lock_batch() {
         set_up();
-        let (mut db_task, _request_sender) = DbTask::new(1);
+        let (db_task, _request_sender) = DbTask::new(1);
+        let db_task = Arc::new(std::sync::Mutex::new(db_task));
+        let received_at: Arc<std::sync::Mutex<VecDeque<DateTime<Utc>>>> = Default::default();
+        let db_connection = TickBasedDbConnection {
+            db_task: db_task.clone(),
+            received_at: received_at.clone(),
+        };
         let execution_id = WorkflowId::generate();
         let mut now = Utc
             .from_local_datetime(
@@ -911,34 +1001,38 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-
         info!("Now: {now}");
-        assert_eq!(0, request_pending(&mut db_task, now).len());
+        assert!(request_pending(&db_connection, now, &received_at)
+            .await
+            .is_empty());
         let exec = Arc::new("exec1".to_string());
         let lock_expiry = Duration::from_millis(500);
         let mut version = 0;
         // Create
         {
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Create {
+            let event = ExecutionEventInner::Created {
+                execution_id: execution_id.clone(),
                 ffqn: SOME_FFQN.to_owned(),
                 params: Params::default(),
                 parent: None,
                 scheduled_at: None,
-                execution_id: execution_id.clone(),
-                resp_sender: oneshot::channel().0,
-            });
-            let actual = db_task.tick(DbTickRequest {
-                request,
-                received_at: now,
-            });
-            assert_matches!(actual, DbTickResponse::PersistResult { result: Ok(()), .. });
+            };
+            insert(
+                &db_connection,
+                now,
+                &received_at,
+                execution_id.clone(),
+                version,
+                event,
+            )
+            .await;
             version += 1;
         }
         // FetchPending
         {
             now += Duration::from_secs(1);
             info!("Now: {now}");
-            let pending = request_pending(&mut db_task, now);
+            let pending = request_pending(&db_connection, now, &received_at).await;
             assert_eq!(1, pending.len());
             assert_eq!((execution_id.clone(), 1_usize, None), pending[0]);
         }
@@ -947,15 +1041,20 @@ mod tests {
             now += Duration::from_secs(1);
             info!("Now: {now}");
             let event_history = lock(
-                &mut db_task,
+                &db_connection,
                 now,
-                exec.clone(),
+                &received_at,
                 execution_id.clone(),
-                lock_expiry,
                 version,
-            );
-            assert_eq!(0, event_history.len());
-            assert_eq!(0, request_pending(&mut db_task, now).len());
+                exec.clone(),
+                lock_expiry,
+            )
+            .await
+            .unwrap_or_log();
+            assert!(event_history.is_empty());
+            assert!(request_pending(&db_connection, now, &received_at)
+                .await
+                .is_empty());
             version += 1;
         }
         // lock expired, another executor issues Lock
@@ -963,58 +1062,56 @@ mod tests {
             now += lock_expiry + Duration::from_millis(1);
             info!("Now: {now}");
             let event_history = lock(
-                &mut db_task,
+                &db_connection,
                 now,
-                exec.clone(),
+                &received_at,
                 execution_id.clone(),
-                lock_expiry,
                 version,
-            );
-            assert_eq!(0, event_history.len());
+                exec.clone(),
+                lock_expiry,
+            )
+            .await
+            .unwrap_or_log();
+            assert!(event_history.is_empty());
             version += 1;
         }
         // intermittent timeout
         {
             now += Duration::from_millis(499);
             info!("Now: {now}");
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
-                execution_id: execution_id.clone(),
+            let event = ExecutionEventInner::IntermittentTimeout {
+                expires_at: now + lock_expiry,
+            };
+
+            insert(
+                &db_connection,
+                now,
+                &received_at,
+                execution_id.clone(),
                 version,
-                event: ExecutionEventInner::IntermittentTimeout {
-                    expires_at: now + lock_expiry,
-                },
-                resp_sender: oneshot::channel().0,
-            });
-            let actual = db_task.tick(DbTickRequest {
-                request,
-                received_at: now,
-            });
-            assert_matches!(actual, DbTickResponse::PersistResult { result: Ok(()), .. });
-            assert_eq!(0, request_pending(&mut db_task, now).len());
+                event,
+            )
+            .await;
+            assert!(request_pending(&db_connection, now, &received_at)
+                .await
+                .is_empty());
             version += 1;
         }
         // Attempt to lock while in a timeout
         {
             now += Duration::from_millis(300);
             info!("Now: {now}");
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
-                execution_id: execution_id.clone(),
+            assert!(lock(
+                &db_connection,
+                now,
+                &received_at,
+                execution_id.clone(),
                 version,
-                executor_name: exec.clone(),
-                expires_at: now + lock_expiry,
-                resp_sender: oneshot::channel().0,
-            });
-            let actual = db_task.tick(DbTickRequest {
-                request,
-                received_at: now,
-            });
-            assert_matches!(
-                actual,
-                DbTickResponse::Lock {
-                    result: Err(()),
-                    ..
-                }
-            );
+                exec.clone(),
+                lock_expiry,
+            )
+            .await
+            .is_err());
             // Version is not changed
         }
         // Lock again
@@ -1022,14 +1119,17 @@ mod tests {
             now += Duration::from_millis(200);
             info!("Now: {now}");
             let event_history = lock(
-                &mut db_task,
+                &db_connection,
                 now,
-                exec.clone(),
+                &received_at,
                 execution_id.clone(),
-                lock_expiry,
                 version,
-            );
-            assert_eq!(0, event_history.len());
+                exec.clone(),
+                lock_expiry,
+            )
+            .await
+            .unwrap_or_log();
+            assert!(event_history.is_empty());
             version += 1;
         }
         // Yield
@@ -1037,19 +1137,19 @@ mod tests {
             now += Duration::from_millis(200);
             info!("Now: {now}");
 
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
-                execution_id: execution_id.clone(),
+            let event = ExecutionEventInner::EventHistory {
+                event: EventHistory::Yield,
+            };
+            insert(
+                &db_connection,
+                now,
+                &received_at,
+                execution_id.clone(),
                 version,
-                event: ExecutionEventInner::EventHistory {
-                    event: EventHistory::Yield,
-                },
-                resp_sender: oneshot::channel().0,
-            });
-            let actual = db_task.tick(DbTickRequest {
-                request,
-                received_at: now,
-            });
-            assert_matches!(actual, DbTickResponse::PersistResult { result: Ok(()), .. });
+                event,
+            )
+            .await;
+
             version += 1;
         }
         // Lock again
@@ -1057,13 +1157,16 @@ mod tests {
             now += Duration::from_millis(200);
             info!("Now: {now}");
             let event_history = lock(
-                &mut db_task,
+                &db_connection,
                 now,
-                exec.clone(),
+                &received_at,
                 execution_id.clone(),
-                lock_expiry,
                 version,
-            );
+                exec.clone(),
+                lock_expiry,
+            )
+            .await
+            .unwrap_or_log();
             assert_eq!(1, event_history.len());
             assert_eq!(vec![EventHistory::Yield], event_history);
             version += 1;
@@ -1072,20 +1175,19 @@ mod tests {
         {
             now += Duration::from_millis(300);
             info!("Now: {now}");
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
-                execution_id: execution_id.clone(),
-                version,
-                event: ExecutionEventInner::Finished {
-                    result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
-                },
-                resp_sender: oneshot::channel().0,
-            });
+            let event = ExecutionEventInner::Finished {
+                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
+            };
 
-            let actual = db_task.tick(DbTickRequest {
-                request,
-                received_at: now,
-            });
-            assert_matches!(actual, DbTickResponse::PersistResult { result: Ok(()), .. })
+            insert(
+                &db_connection,
+                now,
+                &received_at,
+                execution_id.clone(),
+                version,
+                event,
+            )
+            .await;
         }
     }
 }

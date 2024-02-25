@@ -20,8 +20,8 @@ mod index {
 
     #[derive(Debug)]
     pub(crate) struct PendingIndex<ID: ExecutionId> {
-        pending: HashMap<ID, Version>,
-        pending_scheduled: BTreeMap<DateTime<Utc>, HashMap<ID, Version>>,
+        pending: BTreeMap<ID, Version>,
+        pending_scheduled: BTreeMap<DateTime<Utc>, BTreeMap<ID, Version>>,
         pending_scheduled_rev: HashMap<ID, DateTime<Utc>>,
     }
     impl<ID: ExecutionId> PendingIndex<ID> {
@@ -34,7 +34,7 @@ mod index {
             for (id, version, scheduled_at) in pending {
                 if let Some(scheduled_at) = scheduled_at {
                     this.pending_scheduled
-                        .insert(scheduled_at, HashMap::from([(id.clone(), version)]));
+                        .insert(scheduled_at, BTreeMap::from([(id.clone(), version)]));
                     this.pending_scheduled_rev.insert(id, scheduled_at);
                 } else {
                     this.pending.insert(id, version);
@@ -151,16 +151,8 @@ mod tests {
 
     use super::*;
 
-    static INIT: std::sync::Once = std::sync::Once::new();
     fn set_up() {
-        INIT.call_once(|| {
-            use tracing_subscriber::layer::SubscriberExt;
-            use tracing_subscriber::util::SubscriberInitExt;
-            tracing_subscriber::registry()
-                .with(tracing_subscriber::fmt::layer().without_time())
-                .with(tracing_subscriber::EnvFilter::from_default_env())
-                .init();
-        });
+        crate::testing::set_up();
     }
 
     struct MutexDatabaseConnection<ID: ExecutionId> {

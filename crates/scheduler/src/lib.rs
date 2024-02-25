@@ -4,11 +4,19 @@ use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
 use std::time::Duration;
 
-mod memory;
+// mod memory;
 mod scheduler;
 mod storage;
 
+#[cfg(test)]
+mod testing;
+
 mod worker {
+    use self::storage::inmemory_dao::{
+        api::{DbRequest, Version},
+        EventHistory, ExecutionEventInner, ExecutorName,
+    };
+
     use super::*;
     /// Worker commands sent to the worker executor.
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,13 +42,37 @@ mod worker {
     }
 
     #[async_trait]
-    pub trait Worker<S: WorkerStore<E>, E: ExecutionId> {
+    pub trait Worker<ID: ExecutionId> {
         async fn run(
             &self,
-            workflow_id: E,
+            workflow_id: ID,
             params: Params,
-            store: tokio::sync::OwnedMutexGuard<S>,
-        ) -> Result<WorkerCommand<E>, WorkerError>;
+            events: Vec<ExecutionEventInner<ID>>,
+        ) -> Result<WorkerCommand<ID>, WorkerError>;
+    }
+
+    #[async_trait]
+    pub trait DbConnection<ID: ExecutionId> {
+        async fn fetch_pending(
+            &self,
+            batch_size: usize,
+            expiring_before: DateTime<Utc>,
+            created_since: Option<DateTime<Utc>>,
+            ffqns: Vec<FunctionFqn>,
+        ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, ()>;
+        async fn lock(
+            &self,
+            execution_id: ID,
+            version: Version,
+            executor_name: ExecutorName,
+            expires_at: DateTime<Utc>,
+        ) -> Result<Vec<EventHistory<ID>>, ()>;
+        async fn insert(
+            &self,
+            execution_id: ID,
+            version: Version,
+            event: ExecutionEventInner<ID>,
+        ) -> Result<(), ()>;
     }
 
     #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
@@ -68,28 +100,30 @@ mod worker {
         },
     }
 
-    pub(crate) trait WorkerStore<E: ExecutionId> {
-        fn next_id(&mut self) -> Result<E, NonDeterminismError>;
+    // pub(crate) trait WorkerStore<E: ExecutionId> {
+    //     // sync events
+    //     fn next_id(&mut self) -> Result<E, NonDeterminismError>;
 
-        fn next_event(
-            &mut self,
-            command: &WorkerCommand<E>,
-        ) -> Result<MaybeReplayResponse<E>, NonDeterminismError>;
-    }
+    //     // async events
+    //     fn next_event(
+    //         &mut self,
+    //         command: &WorkerCommand<E>,
+    //     ) -> Result<MaybeReplayResponse<E>, NonDeterminismError>;
+    // }
 
-    pub(crate) trait WriteableWorkerStore<E: ExecutionId>:
-        WorkerStore<E> + Default + Send + 'static
-    {
-        fn restart(&mut self);
+    // pub(crate) trait WriteableWorkerStore<E: ExecutionId>:
+    //     WorkerStore<E> + Default + Send + 'static
+    // {
+    //     fn restart(&mut self);
 
-        fn persist_child_result(
-            &mut self,
-            child_execution_id: E,
-            result: FinishedExecutionResult<E>,
-        );
+    //     fn persist_child_result(
+    //         &mut self,
+    //         child_execution_id: E,
+    //         result: FinishedExecutionResult<E>,
+    //     );
 
-        fn persist_delay_passed(&mut self, duration: Duration);
-    }
+    //     fn persist_delay_passed(&mut self, duration: Duration);
+    // }
 }
 
 type FinishedExecutionResult<ID> = Result<SupportedFunctionResult, FinishedExecutionError<ID>>;
