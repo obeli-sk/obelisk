@@ -101,7 +101,7 @@ tokio = { version = "0.2", package = "madsim-tokio" }
 tracing = { version = "0.1", features = ["log"] }
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-tracing-unwrap = "0.10"
+tracing-unwrap = { version = "0.10", features = ["log-location"] }
 ulid = "1.1.0"
 wasmtime = { version = "17.0", features = ["component-model"] }
 wasmtime-wasi = "17.0"

@@ -58,6 +58,16 @@ mod worker {
         RecvError,
     }
 
+    #[derive(thiserror::Error, Clone, Debug)]
+    pub enum DbWriteError {
+        #[error("validation failed: {0}")]
+        ValidationFailed(&'static str),
+        #[error("version mismatch")]
+        VersionMismatch,
+        #[error("not found")]
+        NotFound,
+    }
+
     #[async_trait]
     pub trait DbConnection<ID: ExecutionId> {
         async fn fetch_pending(
@@ -73,13 +83,13 @@ mod worker {
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-        ) -> Result<Result<Vec<EventHistory<ID>>, ()>, DbError>;
+        ) -> Result<Result<Vec<EventHistory<ID>>, DbWriteError>, DbError>;
         async fn insert(
             &self,
             execution_id: ID,
             version: Version,
             event: ExecutionEventInner<ID>,
-        ) -> Result<Result<(), ()>, DbError>;
+        ) -> Result<Result<(), DbWriteError>, DbError>;
     }
 
     #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]

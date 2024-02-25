@@ -12,7 +12,7 @@
 
 use crate::{
     time::now,
-    worker::{DbConnection, DbError},
+    worker::{DbConnection, DbError, DbWriteError},
     FinishedExecutionResult,
 };
 use assert_matches::assert_matches;
@@ -226,15 +226,14 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
         &mut self,
         event: ExecutionEventInner<ID>,
         created_at: DateTime<Utc>,
-    ) -> Result<(), ()> {
+    ) -> Result<(), DbWriteError> {
         if let ExecutionEventInner::Locked { .. } = event {
             match index::potentially_pending(self) {
                 PotentiallyPending::PendingNow => {}
                 PotentiallyPending::PendingAfterExpiry(pending_start)
                     if pending_start <= created_at => {}
                 other => {
-                    warn!("Cannot be locked: {other:?}");
-                    return Err(());
+                    return Err(DbWriteError::ValidationFailed("already locked"));
                 }
             }
         }
@@ -257,6 +256,8 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
 }
 
 pub(crate) mod api {
+    use crate::worker::DbWriteError;
+
     use super::{EventHistory, ExecutionEventInner, ExecutorName};
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn, Params};
@@ -285,7 +286,7 @@ pub(crate) mod api {
             params: Params,
             scheduled_at: Option<DateTime<Utc>>,
             parent: Option<ID>,
-            resp_sender: oneshot::Sender<Result<(), ()>>,
+            resp_sender: oneshot::Sender<Result<(), DbWriteError>>,
         },
         #[display(fmt = "Lock")]
         Lock {
@@ -293,14 +294,14 @@ pub(crate) mod api {
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-            resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, ()>>,
+            resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, DbWriteError>>,
         },
         #[display(fmt = "Insert({event})")]
         Insert {
             execution_id: ID,
             version: Version,
             event: ExecutionEventInner<ID>,
-            resp_sender: oneshot::Sender<Result<(), ()>>,
+            resp_sender: oneshot::Sender<Result<(), DbWriteError>>,
         },
     }
 
@@ -566,32 +567,13 @@ pub(crate) enum DbTickResponse<ID: ExecutionId> {
         message: Vec<(ID, Version, Option<DateTime<Utc>>)>,
     },
     Lock {
-        resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, ()>>,
-        result: Result<Vec<EventHistory<ID>>, ()>,
+        resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, DbWriteError>>,
+        result: Result<Vec<EventHistory<ID>>, DbWriteError>,
     },
     PersistResult {
-        resp_sender: oneshot::Sender<Result<(), ()>>,
-        result: Result<(), ()>,
+        resp_sender: oneshot::Sender<Result<(), DbWriteError>>,
+        result: Result<(), DbWriteError>,
     },
-}
-
-impl<ID: ExecutionId> DbTickResponse<ID> {
-    pub(crate) fn send(self) -> Result<(), ()> {
-        match self {
-            DbTickResponse::FetchPending {
-                resp_sender,
-                message,
-            } => resp_sender.send(message).map_err(|_| ()),
-            DbTickResponse::Lock {
-                resp_sender,
-                result,
-            } => resp_sender.send(result).map_err(|_| ()),
-            DbTickResponse::PersistResult {
-                resp_sender,
-                result,
-            } => resp_sender.send(result).map_err(|_| ()),
-        }
-    }
 }
 
 impl<ID: ExecutionId> DbTask<ID> {
@@ -732,10 +714,11 @@ impl<ID: ExecutionId> DbTask<ID> {
         params: Params,
         scheduled_at: Option<DateTime<Utc>>,
         parent: Option<ID>,
-    ) -> Result<(), ()> {
+    ) -> Result<(), DbWriteError> {
         if self.journals.contains_key(&execution_id) {
-            debug!("Execution is already initialized");
-            return Err(());
+            return Err(DbWriteError::ValidationFailed(
+                "execution is already initialized",
+            ));
         }
         let journal = ExecutionJournal::new(
             execution_id.clone(),
@@ -759,31 +742,29 @@ impl<ID: ExecutionId> DbTask<ID> {
         version: Version,
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
-        resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, ()>>,
+        resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, DbWriteError>>,
     ) -> DbTickResponse<ID> {
         let event = ExecutionEventInner::Locked {
             executor_name,
             expires_at,
         };
 
-        if self
-            .insert(received_at, execution_id.clone(), version, event)
-            .is_ok()
-        {
-            let event_history = self
-                .journals
-                .get(&execution_id)
-                .unwrap_or_log()
-                .event_history();
-            DbTickResponse::Lock {
-                resp_sender,
-                result: Ok(event_history),
+        match self.insert(received_at, execution_id.clone(), version, event) {
+            Ok(()) => {
+                let event_history = self
+                    .journals
+                    .get(&execution_id)
+                    .unwrap_or_log()
+                    .event_history();
+                DbTickResponse::Lock {
+                    resp_sender,
+                    result: Ok(event_history),
+                }
             }
-        } else {
-            DbTickResponse::Lock {
+            Err(err) => DbTickResponse::Lock {
                 resp_sender,
-                result: Err(()),
-            }
+                result: Err(err),
+            },
         }
     }
 
@@ -793,7 +774,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         execution_id: ID,
         version: Version,
         event: ExecutionEventInner<ID>,
-    ) -> Result<(), ()> {
+    ) -> Result<(), DbWriteError> {
         if let ExecutionEventInner::Created {
             execution_id,
             ffqn,
@@ -813,23 +794,17 @@ impl<ID: ExecutionId> DbTask<ID> {
                 )
             } else {
                 warn!("Wrong version");
-                return Err(());
+                return Err(DbWriteError::VersionMismatch);
             };
         }
         // Check version
         let Some(journal) = self.journals.get_mut(&execution_id) else {
-            warn!("Not found");
-            return Err(());
+            return Err(DbWriteError::NotFound);
         };
         if version != journal.version() {
-            warn!("Wrong version");
-            return Err(());
+            return Err(DbWriteError::VersionMismatch);
         }
-
-        if journal.validate_push(event, received_at).is_err() {
-            warn!("Validation failed");
-            return Err(());
-        }
+        journal.validate_push(event, received_at)?;
         self.index.update(execution_id, &self.journals);
         Ok(())
     }
@@ -871,7 +846,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         version: Version,
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
-    ) -> Result<Result<Vec<EventHistory<ID>>, ()>, DbError> {
+    ) -> Result<Result<Vec<EventHistory<ID>>, DbWriteError>, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
             execution_id,
@@ -893,7 +868,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         execution_id: ID,
         version: Version,
         event: ExecutionEventInner<ID>,
-    ) -> Result<Result<(), ()>, DbError> {
+    ) -> Result<Result<(), DbWriteError>, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
             execution_id,
@@ -949,7 +924,7 @@ mod tests {
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-        ) -> Result<Result<Vec<EventHistory<ID>>, ()>, DbError> {
+        ) -> Result<Result<Vec<EventHistory<ID>>, DbWriteError>, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
                 execution_id,
                 version,
@@ -969,7 +944,7 @@ mod tests {
             execution_id: ID,
             version: Version,
             event: ExecutionEventInner<ID>,
-        ) -> Result<Result<(), ()>, DbError> {
+        ) -> Result<Result<(), DbWriteError>, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
                 execution_id,
                 version,
@@ -991,13 +966,17 @@ mod tests {
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
 
     #[tokio::test]
-    async fn lock_batch() {
+    async fn tick_based() {
         set_up();
         let (db_task, _request_sender) = DbTask::new(1);
         let db_task = Arc::new(std::sync::Mutex::new(db_task));
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
         };
+        db_workflow(db_connection).await;
+    }
+
+    async fn db_workflow(db_connection: impl DbConnection<WorkflowId>) {
         let execution_id = WorkflowId::generate();
         assert!(db_connection
             .fetch_pending(
