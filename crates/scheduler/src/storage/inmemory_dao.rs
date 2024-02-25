@@ -22,9 +22,13 @@ use concepts::{ExecutionId, FunctionFqn, Params};
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
+    time::Duration,
 };
-use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, instrument, trace, warn, Level};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::AbortHandle,
+};
+use tracing::{debug, error, info, instrument, trace, warn, Level};
 use tracing_unwrap::{OptionExt, ResultExt};
 
 use self::{
@@ -544,6 +548,38 @@ mod index {
     }
 }
 
+pub(crate) struct DbTaskHandle<ID: ExecutionId> {
+    client_to_store_req_sender: Option<mpsc::Sender<DbRequest<ID>>>,
+    abort_handle: AbortHandle,
+}
+
+impl<ID: ExecutionId> DbTaskHandle<ID> {
+    pub fn sender(&self) -> Option<mpsc::Sender<DbRequest<ID>>> {
+        self.client_to_store_req_sender.clone()
+    }
+
+    pub async fn close(&mut self) {
+        self.client_to_store_req_sender.take();
+        debug!("Gracefully closing");
+        #[cfg(not(madsim))]
+        while !self.abort_handle.is_finished() {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        info!("Gracefully closed");
+    }
+}
+
+impl<ID: ExecutionId> Drop for DbTaskHandle<ID> {
+    fn drop(&mut self) {
+        #[cfg(not(madsim))]
+        if self.abort_handle.is_finished() {
+            return;
+        }
+        warn!("Aborting the database task");
+        self.abort_handle.abort();
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct DbTask<ID: ExecutionId> {
     journals: HashMap<ID, ExecutionJournal<ID>>,
@@ -576,16 +612,57 @@ pub(crate) enum DbTickResponse<ID: ExecutionId> {
     },
 }
 
-impl<ID: ExecutionId> DbTask<ID> {
-    pub(crate) fn new(rpc_capacity: usize) -> (Self, mpsc::Sender<DbRequest<ID>>) {
-        let (client_to_store_req_sender, client_to_store_receiver) =
-            mpsc::channel::<DbRequest<ID>>(rpc_capacity);
+impl<ID: ExecutionId> DbTickResponse<ID> {
+    fn send_response(self) -> Result<(), ()> {
+        match self {
+            DbTickResponse::FetchPending {
+                resp_sender,
+                message,
+            } => resp_sender.send(message).map_err(|_| ()),
+            DbTickResponse::Lock {
+                resp_sender,
+                result,
+            } => resp_sender.send(result).map_err(|_| ()),
+            DbTickResponse::PersistResult {
+                resp_sender,
+                result,
+            } => resp_sender.send(result).map_err(|_| ()),
+        }
+    }
+}
 
-        let task = Self {
+impl<ID: ExecutionId> DbTask<ID> {
+    pub fn new_spawn(rpc_capacity: usize) -> DbTaskHandle<ID> {
+        let (client_to_store_req_sender, mut client_to_store_receiver) =
+            mpsc::channel::<DbRequest<ID>>(rpc_capacity);
+        let abort_handle = tokio::spawn(async move {
+            let mut task = Self::new();
+            while let Some(request) = client_to_store_receiver.recv().await {
+                let resp = task
+                    .tick(DbTickRequest {
+                        request,
+                        received_at: now(),
+                    })
+                    .send_response();
+                if resp.is_err() {
+                    debug!("Failed to send back the response");
+                }
+            }
+            info!("Database task finished");
+        })
+        .abort_handle();
+
+        DbTaskHandle {
+            abort_handle,
+            client_to_store_req_sender: Some(client_to_store_req_sender),
+        }
+    }
+
+    pub(crate) fn new() -> Self {
+        Self {
             journals: HashMap::default(),
             index: JournalsIndex::default(),
-        };
-        (task, client_to_store_req_sender)
+        }
     }
 
     pub(crate) fn tick(&mut self, request: DbTickRequest<ID>) -> DbTickResponse<ID> {
@@ -966,14 +1043,32 @@ mod tests {
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
 
     #[tokio::test]
-    async fn tick_based() {
+    async fn db_workflow_tick_based() {
         set_up();
-        let (db_task, _request_sender) = DbTask::new(1);
+        let db_task = DbTask::new();
         let db_task = Arc::new(std::sync::Mutex::new(db_task));
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
         };
         db_workflow(db_connection).await;
+    }
+
+    #[tokio::test]
+    async fn db_workflow_mpsc_based() {
+        set_up();
+        let db_task = DbTask::new_spawn(1);
+        let client_to_store_req_sender = db_task.sender().unwrap_or_log();
+        let db_connection = InMemoryDbConnection {
+            client_to_store_req_sender,
+        };
+        db_workflow(db_connection).await;
+    }
+
+    #[tokio::test]
+    async fn close() {
+        set_up();
+        let mut task = DbTask::<WorkflowId>::new_spawn(1);
+        task.close().await;
     }
 
     async fn db_workflow(db_connection: impl DbConnection<WorkflowId>) {
