@@ -13,8 +13,7 @@ mod testing;
 
 mod worker {
     use self::storage::inmemory_dao::{
-        api::{DbRequest, Version},
-        EventHistory, ExecutionEventInner, ExecutorName,
+        api::Version, EventHistory, ExecutionEventInner, ExecutorName,
     };
 
     use super::*;
@@ -160,5 +159,22 @@ pub enum ExecutionStatusInfo<ID: ExecutionId> {
 impl<ID: ExecutionId> ExecutionStatusInfo<ID> {
     pub fn is_finished(&self) -> bool {
         matches!(self, Self::Finished(_))
+    }
+}
+
+pub(crate) mod time {
+    use chrono::DateTime;
+    use chrono::Utc;
+
+    cfg_if::cfg_if! {
+        if #[cfg(all(test, madsim))] {
+            pub(crate) fn now() -> DateTime<Utc> {
+                DateTime::from(madsim::time::TimeHandle::current().now_time())
+            }
+        } else {
+            pub(crate) fn now() -> DateTime<Utc> {
+                Utc::now()
+            }
+        }
     }
 }

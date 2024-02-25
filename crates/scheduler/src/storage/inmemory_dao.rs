@@ -10,7 +10,7 @@
 //! Schedulers subscribe to pending executions using `FetchPending` with a list of
 //! fully qualified function names that are supported.
 
-use crate::{worker::DbConnection, FinishedExecutionResult};
+use crate::{time::now, worker::DbConnection, FinishedExecutionResult};
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -833,17 +833,6 @@ impl<ID: ExecutionId> DbTask<ID> {
 
 struct TickBasedDbConnection<ID: ExecutionId> {
     db_task: Arc<std::sync::Mutex<DbTask<ID>>>,
-    received_at: Arc<std::sync::Mutex<VecDeque<DateTime<Utc>>>>,
-}
-
-impl<ID: ExecutionId> TickBasedDbConnection<ID> {
-    fn next_received_at(&self) -> DateTime<Utc> {
-        self.received_at
-            .lock()
-            .unwrap_or_log()
-            .pop_front()
-            .expect_or_log("missing `received_at`")
-    }
 }
 
 #[async_trait]
@@ -855,7 +844,6 @@ impl<ID: ExecutionId> DbConnection<ID> for TickBasedDbConnection<ID> {
         created_since: Option<DateTime<Utc>>,
         ffqns: Vec<FunctionFqn>,
     ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, ()> {
-        let received_at = self.next_received_at();
         let request = DbRequest::General(GeneralRequest::FetchPending {
             batch_size,
             expiring_before,
@@ -865,7 +853,7 @@ impl<ID: ExecutionId> DbConnection<ID> for TickBasedDbConnection<ID> {
         });
         let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
             request,
-            received_at,
+            received_at: now(),
         });
         Ok(assert_matches!(response, DbTickResponse::FetchPending {  message, .. } => message))
     }
@@ -877,7 +865,6 @@ impl<ID: ExecutionId> DbConnection<ID> for TickBasedDbConnection<ID> {
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
     ) -> Result<Vec<EventHistory<ID>>, ()> {
-        let received_at = self.next_received_at();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
             execution_id,
             version,
@@ -887,7 +874,7 @@ impl<ID: ExecutionId> DbConnection<ID> for TickBasedDbConnection<ID> {
         });
         let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
             request,
-            received_at,
+            received_at: now(),
         });
         assert_matches!(response, DbTickResponse::Lock { result, .. } => result)
     }
@@ -897,8 +884,6 @@ impl<ID: ExecutionId> DbConnection<ID> for TickBasedDbConnection<ID> {
         version: Version,
         event: ExecutionEventInner<ID>,
     ) -> Result<(), ()> {
-        let received_at = self.next_received_at();
-
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
             execution_id,
             version,
@@ -907,7 +892,7 @@ impl<ID: ExecutionId> DbConnection<ID> for TickBasedDbConnection<ID> {
         });
         let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
             request,
-            received_at,
+            received_at: now(),
         });
         assert_matches!(response, DbTickResponse::PersistResult { result, .. } => result)
     }
@@ -916,7 +901,6 @@ impl<ID: ExecutionId> DbConnection<ID> for TickBasedDbConnection<ID> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{NaiveDate, TimeZone};
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
     use std::time::Duration;
     use tracing::info;
@@ -927,83 +911,24 @@ mod tests {
 
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
 
-    async fn request_pending<ID: ExecutionId>(
-        db_connection: &impl DbConnection<ID>,
-        now: DateTime<Utc>,
-        received_at: &std::sync::Mutex<VecDeque<DateTime<Utc>>>,
-    ) -> Vec<(ID, Version, Option<DateTime<Utc>>)> {
-        assert!(received_at.lock().unwrap_or_log().is_empty());
-        received_at.lock().unwrap_or_log().push_back(now);
-        let pending = db_connection
-            .fetch_pending(
-                1,
-                now + Duration::from_secs(1),
-                None,
-                vec![SOME_FFQN.to_owned()],
-            )
-            .await
-            .unwrap_or_log();
-        assert!(received_at.lock().unwrap_or_log().is_empty());
-        pending
-    }
-
-    async fn lock<ID: ExecutionId>(
-        db_connection: &impl DbConnection<ID>,
-        now: DateTime<Utc>,
-        received_at: &std::sync::Mutex<VecDeque<DateTime<Utc>>>,
-        execution_id: ID,
-        version: Version,
-        executor_name: ExecutorName,
-        lock_expiry: Duration,
-    ) -> Result<Vec<EventHistory<ID>>, ()> {
-        assert!(received_at.lock().unwrap_or_log().is_empty());
-        received_at.lock().unwrap_or_log().push_back(now);
-        let res = db_connection
-            .lock(execution_id, version, executor_name, now + lock_expiry)
-            .await;
-        assert!(received_at.lock().unwrap_or_log().is_empty());
-        res
-    }
-
-    async fn insert<ID: ExecutionId>(
-        db_connection: &impl DbConnection<ID>,
-        now: DateTime<Utc>,
-        received_at: &std::sync::Mutex<VecDeque<DateTime<Utc>>>,
-        execution_id: ID,
-        version: Version,
-        event: ExecutionEventInner<ID>,
-    ) {
-        assert!(received_at.lock().unwrap_or_log().is_empty());
-        received_at.lock().unwrap_or_log().push_back(now);
-        db_connection
-            .insert(execution_id, version, event)
-            .await
-            .unwrap_or_log();
-        assert!(received_at.lock().unwrap_or_log().is_empty());
-    }
-
     #[tokio::test]
     async fn lock_batch() {
         set_up();
         let (db_task, _request_sender) = DbTask::new(1);
         let db_task = Arc::new(std::sync::Mutex::new(db_task));
-        let received_at: Arc<std::sync::Mutex<VecDeque<DateTime<Utc>>>> = Default::default();
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
-            received_at: received_at.clone(),
         };
         let execution_id = WorkflowId::generate();
-        let mut now = Utc
-            .from_local_datetime(
-                &NaiveDate::from_ymd_opt(1970, 1, 1)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap(),
+        assert!(db_connection
+            .fetch_pending(
+                1,
+                now() + Duration::from_secs(1),
+                None,
+                vec![SOME_FFQN.to_owned()],
             )
-            .unwrap();
-        info!("Now: {now}");
-        assert!(request_pending(&db_connection, now, &received_at)
             .await
+            .unwrap_or_log()
             .is_empty());
         let exec = Arc::new("exec1".to_string());
         let lock_expiry = Duration::from_millis(500);
@@ -1017,177 +942,169 @@ mod tests {
                 parent: None,
                 scheduled_at: None,
             };
-            insert(
-                &db_connection,
-                now,
-                &received_at,
-                execution_id.clone(),
-                version,
-                event,
-            )
-            .await;
+            db_connection
+                .insert(execution_id.clone(), version, event)
+                .await
+                .unwrap_or_log();
             version += 1;
         }
         // FetchPending
         {
-            now += Duration::from_secs(1);
-            info!("Now: {now}");
-            let pending = request_pending(&db_connection, now, &received_at).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            info!("Now: {}", now());
+            let pending = db_connection
+                .fetch_pending(
+                    1,
+                    now() + Duration::from_secs(1),
+                    None,
+                    vec![SOME_FFQN.to_owned()],
+                )
+                .await
+                .unwrap_or_log();
             assert_eq!(1, pending.len());
             assert_eq!((execution_id.clone(), 1_usize, None), pending[0]);
         }
         // Lock
         {
-            now += Duration::from_secs(1);
-            info!("Now: {now}");
-            let event_history = lock(
-                &db_connection,
-                now,
-                &received_at,
-                execution_id.clone(),
-                version,
-                exec.clone(),
-                lock_expiry,
-            )
-            .await
-            .unwrap_or_log();
-            assert!(event_history.is_empty());
-            assert!(request_pending(&db_connection, now, &received_at)
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            info!("Now: {}", now());
+            let event_history = db_connection
+                .lock(
+                    execution_id.clone(),
+                    version,
+                    exec.clone(),
+                    now() + lock_expiry,
+                )
                 .await
+                .unwrap_or_log();
+            assert!(event_history.is_empty());
+            assert!(db_connection
+                .fetch_pending(
+                    1,
+                    now() + Duration::from_secs(1),
+                    None,
+                    vec![SOME_FFQN.to_owned()],
+                )
+                .await
+                .unwrap_or_log()
                 .is_empty());
             version += 1;
         }
         // lock expired, another executor issues Lock
         {
-            now += lock_expiry + Duration::from_millis(1);
-            info!("Now: {now}");
-            let event_history = lock(
-                &db_connection,
-                now,
-                &received_at,
-                execution_id.clone(),
-                version,
-                exec.clone(),
-                lock_expiry,
-            )
-            .await
-            .unwrap_or_log();
+            tokio::time::sleep(lock_expiry).await;
+            info!("Now: {}", now());
+            let event_history = db_connection
+                .lock(
+                    execution_id.clone(),
+                    version,
+                    exec.clone(),
+                    now() + lock_expiry,
+                )
+                .await
+                .unwrap_or_log();
             assert!(event_history.is_empty());
             version += 1;
         }
         // intermittent timeout
         {
-            now += Duration::from_millis(499);
-            info!("Now: {now}");
+            tokio::time::sleep(Duration::from_millis(499)).await;
+            info!("Now: {}", now());
             let event = ExecutionEventInner::IntermittentTimeout {
-                expires_at: now + lock_expiry,
+                expires_at: now() + lock_expiry,
             };
 
-            insert(
-                &db_connection,
-                now,
-                &received_at,
-                execution_id.clone(),
-                version,
-                event,
-            )
-            .await;
-            assert!(request_pending(&db_connection, now, &received_at)
+            db_connection
+                .insert(execution_id.clone(), version, event)
                 .await
+                .unwrap_or_log();
+            assert!(db_connection
+                .fetch_pending(
+                    1,
+                    now() + Duration::from_secs(1),
+                    None,
+                    vec![SOME_FFQN.to_owned()],
+                )
+                .await
+                .unwrap_or_log()
                 .is_empty());
             version += 1;
         }
         // Attempt to lock while in a timeout
         {
-            now += Duration::from_millis(300);
-            info!("Now: {now}");
-            assert!(lock(
-                &db_connection,
-                now,
-                &received_at,
-                execution_id.clone(),
-                version,
-                exec.clone(),
-                lock_expiry,
-            )
-            .await
-            .is_err());
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            info!("Now: {}", now());
+            assert!(db_connection
+                .lock(
+                    execution_id.clone(),
+                    version,
+                    exec.clone(),
+                    now() + lock_expiry,
+                )
+                .await
+                .is_err());
             // Version is not changed
         }
         // Lock again
         {
-            now += Duration::from_millis(200);
-            info!("Now: {now}");
-            let event_history = lock(
-                &db_connection,
-                now,
-                &received_at,
-                execution_id.clone(),
-                version,
-                exec.clone(),
-                lock_expiry,
-            )
-            .await
-            .unwrap_or_log();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            info!("Now: {}", now());
+            let event_history = db_connection
+                .lock(
+                    execution_id.clone(),
+                    version,
+                    exec.clone(),
+                    now() + lock_expiry,
+                )
+                .await
+                .unwrap_or_log();
             assert!(event_history.is_empty());
             version += 1;
         }
         // Yield
         {
-            now += Duration::from_millis(200);
-            info!("Now: {now}");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            info!("Now: {}", now());
 
             let event = ExecutionEventInner::EventHistory {
                 event: EventHistory::Yield,
             };
-            insert(
-                &db_connection,
-                now,
-                &received_at,
-                execution_id.clone(),
-                version,
-                event,
-            )
-            .await;
+            db_connection
+                .insert(execution_id.clone(), version, event)
+                .await
+                .unwrap_or_log();
 
             version += 1;
         }
         // Lock again
         {
-            now += Duration::from_millis(200);
-            info!("Now: {now}");
-            let event_history = lock(
-                &db_connection,
-                now,
-                &received_at,
-                execution_id.clone(),
-                version,
-                exec.clone(),
-                lock_expiry,
-            )
-            .await
-            .unwrap_or_log();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            info!("Now: {}", now());
+            let event_history = db_connection
+                .lock(
+                    execution_id.clone(),
+                    version,
+                    exec.clone(),
+                    now() + lock_expiry,
+                )
+                .await
+                .unwrap_or_log();
             assert_eq!(1, event_history.len());
             assert_eq!(vec![EventHistory::Yield], event_history);
             version += 1;
         }
         // Finish
         {
-            now += Duration::from_millis(300);
-            info!("Now: {now}");
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            info!("Now: {}", now());
             let event = ExecutionEventInner::Finished {
                 result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
             };
 
-            insert(
-                &db_connection,
-                now,
-                &received_at,
-                execution_id.clone(),
-                version,
-                event,
-            )
-            .await;
+            db_connection
+                .insert(execution_id.clone(), version, event)
+                .await
+                .unwrap_or_log();
         }
     }
 }

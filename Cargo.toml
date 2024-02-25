@@ -81,6 +81,7 @@ assert_matches = "1.5.0"
 async-channel = "2.1.1"
 async-trait = "0.1"
 cargo_metadata = "0.18"
+cfg-if = "1.0.0"
 chrono = "0.4.34"
 criterion = "0.5"
 derive_more = "0.99.17"
@@ -109,6 +110,7 @@ wiremock = "0.6"
 wit-bindgen = { version = "0.17.0", default-features = false, features = ["realloc"] }
 wit-component = "0.20"
 wit-parser = "0.13"
+
 
 [workspace.lints]
 # lower the priority to allow overriding later
