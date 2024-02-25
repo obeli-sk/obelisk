@@ -4,9 +4,12 @@ use concepts::{ExecutionId, FunctionFqn};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::oneshot;
 
-use crate::storage::inmemory_dao::{
-    api::{DbRequest, DbTickRequest, GeneralRequest},
-    DbTask,
+use crate::{
+    storage::inmemory_dao::{
+        api::{DbRequest, DbTickRequest, GeneralRequest},
+        DbTask,
+    },
+    worker::DbConnection,
 };
 
 use self::index::PendingIndex;
@@ -59,7 +62,7 @@ mod index {
     }
 }
 
-struct SchTask<ID: ExecutionId, DB: DatabaseConnection<ID>> {
+struct SchTask<ID: ExecutionId, DB: DbConnection<ID>> {
     db_connection: DB,
     ffqns: Vec<FunctionFqn>,
     pending: PendingIndex<ID>,
@@ -84,7 +87,7 @@ enum SchTickResponse<ID: ExecutionId> {
     },
 }
 
-impl<ID: ExecutionId, DB: DatabaseConnection<ID>> SchTask<ID, DB> {
+impl<ID: ExecutionId, DB: DbConnection<ID>> SchTask<ID, DB> {
     async fn tick(&mut self, tick_request: SchTickRequest) -> SchTickResponse<ID> {
         match tick_request.request {
             SchRequest::FetchPending {
@@ -92,24 +95,13 @@ impl<ID: ExecutionId, DB: DatabaseConnection<ID>> SchTask<ID, DB> {
                 batch_size,
             } => {
                 // Obtain the list of pending executions, update `self.pending` .
-                let (resp_sender, resp_receiver) = oneshot::channel();
-                let request = DbRequest::<ID>::General(GeneralRequest::FetchPending {
-                    batch_size,
-                    resp_sender,
-                    expiring_before: expected_next_tick_at,
-                    created_since: None,
-                    ffqns: self.ffqns.clone(),
-                });
                 let mut pending = None;
-                if self
+                if let Ok(pending_vec) = self
                     .db_connection
-                    .send(request, tick_request.received_at)
+                    .fetch_pending(batch_size, expected_next_tick_at, None, self.ffqns.clone())
                     .await
-                    .is_ok()
                 {
-                    if let Ok(pending_vec) = resp_receiver.await {
-                        pending = Some(PendingIndex::new(pending_vec));
-                    }
+                    pending = Some(PendingIndex::new(pending_vec));
                 }
                 SchTickResponse::FetchPending {
                     pending_index: pending,
@@ -119,26 +111,6 @@ impl<ID: ExecutionId, DB: DatabaseConnection<ID>> SchTask<ID, DB> {
     }
 }
 
-#[async_trait]
-trait DatabaseConnection<ID: ExecutionId> {
-    async fn send(&mut self, request: DbRequest<ID>, sent_at: DateTime<Utc>) -> Result<(), ()>;
-}
-
-// struct ImMemoryDatabaseConnection<ID: ExecutionId> {
-//     db_task: DbTask<ID>,
-// }
-
-// #[async_trait]
-// impl<ID: ExecutionId> DatabaseConnection<ID> for ImMemoryDatabaseConnection<ID> {
-//     async fn send(&mut self, request: DbRequest<ID>, sent_at: DateTime<Utc>) -> Result<(), ()> {
-//         let request = DbTickRequest {
-//             request,
-//             received_at: sent_at,
-//         };
-//         self.db_task.tick(request).send()
-//     }
-// }
-
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
@@ -147,7 +119,14 @@ mod tests {
     use tracing::info;
     use tracing_unwrap::ResultExt;
 
-    use crate::storage::inmemory_dao::{api::ExecutionSpecificRequest, DbTickResponse};
+    use crate::{
+        storage::inmemory_dao::{
+            api::ExecutionSpecificRequest, tests::TickBasedDbConnection, DbTickResponse,
+            ExecutionEventInner,
+        },
+        time::now,
+        worker::DbConnection,
+    };
 
     use super::*;
 
@@ -155,74 +134,59 @@ mod tests {
         crate::testing::set_up();
     }
 
-    // struct MutexDatabaseConnection<ID: ExecutionId> {
-    //     db_task: Arc<std::sync::Mutex<DbTask<ID>>>,
-    // }
-
-    // #[async_trait]
-    // impl<ID: ExecutionId> DatabaseConnection<ID> for MutexDatabaseConnection<ID> {
-    //     async fn send(&mut self, request: DbRequest<ID>, sent_at: DateTime<Utc>) -> Result<(), ()> {
-    //         let request = DbTickRequest {
-    //             request,
-    //             received_at: sent_at,
-    //         };
-    //         self.db_task.lock().unwrap_or_log().tick(request).send()
-    //     }
-    // }
-
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
 
-    // #[tokio::test]
-    // async fn test() {
-    //     set_up();
-    //     let (mut db_task, _request_sender) = DbTask::<WorkflowId>::new(1);
-    //     let db_task = Arc::new(std::sync::Mutex::new(db_task));
-    //     let mut now = Utc
-    //         .from_local_datetime(
-    //             &NaiveDate::from_ymd_opt(1970, 1, 1)
-    //                 .unwrap()
-    //                 .and_hms_opt(0, 0, 0)
-    //                 .unwrap(),
-    //         )
-    //         .unwrap();
+    #[tokio::test]
+    async fn tick_based() {
+        set_up();
+        let db_task = DbTask::new();
+        let db_task = Arc::new(std::sync::Mutex::new(db_task));
+        let db_connection = TickBasedDbConnection {
+            db_task: db_task.clone(),
+        };
+        test(db_connection).await;
+    }
 
-    //     info!("Now: {now}");
-    //     let mut scheduler = SchTask {
-    //         db_connection: MutexDatabaseConnection {
-    //             db_task: db_task.clone(),
-    //         },
-    //         ffqns: Default::default(),
-    //         pending: Default::default(),
-    //     };
-    //     let actual = scheduler
-    //         .tick(SchTickRequest {
-    //             request: SchRequest::FetchPending {
-    //                 expected_next_tick_at: now,
-    //                 batch_size: 1,
-    //             },
-    //             received_at: now,
-    //         })
-    //         .await;
-    //     let pending_index = assert_matches!(actual, SchTickResponse::FetchPending { pending_index: Some(pending) } => pending);
-    //     assert!(
-    //         pending_index.is_empty(now),
-    //         "{pending_index:?} must be empty"
-    //     );
-    //     // Create an execution
-    //     let execution_id = WorkflowId::generate();
-    //     let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Create {
-    //         ffqn: SOME_FFQN.to_owned(),
-    //         params: Params::default(),
-    //         parent: None,
-    //         scheduled_at: None,
-    //         execution_id: execution_id.clone(),
-    //         resp_sender: oneshot::channel().0,
-    //     });
-    //     let actual = db_task.lock().unwrap().tick(DbTickRequest {
-    //         request,
-    //         received_at: now,
-    //     });
-    //     assert_matches!(actual, DbTickResponse::PersistResult { result: Ok(()), .. });
-    //     // Plug in an executor. tick() should start the execution.
-    // }
+    async fn test(db_connection: impl DbConnection<WorkflowId> + Clone) {
+        set_up();
+
+        info!("Now: {}", now());
+        let mut scheduler = SchTask {
+            db_connection: db_connection.clone(),
+            ffqns: Default::default(),
+            pending: Default::default(),
+        };
+        let actual = scheduler
+            .tick(SchTickRequest {
+                request: SchRequest::FetchPending {
+                    expected_next_tick_at: now() + Duration::from_secs(1),
+                    batch_size: 1,
+                },
+                received_at: now(),
+            })
+            .await;
+        let pending_index = assert_matches!(actual, SchTickResponse::FetchPending { pending_index: Some(pending) } => pending);
+        assert!(
+            pending_index.is_empty(now()),
+            "{pending_index:?} must be empty"
+        );
+        // Create an execution
+        let execution_id = WorkflowId::generate();
+        db_connection
+            .insert(
+                execution_id.clone(),
+                0,
+                ExecutionEventInner::Created {
+                    ffqn: SOME_FFQN.to_owned(),
+                    params: Params::default(),
+                    parent: None,
+                    scheduled_at: None,
+                },
+            )
+            .await
+            .unwrap_or_log()
+            .unwrap_or_log();
+
+        // Plug in an executor. tick() should start the execution.
+    }
 }

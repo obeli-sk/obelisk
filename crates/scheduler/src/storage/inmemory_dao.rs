@@ -52,7 +52,7 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     // After optional expiry(`scheduled_at`) interpreted as pending.
     #[display(fmt = "Created({ffqn})")]
     Created {
-        execution_id: ID,
+        // execution_id: ID,
         ffqn: FunctionFqn,
         params: Params,
         parent: Option<ID>,
@@ -167,6 +167,7 @@ enum EventHistoryAsyncResponse<ID: ExecutionId> {
 
 #[derive(Debug)]
 struct ExecutionJournal<ID: ExecutionId> {
+    execution_id: ID,
     events: VecDeque<ExecutionEvent<ID>>,
 }
 
@@ -181,7 +182,6 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
     ) -> Self {
         let event = ExecutionEvent {
             event: ExecutionEventInner::Created {
-                execution_id,
                 ffqn,
                 params,
                 scheduled_at,
@@ -190,6 +190,7 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
             created_at,
         };
         Self {
+            execution_id,
             events: VecDeque::from([event]),
         }
     }
@@ -217,13 +218,7 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
     }
 
     fn id(&self) -> &ID {
-        let ExecutionEventInner::Created { execution_id, .. } =
-            &self.events.get(0).unwrap_or_log().event
-        else {
-            error!("First event must be `Created`");
-            panic!("first event must be `Created`");
-        };
-        execution_id
+        &self.execution_id
     }
 
     fn validate_push(
@@ -326,7 +321,7 @@ mod index {
     use crate::storage::inmemory_dao::ExecutionEvent;
     use chrono::{DateTime, Utc};
     use concepts::ExecutionId;
-    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
     use tracing::error;
     use tracing_unwrap::OptionExt;
 
@@ -572,10 +567,13 @@ impl<ID: ExecutionId> DbTaskHandle<ID> {
 impl<ID: ExecutionId> Drop for DbTaskHandle<ID> {
     fn drop(&mut self) {
         #[cfg(not(madsim))]
-        if self.abort_handle.is_finished() {
-            return;
+        {
+            if self.abort_handle.is_finished() {
+                // https://github.com/madsim-rs/madsim/issues/191
+                return;
+            }
+            warn!("Aborting the database task");
         }
-        warn!("Aborting the database task");
         self.abort_handle.abort();
     }
 }
@@ -853,7 +851,6 @@ impl<ID: ExecutionId> DbTask<ID> {
         event: ExecutionEventInner<ID>,
     ) -> Result<(), DbWriteError> {
         if let ExecutionEventInner::Created {
-            execution_id,
             ffqn,
             params,
             parent,
@@ -887,6 +884,7 @@ impl<ID: ExecutionId> DbTask<ID> {
     }
 }
 
+#[derive(Clone)]
 struct InMemoryDbConnection<ID: ExecutionId> {
     client_to_store_req_sender: mpsc::Sender<DbRequest<ID>>,
 }
@@ -962,14 +960,15 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
     use std::time::Duration;
     use tracing::info;
 
-    struct TickBasedDbConnection<ID: ExecutionId> {
-        db_task: Arc<std::sync::Mutex<DbTask<ID>>>,
+    #[derive(Clone)]
+    pub(crate) struct TickBasedDbConnection<ID: ExecutionId> {
+        pub(crate) db_task: Arc<std::sync::Mutex<DbTask<ID>>>,
     }
 
     #[async_trait]
@@ -1089,7 +1088,6 @@ mod tests {
         // Create
         {
             let event = ExecutionEventInner::Created {
-                execution_id: execution_id.clone(),
                 ffqn: SOME_FFQN.to_owned(),
                 params: Params::default(),
                 parent: None,
