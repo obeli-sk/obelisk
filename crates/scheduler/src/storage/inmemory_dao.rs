@@ -19,6 +19,7 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn, Params};
+use derivative::Derivative;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
@@ -279,6 +280,7 @@ pub(crate) mod api {
     use super::{EventHistory, ExecutionEventInner, ExecutorName};
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn, Params};
+    use derivative::Derivative;
     use tokio::sync::oneshot;
 
     pub(crate) type Version = usize;
@@ -295,7 +297,9 @@ pub(crate) mod api {
         ExecutionSpecific(ExecutionSpecificRequest<ID>),
     }
 
-    #[derive(Debug, derive_more::Display)]
+    #[derive(Derivative)]
+    #[derivative(Debug)]
+    #[derive(derive_more::Display)]
     pub(crate) enum ExecutionSpecificRequest<ID: ExecutionId> {
         #[display(fmt = "Create")]
         Create {
@@ -304,6 +308,7 @@ pub(crate) mod api {
             params: Params,
             scheduled_at: Option<DateTime<Utc>>,
             parent: Option<ID>,
+            #[derivative(Debug = "ignore")]
             resp_sender: oneshot::Sender<Result<(), DbWriteError>>,
         },
         #[display(fmt = "Lock")]
@@ -312,6 +317,7 @@ pub(crate) mod api {
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
+            #[derivative(Debug = "ignore")]
             resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, DbWriteError>>,
         },
         #[display(fmt = "Insert({event})")]
@@ -319,17 +325,20 @@ pub(crate) mod api {
             execution_id: ID,
             version: Version,
             event: ExecutionEventInner<ID>,
+            #[derivative(Debug = "ignore")]
             resp_sender: oneshot::Sender<Result<(), DbWriteError>>,
         },
     }
 
-    #[derive(Debug)]
+    #[derive(Derivative)]
+    #[derivative(Debug)]
     pub(crate) enum GeneralRequest<ID: ExecutionId> {
         FetchPending {
             batch_size: usize,
             expiring_before: DateTime<Utc>,
             created_since: Option<DateTime<Utc>>,
             ffqns: Vec<FunctionFqn>,
+            #[derivative(Debug = "ignore")]
             resp_sender: oneshot::Sender<Vec<(ID, Version, Option<DateTime<Utc>>)>>,
         },
     }
@@ -627,19 +636,23 @@ impl<ID: ExecutionId> ExecutionSpecificRequest<ID> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub(crate) enum DbTickResponse<ID: ExecutionId> {
     FetchPending {
-        resp_sender: oneshot::Sender<Vec<(ID, Version, Option<DateTime<Utc>>)>>,
         pending_executions: Vec<(ID, Version, Option<DateTime<Utc>>)>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Vec<(ID, Version, Option<DateTime<Utc>>)>>,
     },
     Lock {
-        resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, DbWriteError>>,
         result: Result<Vec<EventHistory<ID>>, DbWriteError>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, DbWriteError>>,
     },
     PersistResult {
-        resp_sender: oneshot::Sender<Result<(), DbWriteError>>,
         result: Result<(), DbWriteError>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Result<(), DbWriteError>>,
     },
 }
 
