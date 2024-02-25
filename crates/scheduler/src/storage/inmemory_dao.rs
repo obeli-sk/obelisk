@@ -226,12 +226,31 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
         event: ExecutionEventInner<ID>,
         created_at: DateTime<Utc>,
     ) -> Result<(), DbWriteError> {
-        if let ExecutionEventInner::Locked { .. } = event {
+        if let ExecutionEventInner::Locked {
+            executor_name,
+            expires_at,
+        } = &event
+        {
+            if *expires_at <= created_at {
+                return Err(DbWriteError::ValidationFailed("invalid expiry date"));
+            }
             match index::potentially_pending(self) {
                 PotentiallyPending::PendingNow => {}
                 PotentiallyPending::PendingAfterExpiry(pending_start)
                     if pending_start <= created_at => {}
-                other => {
+                PotentiallyPending::Locked {
+                    executor_name: locked_by,
+                    expires_at,
+                } => {
+                    if *executor_name == locked_by {
+                        // we allow extending the lock
+                    } else if expires_at <= created_at {
+                        // we allow locking after the old lock expired
+                    } else {
+                        return Err(DbWriteError::ValidationFailed("already locked"));
+                    }
+                }
+                _not_pending => {
                     return Err(DbWriteError::ValidationFailed("already locked"));
                 }
             }
@@ -317,7 +336,7 @@ pub(crate) mod api {
 }
 
 mod index {
-    use super::{EventHistory, ExecutionEventInner, ExecutionJournal};
+    use super::{EventHistory, ExecutionEventInner, ExecutionJournal, ExecutorName};
     use crate::storage::inmemory_dao::ExecutionEvent;
     use chrono::{DateTime, Utc};
     use concepts::ExecutionId;
@@ -356,9 +375,11 @@ mod index {
             // filter by currently pending
             pending.retain(|(journal, _)| match potentially_pending(journal) {
                 PotentiallyPending::PendingNow => true,
-                PotentiallyPending::PendingAfterExpiry(pending_after) => {
-                    pending_after < received_at
-                }
+                PotentiallyPending::PendingAfterExpiry(pending_after)
+                | PotentiallyPending::Locked {
+                    expires_at: pending_after,
+                    ..
+                } => pending_after < received_at,
                 PotentiallyPending::PendingAfterExternalEvent => false,
                 PotentiallyPending::NotPending => {
                     error!("Expected pending event in {journal:?}");
@@ -392,7 +413,8 @@ mod index {
                 PotentiallyPending::PendingNow => {
                     self.pending.insert(execution_id);
                 }
-                PotentiallyPending::PendingAfterExpiry(expires_at) => {
+                PotentiallyPending::PendingAfterExpiry(expires_at)
+                | PotentiallyPending::Locked { expires_at, .. } => {
                     self.pending_scheduled
                         .entry(expires_at)
                         .or_default()
@@ -417,6 +439,10 @@ mod index {
     #[derive(Debug)]
     pub(super) enum PotentiallyPending {
         PendingNow,
+        Locked {
+            executor_name: ExecutorName,
+            expires_at: DateTime<Utc>,
+        },
         PendingAfterExpiry(DateTime<Utc>),
         PendingAfterExternalEvent,
         NotPending,
@@ -450,10 +476,17 @@ mod index {
             (
                 _,
                 ExecutionEvent {
-                    event: ExecutionEventInner::Locked { expires_at, .. },
+                    event:
+                        ExecutionEventInner::Locked {
+                            executor_name,
+                            expires_at,
+                        },
                     ..
                 },
-            ) => PotentiallyPending::PendingAfterExpiry(*expires_at),
+            ) => PotentiallyPending::Locked {
+                executor_name: executor_name.clone(),
+                expires_at: *expires_at,
+            },
             (
                 _,
                 ExecutionEvent {
@@ -598,7 +631,7 @@ impl<ID: ExecutionId> ExecutionSpecificRequest<ID> {
 pub(crate) enum DbTickResponse<ID: ExecutionId> {
     FetchPending {
         resp_sender: oneshot::Sender<Vec<(ID, Version, Option<DateTime<Utc>>)>>,
-        message: Vec<(ID, Version, Option<DateTime<Utc>>)>,
+        pending_executions: Vec<(ID, Version, Option<DateTime<Utc>>)>,
     },
     Lock {
         resp_sender: oneshot::Sender<Result<Vec<EventHistory<ID>>, DbWriteError>>,
@@ -615,7 +648,7 @@ impl<ID: ExecutionId> DbTickResponse<ID> {
         match self {
             DbTickResponse::FetchPending {
                 resp_sender,
-                message,
+                pending_executions: message,
             } => resp_sender.send(message).map_err(|_| ()),
             DbTickResponse::Lock {
                 resp_sender,
@@ -721,7 +754,7 @@ impl<ID: ExecutionId> DbTask<ID> {
             .collect();
         DbTickResponse::FetchPending {
             resp_sender,
-            message: pending,
+            pending_executions: pending,
         }
     }
 
@@ -736,7 +769,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         } else {
             debug!("Received {request} at `{received_at}`");
         }
-        match request {
+        let resp = match request {
             ExecutionSpecificRequest::Create {
                 execution_id,
                 ffqn,
@@ -778,7 +811,28 @@ impl<ID: ExecutionId> DbTask<ID> {
                 expires_at,
                 resp_sender,
             ),
+        };
+
+        if tracing::enabled!(Level::TRACE) {
+            trace!("Responded with {resp:?}");
+        } else {
+            match &resp {
+                DbTickResponse::FetchPending {
+                    pending_executions, ..
+                } => debug!("Fethed {} executions", pending_executions.len()),
+                DbTickResponse::Lock { result: Ok(eh), .. } => {
+                    debug!("Lock succeded with {} events", eh.len())
+                }
+                DbTickResponse::Lock {
+                    result: Err(err), ..
+                } => debug!("Lock failed: {err:?}"),
+                DbTickResponse::PersistResult { result, .. } => {
+                    debug!("Persist result: {result:?}")
+                }
+            };
         }
+
+        resp
     }
 
     fn create(
@@ -964,6 +1018,7 @@ pub(crate) mod tests {
     use super::*;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
     use std::time::Duration;
+    use tokio::time::sleep;
     use tracing::info;
 
     #[derive(Clone)]
@@ -991,7 +1046,9 @@ pub(crate) mod tests {
                 request,
                 received_at: now(),
             });
-            Ok(assert_matches!(response, DbTickResponse::FetchPending {  message, .. } => message))
+            Ok(
+                assert_matches!(response, DbTickResponse::FetchPending {  pending_executions, .. } => pending_executions),
+            )
         }
 
         async fn lock(
@@ -1082,7 +1139,8 @@ pub(crate) mod tests {
             .await
             .unwrap_or_log()
             .is_empty());
-        let exec = Arc::new("exec1".to_string());
+        let exec1 = Arc::new("exec1".to_string());
+        let exec2 = Arc::new("exec2".to_string());
         let lock_expiry = Duration::from_millis(500);
         let mut version = 0;
         // Create
@@ -1101,9 +1159,9 @@ pub(crate) mod tests {
             version += 1;
         }
         // FetchPending
+        sleep(Duration::from_secs(1)).await;
         {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            info!("Now: {}", now());
+            info!("FetchPending: {}", now());
             let pending = db_connection
                 .fetch_pending(
                     1,
@@ -1117,14 +1175,14 @@ pub(crate) mod tests {
             assert_eq!((execution_id.clone(), 1_usize, None), pending[0]);
         }
         // Lock
+        sleep(Duration::from_secs(1)).await;
         {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            info!("Now: {}", now());
+            info!("Lock: {}", now());
             let event_history = db_connection
                 .lock(
                     execution_id.clone(),
                     version,
-                    exec.clone(),
+                    exec1.clone(),
                     now() + lock_expiry,
                 )
                 .await
@@ -1144,14 +1202,14 @@ pub(crate) mod tests {
             version += 1;
         }
         // lock expired, another executor issues Lock
+        sleep(lock_expiry).await;
         {
-            tokio::time::sleep(lock_expiry).await;
-            info!("Now: {}", now());
+            info!("Lock after expiry: {}", now());
             let event_history = db_connection
                 .lock(
                     execution_id.clone(),
                     version,
-                    exec.clone(),
+                    exec1.clone(),
                     now() + lock_expiry,
                 )
                 .await
@@ -1161,9 +1219,9 @@ pub(crate) mod tests {
             version += 1;
         }
         // intermittent timeout
+        sleep(Duration::from_millis(499)).await;
         {
-            tokio::time::sleep(Duration::from_millis(499)).await;
-            info!("Now: {}", now());
+            info!("Intermittent timeout: {}", now());
             let event = ExecutionEventInner::IntermittentTimeout {
                 expires_at: now() + lock_expiry,
             };
@@ -1185,15 +1243,15 @@ pub(crate) mod tests {
                 .is_empty());
             version += 1;
         }
-        // Attempt to lock while in a timeout
+        // Attempt to lock while in a timeout with exec2
+        sleep(Duration::from_millis(300)).await;
         {
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            info!("Now: {}", now());
+            info!("Attempt to lock using exec2: {}", now());
             assert!(db_connection
                 .lock(
                     execution_id.clone(),
                     version,
-                    exec.clone(),
+                    exec2.clone(),
                     now() + lock_expiry,
                 )
                 .await
@@ -1201,15 +1259,32 @@ pub(crate) mod tests {
                 .is_err());
             // Version is not changed
         }
-        // Lock again
+        // Lock using exec1
+        sleep(Duration::from_millis(700)).await;
         {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            info!("Now: {}", now());
+            info!("Extend lock using exec1: {}", now());
             let event_history = db_connection
                 .lock(
                     execution_id.clone(),
                     version,
-                    exec.clone(),
+                    exec1.clone(),
+                    now() + Duration::from_secs(1),
+                )
+                .await
+                .unwrap_or_log()
+                .unwrap_or_log();
+            assert!(event_history.is_empty());
+            version += 1;
+        }
+        sleep(Duration::from_millis(700)).await;
+        // Extend the lock using exec1
+        {
+            info!("Extend lock using exec1: {}", now());
+            let event_history = db_connection
+                .lock(
+                    execution_id.clone(),
+                    version,
+                    exec1.clone(),
                     now() + lock_expiry,
                 )
                 .await
@@ -1219,9 +1294,9 @@ pub(crate) mod tests {
             version += 1;
         }
         // Yield
+        sleep(Duration::from_millis(200)).await;
         {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            info!("Now: {}", now());
+            info!("Yield: {}", now());
 
             let event = ExecutionEventInner::EventHistory {
                 event: EventHistory::Yield,
@@ -1235,14 +1310,14 @@ pub(crate) mod tests {
             version += 1;
         }
         // Lock again
+        sleep(Duration::from_millis(200)).await;
         {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            info!("Now: {}", now());
+            info!("Lock again: {}", now());
             let event_history = db_connection
                 .lock(
                     execution_id.clone(),
                     version,
-                    exec.clone(),
+                    exec1.clone(),
                     now() + lock_expiry,
                 )
                 .await
@@ -1253,9 +1328,9 @@ pub(crate) mod tests {
             version += 1;
         }
         // Finish
+        sleep(Duration::from_millis(300)).await;
         {
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            info!("Now: {}", now());
+            info!("Finish: {}", now());
             let event = ExecutionEventInner::Finished {
                 result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
             };
