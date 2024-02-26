@@ -108,7 +108,7 @@ struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>> {
     ffqns: Vec<FunctionFqn>,
     executor_name: ExecutorName,
     lock_expiry: Duration,
-    sleep: Duration,
+    max_tick_sleep: Duration,
     phantom_data: PhantomData<fn(ID) -> ID>,
 }
 
@@ -131,7 +131,7 @@ enum ExecTickResponse<ID: ExecutionId> {
 
 impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
     async fn tick(&mut self, request: ExecTickRequest<ID>) -> ExecTickResponse<ID> {
-        let expected_next_tick_at = request.now + self.sleep;
+        let expected_next_tick_at = request.now + self.max_tick_sleep;
         let mut pending = if let Some(pending) = request.pending {
             pending
         } else {
@@ -199,6 +199,7 @@ mod tests {
     use assert_matches::assert_matches;
     use chrono::{NaiveDate, TimeZone};
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params};
+    use tokio::time::{sleep, sleep_until};
     use tracing::info;
     use tracing_unwrap::ResultExt;
 
@@ -222,8 +223,7 @@ mod tests {
     #[tokio::test]
     async fn tick_based() {
         set_up();
-        let db_task = DbTask::new();
-        let db_task = Arc::new(std::sync::Mutex::new(db_task));
+        let db_task = Arc::new(std::sync::Mutex::new(DbTask::new()));
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
         };
@@ -234,13 +234,13 @@ mod tests {
         set_up();
 
         info!("Now: {}", now());
-        let sleep = Duration::from_millis(500);
+        let max_tick_sleep = Duration::from_millis(500);
         let mut executor = ExecTask {
             db_connection: db_connection.clone(),
-            ffqns: Default::default(),
+            ffqns: vec![SOME_FFQN.to_owned()],
             executor_name: Arc::new("exec1".to_string()),
             lock_expiry: Duration::from_secs(1),
-            sleep,
+            max_tick_sleep,
             phantom_data: Default::default(),
         };
         let actual = executor
@@ -252,7 +252,7 @@ mod tests {
             .await;
         let (executions, next_tick, pending) = assert_matches!(actual, ExecTickResponse::Executions { executions,next_tick, pending } => (executions,next_tick, pending));
         assert!(executions.is_empty(),);
-        assert_eq!(now() + sleep, next_tick);
+        assert_eq!(now() + max_tick_sleep, next_tick);
         assert!(pending.is_none());
         // Create an execution
         let execution_id = WorkflowId::generate();
@@ -271,8 +271,20 @@ mod tests {
             .unwrap_or_log()
             .unwrap_or_log();
 
-        // Fetch
-        // Lock
-        // Execute
+        let next_tick: Duration = (next_tick - now()).to_std().unwrap_or_log();
+        tokio::time::sleep(next_tick).await;
+        // execute!
+        info!("Now: {}", now());
+        let actual = executor
+            .tick(ExecTickRequest {
+                batch_size: 5,
+                now: now(),
+                pending: None,
+            })
+            .await;
+        let (executions, next_tick, pending) = assert_matches!(actual, ExecTickResponse::Executions { executions,next_tick, pending } => (executions,next_tick, pending));
+        assert_eq!(vec![Ok(execution_id)], executions);
+        assert_eq!(now() + max_tick_sleep, next_tick);
+        assert!(pending.is_none());
     }
 }

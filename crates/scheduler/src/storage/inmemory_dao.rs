@@ -744,7 +744,12 @@ impl<ID: ExecutionId> DbTask<ID> {
         let pending = pending
             .into_iter()
             .map(|(journal, scheduled_at)| (journal.id().clone(), journal.version(), scheduled_at))
-            .collect();
+            .collect::<Vec<_>>();
+        if tracing::enabled!(Level::TRACE) {
+            trace!("Responding with {pending:?}");
+        } else {
+            debug!("Responding with {} pending executions", pending.len());
+        }
         DbTickResponse::FetchPending {
             resp_sender,
             pending_executions: pending,
@@ -807,7 +812,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         };
 
         if tracing::enabled!(Level::TRACE) {
-            trace!("Responded with {resp:?}");
+            trace!("Responding with {resp:?}");
         } else {
             match &resp {
                 DbTickResponse::FetchPending {
