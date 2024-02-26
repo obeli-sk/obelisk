@@ -4,8 +4,7 @@ use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
 use std::time::Duration;
 
-// mod memory;
-mod scheduler;
+mod executor;
 mod storage;
 
 #[cfg(test)]
