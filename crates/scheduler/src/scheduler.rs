@@ -96,7 +96,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID>> SchTask<ID, DB> {
                 let mut pending = None;
                 if let Ok(pending_vec) = self
                     .db_connection
-                    .fetch_pending(batch_size, expected_next_tick_at, None, self.ffqns.clone())
+                    .fetch_pending(batch_size, expected_next_tick_at, self.ffqns.clone())
                     .await
                 {
                     pending = Some(PendingIndex::new(pending_vec));

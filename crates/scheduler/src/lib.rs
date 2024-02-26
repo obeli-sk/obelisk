@@ -74,7 +74,6 @@ mod worker {
             &self,
             batch_size: usize,
             expiring_before: DateTime<Utc>,
-            created_since: Option<DateTime<Utc>>,
             ffqns: Vec<FunctionFqn>,
         ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, DbError>;
         async fn lock(

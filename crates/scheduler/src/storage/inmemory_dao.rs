@@ -336,7 +336,6 @@ pub(crate) mod api {
         FetchPending {
             batch_size: usize,
             expiring_before: DateTime<Utc>,
-            created_since: Option<DateTime<Utc>>,
             ffqns: Vec<FunctionFqn>,
             #[derivative(Debug = "ignore")]
             resp_sender: oneshot::Sender<Vec<(ID, Version, Option<DateTime<Utc>>)>>,
@@ -367,7 +366,6 @@ mod index {
             received_at: DateTime<Utc>,
             batch_size: usize,
             expiring_before: DateTime<Utc>,
-            created_since: Option<DateTime<Utc>>,
             ffqns: Vec<concepts::FunctionFqn>,
         ) -> Vec<(&'a ExecutionJournal<ID>, Option<DateTime<Utc>>)> {
             let mut pending = self
@@ -397,10 +395,6 @@ mod index {
             });
             // filter by ffqn
             pending.retain(|(journal, _)| ffqns.contains(journal.ffqn()));
-            // filter out older than `created_since`
-            if let Some(created_since) = created_since {
-                pending.retain(|(journal, _)| journal.created_at() >= created_since);
-            }
             pending.truncate(batch_size);
             pending
         }
@@ -726,17 +720,9 @@ impl<ID: ExecutionId> DbTask<ID> {
             GeneralRequest::FetchPending {
                 batch_size,
                 expiring_before,
-                created_since,
                 ffqns,
                 resp_sender,
-            } => self.fetch_pending(
-                received_at,
-                batch_size,
-                expiring_before,
-                created_since,
-                ffqns,
-                resp_sender,
-            ),
+            } => self.fetch_pending(received_at, batch_size, expiring_before, ffqns, resp_sender),
         }
     }
 
@@ -745,7 +731,6 @@ impl<ID: ExecutionId> DbTask<ID> {
         received_at: DateTime<Utc>,
         batch_size: usize,
         expiring_before: DateTime<Utc>,
-        created_since: Option<DateTime<Utc>>,
         ffqns: Vec<FunctionFqn>,
         resp_sender: oneshot::Sender<Vec<(ID, Version, Option<DateTime<Utc>>)>>,
     ) -> DbTickResponse<ID> {
@@ -754,7 +739,6 @@ impl<ID: ExecutionId> DbTask<ID> {
             received_at,
             batch_size,
             expiring_before,
-            created_since,
             ffqns,
         );
         let pending = pending
@@ -959,14 +943,12 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         &self,
         batch_size: usize,
         expiring_before: DateTime<Utc>,
-        created_since: Option<DateTime<Utc>>,
         ffqns: Vec<FunctionFqn>,
     ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::General(GeneralRequest::FetchPending {
             batch_size,
             expiring_before,
-            created_since,
             ffqns,
             resp_sender,
         });
@@ -1041,13 +1023,11 @@ pub(crate) mod tests {
             &self,
             batch_size: usize,
             expiring_before: DateTime<Utc>,
-            created_since: Option<DateTime<Utc>>,
             ffqns: Vec<FunctionFqn>,
         ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, DbError> {
             let request = DbRequest::General(GeneralRequest::FetchPending {
                 batch_size,
                 expiring_before,
-                created_since,
                 ffqns,
                 resp_sender: oneshot::channel().0,
             });
@@ -1143,7 +1123,6 @@ pub(crate) mod tests {
             .fetch_pending(
                 1,
                 now() + Duration::from_secs(1),
-                None,
                 vec![SOME_FFQN.to_owned()],
             )
             .await
@@ -1176,7 +1155,6 @@ pub(crate) mod tests {
                 .fetch_pending(
                     1,
                     now() + Duration::from_secs(1),
-                    None,
                     vec![SOME_FFQN.to_owned()],
                 )
                 .await
@@ -1203,7 +1181,6 @@ pub(crate) mod tests {
                 .fetch_pending(
                     1,
                     now() + Duration::from_secs(1),
-                    None,
                     vec![SOME_FFQN.to_owned()],
                 )
                 .await
@@ -1245,7 +1222,6 @@ pub(crate) mod tests {
                 .fetch_pending(
                     1,
                     now() + Duration::from_secs(1),
-                    None,
                     vec![SOME_FFQN.to_owned()],
                 )
                 .await
