@@ -1,107 +1,11 @@
-use self::index::PendingIndex;
 use crate::{
-    storage::inmemory_dao::{
-        api::{DbRequest, DbTickRequest, GeneralRequest, Version},
-        DbTask, ExecutorName,
-    },
+    storage::inmemory_dao::{api::Version, ExecutorName},
     worker::{DbConnection, DbError},
 };
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn};
-use std::{cmp::min, marker::PhantomData, sync::Arc, time::Duration};
-use tokio::sync::oneshot;
+use std::{marker::PhantomData, time::Duration};
 use tracing::{debug, instrument};
-
-mod index {
-    use chrono::{DateTime, Utc};
-    use concepts::ExecutionId;
-    use std::collections::{BTreeMap, HashMap};
-    use tracing_unwrap::OptionExt;
-
-    use crate::storage::inmemory_dao::api::Version;
-
-    #[derive(Debug)]
-    pub(crate) struct PendingIndex<ID: ExecutionId> {
-        pending: BTreeMap<ID, Version>,
-        pending_scheduled: BTreeMap<DateTime<Utc>, BTreeMap<ID, Version>>,
-        pending_scheduled_rev: HashMap<ID, DateTime<Utc>>,
-    }
-    impl<ID: ExecutionId> PendingIndex<ID> {
-        pub(super) fn new(pending: Vec<(ID, Version, Option<DateTime<Utc>>)>) -> PendingIndex<ID> {
-            let mut this = Self {
-                pending: Default::default(),
-                pending_scheduled: Default::default(),
-                pending_scheduled_rev: Default::default(),
-            };
-            for (id, version, scheduled_at) in pending {
-                if let Some(scheduled_at) = scheduled_at {
-                    this.pending_scheduled
-                        .insert(scheduled_at, BTreeMap::from([(id.clone(), version)]));
-                    this.pending_scheduled_rev.insert(id, scheduled_at);
-                } else {
-                    this.pending.insert(id, version);
-                }
-            }
-            this
-        }
-
-        pub(crate) fn is_empty(&self) -> bool {
-            self.pending.is_empty() && self.pending_scheduled.is_empty()
-        }
-
-        /// Find the minimum of (first key of `pending_scheduled`, `expected_next_tick_at`)
-        pub(crate) fn sleep_until(&self, expected_next_tick_at: DateTime<Utc>) -> DateTime<Utc> {
-            std::cmp::min(
-                self.pending_scheduled
-                    .keys()
-                    .next()
-                    .cloned()
-                    .unwrap_or(expected_next_tick_at),
-                expected_next_tick_at,
-            )
-        }
-
-        /// Take all executions that are pending before `now`.
-        pub(crate) fn drain_before(&mut self, now: DateTime<Utc>) -> Vec<(ID, Version)> {
-            let mut drained: Vec<_> = self
-                .pending
-                .iter()
-                .map(|(id, ver)| (id.clone(), *ver))
-                .collect();
-            self.pending.clear();
-            let to_be_drained = self.pending_scheduled.range(..now).collect::<Vec<_>>();
-            for (_, id_version) in to_be_drained.iter() {
-                for (id, version) in *id_version {
-                    drained.push((id.clone(), *version));
-                    self.pending_scheduled_rev
-                        .remove(id)
-                        .expect_or_log("must be found in `pending_scheduled_rev`");
-                }
-            }
-            for deleted_schedule in to_be_drained
-                .into_iter()
-                .map(|(deleted_schedule, _)| *deleted_schedule)
-                .collect::<Vec<_>>()
-            {
-                self.pending_scheduled
-                    .remove(&deleted_schedule)
-                    .expect_or_log("must be found");
-            }
-            drained
-        }
-    }
-
-    impl<T: ExecutionId> Default for PendingIndex<T> {
-        fn default() -> Self {
-            Self {
-                pending: Default::default(),
-                pending_scheduled: Default::default(),
-                pending_scheduled_rev: Default::default(),
-            }
-        }
-    }
-}
 
 struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>> {
     db_connection: DB,
@@ -113,56 +17,25 @@ struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>> {
 }
 
 #[derive(Debug)]
-struct ExecTickRequest<ID: ExecutionId> {
+struct ExecTickRequest {
     now: DateTime<Utc>,
     batch_size: usize,
-    pending: Option<PendingIndex<ID>>,
 }
 
-#[derive(Debug)]
-enum ExecTickResponse<ID: ExecutionId> {
-    DbError(DbError),
-    Executions {
-        executions: Vec<Result<ID, ID>>,
-        next_tick: DateTime<Utc>,
-        pending: Option<PendingIndex<ID>>,
-    },
-}
+type Executions<ID> = Vec<Result<ID, ID>>;
 
 impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
-    async fn tick(&mut self, request: ExecTickRequest<ID>) -> ExecTickResponse<ID> {
-        let expected_next_tick_at = request.now + self.max_tick_sleep;
-        let mut pending = if let Some(pending) = request.pending {
-            pending
-        } else {
-            match self
-                .db_connection
-                .fetch_pending(
-                    request.batch_size,
-                    expected_next_tick_at,
-                    self.ffqns.clone(),
-                )
-                .await
-            {
-                Ok(pending_vec) => PendingIndex::new(pending_vec),
-                Err(err) => return ExecTickResponse::DbError(err),
-            }
-        };
+    async fn tick(&mut self, request: ExecTickRequest) -> Result<Executions<ID>, DbError> {
+        let pending = self
+            .db_connection
+            .fetch_pending(request.batch_size, request.now, self.ffqns.clone())
+            .await?;
 
         let mut executions = Vec::new();
-        for (execution, version) in pending.drain_before(request.now) {
+        for (execution, version, _) in pending {
             executions.push(self.lock_execute(execution, version, request.now).await);
         }
-        let next_tick = pending.sleep_until(expected_next_tick_at);
-        ExecTickResponse::Executions {
-            executions,
-            next_tick,
-            pending: if pending.is_empty() {
-                None
-            } else {
-                Some(pending)
-            },
-        }
+        Ok(executions)
     }
 
     #[instrument(skip_all, fields(%execution_id))]
@@ -196,21 +69,15 @@ impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
-    use chrono::{NaiveDate, TimeZone};
-    use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params};
-    use tokio::time::{sleep, sleep_until};
-    use tracing::info;
-    use tracing_unwrap::ResultExt;
-
     use crate::{
-        storage::inmemory_dao::{
-            api::ExecutionSpecificRequest, tests::TickBasedDbConnection, DbTickResponse,
-            ExecutionEventInner,
-        },
+        storage::inmemory_dao::{tests::TickBasedDbConnection, DbTask, ExecutionEventInner},
         time::now,
         worker::DbConnection,
     };
+    use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params};
+    use std::sync::Arc;
+    use tracing::info;
+    use tracing_unwrap::ResultExt;
 
     use super::*;
 
@@ -247,13 +114,10 @@ mod tests {
             .tick(ExecTickRequest {
                 batch_size: 5,
                 now: now(),
-                pending: None,
             })
             .await;
-        let (executions, next_tick, pending) = assert_matches!(actual, ExecTickResponse::Executions { executions,next_tick, pending } => (executions,next_tick, pending));
+        let executions = actual.unwrap_or_log();
         assert!(executions.is_empty(),);
-        assert_eq!(now() + max_tick_sleep, next_tick);
-        assert!(pending.is_none());
         // Create an execution
         let execution_id = WorkflowId::generate();
         db_connection
@@ -271,20 +135,14 @@ mod tests {
             .unwrap_or_log()
             .unwrap_or_log();
 
-        let next_tick: Duration = (next_tick - now()).to_std().unwrap_or_log();
-        tokio::time::sleep(next_tick).await;
         // execute!
-        info!("Now: {}", now());
         let actual = executor
             .tick(ExecTickRequest {
                 batch_size: 5,
                 now: now(),
-                pending: None,
             })
             .await;
-        let (executions, next_tick, pending) = assert_matches!(actual, ExecTickResponse::Executions { executions,next_tick, pending } => (executions,next_tick, pending));
+        let executions = actual.unwrap_or_log();
         assert_eq!(vec![Ok(execution_id)], executions);
-        assert_eq!(now() + max_tick_sleep, next_tick);
-        assert!(pending.is_none());
     }
 }
