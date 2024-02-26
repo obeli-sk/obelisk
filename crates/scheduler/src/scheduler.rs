@@ -1,9 +1,4 @@
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use concepts::{ExecutionId, FunctionFqn};
-use std::{sync::Arc, time::Duration};
-use tokio::sync::oneshot;
-
+use self::index::PendingIndex;
 use crate::{
     storage::inmemory_dao::{
         api::{DbRequest, DbTickRequest, GeneralRequest},
@@ -11,8 +6,11 @@ use crate::{
     },
     worker::DbConnection,
 };
-
-use self::index::PendingIndex;
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use concepts::{ExecutionId, FunctionFqn};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::oneshot;
 
 mod index {
     use chrono::{DateTime, Utc};

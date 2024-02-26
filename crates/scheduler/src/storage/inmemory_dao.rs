@@ -598,7 +598,6 @@ impl<ID: ExecutionId> DbTaskHandle<ID> {
     pub async fn close(&mut self) {
         self.client_to_store_req_sender.take();
         debug!("Gracefully closing");
-        #[cfg(not(madsim))]
         while !self.abort_handle.is_finished() {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
@@ -608,14 +607,11 @@ impl<ID: ExecutionId> DbTaskHandle<ID> {
 
 impl<ID: ExecutionId> Drop for DbTaskHandle<ID> {
     fn drop(&mut self) {
-        #[cfg(not(madsim))]
-        {
-            if self.abort_handle.is_finished() {
-                // https://github.com/madsim-rs/madsim/issues/191
-                return;
-            }
-            warn!("Aborting the database task");
+        if self.abort_handle.is_finished() {
+            // https://github.com/madsim-rs/madsim/issues/191
+            return;
         }
+        warn!("Aborting the database task");
         self.abort_handle.abort();
     }
 }
@@ -1125,12 +1121,13 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn db_workflow_mpsc_based() {
         set_up();
-        let db_task = DbTask::new_spawn(1);
+        let mut db_task = DbTask::new_spawn(1);
         let client_to_store_req_sender = db_task.sender().unwrap_or_log();
         let db_connection = InMemoryDbConnection {
             client_to_store_req_sender,
         };
         db_workflow(db_connection).await;
+        db_task.close().await;
     }
 
     #[tokio::test]
