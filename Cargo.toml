@@ -92,7 +92,7 @@ hyper = "1.1.0"
 hyper-util = "0.1"
 indexmap = "2.1"
 lazy_static = "1.4"
-madsim = "0.2.24"
+madsim = "0.2.25"
 rstest = "0.18.2"
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
