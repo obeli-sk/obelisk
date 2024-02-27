@@ -1,7 +1,7 @@
 use crate::{
     storage::inmemory_dao::{api::Version, ExecutionEvent, ExecutionEventInner, ExecutorName},
     time::now,
-    worker::{DbConnection, DbError, DbWriteError},
+    worker::{DbConnection, DbError, DbReadError},
 };
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn, SupportedFunctionResult};
@@ -23,25 +23,17 @@ struct ExecTickRequest {
     batch_size: usize,
 }
 
-#[derive(thiserror::Error, Debug, PartialEq, Eq)]
-enum DatabaseError {
-    #[error("read failed - `{0:?}`")]
-    Read(DbError),
-    #[error("write failed - `{0:?}`")]
-    Write(DbWriteError),
-}
-
 #[derive(Debug, PartialEq, Eq)]
 struct ExecutionProgress<ID: ExecutionId> {
     execution_id: ID,
-    event: Result<ExecutionEvent<ID>, DatabaseError>,
+    event: Result<ExecutionEvent<ID>, DbError>,
 }
 
 impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
     async fn tick(
         &mut self,
         request: ExecTickRequest,
-    ) -> Result<Vec<ExecutionProgress<ID>>, DbError> {
+    ) -> Result<Vec<ExecutionProgress<ID>>, DbReadError> {
         let pending = self
             .db_connection
             .fetch_pending(request.batch_size, request.now, self.ffqns.clone())
@@ -71,7 +63,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
             )
             .await
         {
-            Ok(Ok(event_history)) => {
+            Ok(event_history) => {
                 // TODO - execute, update state.
                 ExecutionProgress {
                     execution_id,
@@ -83,18 +75,11 @@ impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
                     }),
                 }
             }
-            Ok(Err(err)) => {
-                debug!("Write failed: {err:?}");
-                ExecutionProgress {
-                    execution_id,
-                    event: Err(DatabaseError::Write(err)),
-                }
-            }
             Err(err) => {
-                debug!("Read failed: {err:?}");
+                debug!("Database error: {err:?}");
                 ExecutionProgress {
                     execution_id,
-                    event: Err(DatabaseError::Read(err)),
+                    event: Err(err),
                 }
             }
         }
@@ -166,7 +151,6 @@ mod tests {
                 },
             )
             .await
-            .unwrap_or_log()
             .unwrap_or_log();
 
         // execute!

@@ -16,7 +16,7 @@ use self::{
 };
 use crate::{
     time::now,
-    worker::{DbConnection, DbError, DbWriteError},
+    worker::{DbConnection, DbError, DbReadError, DbWriteError},
     FinishedExecutionResult,
 };
 use async_trait::async_trait;
@@ -947,7 +947,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         batch_size: usize,
         expiring_before: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
-    ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, DbError> {
+    ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, DbReadError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::General(GeneralRequest::FetchPending {
             batch_size,
@@ -958,8 +958,8 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         self.client_to_store_req_sender
             .send(request)
             .await
-            .map_err(|_| DbError::SendError)?;
-        resp_receiver.await.map_err(|_| DbError::RecvError)
+            .map_err(|_| DbReadError::SendError)?;
+        resp_receiver.await.map_err(|_| DbReadError::RecvError)
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -969,7 +969,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         version: Version,
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
-    ) -> Result<Result<Vec<EventHistory<ID>>, DbWriteError>, DbError> {
+    ) -> Result<Vec<EventHistory<ID>>, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
             execution_id,
@@ -981,8 +981,11 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         self.client_to_store_req_sender
             .send(request)
             .await
-            .map_err(|_| DbError::SendError)?;
-        resp_receiver.await.map_err(|_| DbError::RecvError)
+            .map_err(|_| DbError::Read(DbReadError::SendError))?;
+        resp_receiver
+            .await
+            .map_err(|_| DbError::Read(DbReadError::RecvError))?
+            .map_err(|err| DbError::Write(err))
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -991,7 +994,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         execution_id: ID,
         version: Version,
         event: ExecutionEventInner<ID>,
-    ) -> Result<Result<(), DbWriteError>, DbError> {
+    ) -> Result<(), DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
             execution_id,
@@ -1002,8 +1005,11 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         self.client_to_store_req_sender
             .send(request)
             .await
-            .map_err(|_| DbError::SendError)?;
-        resp_receiver.await.map_err(|_| DbError::RecvError)
+            .map_err(|_| DbError::Read(DbReadError::SendError))?;
+        resp_receiver
+            .await
+            .map_err(|_| DbError::Read(DbReadError::RecvError))?
+            .map_err(|err| DbError::Write(err))
     }
 }
 
@@ -1029,7 +1035,7 @@ pub(crate) mod tests {
             batch_size: usize,
             expiring_before: DateTime<Utc>,
             ffqns: Vec<FunctionFqn>,
-        ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, DbError> {
+        ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, DbReadError> {
             let request = DbRequest::General(GeneralRequest::FetchPending {
                 batch_size,
                 expiring_before,
@@ -1051,7 +1057,7 @@ pub(crate) mod tests {
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-        ) -> Result<Result<Vec<EventHistory<ID>>, DbWriteError>, DbError> {
+        ) -> Result<Vec<EventHistory<ID>>, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
                 execution_id,
                 version,
@@ -1063,7 +1069,8 @@ pub(crate) mod tests {
                 request,
                 received_at: now(),
             });
-            Ok(assert_matches!(response, DbTickResponse::Lock { result, .. } => result))
+            assert_matches!(response, DbTickResponse::Lock { result, .. } => result)
+                .map_err(|err| DbError::Write(err))
         }
 
         async fn insert(
@@ -1071,7 +1078,7 @@ pub(crate) mod tests {
             execution_id: ID,
             version: Version,
             event: ExecutionEventInner<ID>,
-        ) -> Result<Result<(), DbWriteError>, DbError> {
+        ) -> Result<(), DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Insert {
                 execution_id,
                 version,
@@ -1082,7 +1089,8 @@ pub(crate) mod tests {
                 request,
                 received_at: now(),
             });
-            Ok(assert_matches!(response, DbTickResponse::PersistResult { result, .. } => result))
+            assert_matches!(response, DbTickResponse::PersistResult { result, .. } => result)
+                .map_err(|err| DbError::Write(err))
         }
     }
 
@@ -1148,7 +1156,6 @@ pub(crate) mod tests {
             db_connection
                 .insert(execution_id.clone(), version, event)
                 .await
-                .unwrap_or_log()
                 .unwrap_or_log();
             version += 1;
         }
@@ -1179,7 +1186,6 @@ pub(crate) mod tests {
                     now() + lock_expiry,
                 )
                 .await
-                .unwrap_or_log()
                 .unwrap_or_log();
             assert!(event_history.is_empty());
             assert!(db_connection
@@ -1205,7 +1211,6 @@ pub(crate) mod tests {
                     now() + lock_expiry,
                 )
                 .await
-                .unwrap_or_log()
                 .unwrap_or_log();
             assert!(event_history.is_empty());
             version += 1;
@@ -1221,7 +1226,6 @@ pub(crate) mod tests {
             db_connection
                 .insert(execution_id.clone(), version, event)
                 .await
-                .unwrap_or_log()
                 .unwrap_or_log();
             assert!(db_connection
                 .fetch_pending(
@@ -1246,7 +1250,6 @@ pub(crate) mod tests {
                     now() + lock_expiry,
                 )
                 .await
-                .unwrap_or_log()
                 .is_err());
             // Version is not changed
         }
@@ -1262,7 +1265,6 @@ pub(crate) mod tests {
                     now() + Duration::from_secs(1),
                 )
                 .await
-                .unwrap_or_log()
                 .unwrap_or_log();
             assert!(event_history.is_empty());
             version += 1;
@@ -1279,7 +1281,6 @@ pub(crate) mod tests {
                     now() + lock_expiry,
                 )
                 .await
-                .unwrap_or_log()
                 .unwrap_or_log();
             assert!(event_history.is_empty());
             version += 1;
@@ -1295,7 +1296,6 @@ pub(crate) mod tests {
             db_connection
                 .insert(execution_id.clone(), version, event)
                 .await
-                .unwrap_or_log()
                 .unwrap_or_log();
 
             version += 1;
@@ -1312,7 +1312,6 @@ pub(crate) mod tests {
                     now() + lock_expiry,
                 )
                 .await
-                .unwrap_or_log()
                 .unwrap_or_log();
             assert_eq!(1, event_history.len());
             assert_eq!(vec![EventHistory::Yield], event_history);
@@ -1329,7 +1328,6 @@ pub(crate) mod tests {
             db_connection
                 .insert(execution_id.clone(), version, event)
                 .await
-                .unwrap_or_log()
                 .unwrap_or_log();
         }
     }

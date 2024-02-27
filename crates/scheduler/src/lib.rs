@@ -50,7 +50,7 @@ mod worker {
     }
 
     #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-    pub enum DbError {
+    pub enum DbReadError {
         #[error("send error")]
         SendError,
         #[error("receive error")]
@@ -67,6 +67,14 @@ mod worker {
         NotFound,
     }
 
+    #[derive(thiserror::Error, Debug, PartialEq, Eq)]
+    pub enum DbError {
+        #[error("read failed - `{0:?}`")]
+        Read(DbReadError),
+        #[error("write failed - `{0:?}`")]
+        Write(DbWriteError),
+    }
+
     #[async_trait]
     pub trait DbConnection<ID: ExecutionId> {
         async fn fetch_pending(
@@ -74,20 +82,20 @@ mod worker {
             batch_size: usize,
             expiring_before: DateTime<Utc>,
             ffqns: Vec<FunctionFqn>,
-        ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, DbError>;
+        ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, DbReadError>;
         async fn lock(
             &self,
             execution_id: ID,
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-        ) -> Result<Result<Vec<EventHistory<ID>>, DbWriteError>, DbError>;
+        ) -> Result<Vec<EventHistory<ID>>, DbError>;
         async fn insert(
             &self,
             execution_id: ID,
             version: Version,
             event: ExecutionEventInner<ID>,
-        ) -> Result<Result<(), DbWriteError>, DbError>;
+        ) -> Result<(), DbError>;
     }
 
     #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
