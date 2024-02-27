@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
-use std::time::Duration;
 
 mod executor;
 mod storage;
@@ -12,45 +11,23 @@ mod testing;
 
 mod worker {
     use self::storage::inmemory_dao::{
-        api::Version, EventHistory, ExecutionEventInner, ExecutorName,
+        api::Version, EventHistory, ExecutionEvent, ExecutionEventInner, ExecutorName,
     };
-
     use super::*;
-    /// Worker commands sent to the worker executor.
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub enum WorkerCommand<E: ExecutionId> {
-        Yield,
-        DelayFor(Duration),
-        ExecuteBlocking {
-            ffqn: FunctionFqn,
-            params: Params,
-            child_execution_id: E,
-        },
-        PublishResult(SupportedFunctionResult),
-    }
-
-    #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-    pub enum WorkerError {
-        #[error("worker timed out")]
-        Timeout,
-        #[error("non-determinism detected, reason: `{0}`")]
-        NonDeterminismDetected(String),
-        #[error("worker failed")]
-        Uncategorized, // Panic, cancellation
-    }
 
     #[async_trait]
     pub trait Worker<ID: ExecutionId> {
         async fn run(
             &self,
-            workflow_id: ID,
+            execution_id: ID,
             params: Params,
-            events: Vec<ExecutionEventInner<ID>>,
-        ) -> Result<WorkerCommand<ID>, WorkerError>;
+            event_history: Vec<EventHistory<ID>>,
+            version: Version,
+        ) -> Result<ExecutionEvent<ID>, DbError>;
     }
 
     #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-    pub enum DbReadError {
+    pub enum DbConnectionError {
         #[error("send error")]
         SendError,
         #[error("receive error")]
@@ -58,7 +35,7 @@ mod worker {
     }
 
     #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-    pub enum DbWriteError {
+    pub enum RowSpecificError {
         #[error("validation failed: {0}")]
         ValidationFailed(&'static str),
         #[error("version mismatch")]
@@ -67,45 +44,45 @@ mod worker {
         NotFound,
     }
 
-    #[derive(thiserror::Error, Debug, PartialEq, Eq)]
+    #[derive(thiserror::Error, Debug, PartialEq, Eq, Clone)]
     pub enum DbError {
-        #[error("read failed - `{0:?}`")]
-        Read(DbReadError),
-        #[error("write failed - `{0:?}`")]
-        Write(DbWriteError),
+        #[error(transparent)]
+        Connection(DbConnectionError),
+        #[error(transparent)]
+        RowSpecific(RowSpecificError),
     }
+
+    pub type PendingExecution<ID> = (ID, Version, Params, Option<DateTime<Utc>>);
+    pub type ExecutionHistory<ID> = (Vec<ExecutionEvent<ID>>, Version);
+    pub type LockResponse<ID> = (Vec<EventHistory<ID>>, Version);
 
     #[async_trait]
     pub trait DbConnection<ID: ExecutionId> {
+        // TODO: fetch_and_lock
         async fn fetch_pending(
             &self,
             batch_size: usize,
             expiring_before: DateTime<Utc>,
             ffqns: Vec<FunctionFqn>,
-        ) -> Result<Vec<(ID, Version, Option<DateTime<Utc>>)>, DbReadError>;
+        ) -> Result<Vec<PendingExecution<ID>>, DbConnectionError>;
+
         async fn lock(
             &self,
+            created_at: DateTime<Utc>,
             execution_id: ID,
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-        ) -> Result<Vec<EventHistory<ID>>, DbError>;
+        ) -> Result<LockResponse<ID>, DbError>;
+
         async fn insert(
             &self,
             execution_id: ID,
             version: Version,
-            event: ExecutionEventInner<ID>,
+            event: ExecutionEvent<ID>,
         ) -> Result<(), DbError>;
-    }
 
-    #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-    #[error("non-determinism detected, reason: `{0}`")]
-    pub(crate) struct NonDeterminismError(pub(crate) String);
-
-    impl From<NonDeterminismError> for WorkerError {
-        fn from(value: NonDeterminismError) -> Self {
-            Self::NonDeterminismDetected(value.0)
-        }
+        async fn get(&self, execution_id: ID) -> Result<ExecutionHistory<ID>, DbError>;
     }
 
     #[derive(Debug)]
@@ -122,31 +99,6 @@ mod worker {
             result: FinishedExecutionResult<E>,
         },
     }
-
-    // pub(crate) trait WorkerStore<E: ExecutionId> {
-    //     // sync events
-    //     fn next_id(&mut self) -> Result<E, NonDeterminismError>;
-
-    //     // async events
-    //     fn next_event(
-    //         &mut self,
-    //         command: &WorkerCommand<E>,
-    //     ) -> Result<MaybeReplayResponse<E>, NonDeterminismError>;
-    // }
-
-    // pub(crate) trait WriteableWorkerStore<E: ExecutionId>:
-    //     WorkerStore<E> + Default + Send + 'static
-    // {
-    //     fn restart(&mut self);
-
-    //     fn persist_child_result(
-    //         &mut self,
-    //         child_execution_id: E,
-    //         result: FinishedExecutionResult<E>,
-    //     );
-
-    //     fn persist_delay_passed(&mut self, duration: Duration);
-    // }
 }
 
 type FinishedExecutionResult<ID> = Result<SupportedFunctionResult, FinishedExecutionError<ID>>;

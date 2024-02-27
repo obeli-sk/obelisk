@@ -1,47 +1,51 @@
 use crate::{
     storage::inmemory_dao::{api::Version, ExecutionEvent, ExecutionEventInner, ExecutorName},
     time::now,
-    worker::{DbConnection, DbError, DbReadError},
+    worker::{DbConnection, DbConnectionError, DbError, Worker},
 };
 use chrono::{DateTime, Utc};
-use concepts::{ExecutionId, FunctionFqn, SupportedFunctionResult};
+use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
 use std::{marker::PhantomData, time::Duration};
 use tracing::{debug, instrument};
 
-struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>> {
+struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     db_connection: DB,
     ffqns: Vec<FunctionFqn>,
     executor_name: ExecutorName,
     lock_expiry: Duration,
     max_tick_sleep: Duration,
-    phantom_data: PhantomData<fn(ID) -> ID>,
+    worker: W,
+    _phantom_data: PhantomData<fn(ID) -> ID>,
 }
 
 #[derive(Debug)]
 struct ExecTickRequest {
-    now: DateTime<Utc>,
+    executed_at: DateTime<Utc>,
     batch_size: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 struct ExecutionProgress<ID: ExecutionId> {
     execution_id: ID,
-    event: Result<ExecutionEvent<ID>, DbError>,
+    result: Result<ExecutionEvent<ID>, DbError>,
 }
 
-impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
+impl<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> ExecTask<ID, DB, W> {
     async fn tick(
         &mut self,
         request: ExecTickRequest,
-    ) -> Result<Vec<ExecutionProgress<ID>>, DbReadError> {
+    ) -> Result<Vec<ExecutionProgress<ID>>, DbConnectionError> {
         let pending = self
             .db_connection
-            .fetch_pending(request.batch_size, request.now, self.ffqns.clone())
+            .fetch_pending(request.batch_size, request.executed_at, self.ffqns.clone())
             .await?;
 
         let mut executions = Vec::new();
-        for (execution, version, _) in pending {
-            executions.push(self.lock_execute(execution, version, request.now).await);
+        for (execution, version, params, _) in pending {
+            executions.push(
+                self.lock_execute(execution, version, params, request.executed_at)
+                    .await,
+            );
         }
         Ok(executions)
     }
@@ -51,11 +55,13 @@ impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
         &self,
         execution_id: ID,
         version: Version,
+        params: Params,
         started_at: DateTime<Utc>,
     ) -> ExecutionProgress<ID> {
         match self
             .db_connection
             .lock(
+                started_at,
                 execution_id.clone(),
                 version,
                 self.executor_name.clone(),
@@ -63,23 +69,21 @@ impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
             )
             .await
         {
-            Ok(event_history) => {
-                // TODO - execute, update state.
+            Ok((event_history, version)) => {
+                let result = self
+                    .worker
+                    .run(execution_id.clone(), params, event_history, version)
+                    .await;
                 ExecutionProgress {
                     execution_id,
-                    event: Ok(ExecutionEvent {
-                        created_at: now(),
-                        event: ExecutionEventInner::Finished {
-                            result: Ok(SupportedFunctionResult::None),
-                        },
-                    }),
+                    result,
                 }
             }
             Err(err) => {
                 debug!("Database error: {err:?}");
                 ExecutionProgress {
                     execution_id,
-                    event: Err(err),
+                    result: Err(err),
                 }
             }
         }
@@ -89,14 +93,18 @@ impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        storage::inmemory_dao::{tests::TickBasedDbConnection, DbTask, ExecutionEventInner},
+        storage::inmemory_dao::{
+            tests::TickBasedDbConnection, DbTask, EventHistory, ExecutionEventInner,
+        },
         time::now,
         worker::DbConnection,
     };
+    use assert_matches::assert_matches;
+    use async_trait::async_trait;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params};
     use std::sync::Arc;
     use tracing::info;
-    use tracing_unwrap::ResultExt;
+    use tracing_unwrap::{OptionExt, ResultExt};
 
     use super::*;
 
@@ -105,6 +113,35 @@ mod tests {
     }
 
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
+
+    struct SimpleWorker<DB: DbConnection<WorkflowId>> {
+        db_connection: DB,
+    }
+    #[async_trait]
+    impl<DB: DbConnection<WorkflowId> + Sync> Worker<WorkflowId> for SimpleWorker<DB> {
+        async fn run(
+            &self,
+            execution_id: WorkflowId,
+            params: Params,
+            events: Vec<EventHistory<WorkflowId>>,
+            version: Version,
+        ) -> Result<ExecutionEvent<WorkflowId>, DbError> {
+            debug!("run");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            // persist
+            let finished_event = ExecutionEvent {
+                created_at: now(),
+                event: ExecutionEventInner::Finished {
+                    result: Ok(SupportedFunctionResult::None),
+                },
+            };
+            self.db_connection
+                .insert(execution_id, version, finished_event.clone())
+                .await?;
+
+            Ok(finished_event)
+        }
+    }
 
     #[tokio::test]
     async fn tick_based() {
@@ -116,7 +153,7 @@ mod tests {
         test(db_connection).await;
     }
 
-    async fn test(db_connection: impl DbConnection<WorkflowId> + Clone) {
+    async fn test(db_connection: impl DbConnection<WorkflowId> + Clone + Sync) {
         set_up();
 
         info!("Now: {}", now());
@@ -127,12 +164,15 @@ mod tests {
             executor_name: Arc::new("exec1".to_string()),
             lock_expiry: Duration::from_secs(1),
             max_tick_sleep,
-            phantom_data: Default::default(),
+            worker: SimpleWorker {
+                db_connection: db_connection.clone(),
+            },
+            _phantom_data: Default::default(),
         };
         let actual = executor
             .tick(ExecTickRequest {
                 batch_size: 5,
-                now: now(),
+                executed_at: now(),
             })
             .await;
         let executions = actual.unwrap_or_log();
@@ -143,33 +183,61 @@ mod tests {
             .insert(
                 execution_id.clone(),
                 0,
-                ExecutionEventInner::Created {
-                    ffqn: SOME_FFQN.to_owned(),
-                    params: Params::default(),
-                    parent: None,
-                    scheduled_at: None,
+                ExecutionEvent {
+                    created_at: now(),
+                    event: ExecutionEventInner::Created {
+                        ffqn: SOME_FFQN.to_owned(),
+                        params: Params::default(),
+                        parent: None,
+                        scheduled_at: None,
+                    },
                 },
             )
             .await
             .unwrap_or_log();
 
         // execute!
+        let requested_execution_at = now();
         let actual = executor
             .tick(ExecTickRequest {
                 batch_size: 5,
-                now: now(),
+                executed_at: requested_execution_at,
             })
             .await;
         let executions = actual.unwrap_or_log();
-        let expected = ExecutionProgress {
-            execution_id,
-            event: Ok(ExecutionEvent {
-                created_at: now(),
-                event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionResult::None),
-                },
-            }),
-        };
-        assert_eq!(vec![expected], executions);
+
+        assert_eq!(1, executions.len());
+        let finished_event = assert_matches!(
+            executions.get(0),
+            Some(ExecutionProgress {
+                execution_id: returned_id,
+                result: Ok(event),
+            }) if *returned_id == execution_id => event
+        );
+        assert_matches!(finished_event, ExecutionEvent {
+            created_at: executed_at,
+            event: ExecutionEventInner::Finished {
+                result: Ok(SupportedFunctionResult::None),
+            },
+        } if *executed_at >= requested_execution_at);
+
+        // check that DB contains the result.
+        let (history, _) = db_connection.get(execution_id).await.unwrap_or_log();
+        assert_eq!(3, history.len());
+        assert_matches!(
+            history[0],
+            ExecutionEvent {
+                event: ExecutionEventInner::Created { .. },
+                ..
+            }
+        );
+        assert_matches!(
+            history[1],
+            ExecutionEvent {
+                event: ExecutionEventInner::Locked { .. },
+                ..
+            }
+        );
+        assert_eq!(*finished_event, history[2]);
     }
 }
