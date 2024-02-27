@@ -1,9 +1,10 @@
 use crate::{
-    storage::inmemory_dao::{api::Version, ExecutorName},
-    worker::{DbConnection, DbError},
+    storage::inmemory_dao::{api::Version, ExecutionEvent, ExecutionEventInner, ExecutorName},
+    time::now,
+    worker::{DbConnection, DbError, DbWriteError},
 };
 use chrono::{DateTime, Utc};
-use concepts::{ExecutionId, FunctionFqn};
+use concepts::{ExecutionId, FunctionFqn, SupportedFunctionResult};
 use std::{marker::PhantomData, time::Duration};
 use tracing::{debug, instrument};
 
@@ -22,10 +23,25 @@ struct ExecTickRequest {
     batch_size: usize,
 }
 
-type Executions<ID> = Vec<Result<ID, ID>>;
+#[derive(thiserror::Error, Debug, PartialEq, Eq)]
+enum DatabaseError {
+    #[error("read failed - `{0:?}`")]
+    Read(DbError),
+    #[error("write failed - `{0:?}`")]
+    Write(DbWriteError),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExecutionProgress<ID: ExecutionId> {
+    execution_id: ID,
+    event: Result<ExecutionEvent<ID>, DatabaseError>,
+}
 
 impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
-    async fn tick(&mut self, request: ExecTickRequest) -> Result<Executions<ID>, DbError> {
+    async fn tick(
+        &mut self,
+        request: ExecTickRequest,
+    ) -> Result<Vec<ExecutionProgress<ID>>, DbError> {
         let pending = self
             .db_connection
             .fetch_pending(request.batch_size, request.now, self.ffqns.clone())
@@ -43,25 +59,43 @@ impl<ID: ExecutionId, DB: DbConnection<ID>> ExecTask<ID, DB> {
         &self,
         execution_id: ID,
         version: Version,
-        now: DateTime<Utc>,
-    ) -> Result<ID, ID> {
+        started_at: DateTime<Utc>,
+    ) -> ExecutionProgress<ID> {
         match self
             .db_connection
             .lock(
                 execution_id.clone(),
                 version,
                 self.executor_name.clone(),
-                now + self.lock_expiry,
+                started_at + self.lock_expiry,
             )
             .await
         {
             Ok(Ok(event_history)) => {
                 // TODO - execute, update state.
-                Ok(execution_id)
+                ExecutionProgress {
+                    execution_id,
+                    event: Ok(ExecutionEvent {
+                        created_at: now(),
+                        event: ExecutionEventInner::Finished {
+                            result: Ok(SupportedFunctionResult::None),
+                        },
+                    }),
+                }
             }
-            other => {
-                debug!("Locking failed: {other:?}");
-                Err(execution_id)
+            Ok(Err(err)) => {
+                debug!("Write failed: {err:?}");
+                ExecutionProgress {
+                    execution_id,
+                    event: Err(DatabaseError::Write(err)),
+                }
+            }
+            Err(err) => {
+                debug!("Read failed: {err:?}");
+                ExecutionProgress {
+                    execution_id,
+                    event: Err(DatabaseError::Read(err)),
+                }
             }
         }
     }
@@ -143,6 +177,15 @@ mod tests {
             })
             .await;
         let executions = actual.unwrap_or_log();
-        assert_eq!(vec![Ok(execution_id)], executions);
+        let expected = ExecutionProgress {
+            execution_id,
+            event: Ok(ExecutionEvent {
+                created_at: now(),
+                event: ExecutionEventInner::Finished {
+                    result: Ok(SupportedFunctionResult::None),
+                },
+            }),
+        };
+        assert_eq!(vec![expected], executions);
     }
 }

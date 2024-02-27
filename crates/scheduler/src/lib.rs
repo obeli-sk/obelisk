@@ -49,7 +49,7 @@ mod worker {
         ) -> Result<WorkerCommand<ID>, WorkerError>;
     }
 
-    #[derive(thiserror::Error, Clone, Debug)]
+    #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
     pub enum DbError {
         #[error("send error")]
         SendError,
@@ -57,7 +57,7 @@ mod worker {
         RecvError,
     }
 
-    #[derive(thiserror::Error, Clone, Debug)]
+    #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
     pub enum DbWriteError {
         #[error("validation failed: {0}")]
         ValidationFailed(&'static str),

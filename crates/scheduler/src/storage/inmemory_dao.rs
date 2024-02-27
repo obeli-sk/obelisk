@@ -10,12 +10,15 @@
 //! Schedulers subscribe to pending executions using `FetchPending` with a list of
 //! fully qualified function names that are supported.
 
+use self::{
+    api::{DbRequest, DbTickRequest, ExecutionSpecificRequest, GeneralRequest, Version},
+    index::{JournalsIndex, PotentiallyPending},
+};
 use crate::{
     time::now,
     worker::{DbConnection, DbError, DbWriteError},
     FinishedExecutionResult,
 };
-use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn, Params};
@@ -29,24 +32,19 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::AbortHandle,
 };
-use tracing::{debug, error, info, instrument, trace, warn, Level};
-use tracing_unwrap::{OptionExt, ResultExt};
-
-use self::{
-    api::{DbRequest, DbTickRequest, ExecutionSpecificRequest, GeneralRequest, Version},
-    index::{JournalsIndex, PotentiallyPending},
-};
+use tracing::{debug, info, instrument, trace, warn, Level};
+use tracing_unwrap::OptionExt;
 
 pub type ExecutorName = Arc<String>;
 
-#[derive(Clone, Debug, derive_more::Display)]
+#[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
 #[display(fmt = "{event}")]
-struct ExecutionEvent<ID: ExecutionId> {
-    created_at: DateTime<Utc>,
-    event: ExecutionEventInner<ID>,
+pub(crate) struct ExecutionEvent<ID: ExecutionId> {
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) event: ExecutionEventInner<ID>,
 }
 
-#[derive(Clone, Debug, derive_more::Display)]
+#[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
 pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
@@ -1012,10 +1010,12 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use assert_matches::assert_matches;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
     use std::time::Duration;
     use tokio::time::sleep;
     use tracing::info;
+    use tracing_unwrap::ResultExt;
 
     #[derive(Clone)]
     pub(crate) struct TickBasedDbConnection<ID: ExecutionId> {
