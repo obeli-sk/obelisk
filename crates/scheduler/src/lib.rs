@@ -10,9 +10,7 @@ mod storage;
 mod testing;
 
 mod worker {
-    use self::storage::inmemory_dao::{
-        api::Version, EventHistory, ExecutionEvent, ExecutionEventInner, ExecutorName,
-    };
+    use self::storage::inmemory_dao::{api::Version, EventHistory, ExecutionEvent, ExecutorName};
     use super::*;
 
     #[async_trait]
@@ -53,14 +51,30 @@ mod worker {
         RowSpecific(RowSpecificError),
     }
 
+    pub type AppendResponse = Version;
     pub type PendingExecution<ID> = (ID, Version, Params, Option<DateTime<Utc>>);
     pub type ExecutionHistory<ID> = (Vec<ExecutionEvent<ID>>, Version);
-    pub type LockResponse<ID> = (Vec<EventHistory<ID>>, Version);
-    pub type AppendResponse = Version;
+    pub type LockedResponse<ID> = (Vec<EventHistory<ID>>, Version);
+    pub type FetchLockResponse<ID> = Vec<(
+        ID,
+        Version,
+        Params,
+        Vec<EventHistory<ID>>,
+        Option<DateTime<Utc>>,
+    )>;
 
     #[async_trait]
     pub trait DbConnection<ID: ExecutionId> {
-        // TODO: fetch_and_lock
+        async fn fetch_lock_pending(
+            &self,
+            batch_size: usize,
+            fetch_expiring_before: DateTime<Utc>,
+            ffqns: Vec<FunctionFqn>,
+            lock_created_at: DateTime<Utc>,
+            executor_name: ExecutorName,
+            lock_expires_at: DateTime<Utc>,
+        ) -> Result<FetchLockResponse<ID>, DbConnectionError>;
+
         async fn fetch_pending(
             &self,
             batch_size: usize,
@@ -87,7 +101,7 @@ mod worker {
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-        ) -> Result<LockResponse<ID>, DbError>;
+        ) -> Result<LockedResponse<ID>, DbError>;
 
         async fn append(
             &self,

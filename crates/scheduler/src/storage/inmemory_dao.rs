@@ -17,8 +17,8 @@ use self::{
 use crate::{
     time::now,
     worker::{
-        AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory, LockResponse,
-        PendingExecution, RowSpecificError,
+        AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
+        FetchLockResponse, LockedResponse, PendingExecution, RowSpecificError,
     },
     FinishedExecutionResult,
 };
@@ -36,7 +36,7 @@ use tokio::{
     task::AbortHandle,
 };
 use tracing::{debug, info, instrument, trace, warn, Level};
-use tracing_unwrap::OptionExt;
+use tracing_unwrap::{OptionExt, ResultExt};
 
 pub type ExecutorName = Arc<String>;
 
@@ -289,12 +289,13 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
 
 pub(crate) mod api {
     use crate::worker::{
-        AppendResponse, ExecutionHistory, LockResponse, PendingExecution, RowSpecificError,
+        AppendResponse, ExecutionHistory, FetchLockResponse, LockedResponse, PendingExecution,
+        RowSpecificError,
     };
 
     use super::{ExecutionEvent, ExecutorName};
     use chrono::{DateTime, Utc};
-    use concepts::{ExecutionId, FunctionFqn, Params};
+    use concepts::{ExecutionId, FunctionFqn};
     use derivative::Derivative;
     use tokio::sync::oneshot;
 
@@ -306,7 +307,7 @@ pub(crate) mod api {
         pub(crate) received_at: DateTime<Utc>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, derive_more::Display)]
     pub(crate) enum DbRequest<ID: ExecutionId> {
         General(GeneralRequest<ID>),
         ExecutionSpecific(ExecutionSpecificRequest<ID>),
@@ -316,7 +317,7 @@ pub(crate) mod api {
     #[derivative(Debug)]
     #[derive(derive_more::Display)]
     pub(crate) enum ExecutionSpecificRequest<ID: ExecutionId> {
-        #[display(fmt = "Lock")]
+        #[display(fmt = "Lock(`{executor_name}`)")]
         Lock {
             created_at: DateTime<Utc>,
             execution_id: ID,
@@ -324,7 +325,7 @@ pub(crate) mod api {
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
             #[derivative(Debug = "ignore")]
-            resp_sender: oneshot::Sender<Result<LockResponse<ID>, RowSpecificError>>,
+            resp_sender: oneshot::Sender<Result<LockedResponse<ID>, RowSpecificError>>,
         },
         #[display(fmt = "Insert({event})")]
         Append {
@@ -342,15 +343,27 @@ pub(crate) mod api {
         },
     }
 
-    #[derive(Derivative)]
+    #[derive(derive_more::Display, Derivative)]
     #[derivative(Debug)]
     pub(crate) enum GeneralRequest<ID: ExecutionId> {
+        #[display(fmt = "FetchPending({ffqns:?})")]
         FetchPending {
             batch_size: usize,
             expiring_before: DateTime<Utc>,
             ffqns: Vec<FunctionFqn>,
             #[derivative(Debug = "ignore")]
             resp_sender: oneshot::Sender<Vec<PendingExecution<ID>>>,
+        },
+        #[display(fmt = "FetchLockPending(`{executor_name}`, {ffqns:?})")]
+        FetchLockPending {
+            batch_size: usize,
+            expiring_before: DateTime<Utc>,
+            ffqns: Vec<FunctionFqn>,
+            created_at: DateTime<Utc>,
+            executor_name: ExecutorName,
+            expires_at: DateTime<Utc>,
+            #[derivative(Debug = "ignore")]
+            resp_sender: oneshot::Sender<FetchLockResponse<ID>>,
         },
     }
 }
@@ -375,7 +388,6 @@ mod index {
         pub(super) fn fetch_pending<'a>(
             &self,
             journals: &'a HashMap<ID, ExecutionJournal<ID>>,
-            received_at: DateTime<Utc>,
             batch_size: usize,
             expiring_before: DateTime<Utc>,
             ffqns: Vec<concepts::FunctionFqn>,
@@ -642,22 +654,27 @@ impl<ID: ExecutionId> ExecutionSpecificRequest<ID> {
 #[derivative(Debug)]
 pub(crate) enum DbTickResponse<ID: ExecutionId> {
     FetchPending {
-        pending_executions: Vec<PendingExecution<ID>>,
+        payload: Vec<PendingExecution<ID>>,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Vec<PendingExecution<ID>>>,
     },
-    Lock {
-        result: Result<LockResponse<ID>, RowSpecificError>,
+    FetchLockPending {
+        payload: FetchLockResponse<ID>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<LockResponse<ID>, RowSpecificError>>,
+        resp_sender: oneshot::Sender<FetchLockResponse<ID>>,
+    },
+    Lock {
+        payload: Result<LockedResponse<ID>, RowSpecificError>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Result<LockedResponse<ID>, RowSpecificError>>,
     },
     AppendResult {
-        result: Result<AppendResponse, RowSpecificError>,
+        payload: Result<AppendResponse, RowSpecificError>,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<AppendResponse, RowSpecificError>>,
     },
     Get {
-        result: Result<ExecutionHistory<ID>, RowSpecificError>,
+        payload: Result<ExecutionHistory<ID>, RowSpecificError>,
         resp_sender: oneshot::Sender<Result<ExecutionHistory<ID>, RowSpecificError>>,
     },
 }
@@ -667,20 +684,24 @@ impl<ID: ExecutionId> DbTickResponse<ID> {
         match self {
             Self::FetchPending {
                 resp_sender,
-                pending_executions: message,
-            } => resp_sender.send(message).map_err(|_| ()),
+                payload,
+            } => resp_sender.send(payload).map_err(|_| ()),
+            Self::FetchLockPending {
+                resp_sender,
+                payload,
+            } => resp_sender.send(payload).map_err(|_| ()),
             Self::Lock {
                 resp_sender,
-                result,
-            } => resp_sender.send(result).map_err(|_| ()),
+                payload,
+            } => resp_sender.send(payload).map_err(|_| ()),
             Self::AppendResult {
                 resp_sender,
-                result,
-            } => resp_sender.send(result).map_err(|_| ()),
+                payload,
+            } => resp_sender.send(payload).map_err(|_| ()),
             Self::Get {
-                result,
+                payload,
                 resp_sender,
-            } => resp_sender.send(result).map_err(|_| ()),
+            } => resp_sender.send(payload).map_err(|_| ()),
         }
     }
 }
@@ -724,43 +745,85 @@ impl<ID: ExecutionId> DbTask<ID> {
             request,
             received_at,
         } = request;
-        match request {
-            DbRequest::ExecutionSpecific(request) => self.handle_specific(request, received_at),
-            DbRequest::General(request) => self.handle_general(request, received_at),
+
+        if tracing::enabled!(Level::TRACE) {
+            trace!("Received {request:?} at `{received_at}`");
+        } else {
+            debug!("Received {request} at `{received_at}`");
         }
+
+        let resp = match request {
+            DbRequest::ExecutionSpecific(request) => self.handle_specific(request),
+            DbRequest::General(request) => self.handle_general(request),
+        };
+        if tracing::enabled!(Level::TRACE) {
+            trace!("Responding with {resp:?}");
+        } else {
+            match &resp {
+                DbTickResponse::FetchPending { payload, .. } => {
+                    debug!("Fetched {} executions", payload.len())
+                }
+                DbTickResponse::FetchLockPending { payload, .. } => {
+                    debug!("Fetched and locked {} executions", payload.len())
+                }
+                DbTickResponse::Lock {
+                    payload: Ok(lock_resp),
+                    ..
+                } => {
+                    debug!("Lock succeded with version {}", lock_resp.1)
+                }
+                DbTickResponse::Lock {
+                    payload: Err(err), ..
+                } => debug!("Lock failed: {err:?}"),
+                DbTickResponse::AppendResult { payload, .. } => {
+                    debug!("Persist result: {payload:?}")
+                }
+                DbTickResponse::Get { payload, .. } => {
+                    debug!("Get: {payload:?}")
+                }
+            };
+        }
+        resp
     }
 
-    fn handle_general(
-        &mut self,
-        request: GeneralRequest<ID>,
-        received_at: DateTime<Utc>,
-    ) -> DbTickResponse<ID> {
-        trace!("Received General event {request:?} at `{received_at}`");
+    fn handle_general(&mut self, request: GeneralRequest<ID>) -> DbTickResponse<ID> {
         match request {
             GeneralRequest::FetchPending {
                 batch_size,
                 expiring_before,
                 ffqns,
                 resp_sender,
-            } => self.fetch_pending(received_at, batch_size, expiring_before, ffqns, resp_sender),
+            } => self.fetch_pending(batch_size, expiring_before, ffqns, resp_sender),
+            GeneralRequest::FetchLockPending {
+                batch_size,
+                expiring_before,
+                ffqns,
+                created_at,
+                executor_name,
+                expires_at,
+                resp_sender,
+            } => self.fetch_lock_pending(
+                batch_size,
+                expiring_before,
+                ffqns,
+                created_at,
+                executor_name,
+                expires_at,
+                resp_sender,
+            ),
         }
     }
 
     fn fetch_pending(
         &self,
-        received_at: DateTime<Utc>,
         batch_size: usize,
         expiring_before: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         resp_sender: oneshot::Sender<Vec<PendingExecution<ID>>>,
     ) -> DbTickResponse<ID> {
-        let pending = self.index.fetch_pending(
-            &self.journals,
-            received_at,
-            batch_size,
-            expiring_before,
-            ffqns,
-        );
+        let pending = self
+            .index
+            .fetch_pending(&self.journals, batch_size, expiring_before, ffqns);
         let pending = pending
             .into_iter()
             .map(|(journal, scheduled_at)| {
@@ -772,29 +835,59 @@ impl<ID: ExecutionId> DbTask<ID> {
                 )
             })
             .collect::<Vec<_>>();
-        if tracing::enabled!(Level::TRACE) {
-            trace!("Responding with {pending:?}");
-        } else {
-            debug!("Responding with {} pending executions", pending.len());
-        }
         DbTickResponse::FetchPending {
             resp_sender,
-            pending_executions: pending,
+            payload: pending,
+        }
+    }
+
+    fn fetch_lock_pending(
+        &mut self,
+        batch_size: usize,
+        expiring_before: DateTime<Utc>,
+        ffqns: Vec<FunctionFqn>,
+        created_at: DateTime<Utc>,
+        executor_name: Arc<String>,
+        expires_at: DateTime<Utc>,
+        resp_sender: oneshot::Sender<FetchLockResponse<ID>>,
+    ) -> DbTickResponse<ID> {
+        let pending = self
+            .index
+            .fetch_pending(&self.journals, batch_size, expiring_before, ffqns);
+        let mut payload = Vec::with_capacity(pending.len());
+        for (journal, scheduled_at) in pending {
+            let item = (
+                journal.id().clone(),
+                journal.version(), // updated later
+                journal.params(),
+                Vec::default(), // updated later
+                scheduled_at,
+            );
+            payload.push(item);
+        }
+        // Lock all, update the version and event history.
+        for (execution_id, version, _, event_history, _) in payload.iter_mut() {
+            let (new_event_history, new_version) = self
+                .lock(
+                    created_at,
+                    execution_id.clone(),
+                    *version,
+                    executor_name.clone(),
+                    expires_at,
+                )
+                .expect_or_log("must be lockable within the same transaction");
+            *version = new_version;
+            event_history.extend(new_event_history);
+        }
+        DbTickResponse::FetchLockPending {
+            payload,
+            resp_sender,
         }
     }
 
     #[instrument(skip_all, fields(execution_id = %request.execution_id()))]
-    fn handle_specific(
-        &mut self,
-        request: ExecutionSpecificRequest<ID>,
-        received_at: DateTime<Utc>,
-    ) -> DbTickResponse<ID> {
-        if tracing::enabled!(Level::TRACE) {
-            trace!("Received {request:?} at `{received_at}`");
-        } else {
-            debug!("Received {request} at `{received_at}`");
-        }
-        let resp = match request {
+    fn handle_specific(&mut self, request: ExecutionSpecificRequest<ID>) -> DbTickResponse<ID> {
+        match request {
             ExecutionSpecificRequest::Append {
                 execution_id,
                 version,
@@ -802,7 +895,7 @@ impl<ID: ExecutionId> DbTask<ID> {
                 resp_sender,
             } => DbTickResponse::AppendResult {
                 resp_sender,
-                result: self.append(execution_id, version, event),
+                payload: self.append(execution_id, version, event),
             },
             ExecutionSpecificRequest::Lock {
                 created_at,
@@ -813,47 +906,21 @@ impl<ID: ExecutionId> DbTask<ID> {
                 resp_sender,
             } => DbTickResponse::Lock {
                 resp_sender,
-                result: self.lock(created_at, execution_id, version, executor_name, expires_at),
+                payload: self.lock(created_at, execution_id, version, executor_name, expires_at),
             },
             ExecutionSpecificRequest::Get {
                 execution_id,
                 resp_sender,
             } => DbTickResponse::Get {
-                result: self.get(execution_id),
+                payload: self.get(execution_id),
                 resp_sender,
             },
-        };
-
-        if tracing::enabled!(Level::TRACE) {
-            trace!("Responding with {resp:?}");
-        } else {
-            match &resp {
-                DbTickResponse::FetchPending {
-                    pending_executions, ..
-                } => debug!("Fethed {} executions", pending_executions.len()),
-                DbTickResponse::Lock {
-                    result: Ok(lock_resp),
-                    ..
-                } => {
-                    debug!("Lock succeded with version {}", lock_resp.1)
-                }
-                DbTickResponse::Lock {
-                    result: Err(err), ..
-                } => debug!("Lock failed: {err:?}"),
-                DbTickResponse::AppendResult { result, .. } => {
-                    debug!("Persist result: {result:?}")
-                }
-                DbTickResponse::Get { result, .. } => {
-                    debug!("Get: {result:?}")
-                }
-            };
         }
-        resp
     }
 
     fn create(
         &mut self,
-        received_at: DateTime<Utc>,
+        created_at: DateTime<Utc>,
         execution_id: ID,
         ffqn: FunctionFqn,
         params: Params,
@@ -871,7 +938,7 @@ impl<ID: ExecutionId> DbTask<ID> {
             params,
             scheduled_at,
             parent,
-            received_at,
+            created_at,
         );
         let version = journal.version();
         self.journals
@@ -888,7 +955,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         version: Version,
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
-    ) -> Result<LockResponse<ID>, RowSpecificError> {
+    ) -> Result<LockedResponse<ID>, RowSpecificError> {
         let event = ExecutionEvent {
             created_at,
             event: ExecutionEventInner::Locked {
@@ -1002,6 +1069,35 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
             .map_err(|_| DbConnectionError::RecvError)
     }
 
+    #[instrument(skip_all)]
+    async fn fetch_lock_pending(
+        &self,
+        batch_size: usize,
+        expiring_before: DateTime<Utc>,
+        ffqns: Vec<FunctionFqn>,
+        created_at: DateTime<Utc>,
+        executor_name: ExecutorName,
+        expires_at: DateTime<Utc>,
+    ) -> Result<FetchLockResponse<ID>, DbConnectionError> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        let request = DbRequest::General(GeneralRequest::FetchLockPending {
+            batch_size,
+            expiring_before,
+            ffqns,
+            created_at,
+            executor_name,
+            expires_at,
+            resp_sender,
+        });
+        self.client_to_store_req_sender
+            .send(request)
+            .await
+            .map_err(|_| DbConnectionError::SendError)?;
+        resp_receiver
+            .await
+            .map_err(|_| DbConnectionError::RecvError)
+    }
+
     #[instrument(skip_all, %execution_id)]
     async fn lock(
         &self,
@@ -1010,7 +1106,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         version: Version,
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
-    ) -> Result<LockResponse<ID>, DbError> {
+    ) -> Result<LockedResponse<ID>, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
             created_at,
@@ -1126,8 +1222,34 @@ pub(crate) mod tests {
                 request,
                 received_at: now(),
             });
+            Ok(assert_matches!(response, DbTickResponse::FetchPending {  payload, .. } => payload))
+        }
+
+        #[instrument(skip_all)]
+        async fn fetch_lock_pending(
+            &self,
+            batch_size: usize,
+            expiring_before: DateTime<Utc>,
+            ffqns: Vec<FunctionFqn>,
+            created_at: DateTime<Utc>,
+            executor_name: ExecutorName,
+            expires_at: DateTime<Utc>,
+        ) -> Result<FetchLockResponse<ID>, DbConnectionError> {
+            let request = DbRequest::General(GeneralRequest::FetchLockPending {
+                batch_size,
+                expiring_before,
+                ffqns,
+                created_at,
+                executor_name,
+                expires_at,
+                resp_sender: oneshot::channel().0,
+            });
+            let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
+                request,
+                received_at: now(),
+            });
             Ok(
-                assert_matches!(response, DbTickResponse::FetchPending {  pending_executions, .. } => pending_executions),
+                assert_matches!(response, DbTickResponse::FetchLockPending {  payload, .. } => payload),
             )
         }
 
@@ -1138,7 +1260,7 @@ pub(crate) mod tests {
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-        ) -> Result<LockResponse<ID>, DbError> {
+        ) -> Result<LockedResponse<ID>, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
                 created_at,
                 execution_id,
@@ -1151,7 +1273,7 @@ pub(crate) mod tests {
                 request,
                 received_at: now(),
             });
-            assert_matches!(response, DbTickResponse::Lock { result, .. } => result)
+            assert_matches!(response, DbTickResponse::Lock { payload, .. } => payload)
                 .map_err(|err| DbError::RowSpecific(err))
         }
 
@@ -1171,7 +1293,7 @@ pub(crate) mod tests {
                 request,
                 received_at: now(),
             });
-            assert_matches!(response, DbTickResponse::AppendResult { result, .. } => result)
+            assert_matches!(response, DbTickResponse::AppendResult { payload, .. } => payload)
                 .map_err(|err| DbError::RowSpecific(err))
         }
 
@@ -1184,7 +1306,7 @@ pub(crate) mod tests {
                 request,
                 received_at: now(),
             });
-            assert_matches!(response, DbTickResponse::Get { result, .. } => result)
+            assert_matches!(response, DbTickResponse::Get { payload, .. } => payload)
                 .map_err(|err| DbError::RowSpecific(err))
         }
     }
