@@ -173,6 +173,9 @@ pub(crate) mod time {
     cfg_if::cfg_if! {
         if #[cfg(all(test, madsim))] {
             pub(crate) fn now() -> DateTime<Utc> {
+                if madsim::rand::random() {
+                    madsim::time::advance(std::time::Duration::from_millis(1));
+                }
                 DateTime::from(madsim::time::TimeHandle::current().now_time())
             }
         } else {
