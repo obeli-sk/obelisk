@@ -4,12 +4,6 @@
 //!
 //! When inserting, the row in the journal must contain a version that must be equal
 //! to the current number of events in the journal. First change with the expected version wins.
-//!
-//! There can be many schedulers and executors operating on the same execution.
-//!
-//! Schedulers subscribe to pending executions using `FetchPending` with a list of
-//! fully qualified function names that are supported.
-
 use self::{
     api::{DbRequest, DbTickRequest, ExecutionSpecificRequest, GeneralRequest, Version},
     index::{JournalsIndex, PotentiallyPending},
