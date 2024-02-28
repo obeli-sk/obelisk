@@ -5,7 +5,7 @@ use crate::{
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn, Params};
 use std::{marker::PhantomData, time::Duration};
-use tracing::{debug, instrument};
+use tracing::{debug, info_span, instrument, Instrument};
 
 struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     db_connection: DB,
@@ -30,69 +30,44 @@ struct ExecutionProgress<ID: ExecutionId> {
 }
 
 impl<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> ExecTask<ID, DB, W> {
+    // TODO: logging
     async fn tick(
         &mut self,
         request: ExecTickRequest,
     ) -> Result<Vec<ExecutionProgress<ID>>, DbConnectionError> {
-        let pending = self
+        let lock_expires_at = request.executed_at + self.lock_expiry;
+        let locked = self
             .db_connection
-            .fetch_pending(request.batch_size, request.executed_at, self.ffqns.clone())
-            .await?;
-
-        let mut executions = Vec::new();
-        for (execution, version, params, _) in pending {
-            executions.push(
-                self.lock_execute(execution, version, params, request.executed_at)
-                    .await,
-            );
-        }
-        Ok(executions)
-    }
-
-    #[instrument(skip_all, fields(%execution_id))]
-    async fn lock_execute(
-        &self,
-        execution_id: ID,
-        version: Version,
-        params: Params,
-        started_at: DateTime<Utc>,
-    ) -> ExecutionProgress<ID> {
-        let lock_expires_at = started_at + self.lock_expiry;
-        match self
-            .db_connection
-            .lock(
-                started_at,
-                execution_id.clone(),
-                version,
+            .fetch_lock_pending(
+                request.batch_size,
+                request.executed_at, // fetch expiring before now
+                self.ffqns.clone(),
+                request.executed_at, // lock created at - now
                 self.executor_name.clone(),
                 lock_expires_at,
             )
-            .await
-        {
-            Ok((event_history, version)) => {
-                let result = self
-                    .worker
-                    .run(
-                        execution_id.clone(),
-                        params,
-                        event_history,
-                        version,
-                        lock_expires_at,
-                    )
-                    .await;
-                ExecutionProgress {
-                    execution_id,
-                    result,
-                }
-            }
-            Err(err) => {
-                debug!("Database error: {err:?}");
-                ExecutionProgress {
-                    execution_id,
-                    result: Err(err),
-                }
-            }
+            .await?;
+
+        let mut executions = Vec::new();
+        for (execution_id, version, params, event_history, _) in locked {
+            let result = self
+                .worker
+                .run(
+                    execution_id.clone(),
+                    params,
+                    event_history,
+                    version,
+                    lock_expires_at,
+                )
+                .instrument(info_span!("worker::run", %execution_id))
+                .await;
+
+            executions.push(ExecutionProgress {
+                execution_id,
+                result,
+            });
         }
+        Ok(executions)
     }
 }
 
