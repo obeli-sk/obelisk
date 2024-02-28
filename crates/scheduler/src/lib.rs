@@ -77,18 +77,7 @@ mod worker {
             params: Params,
             parent: Option<ID>,
             scheduled_at: Option<DateTime<Utc>>,
-        ) -> Result<AppendResponse, DbError> {
-            let event = ExecutionEvent {
-                created_at,
-                event: ExecutionEventInner::Created {
-                    ffqn,
-                    params,
-                    parent,
-                    scheduled_at,
-                },
-            };
-            self.append(execution_id, Version::default(), event).await
-        }
+        ) -> Result<AppendResponse, DbError>;
 
         /// Specialized `append` which returns the event history.
         async fn lock(

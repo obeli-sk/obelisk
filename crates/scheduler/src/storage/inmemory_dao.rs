@@ -957,6 +957,28 @@ struct InMemoryDbConnection<ID: ExecutionId> {
 
 #[async_trait]
 impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
+    #[instrument(skip_all, %execution_id)]
+    async fn create(
+        &self,
+        execution_id: ID,
+        created_at: DateTime<Utc>,
+        ffqn: FunctionFqn,
+        params: Params,
+        parent: Option<ID>,
+        scheduled_at: Option<DateTime<Utc>>,
+    ) -> Result<AppendResponse, DbError> {
+        let event = ExecutionEvent {
+            created_at,
+            event: ExecutionEventInner::Created {
+                ffqn,
+                params,
+                parent,
+                scheduled_at,
+            },
+        };
+        self.append(execution_id, Version::default(), event).await
+    }
+
     #[instrument(skip_all)]
     async fn fetch_pending(
         &self,
@@ -1066,6 +1088,28 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<ID: ExecutionId> DbConnection<ID> for TickBasedDbConnection<ID> {
+        #[instrument(skip_all, %execution_id)]
+        async fn create(
+            &self,
+            execution_id: ID,
+            created_at: DateTime<Utc>,
+            ffqn: FunctionFqn,
+            params: Params,
+            parent: Option<ID>,
+            scheduled_at: Option<DateTime<Utc>>,
+        ) -> Result<AppendResponse, DbError> {
+            let event = ExecutionEvent {
+                created_at,
+                event: ExecutionEventInner::Created {
+                    ffqn,
+                    params,
+                    parent,
+                    scheduled_at,
+                },
+            };
+            self.append(execution_id, Version::default(), event).await
+        }
+
         async fn fetch_pending(
             &self,
             batch_size: usize,
@@ -1181,7 +1225,7 @@ pub(crate) mod tests {
         task.close().await;
     }
 
-    async fn db_workflow(db_connection: impl DbConnection<WorkflowId> + Sync) {
+    async fn db_workflow(db_connection: impl DbConnection<WorkflowId>) {
         let execution_id = WorkflowId::generate();
         assert!(db_connection
             .fetch_pending(
