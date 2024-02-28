@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::{ExecutionId, FunctionFqn};
+use concepts::ExecutionId;
 use concepts::{Params, SupportedFunctionResult};
 
 mod executor;
@@ -10,7 +10,7 @@ mod storage;
 mod testing;
 
 mod worker {
-    use self::storage::inmemory_dao::{api::Version, EventHistory, ExecutionEvent, ExecutorName};
+    use self::storage::{DbError, EventHistory, Version};
     use super::*;
 
     #[async_trait]
@@ -23,109 +23,6 @@ mod worker {
             version: Version,
             lock_expires_at: DateTime<Utc>,
         ) -> Result<Version, DbError>;
-    }
-
-    #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-    pub enum DbConnectionError {
-        #[error("send error")]
-        SendError,
-        #[error("receive error")]
-        RecvError,
-    }
-
-    #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-    pub enum RowSpecificError {
-        #[error("validation failed: {0}")]
-        ValidationFailed(&'static str),
-        #[error("version mismatch")]
-        VersionMismatch,
-        #[error("not found")]
-        NotFound,
-    }
-
-    #[derive(thiserror::Error, Debug, PartialEq, Eq, Clone)]
-    pub enum DbError {
-        #[error(transparent)]
-        Connection(DbConnectionError),
-        #[error(transparent)]
-        RowSpecific(RowSpecificError),
-    }
-
-    pub type AppendResponse = Version;
-    pub type PendingExecution<ID> = (ID, Version, Params, Option<DateTime<Utc>>);
-    pub type ExecutionHistory<ID> = (Vec<ExecutionEvent<ID>>, Version);
-    pub type LockResponse<ID> = (Vec<EventHistory<ID>>, Version);
-    pub type LockPendingResponse<ID> = Vec<(
-        ID,
-        Version,
-        Params,
-        Vec<EventHistory<ID>>,
-        Option<DateTime<Utc>>,
-    )>;
-
-    #[async_trait]
-    pub trait DbConnection<ID: ExecutionId> {
-        async fn lock_pending(
-            &self,
-            batch_size: usize,
-            fetch_expiring_before: DateTime<Utc>,
-            ffqns: Vec<FunctionFqn>,
-            lock_created_at: DateTime<Utc>,
-            executor_name: ExecutorName,
-            lock_expires_at: DateTime<Utc>,
-        ) -> Result<LockPendingResponse<ID>, DbConnectionError>;
-
-        async fn fetch_pending(
-            &self,
-            batch_size: usize,
-            expiring_before: DateTime<Utc>,
-            ffqns: Vec<FunctionFqn>,
-        ) -> Result<Vec<PendingExecution<ID>>, DbConnectionError>;
-
-        /// Specialized `append` which does not require a version.
-        async fn create(
-            &self,
-            execution_id: ID,
-            created_at: DateTime<Utc>,
-            ffqn: FunctionFqn,
-            params: Params,
-            parent: Option<ID>,
-            scheduled_at: Option<DateTime<Utc>>,
-        ) -> Result<AppendResponse, DbError>;
-
-        /// Specialized `append` which returns the event history.
-        async fn lock(
-            &self,
-            created_at: DateTime<Utc>,
-            execution_id: ID,
-            version: Version,
-            executor_name: ExecutorName,
-            expires_at: DateTime<Utc>,
-        ) -> Result<LockResponse<ID>, DbError>;
-
-        async fn append(
-            &self,
-            execution_id: ID,
-            version: Version,
-            event: ExecutionEvent<ID>,
-        ) -> Result<AppendResponse, DbError>;
-
-        async fn get(&self, execution_id: ID) -> Result<ExecutionHistory<ID>, DbError>;
-    }
-
-    #[derive(Debug)]
-    pub(crate) enum MaybeReplayResponse<E: ExecutionId> {
-        ReplayResponse(ReplayResponse<E>),
-        MissingResponse,
-    }
-
-    #[derive(Debug)]
-    pub(crate) enum ReplayResponse<E: ExecutionId> {
-        Completed,
-        CompletedWithResult {
-            child_execution_id: E,
-            result: FinishedExecutionResult<E>,
-        },
     }
 }
 
@@ -149,21 +46,6 @@ pub enum FinishedExecutionError<ID: ExecutionId> {
     },
     #[error("cancelled and starting {execution_id}")]
     CancelledWithNew { execution_id: ID },
-}
-
-#[derive(Debug, PartialEq, Clone, Eq)]
-pub enum ExecutionStatusInfo<ID: ExecutionId> {
-    Pending,
-    Enqueued,
-    DelayedUntil(DateTime<Utc>),
-    Blocked,
-    IntermittentTimeout(DateTime<Utc>),
-    Finished(FinishedExecutionResult<ID>),
-}
-impl<ID: ExecutionId> ExecutionStatusInfo<ID> {
-    pub fn is_finished(&self) -> bool {
-        matches!(self, Self::Finished(_))
-    }
 }
 
 pub(crate) mod time {

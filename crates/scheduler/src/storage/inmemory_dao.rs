@@ -5,16 +5,15 @@
 //! When inserting, the row in the journal must contain a version that must be equal
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::{
-    api::{DbRequest, DbTickRequest, ExecutionSpecificRequest, GeneralRequest, Version},
+    api::{DbRequest, DbTickRequest, ExecutionSpecificRequest, GeneralRequest},
     index::{JournalsIndex, PotentiallyPending},
 };
 use crate::{
-    time::now,
-    worker::{
+    storage::{
         AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
-        LockPendingResponse, LockResponse, PendingExecution, RowSpecificError,
+        LockPendingResponse, LockResponse, PendingExecution, RowSpecificError, Version,
     },
-    FinishedExecutionResult,
+    time::now,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -32,134 +31,7 @@ use tokio::{
 use tracing::{debug, info, instrument, trace, warn, Level};
 use tracing_unwrap::{OptionExt, ResultExt};
 
-pub type ExecutorName = Arc<String>;
-
-#[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
-#[display(fmt = "{event}")]
-pub(crate) struct ExecutionEvent<ID: ExecutionId> {
-    pub(crate) created_at: DateTime<Utc>,
-    pub(crate) event: ExecutionEventInner<ID>,
-}
-
-#[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
-pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
-    /// Created by an external system or a scheduler when requesting a child execution or
-    /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
-    // After optional expiry(`scheduled_at`) interpreted as pending.
-    #[display(fmt = "Created({ffqn})")]
-    Created {
-        // execution_id: ID,
-        ffqn: FunctionFqn,
-        params: Params,
-        parent: Option<ID>,
-        scheduled_at: Option<DateTime<Utc>>,
-    },
-    // Created by an executor.
-    // Either immediately followed by an execution request by an executor or
-    // after expiry immediately followed by WaitingForExecutor by a scheduler.
-    #[display(fmt = "Locked")]
-    Locked {
-        executor_name: ExecutorName,
-        expires_at: DateTime<Utc>,
-    },
-    // Created by the executor holding last lock.
-    // Processed by a scheduler.
-    // After expiry interpreted as pending.
-    #[display(fmt = "IntermittentFailure")]
-    IntermittentFailure {
-        expires_at: DateTime<Utc>,
-        reason: String,
-    },
-    // Created by the executor holding last lock.
-    // Processed by a scheduler.
-    // After expiry interpreted as pending.
-    #[display(fmt = "IntermittentTimeout")]
-    IntermittentTimeout { expires_at: DateTime<Utc> },
-    // Created by the executor holding last lock.
-    // Processed by a scheduler if a parent execution needs to be notified,
-    // also when
-    #[display(fmt = "Finished")]
-    Finished { result: FinishedExecutionResult<ID> },
-    // Created by an external system or a scheduler during a race.
-    // Processed by the executor holding the last Lock.
-    // Imediately followed by Finished by a scheduler.
-    #[display(fmt = "CancelRequest")]
-    CancelRequest,
-
-    #[display(fmt = "EventHistory({event})")]
-    EventHistory { event: EventHistory<ID> },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-pub(crate) enum EventHistory<ID: ExecutionId> {
-    // Created by the executor holding last lock.
-    // Interpreted as lock being ended.
-    Yield,
-    #[display(fmt = "Persist")]
-    // Created by the executor holding last lock.
-    // Does not block the execution
-    Persist {
-        value: Vec<u8>,
-    },
-    // Created by the executor holding last lock.
-    // Does not block the execution
-    JoinSet {
-        joinset_id: ID,
-    },
-    // Created by an executor
-    // Processed by a scheduler
-    // Later followed by DelayFinished
-    #[display(fmt = "DelayedUntilAsyncRequest({joinset_id})")]
-    DelayedUntilAsyncRequest {
-        joinset_id: ID,
-        delay_id: ID,
-        expires_at: DateTime<Utc>,
-    },
-    // Created by an executor
-    // Processed by a scheduler - new execution must be scheduled
-    // Immediately followed by ChildExecutionRequested
-    #[display(fmt = "ChildExecutionAsyncRequest({joinset_id})")]
-    ChildExecutionAsyncRequest {
-        joinset_id: ID,
-        child_execution_id: ID,
-        ffqn: FunctionFqn,
-        params: Params,
-    },
-    // Created by a scheduler right after.
-    // Processed by other schedulers
-    ChildExecutionRequested {
-        child_execution_id: ID,
-    },
-    // Created by the executor.
-    // Executor continues without blocking.
-    JoinNextFetched {
-        joinset_id: ID,
-    },
-    #[display(fmt = "EventHistoryAsyncResponse({joinset_id})")]
-    EventHistoryAsyncResponse {
-        joinset_id: ID,
-        response: EventHistoryAsyncResponse<ID>,
-    },
-    // Created by the executor.
-    // Execution is blocked, until the next response of the
-    // joinset arrives. After that, a scheduler issues `WaitingForExecutor`.
-    JoinNextBlocking {
-        joinset_id: ID,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum EventHistoryAsyncResponse<ID: ExecutionId> {
-    // Created by a scheduler sometime after DelayedUntilAsyncRequest.
-    DelayFinishedAsyncResponse {
-        delay_id: ID,
-    },
-    // Created by a scheduler sometime after ChildExecutionRequested.
-    ChildExecutionAsyncResponse {
-        child_execution_id: ID,
-        result: FinishedExecutionResult<ID>,
-    },
-}
+use super::{EventHistory, ExecutionEvent, ExecutionEventInner, ExecutorName};
 
 #[derive(Debug)]
 struct ExecutionJournal<ID: ExecutionId> {
@@ -281,28 +153,23 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
     }
 }
 
-pub(crate) mod api {
-    use crate::worker::{
-        AppendResponse, ExecutionHistory, LockPendingResponse, LockResponse, PendingExecution,
-        RowSpecificError,
-    };
+pub(super) mod api {
+    use crate::storage::ExecutorName;
 
-    use super::{ExecutionEvent, ExecutorName};
+    use super::*;
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn};
     use derivative::Derivative;
     use tokio::sync::oneshot;
 
-    pub(crate) type Version = usize;
-
     #[derive(Debug)]
-    pub(crate) struct DbTickRequest<ID: ExecutionId> {
+    pub(super) struct DbTickRequest<ID: ExecutionId> {
         pub(crate) request: DbRequest<ID>,
         pub(crate) received_at: DateTime<Utc>,
     }
 
     #[derive(Debug, derive_more::Display)]
-    pub(crate) enum DbRequest<ID: ExecutionId> {
+    pub(super) enum DbRequest<ID: ExecutionId> {
         General(GeneralRequest<ID>),
         ExecutionSpecific(ExecutionSpecificRequest<ID>),
     }
@@ -310,7 +177,7 @@ pub(crate) mod api {
     #[derive(Derivative)]
     #[derivative(Debug)]
     #[derive(derive_more::Display)]
-    pub(crate) enum ExecutionSpecificRequest<ID: ExecutionId> {
+    pub(super) enum ExecutionSpecificRequest<ID: ExecutionId> {
         #[display(fmt = "Lock(`{executor_name}`)")]
         Lock {
             created_at: DateTime<Utc>,
@@ -339,7 +206,7 @@ pub(crate) mod api {
 
     #[derive(derive_more::Display, Derivative)]
     #[derivative(Debug)]
-    pub(crate) enum GeneralRequest<ID: ExecutionId> {
+    pub(super) enum GeneralRequest<ID: ExecutionId> {
         #[display(fmt = "FetchPending({ffqns:?})")]
         FetchPending {
             batch_size: usize,
@@ -363,8 +230,8 @@ pub(crate) mod api {
 }
 
 mod index {
-    use super::{EventHistory, ExecutionEventInner, ExecutionJournal, ExecutorName};
-    use crate::storage::inmemory_dao::ExecutionEvent;
+    use super::{EventHistory, ExecutionEventInner, ExecutionJournal};
+    use crate::storage::{inmemory_dao::ExecutionEvent, ExecutorName};
     use chrono::{DateTime, Utc};
     use concepts::ExecutionId;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -605,6 +472,14 @@ pub(crate) struct DbTaskHandle<ID: ExecutionId> {
 impl<ID: ExecutionId> DbTaskHandle<ID> {
     pub fn sender(&self) -> Option<mpsc::Sender<DbRequest<ID>>> {
         self.client_to_store_req_sender.clone()
+    }
+
+    pub fn as_db_connection(&self) -> Option<InMemoryDbConnection<ID>> {
+        self.client_to_store_req_sender
+            .as_ref()
+            .map(|sender| InMemoryDbConnection {
+                client_to_store_req_sender: sender.clone(),
+            })
     }
 
     pub async fn close(&mut self) {
@@ -1163,6 +1038,8 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::FinishedExecutionResult;
+
     use super::*;
     use assert_matches::assert_matches;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr};

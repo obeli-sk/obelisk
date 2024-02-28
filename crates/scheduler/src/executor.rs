@@ -1,6 +1,6 @@
 use crate::{
-    storage::inmemory_dao::{api::Version, ExecutorName},
-    worker::{DbConnection, DbConnectionError, DbError, Worker},
+    storage::{DbConnection, DbConnectionError, DbError, ExecutorName, Version},
+    worker::Worker,
 };
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn};
@@ -75,12 +75,9 @@ impl<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> ExecTask<ID, DB, W> {
 mod tests {
     use super::*;
     use crate::{
-        storage::inmemory_dao::{
-            tests::TickBasedDbConnection, DbTask, EventHistory, ExecutionEvent,
-            ExecutionEventInner, InMemoryDbConnection,
-        },
+        storage::inmemory_dao::{tests::TickBasedDbConnection, DbTask},
+        storage::{DbConnection, EventHistory, ExecutionEvent, ExecutionEventInner},
         time::now,
-        worker::DbConnection,
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
@@ -139,11 +136,7 @@ mod tests {
     async fn execute_mpsc_based() {
         set_up();
         let mut db_task = DbTask::new_spawn(1);
-        let client_to_store_req_sender = db_task.sender().unwrap_or_log();
-        let db_connection = InMemoryDbConnection {
-            client_to_store_req_sender,
-        };
-        execute(db_connection).await;
+        execute(db_task.as_db_connection().unwrap_or_log()).await;
         db_task.close().await;
     }
 
