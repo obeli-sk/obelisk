@@ -10,9 +10,7 @@ mod storage;
 mod testing;
 
 mod worker {
-    use self::storage::inmemory_dao::{
-        api::Version, EventHistory, ExecutionEvent, ExecutionEventInner, ExecutorName,
-    };
+    use self::storage::inmemory_dao::{api::Version, EventHistory, ExecutionEvent, ExecutorName};
     use super::*;
 
     #[async_trait]
@@ -23,7 +21,8 @@ mod worker {
             params: Params,
             event_history: Vec<EventHistory<ID>>,
             version: Version,
-        ) -> Result<ExecutionEvent<ID>, DbError>;
+            lock_expires_at: DateTime<Utc>,
+        ) -> Result<Version, DbError>;
     }
 
     #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
@@ -55,6 +54,7 @@ mod worker {
     pub type PendingExecution<ID> = (ID, Version, Params, Option<DateTime<Utc>>);
     pub type ExecutionHistory<ID> = (Vec<ExecutionEvent<ID>>, Version);
     pub type LockResponse<ID> = (Vec<EventHistory<ID>>, Version);
+    pub type AppendResponse = Version;
 
     #[async_trait]
     pub trait DbConnection<ID: ExecutionId> {
@@ -75,12 +75,12 @@ mod worker {
             expires_at: DateTime<Utc>,
         ) -> Result<LockResponse<ID>, DbError>;
 
-        async fn insert(
+        async fn append(
             &self,
             execution_id: ID,
             version: Version,
             event: ExecutionEvent<ID>,
-        ) -> Result<(), DbError>;
+        ) -> Result<AppendResponse, DbError>;
 
         async fn get(&self, execution_id: ID) -> Result<ExecutionHistory<ID>, DbError>;
     }
