@@ -398,7 +398,7 @@ mod index {
                 | PotentiallyPending::Locked {
                     expires_at: pending_after,
                     ..
-                } => pending_after < received_at,
+                } => pending_after < expiring_before,
                 PotentiallyPending::PendingAfterExternalEvent => false,
                 PotentiallyPending::NotPending => {
                     error!("Expected pending event in {journal:?}");
@@ -1287,15 +1287,19 @@ pub(crate) mod tests {
                 .await
                 .unwrap_or_log();
             assert!(event_history.is_empty());
-            assert!(db_connection
-                .fetch_pending(
-                    1,
-                    now() + Duration::from_secs(1),
-                    vec![SOME_FFQN.to_owned()],
-                )
-                .await
-                .unwrap_or_log()
-                .is_empty());
+            // check that the lock will be expired after lock_expiry
+            assert_eq!(
+                1,
+                db_connection
+                    .fetch_pending(
+                        1,
+                        now() + lock_expiry + Duration::from_millis(1), // FIXME
+                        vec![SOME_FFQN.to_owned()],
+                    )
+                    .await
+                    .unwrap_or_log()
+                    .len()
+            );
             version = current_version;
         }
         // lock expired, another executor issues Lock
@@ -1330,15 +1334,18 @@ pub(crate) mod tests {
                 .append(execution_id.clone(), version, event)
                 .await
                 .unwrap_or_log();
-            assert!(db_connection
-                .fetch_pending(
-                    1,
-                    now() + Duration::from_secs(1),
-                    vec![SOME_FFQN.to_owned()],
-                )
-                .await
-                .unwrap_or_log()
-                .is_empty());
+            assert_eq!(
+                1,
+                db_connection
+                    .fetch_pending(
+                        1,
+                        now() + Duration::from_secs(1), // FIXME
+                        vec![SOME_FFQN.to_owned()],
+                    )
+                    .await
+                    .unwrap_or_log()
+                    .len()
+            );
         }
         // Attempt to lock while in a timeout with exec2
         sleep(Duration::from_millis(300)).await;
