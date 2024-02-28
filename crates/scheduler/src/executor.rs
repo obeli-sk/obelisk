@@ -3,9 +3,9 @@ use crate::{
     worker::{DbConnection, DbConnectionError, DbError, Worker},
 };
 use chrono::{DateTime, Utc};
-use concepts::{ExecutionId, FunctionFqn, Params};
+use concepts::{ExecutionId, FunctionFqn};
 use std::{marker::PhantomData, time::Duration};
-use tracing::{debug, info_span, instrument, Instrument};
+use tracing::{info_span, Instrument};
 
 struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     db_connection: DB,
@@ -76,7 +76,8 @@ mod tests {
     use super::*;
     use crate::{
         storage::inmemory_dao::{
-            tests::TickBasedDbConnection, DbTask, EventHistory, ExecutionEvent, ExecutionEventInner,
+            tests::TickBasedDbConnection, DbTask, EventHistory, ExecutionEvent,
+            ExecutionEventInner, InMemoryDbConnection,
         },
         time::now,
         worker::DbConnection,
@@ -85,8 +86,8 @@ mod tests {
     use async_trait::async_trait;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params, SupportedFunctionResult};
     use std::sync::Arc;
-    use tracing::info;
-    use tracing_unwrap::ResultExt;
+    use tracing::{debug, info};
+    use tracing_unwrap::{OptionExt, ResultExt};
 
     fn set_up() {
         crate::testing::set_up();
@@ -125,16 +126,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tick_based() {
+    async fn execute_tick_based() {
         set_up();
         let db_task = Arc::new(std::sync::Mutex::new(DbTask::new()));
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
         };
-        test(db_connection).await;
+        execute(db_connection).await;
     }
 
-    async fn test(db_connection: impl DbConnection<WorkflowId> + Clone + Sync) {
+    #[tokio::test]
+    async fn execute_mpsc_based() {
+        set_up();
+        let mut db_task = DbTask::new_spawn(1);
+        let client_to_store_req_sender = db_task.sender().unwrap_or_log();
+        let db_connection = InMemoryDbConnection {
+            client_to_store_req_sender,
+        };
+        execute(db_connection).await;
+        db_task.close().await;
+    }
+
+    async fn execute(db_connection: impl DbConnection<WorkflowId> + Clone + Sync) {
         set_up();
 
         info!("Now: {}", now());

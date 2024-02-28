@@ -1018,8 +1018,8 @@ impl<ID: ExecutionId> DbTask<ID> {
 }
 
 #[derive(Clone)]
-struct InMemoryDbConnection<ID: ExecutionId> {
-    client_to_store_req_sender: mpsc::Sender<DbRequest<ID>>,
+pub(crate) struct InMemoryDbConnection<ID: ExecutionId> {
+    pub(crate) client_to_store_req_sender: mpsc::Sender<DbRequest<ID>>,
 }
 
 #[async_trait]
