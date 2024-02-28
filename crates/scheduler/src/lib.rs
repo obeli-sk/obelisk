@@ -10,7 +10,9 @@ mod storage;
 mod testing;
 
 mod worker {
-    use self::storage::inmemory_dao::{api::Version, EventHistory, ExecutionEvent, ExecutorName};
+    use self::storage::inmemory_dao::{
+        api::Version, EventHistory, ExecutionEvent, ExecutionEventInner, ExecutorName,
+    };
     use super::*;
 
     #[async_trait]
@@ -66,6 +68,29 @@ mod worker {
             ffqns: Vec<FunctionFqn>,
         ) -> Result<Vec<PendingExecution<ID>>, DbConnectionError>;
 
+        /// Specialized `append` which does not require a version.
+        async fn create(
+            &self,
+            execution_id: ID,
+            created_at: DateTime<Utc>,
+            ffqn: FunctionFqn,
+            params: Params,
+            parent: Option<ID>,
+            scheduled_at: Option<DateTime<Utc>>,
+        ) -> Result<AppendResponse, DbError> {
+            let event = ExecutionEvent {
+                created_at,
+                event: ExecutionEventInner::Created {
+                    ffqn,
+                    params,
+                    parent,
+                    scheduled_at,
+                },
+            };
+            self.append(execution_id, Version::default(), event).await
+        }
+
+        /// Specialized `append` which returns the event history.
         async fn lock(
             &self,
             created_at: DateTime<Utc>,

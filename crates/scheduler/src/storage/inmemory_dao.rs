@@ -316,16 +316,6 @@ pub(crate) mod api {
     #[derivative(Debug)]
     #[derive(derive_more::Display)]
     pub(crate) enum ExecutionSpecificRequest<ID: ExecutionId> {
-        #[display(fmt = "Create")]
-        Create {
-            execution_id: ID,
-            ffqn: FunctionFqn,
-            params: Params,
-            scheduled_at: Option<DateTime<Utc>>,
-            parent: Option<ID>,
-            #[derivative(Debug = "ignore")]
-            resp_sender: oneshot::Sender<Result<AppendResponse, RowSpecificError>>,
-        },
         #[display(fmt = "Lock")]
         Lock {
             created_at: DateTime<Utc>,
@@ -641,7 +631,6 @@ pub(crate) struct DbTask<ID: ExecutionId> {
 impl<ID: ExecutionId> ExecutionSpecificRequest<ID> {
     fn execution_id(&self) -> &ID {
         match self {
-            Self::Create { execution_id, .. } => execution_id,
             Self::Lock { execution_id, .. } => execution_id,
             Self::Append { execution_id, .. } => execution_id,
             Self::Get { execution_id, .. } => execution_id,
@@ -806,24 +795,6 @@ impl<ID: ExecutionId> DbTask<ID> {
             debug!("Received {request} at `{received_at}`");
         }
         let resp = match request {
-            ExecutionSpecificRequest::Create {
-                execution_id,
-                ffqn,
-                params,
-                scheduled_at,
-                parent,
-                resp_sender,
-            } => DbTickResponse::AppendResult {
-                resp_sender,
-                result: self.create(
-                    received_at,
-                    execution_id,
-                    ffqn,
-                    params,
-                    scheduled_at,
-                    parent,
-                ),
-            },
             ExecutionSpecificRequest::Append {
                 execution_id,
                 version,
@@ -1210,7 +1181,7 @@ pub(crate) mod tests {
         task.close().await;
     }
 
-    async fn db_workflow(db_connection: impl DbConnection<WorkflowId>) {
+    async fn db_workflow(db_connection: impl DbConnection<WorkflowId> + Sync) {
         let execution_id = WorkflowId::generate();
         assert!(db_connection
             .fetch_pending(
@@ -1224,20 +1195,18 @@ pub(crate) mod tests {
         let exec1 = Arc::new("exec1".to_string());
         let exec2 = Arc::new("exec2".to_string());
         let lock_expiry = Duration::from_millis(500);
-        let mut version = 0;
+        let mut version;
         // Create
         {
-            let event = ExecutionEvent {
-                created_at: now(),
-                event: ExecutionEventInner::Created {
-                    ffqn: SOME_FFQN.to_owned(),
-                    params: Params::default(),
-                    parent: None,
-                    scheduled_at: None,
-                },
-            };
             version = db_connection
-                .append(execution_id.clone(), version, event)
+                .create(
+                    execution_id.clone(),
+                    now(),
+                    SOME_FFQN.to_owned(),
+                    Params::default(),
+                    None,
+                    None,
+                )
                 .await
                 .unwrap_or_log();
         }

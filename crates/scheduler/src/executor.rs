@@ -186,18 +186,13 @@ mod tests {
         // Create an execution
         let execution_id = WorkflowId::generate();
         db_connection
-            .append(
+            .create(
                 execution_id.clone(),
-                0,
-                ExecutionEvent {
-                    created_at: now(),
-                    event: ExecutionEventInner::Created {
-                        ffqn: SOME_FFQN.to_owned(),
-                        params: Params::default(),
-                        parent: None,
-                        scheduled_at: None,
-                    },
-                },
+                now(),
+                SOME_FFQN.to_owned(),
+                Params::default(),
+                None,
+                None,
             )
             .await
             .unwrap_or_log();
