@@ -38,7 +38,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> ExecTask<ID, DB, W> {
         let lock_expires_at = request.executed_at + self.lock_expiry;
         let locked = self
             .db_connection
-            .fetch_lock_pending(
+            .lock_pending(
                 request.batch_size,
                 request.executed_at, // fetch expiring before now
                 self.ffqns.clone(),

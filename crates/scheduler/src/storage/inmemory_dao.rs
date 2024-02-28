@@ -18,7 +18,7 @@ use crate::{
     time::now,
     worker::{
         AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
-        FetchLockResponse, LockedResponse, PendingExecution, RowSpecificError,
+        LockPendingResponse, LockResponse, PendingExecution, RowSpecificError,
     },
     FinishedExecutionResult,
 };
@@ -289,7 +289,7 @@ impl<ID: ExecutionId> ExecutionJournal<ID> {
 
 pub(crate) mod api {
     use crate::worker::{
-        AppendResponse, ExecutionHistory, FetchLockResponse, LockedResponse, PendingExecution,
+        AppendResponse, ExecutionHistory, LockPendingResponse, LockResponse, PendingExecution,
         RowSpecificError,
     };
 
@@ -325,7 +325,7 @@ pub(crate) mod api {
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
             #[derivative(Debug = "ignore")]
-            resp_sender: oneshot::Sender<Result<LockedResponse<ID>, RowSpecificError>>,
+            resp_sender: oneshot::Sender<Result<LockResponse<ID>, RowSpecificError>>,
         },
         #[display(fmt = "Insert({event})")]
         Append {
@@ -354,8 +354,8 @@ pub(crate) mod api {
             #[derivative(Debug = "ignore")]
             resp_sender: oneshot::Sender<Vec<PendingExecution<ID>>>,
         },
-        #[display(fmt = "FetchLockPending(`{executor_name}`, {ffqns:?})")]
-        FetchLockPending {
+        #[display(fmt = "LockPending(`{executor_name}`, {ffqns:?})")]
+        LockPending {
             batch_size: usize,
             expiring_before: DateTime<Utc>,
             ffqns: Vec<FunctionFqn>,
@@ -363,7 +363,7 @@ pub(crate) mod api {
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
             #[derivative(Debug = "ignore")]
-            resp_sender: oneshot::Sender<FetchLockResponse<ID>>,
+            resp_sender: oneshot::Sender<LockPendingResponse<ID>>,
         },
     }
 }
@@ -658,15 +658,15 @@ pub(crate) enum DbTickResponse<ID: ExecutionId> {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Vec<PendingExecution<ID>>>,
     },
-    FetchLockPending {
-        payload: FetchLockResponse<ID>,
+    LockPending {
+        payload: LockPendingResponse<ID>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<FetchLockResponse<ID>>,
+        resp_sender: oneshot::Sender<LockPendingResponse<ID>>,
     },
     Lock {
-        payload: Result<LockedResponse<ID>, RowSpecificError>,
+        payload: Result<LockResponse<ID>, RowSpecificError>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<LockedResponse<ID>, RowSpecificError>>,
+        resp_sender: oneshot::Sender<Result<LockResponse<ID>, RowSpecificError>>,
     },
     AppendResult {
         payload: Result<AppendResponse, RowSpecificError>,
@@ -686,7 +686,7 @@ impl<ID: ExecutionId> DbTickResponse<ID> {
                 resp_sender,
                 payload,
             } => resp_sender.send(payload).map_err(|_| ()),
-            Self::FetchLockPending {
+            Self::LockPending {
                 resp_sender,
                 payload,
             } => resp_sender.send(payload).map_err(|_| ()),
@@ -763,7 +763,7 @@ impl<ID: ExecutionId> DbTask<ID> {
                 DbTickResponse::FetchPending { payload, .. } => {
                     debug!("Fetched {} executions", payload.len())
                 }
-                DbTickResponse::FetchLockPending { payload, .. } => {
+                DbTickResponse::LockPending { payload, .. } => {
                     debug!("Fetched and locked {} executions", payload.len())
                 }
                 DbTickResponse::Lock {
@@ -794,7 +794,7 @@ impl<ID: ExecutionId> DbTask<ID> {
                 ffqns,
                 resp_sender,
             } => self.fetch_pending(batch_size, expiring_before, ffqns, resp_sender),
-            GeneralRequest::FetchLockPending {
+            GeneralRequest::LockPending {
                 batch_size,
                 expiring_before,
                 ffqns,
@@ -802,7 +802,7 @@ impl<ID: ExecutionId> DbTask<ID> {
                 executor_name,
                 expires_at,
                 resp_sender,
-            } => self.fetch_lock_pending(
+            } => self.lock_pending(
                 batch_size,
                 expiring_before,
                 ffqns,
@@ -841,7 +841,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         }
     }
 
-    fn fetch_lock_pending(
+    fn lock_pending(
         &mut self,
         batch_size: usize,
         expiring_before: DateTime<Utc>,
@@ -849,7 +849,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         created_at: DateTime<Utc>,
         executor_name: Arc<String>,
         expires_at: DateTime<Utc>,
-        resp_sender: oneshot::Sender<FetchLockResponse<ID>>,
+        resp_sender: oneshot::Sender<LockPendingResponse<ID>>,
     ) -> DbTickResponse<ID> {
         let pending = self
             .index
@@ -879,7 +879,7 @@ impl<ID: ExecutionId> DbTask<ID> {
             *version = new_version;
             event_history.extend(new_event_history);
         }
-        DbTickResponse::FetchLockPending {
+        DbTickResponse::LockPending {
             payload,
             resp_sender,
         }
@@ -955,7 +955,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         version: Version,
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
-    ) -> Result<LockedResponse<ID>, RowSpecificError> {
+    ) -> Result<LockResponse<ID>, RowSpecificError> {
         let event = ExecutionEvent {
             created_at,
             event: ExecutionEventInner::Locked {
@@ -1070,7 +1070,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
     }
 
     #[instrument(skip_all)]
-    async fn fetch_lock_pending(
+    async fn lock_pending(
         &self,
         batch_size: usize,
         expiring_before: DateTime<Utc>,
@@ -1078,9 +1078,9 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         created_at: DateTime<Utc>,
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
-    ) -> Result<FetchLockResponse<ID>, DbConnectionError> {
+    ) -> Result<LockPendingResponse<ID>, DbConnectionError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::General(GeneralRequest::FetchLockPending {
+        let request = DbRequest::General(GeneralRequest::LockPending {
             batch_size,
             expiring_before,
             ffqns,
@@ -1106,7 +1106,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         version: Version,
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
-    ) -> Result<LockedResponse<ID>, DbError> {
+    ) -> Result<LockResponse<ID>, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
             created_at,
@@ -1226,7 +1226,7 @@ pub(crate) mod tests {
         }
 
         #[instrument(skip_all)]
-        async fn fetch_lock_pending(
+        async fn lock_pending(
             &self,
             batch_size: usize,
             expiring_before: DateTime<Utc>,
@@ -1234,8 +1234,8 @@ pub(crate) mod tests {
             created_at: DateTime<Utc>,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-        ) -> Result<FetchLockResponse<ID>, DbConnectionError> {
-            let request = DbRequest::General(GeneralRequest::FetchLockPending {
+        ) -> Result<LockPendingResponse<ID>, DbConnectionError> {
+            let request = DbRequest::General(GeneralRequest::LockPending {
                 batch_size,
                 expiring_before,
                 ffqns,
@@ -1248,9 +1248,7 @@ pub(crate) mod tests {
                 request,
                 received_at: now(),
             });
-            Ok(
-                assert_matches!(response, DbTickResponse::FetchLockPending {  payload, .. } => payload),
-            )
+            Ok(assert_matches!(response, DbTickResponse::LockPending {  payload, .. } => payload))
         }
 
         async fn lock(
@@ -1260,7 +1258,7 @@ pub(crate) mod tests {
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-        ) -> Result<LockedResponse<ID>, DbError> {
+        ) -> Result<LockResponse<ID>, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
                 created_at,
                 execution_id,

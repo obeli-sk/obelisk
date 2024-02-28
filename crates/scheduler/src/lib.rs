@@ -54,8 +54,8 @@ mod worker {
     pub type AppendResponse = Version;
     pub type PendingExecution<ID> = (ID, Version, Params, Option<DateTime<Utc>>);
     pub type ExecutionHistory<ID> = (Vec<ExecutionEvent<ID>>, Version);
-    pub type LockedResponse<ID> = (Vec<EventHistory<ID>>, Version);
-    pub type FetchLockResponse<ID> = Vec<(
+    pub type LockResponse<ID> = (Vec<EventHistory<ID>>, Version);
+    pub type LockPendingResponse<ID> = Vec<(
         ID,
         Version,
         Params,
@@ -65,7 +65,7 @@ mod worker {
 
     #[async_trait]
     pub trait DbConnection<ID: ExecutionId> {
-        async fn fetch_lock_pending(
+        async fn lock_pending(
             &self,
             batch_size: usize,
             fetch_expiring_before: DateTime<Utc>,
@@ -73,7 +73,7 @@ mod worker {
             lock_created_at: DateTime<Utc>,
             executor_name: ExecutorName,
             lock_expires_at: DateTime<Utc>,
-        ) -> Result<FetchLockResponse<ID>, DbConnectionError>;
+        ) -> Result<LockPendingResponse<ID>, DbConnectionError>;
 
         async fn fetch_pending(
             &self,
@@ -101,7 +101,7 @@ mod worker {
             version: Version,
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
-        ) -> Result<LockedResponse<ID>, DbError>;
+        ) -> Result<LockResponse<ID>, DbError>;
 
         async fn append(
             &self,
