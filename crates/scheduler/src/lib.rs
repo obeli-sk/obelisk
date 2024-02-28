@@ -60,9 +60,15 @@ pub(crate) mod time {
                 }
                 DateTime::from(madsim::time::TimeHandle::current().now_time())
             }
+            pub(crate) fn now_tokio_instant() -> tokio::time::Instant {
+                madsim::time::Instant::now()
+            }
         } else {
             pub(crate) fn now() -> DateTime<Utc> {
                 Utc::now()
+            }
+            pub(crate) fn now_tokio_instant() -> tokio::time::Instant {
+                tokio::time::Instant::now()
             }
         }
     }

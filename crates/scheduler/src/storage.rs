@@ -179,7 +179,7 @@ pub type LockPendingResponse<ID> = Vec<(
 )>;
 
 #[async_trait]
-pub trait DbConnection<ID: ExecutionId> {
+pub trait DbConnection<ID: ExecutionId>: Send + 'static {
     async fn lock_pending(
         &self,
         batch_size: usize,

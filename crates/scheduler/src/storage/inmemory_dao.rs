@@ -8,12 +8,9 @@ use self::{
     api::{DbRequest, DbTickRequest, ExecutionSpecificRequest, GeneralRequest},
     index::{JournalsIndex, PotentiallyPending},
 };
-use crate::{
-    storage::{
-        AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
-        LockPendingResponse, LockResponse, PendingExecution, RowSpecificError, Version,
-    },
-    time::now,
+use crate::storage::{
+    AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
+    LockPendingResponse, LockResponse, PendingExecution, RowSpecificError, Version,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -165,7 +162,6 @@ pub(super) mod api {
     #[derive(Debug)]
     pub(super) struct DbTickRequest<ID: ExecutionId> {
         pub(crate) request: DbRequest<ID>,
-        pub(crate) received_at: DateTime<Utc>,
     }
 
     #[derive(Debug, derive_more::Display)]
@@ -495,10 +491,9 @@ impl<ID: ExecutionId> DbTaskHandle<ID> {
 impl<ID: ExecutionId> Drop for DbTaskHandle<ID> {
     fn drop(&mut self) {
         if self.abort_handle.is_finished() {
-            // https://github.com/madsim-rs/madsim/issues/191
             return;
         }
-        warn!("Aborting the database task");
+        warn!("Aborting the task");
         self.abort_handle.abort();
     }
 }
@@ -576,18 +571,13 @@ impl<ID: ExecutionId> DbTickResponse<ID> {
 }
 
 impl<ID: ExecutionId> DbTask<ID> {
-    pub fn new_spawn(rpc_capacity: usize) -> DbTaskHandle<ID> {
+    pub fn spawn_new(rpc_capacity: usize) -> DbTaskHandle<ID> {
         let (client_to_store_req_sender, mut client_to_store_receiver) =
             mpsc::channel::<DbRequest<ID>>(rpc_capacity);
         let abort_handle = tokio::spawn(async move {
             let mut task = Self::new();
             while let Some(request) = client_to_store_receiver.recv().await {
-                let resp = task
-                    .tick(DbTickRequest {
-                        request,
-                        received_at: now(),
-                    })
-                    .send_response();
+                let resp = task.tick(DbTickRequest { request }).send_response();
                 if resp.is_err() {
                     debug!("Failed to send back the response");
                 }
@@ -609,53 +599,20 @@ impl<ID: ExecutionId> DbTask<ID> {
         }
     }
 
+    #[instrument(skip_all)]
     pub(crate) fn tick(&mut self, request: DbTickRequest<ID>) -> DbTickResponse<ID> {
-        let DbTickRequest {
-            request,
-            received_at,
-        } = request;
-
-        if tracing::enabled!(Level::TRACE) {
-            trace!("Received {request:?} at `{received_at}`");
-        } else {
-            debug!("Received {request} at `{received_at}`");
-        }
+        let DbTickRequest { request } = request;
 
         let resp = match request {
             DbRequest::ExecutionSpecific(request) => self.handle_specific(request),
             DbRequest::General(request) => self.handle_general(request),
         };
-        if tracing::enabled!(Level::TRACE) {
-            trace!("Responding with {resp:?}");
-        } else {
-            match &resp {
-                DbTickResponse::FetchPending { payload, .. } => {
-                    debug!("Fetched {} executions", payload.len())
-                }
-                DbTickResponse::LockPending { payload, .. } => {
-                    debug!("Fetched and locked {} executions", payload.len())
-                }
-                DbTickResponse::Lock {
-                    payload: Ok(lock_resp),
-                    ..
-                } => {
-                    debug!("Lock succeded with version {}", lock_resp.1)
-                }
-                DbTickResponse::Lock {
-                    payload: Err(err), ..
-                } => debug!("Lock failed: {err:?}"),
-                DbTickResponse::AppendResult { payload, .. } => {
-                    debug!("Persist result: {payload:?}")
-                }
-                DbTickResponse::Get { payload, .. } => {
-                    debug!("Get: {payload:?}")
-                }
-            };
-        }
+        trace!("Responding with {resp:?}");
         resp
     }
 
     fn handle_general(&mut self, request: GeneralRequest<ID>) -> DbTickResponse<ID> {
+        trace!("Received {request:?}");
         match request {
             GeneralRequest::FetchPending {
                 batch_size,
@@ -756,6 +713,11 @@ impl<ID: ExecutionId> DbTask<ID> {
 
     #[instrument(skip_all, fields(execution_id = %request.execution_id()))]
     fn handle_specific(&mut self, request: ExecutionSpecificRequest<ID>) -> DbTickResponse<ID> {
+        if tracing::enabled!(Level::TRACE) {
+            trace!("Received {request:?}");
+        } else {
+            debug!("Received {request}");
+        }
         match request {
             ExecutionSpecificRequest::Append {
                 execution_id,
@@ -1038,7 +1000,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::FinishedExecutionResult;
+    use crate::{time::now, FinishedExecutionResult};
 
     use super::*;
     use assert_matches::assert_matches;
@@ -1089,10 +1051,11 @@ pub(crate) mod tests {
                 ffqns,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
-                request,
-                received_at: now(),
-            });
+            let response = self
+                .db_task
+                .lock()
+                .unwrap_or_log()
+                .tick(DbTickRequest { request });
             Ok(assert_matches!(response, DbTickResponse::FetchPending {  payload, .. } => payload))
         }
 
@@ -1115,10 +1078,11 @@ pub(crate) mod tests {
                 expires_at,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
-                request,
-                received_at: now(),
-            });
+            let response = self
+                .db_task
+                .lock()
+                .unwrap_or_log()
+                .tick(DbTickRequest { request });
             Ok(assert_matches!(response, DbTickResponse::LockPending {  payload, .. } => payload))
         }
 
@@ -1138,10 +1102,11 @@ pub(crate) mod tests {
                 expires_at,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
-                request,
-                received_at: now(),
-            });
+            let response = self
+                .db_task
+                .lock()
+                .unwrap_or_log()
+                .tick(DbTickRequest { request });
             assert_matches!(response, DbTickResponse::Lock { payload, .. } => payload)
                 .map_err(|err| DbError::RowSpecific(err))
         }
@@ -1158,10 +1123,11 @@ pub(crate) mod tests {
                 event,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
-                request,
-                received_at: now(),
-            });
+            let response = self
+                .db_task
+                .lock()
+                .unwrap_or_log()
+                .tick(DbTickRequest { request });
             assert_matches!(response, DbTickResponse::AppendResult { payload, .. } => payload)
                 .map_err(|err| DbError::RowSpecific(err))
         }
@@ -1171,10 +1137,11 @@ pub(crate) mod tests {
                 execution_id,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self.db_task.lock().unwrap_or_log().tick(DbTickRequest {
-                request,
-                received_at: now(),
-            });
+            let response = self
+                .db_task
+                .lock()
+                .unwrap_or_log()
+                .tick(DbTickRequest { request });
             assert_matches!(response, DbTickResponse::Get { payload, .. } => payload)
                 .map_err(|err| DbError::RowSpecific(err))
         }
@@ -1187,36 +1154,36 @@ pub(crate) mod tests {
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
 
     #[tokio::test]
-    async fn db_workflow_tick_based() {
+    async fn lifecycle_tick_based() {
         set_up();
         let db_task = DbTask::new();
         let db_task = Arc::new(std::sync::Mutex::new(db_task));
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
         };
-        db_workflow(db_connection).await;
+        lifecycle(db_connection).await;
     }
 
     #[tokio::test]
-    async fn db_workflow_mpsc_based() {
+    async fn lifecycle_task_based() {
         set_up();
-        let mut db_task = DbTask::new_spawn(1);
+        let mut db_task = DbTask::spawn_new(1);
         let client_to_store_req_sender = db_task.sender().unwrap_or_log();
         let db_connection = InMemoryDbConnection {
             client_to_store_req_sender,
         };
-        db_workflow(db_connection).await;
+        lifecycle(db_connection).await;
         db_task.close().await;
     }
 
     #[tokio::test]
     async fn close() {
         set_up();
-        let mut task = DbTask::<WorkflowId>::new_spawn(1);
+        let mut task = DbTask::<WorkflowId>::spawn_new(1);
         task.close().await;
     }
 
-    async fn db_workflow(db_connection: impl DbConnection<WorkflowId>) {
+    async fn lifecycle(db_connection: impl DbConnection<WorkflowId>) {
         let execution_id = WorkflowId::generate();
         assert!(db_connection
             .fetch_pending(
