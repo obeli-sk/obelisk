@@ -179,32 +179,25 @@ mod tests {
         }
     }
 
-    fn tick_fn(
-        db_connection: impl DbConnection<WorkflowId> + Sync + Clone + 'static,
-    ) -> impl (FnMut() -> Box<dyn Future<Output = ()> + Unpin>) {
-        move || {
-            let db_connection = db_connection.clone();
-            Box::new(Box::pin(async move {
-                let max_tick_sleep = Duration::from_millis(500);
-                let mut executor = ExecTask {
-                    db_connection: db_connection.clone(),
-                    ffqns: vec![SOME_FFQN.to_owned()],
-                    executor_name: Arc::new("exec1".to_string()),
-                    lock_expiry: Duration::from_secs(1),
-                    max_tick_sleep,
-                    worker: SimpleWorker {
-                        db_connection: db_connection.clone(),
-                    },
-                    _phantom_data: Default::default(),
-                };
-                let _ = executor
-                    .tick(ExecTickRequest {
-                        batch_size: 5,
-                        executed_at: now(),
-                    })
-                    .await;
-            }))
-        }
+    async fn tick_fn<DB: DbConnection<WorkflowId> + Clone + Sync>(db_connection: DB) {
+        let max_tick_sleep = Duration::from_millis(500);
+        let mut executor = ExecTask {
+            db_connection: db_connection.clone(),
+            ffqns: vec![SOME_FFQN.to_owned()],
+            executor_name: Arc::new("exec1".to_string()),
+            lock_expiry: Duration::from_secs(1),
+            max_tick_sleep,
+            worker: SimpleWorker {
+                db_connection: db_connection.clone(),
+            },
+            _phantom_data: Default::default(),
+        };
+        let _ = executor
+            .tick(ExecTickRequest {
+                batch_size: 5,
+                executed_at: now(),
+            })
+            .await;
     }
 
     #[tokio::test]
@@ -214,7 +207,7 @@ mod tests {
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
         };
-        execute(db_connection.clone(), tick_fn(db_connection)).await;
+        execute(db_connection, tick_fn).await;
     }
 
     #[tokio::test]
@@ -222,7 +215,7 @@ mod tests {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().unwrap_or_log();
-        execute(db_connection.clone(), tick_fn(db_connection)).await;
+        execute(db_connection, tick_fn).await;
         db_task.close().await;
     }
 
@@ -244,7 +237,7 @@ mod tests {
             worker,
             1,
         );
-        execute(db_task.as_db_connection().unwrap_or_log(), || {
+        execute(db_task.as_db_connection().unwrap_or_log(), |_| {
             tokio::time::sleep(Duration::from_secs(1))
         })
         .await;
@@ -252,12 +245,16 @@ mod tests {
         db_task.close().await;
     }
 
-    async fn execute<T: FnMut() -> F, F: Future<Output = ()>>(
-        db_connection: impl DbConnection<WorkflowId> + Clone + Sync + 'static,
+    async fn execute<
+        DB: DbConnection<WorkflowId> + Clone + Sync,
+        T: FnMut(DB) -> F,
+        F: Future<Output = ()>,
+    >(
+        db_connection: DB,
         mut tick: T,
     ) {
         info!("Now: {}", now());
-        tick().await;
+        tick(db_connection.clone()).await;
         // Create an execution
         let execution_id = WorkflowId::generate();
         db_connection
@@ -274,7 +271,7 @@ mod tests {
 
         // execute!
         let requested_execution_at = now();
-        tick().await;
+        tick(db_connection.clone()).await;
         // check that DB contains the result.
         let (history, _) = db_connection.get(execution_id).await.unwrap_or_log();
         assert_eq!(3, history.len(), "Unexpected {history:?}");
