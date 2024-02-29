@@ -71,32 +71,28 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
 
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub(crate) enum EventHistory<ID: ExecutionId> {
-    // Created by the executor holding last lock.
-    // Interpreted as lock being ended.
+    // Must be created by the executor in `PotentiallyPending::Locked` state.
+    // Returns execution to `PotentiallyPending::PendingNow` state.
     Yield,
     #[display(fmt = "Persist")]
-    // Created by the executor holding last lock.
-    // Does not block the execution
+    // Must be created by the executor in `PotentiallyPending::Locked` state.
     Persist {
         value: Vec<u8>,
     },
-    // Created by the executor holding last lock.
-    // Does not block the execution
+    // Must be created by the executor in `PotentiallyPending::Locked` state.
     JoinSet {
         joinset_id: ID,
     },
-    // Created by an executor
-    // Processed by a scheduler
-    // Later followed by DelayFinished
+    // Joinset entry that will be unblocked by DelayFinishedAsyncResponse.
+    // Must be created by the executor in `PotentiallyPending::Locked` state.
     #[display(fmt = "DelayedUntilAsyncRequest({joinset_id})")]
     DelayedUntilAsyncRequest {
         joinset_id: ID,
         delay_id: ID,
         expires_at: DateTime<Utc>,
     },
-    // Created by an executor
-    // Processed by a scheduler - new execution must be scheduled
-    // Immediately followed by ChildExecutionRequested
+    // Joinset entry that will be unblocked by ChildExecutionRequested.
+    // Must be created by the executor in `PotentiallyPending::Locked` state.
     #[display(fmt = "ChildExecutionAsyncRequest({joinset_id})")]
     ChildExecutionAsyncRequest {
         joinset_id: ID,
@@ -104,24 +100,19 @@ pub(crate) enum EventHistory<ID: ExecutionId> {
         ffqn: FunctionFqn,
         params: Params,
     },
-    // Created by a scheduler right after.
-    // Processed by other schedulers
-    ChildExecutionRequested {
-        child_execution_id: ID,
-    },
-    // Created by the executor.
-    // Executor continues without blocking.
+    // Execution continues without blocking as the next pending response is in the journal.
+    // Must be created by the executor in `PotentiallyPending::Locked` state.
     JoinNextFetched {
         joinset_id: ID,
     },
+    // Moves the execution to `PotentiallyPending::PendingNow` if it is currently blocked on `JoinNextBlocking`.
     #[display(fmt = "EventHistoryAsyncResponse({joinset_id})")]
     EventHistoryAsyncResponse {
         joinset_id: ID,
         response: EventHistoryAsyncResponse<ID>,
     },
-    // Created by the executor.
-    // Execution is blocked, until the next response of the
-    // joinset arrives. After that, a scheduler issues `WaitingForExecutor`.
+    // Must be created by the executor in `PotentiallyPending::Locked` state.
+    // Execution is `PotentiallyPending::BlockedByJoinSet` until the next response of the joinset arrives.
     JoinNextBlocking {
         joinset_id: ID,
     },
@@ -226,4 +217,251 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static {
     ) -> Result<AppendResponse, DbError>;
 
     async fn get(&self, execution_id: ID) -> Result<ExecutionHistory<ID>, DbError>;
+}
+
+pub(crate) mod journal {
+    use super::{EventHistory, ExecutionEvent, ExecutionEventInner, ExecutorName};
+    use crate::storage::{ExecutionHistory, RowSpecificError, Version};
+    use chrono::{DateTime, Utc};
+    use concepts::{ExecutionId, FunctionFqn, Params};
+    use std::collections::VecDeque;
+    use tracing_unwrap::OptionExt;
+
+    #[derive(Debug)]
+    pub(crate) struct ExecutionJournal<ID: ExecutionId> {
+        execution_id: ID,
+        events: VecDeque<ExecutionEvent<ID>>,
+    }
+
+    impl<ID: ExecutionId> ExecutionJournal<ID> {
+        pub(crate) fn new(
+            execution_id: ID,
+            ffqn: FunctionFqn,
+            params: Params,
+            scheduled_at: Option<DateTime<Utc>>,
+            parent: Option<ID>,
+            created_at: DateTime<Utc>,
+        ) -> Self {
+            let event = ExecutionEvent {
+                event: ExecutionEventInner::Created {
+                    ffqn,
+                    params,
+                    scheduled_at,
+                    parent,
+                },
+                created_at,
+            };
+            Self {
+                execution_id,
+                events: VecDeque::from([event]),
+            }
+        }
+
+        pub(crate) fn len(&self) -> usize {
+            self.events.len()
+        }
+
+        pub(crate) fn created_at(&self) -> DateTime<Utc> {
+            self.events.iter().rev().next().unwrap_or_log().created_at
+        }
+
+        pub(crate) fn ffqn(&self) -> &FunctionFqn {
+            match self.events.get(0) {
+                Some(ExecutionEvent {
+                    event: ExecutionEventInner::Created { ffqn, .. },
+                    ..
+                }) => ffqn,
+                _ => panic!("first event must be `Created`"),
+            }
+        }
+
+        pub(crate) fn version(&self) -> Version {
+            self.events.len()
+        }
+
+        pub(crate) fn id(&self) -> &ID {
+            &self.execution_id
+        }
+
+        pub(crate) fn validate_push(
+            &mut self,
+            event: ExecutionEvent<ID>,
+        ) -> Result<(), RowSpecificError> {
+            let pending_state = self.pending_state();
+            if pending_state == PendingState::Finished {
+                return Err(RowSpecificError::ValidationFailed("already finished"));
+            }
+
+            if let ExecutionEventInner::Locked {
+                executor_name,
+                expires_at,
+            } = &event.event
+            {
+                if *expires_at <= event.created_at {
+                    return Err(RowSpecificError::ValidationFailed("invalid expiry date"));
+                }
+                match pending_state {
+                    PendingState::PendingNow => {} // ok to lock
+                    PendingState::PendingAfterExpiry(pending_start) => {
+                        if pending_start <= event.created_at {
+                            // pending now, ok to lock
+                        } else {
+                            return Err(RowSpecificError::ValidationFailed("already locked"));
+                        }
+                    }
+                    PendingState::Locked {
+                        executor_name: locked_by,
+                        expires_at,
+                    } => {
+                        if *executor_name == locked_by {
+                            // we allow extending the lock
+                        } else if expires_at <= event.created_at {
+                            // we allow locking after the old lock expired
+                        } else {
+                            return Err(RowSpecificError::ValidationFailed("already locked"));
+                        }
+                    }
+                    PendingState::BlockedByJoinSet => {
+                        return Err(RowSpecificError::ValidationFailed(
+                            "cannot transition to Locked from BlockedByJoinSet",
+                        ));
+                    }
+                    PendingState::Finished => {
+                        unreachable!() // handled at the beginning of the function
+                    }
+                }
+            }
+            self.events.push_back(event);
+            Ok(())
+        }
+
+        pub(crate) fn event_history(&self) -> Vec<EventHistory<ID>> {
+            self.events
+                .iter()
+                .filter_map(|event| {
+                    if let ExecutionEventInner::EventHistory { event: eh, .. } = &event.event {
+                        Some(eh.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+
+        pub(crate) fn params(&self) -> Params {
+            match self.events.front().expect_or_log("must be not empty") {
+                ExecutionEvent {
+                    event: ExecutionEventInner::Created { params, .. },
+                    ..
+                } => Some(params),
+                _ => None,
+            }
+            .expect_or_log("first event must be `Created`")
+            .clone()
+        }
+
+        pub(crate) fn as_execution_history(&self) -> ExecutionHistory<ID> {
+            (self.events.iter().cloned().collect(), self.version())
+        }
+
+        pub(crate) fn pending_state(&self) -> PendingState {
+            self.events
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(idx, event)| match (idx, &event.event) {
+                    (
+                        _,
+                        ExecutionEventInner::Created {
+                            scheduled_at: None, ..
+                        },
+                    ) => Some(PendingState::PendingNow),
+
+                    (
+                        _,
+                        ExecutionEventInner::Created {
+                            scheduled_at: Some(scheduled_at),
+                            ..
+                        },
+                    ) => Some(PendingState::PendingAfterExpiry(scheduled_at.clone())),
+
+                    (_, ExecutionEventInner::Finished { .. }) => Some(PendingState::Finished),
+
+                    (
+                        _,
+                        ExecutionEventInner::Locked {
+                            executor_name,
+                            expires_at,
+                        },
+                    ) => Some(PendingState::Locked {
+                        executor_name: executor_name.clone(),
+                        expires_at: *expires_at,
+                    }),
+
+                    (_, ExecutionEventInner::IntermittentFailure { expires_at, .. }) => {
+                        Some(PendingState::PendingAfterExpiry(*expires_at))
+                    }
+
+                    (_, ExecutionEventInner::IntermittentTimeout { expires_at, .. }) => {
+                        Some(PendingState::PendingAfterExpiry(*expires_at))
+                    }
+
+                    (
+                        _,
+                        ExecutionEventInner::EventHistory {
+                            event: EventHistory::Yield { .. },
+                            ..
+                        },
+                    ) => Some(PendingState::PendingNow),
+                    (
+                        idx,
+                        ExecutionEventInner::EventHistory {
+                            event:
+                                EventHistory::JoinNextBlocking {
+                                    joinset_id: expected_join_set_id,
+                                    ..
+                                },
+                            ..
+                        },
+                    ) => {
+                        // pending if this event is followed by an async response
+                        if self
+                            .events
+                            .iter()
+                            .skip(idx + 1)
+                            .find(|event| {
+                                matches!(event, ExecutionEvent {
+                                event:
+                                    ExecutionEventInner::EventHistory{event:
+                                        EventHistory::EventHistoryAsyncResponse { joinset_id, .. },
+                                    .. },
+                            .. }
+                            if expected_join_set_id == joinset_id)
+                            })
+                            .is_some()
+                        {
+                            Some(PendingState::PendingNow)
+                        } else {
+                            Some(PendingState::BlockedByJoinSet)
+                        }
+                    }
+                    _ => None,
+                })
+                .expect_or_log("journal must begin with Created event")
+        }
+    }
+
+    #[derive(Debug, derive_more::Display, PartialEq, Eq)]
+    pub(crate) enum PendingState {
+        PendingNow,
+        #[display(fmt = "Locked(`{expires_at}`)")]
+        Locked {
+            executor_name: ExecutorName,
+            expires_at: DateTime<Utc>,
+        },
+        #[display(fmt = "PendingAfterExpiry(`{_0}`)")]
+        PendingAfterExpiry(DateTime<Utc>), // e.g. created with a schedule, intermittent timeout/failure
+        BlockedByJoinSet,
+        Finished,
+    }
 }

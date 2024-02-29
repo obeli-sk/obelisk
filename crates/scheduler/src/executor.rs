@@ -277,7 +277,7 @@ mod tests {
         tick().await;
         // check that DB contains the result.
         let (history, _) = db_connection.get(execution_id).await.unwrap_or_log();
-        assert_eq!(3, history.len());
+        assert_eq!(3, history.len(), "Unexpected {history:?}");
         assert_matches!(
             history[0],
             ExecutionEvent {

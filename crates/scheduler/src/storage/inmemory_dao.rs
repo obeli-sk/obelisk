@@ -6,8 +6,10 @@
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::{
     api::{DbRequest, DbTickRequest, ExecutionSpecificRequest, GeneralRequest},
-    index::{JournalsIndex, PotentiallyPending},
+    index::JournalsIndex,
 };
+use super::{journal::ExecutionJournal, ExecutionEvent, ExecutionEventInner, ExecutorName};
+use crate::storage::journal::PendingState;
 use crate::storage::{
     AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
     LockPendingResponse, LockResponse, PendingExecution, RowSpecificError, Version,
@@ -16,148 +18,18 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn, Params};
 use derivative::Derivative;
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
-    time::Duration,
-};
+use std::collections::{BTreeMap, BTreeSet};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, oneshot},
     task::AbortHandle,
 };
+use tracing::error;
 use tracing::{debug, info, instrument, trace, warn, Level};
 use tracing_unwrap::{OptionExt, ResultExt};
 
-use super::{EventHistory, ExecutionEvent, ExecutionEventInner, ExecutorName};
-
-#[derive(Debug)]
-struct ExecutionJournal<ID: ExecutionId> {
-    execution_id: ID,
-    events: VecDeque<ExecutionEvent<ID>>,
-}
-
-impl<ID: ExecutionId> ExecutionJournal<ID> {
-    fn new(
-        execution_id: ID,
-        ffqn: FunctionFqn,
-        params: Params,
-        scheduled_at: Option<DateTime<Utc>>,
-        parent: Option<ID>,
-        created_at: DateTime<Utc>,
-    ) -> Self {
-        let event = ExecutionEvent {
-            event: ExecutionEventInner::Created {
-                ffqn,
-                params,
-                scheduled_at,
-                parent,
-            },
-            created_at,
-        };
-        Self {
-            execution_id,
-            events: VecDeque::from([event]),
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.events.len()
-    }
-
-    fn created_at(&self) -> DateTime<Utc> {
-        self.events.iter().rev().next().unwrap_or_log().created_at
-    }
-
-    fn ffqn(&self) -> &FunctionFqn {
-        match self.events.get(0) {
-            Some(ExecutionEvent {
-                event: ExecutionEventInner::Created { ffqn, .. },
-                ..
-            }) => ffqn,
-            _ => panic!("first event must be `Created`"),
-        }
-    }
-
-    fn version(&self) -> Version {
-        self.events.len()
-    }
-
-    fn id(&self) -> &ID {
-        &self.execution_id
-    }
-
-    fn validate_push(&mut self, event: ExecutionEvent<ID>) -> Result<(), RowSpecificError> {
-        if let ExecutionEventInner::Locked {
-            executor_name,
-            expires_at,
-        } = &event.event
-        {
-            if *expires_at <= event.created_at {
-                return Err(RowSpecificError::ValidationFailed("invalid expiry date"));
-            }
-            match index::potentially_pending(self) {
-                PotentiallyPending::PendingNow => {}
-                PotentiallyPending::PendingAfterExpiry(pending_start)
-                    if pending_start <= event.created_at => {}
-                PotentiallyPending::Locked {
-                    executor_name: locked_by,
-                    expires_at,
-                } => {
-                    if *executor_name == locked_by {
-                        // we allow extending the lock
-                    } else if expires_at <= event.created_at {
-                        // we allow locking after the old lock expired
-                    } else {
-                        return Err(RowSpecificError::ValidationFailed("already locked"));
-                    }
-                }
-                _not_pending => {
-                    return Err(RowSpecificError::ValidationFailed("already locked"));
-                }
-            }
-        }
-        self.events.push_back(event);
-        Ok(())
-    }
-
-    fn event_history(&self) -> Vec<EventHistory<ID>> {
-        self.events
-            .iter()
-            .filter_map(|event| {
-                if let ExecutionEventInner::EventHistory { event: eh, .. } = &event.event {
-                    Some(eh.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    fn params(&self) -> Params {
-        match self.events.front().expect_or_log("must be not empty") {
-            ExecutionEvent {
-                event: ExecutionEventInner::Created { params, .. },
-                ..
-            } => Some(params),
-            _ => None,
-        }
-        .expect_or_log("first event must be `Created`")
-        .clone()
-    }
-
-    fn as_execution_history(&self) -> ExecutionHistory<ID> {
-        (self.events.iter().cloned().collect(), self.version())
-    }
-}
-
 pub(super) mod api {
-    use crate::storage::ExecutorName;
-
     use super::*;
-    use chrono::{DateTime, Utc};
-    use concepts::{ExecutionId, FunctionFqn};
-    use derivative::Derivative;
-    use tokio::sync::oneshot;
 
     #[derive(Debug)]
     pub(super) struct DbTickRequest<ID: ExecutionId> {
@@ -226,13 +98,7 @@ pub(super) mod api {
 }
 
 mod index {
-    use super::{EventHistory, ExecutionEventInner, ExecutionJournal};
-    use crate::storage::{inmemory_dao::ExecutionEvent, ExecutorName};
-    use chrono::{DateTime, Utc};
-    use concepts::ExecutionId;
-    use std::collections::{BTreeMap, BTreeSet, HashMap};
-    use tracing::error;
-    use tracing_unwrap::OptionExt;
+    use super::*;
 
     #[derive(Debug)]
     pub(super) struct JournalsIndex<ID: ExecutionId> {
@@ -261,17 +127,17 @@ mod index {
                 },
             ));
             // filter by currently pending
-            pending.retain(|(journal, _)| match potentially_pending(journal) {
-                PotentiallyPending::PendingNow => true,
-                PotentiallyPending::PendingAfterExpiry(pending_after)
-                | PotentiallyPending::Locked {
+            pending.retain(|(journal, _)| match journal.pending_state() {
+                PendingState::PendingNow => true,
+                PendingState::PendingAfterExpiry(pending_after)
+                | PendingState::Locked {
                     expires_at: pending_after,
                     ..
                 } => pending_after < expiring_before,
-                PotentiallyPending::PendingAfterExternalEvent => false,
-                PotentiallyPending::NotPending => {
-                    error!("Expected pending event in {journal:?}");
-                    false
+                state @ PendingState::BlockedByJoinSet | state @ PendingState::Finished => {
+                    // Update was not called after modifying the journal.
+                    error!("Expected pending, got {state}. Journal: {journal:?}");
+                    panic!("index must only contain pending executions")
                 }
             });
             // filter by ffqn
@@ -293,19 +159,19 @@ mod index {
             }
             let journal = journals.get(&execution_id).unwrap_or_log();
             // Add it again if needed
-            match potentially_pending(journal) {
-                PotentiallyPending::PendingNow => {
+            match journal.pending_state() {
+                PendingState::PendingNow => {
                     self.pending.insert(execution_id);
                 }
-                PotentiallyPending::PendingAfterExpiry(expires_at)
-                | PotentiallyPending::Locked { expires_at, .. } => {
+                PendingState::PendingAfterExpiry(expires_at)
+                | PendingState::Locked { expires_at, .. } => {
                     self.pending_scheduled
                         .entry(expires_at)
                         .or_default()
                         .insert(execution_id.clone());
                     self.pending_scheduled_rev.insert(execution_id, expires_at);
                 }
-                PotentiallyPending::PendingAfterExternalEvent | PotentiallyPending::NotPending => {}
+                PendingState::BlockedByJoinSet | PendingState::Finished => {}
             }
         }
     }
@@ -318,145 +184,6 @@ mod index {
                 pending_scheduled_rev: Default::default(),
             }
         }
-    }
-
-    #[derive(Debug)]
-    pub(super) enum PotentiallyPending {
-        PendingNow,
-        Locked {
-            executor_name: ExecutorName,
-            expires_at: DateTime<Utc>,
-        },
-        PendingAfterExpiry(DateTime<Utc>),
-        PendingAfterExternalEvent,
-        NotPending,
-    }
-
-    pub(super) fn potentially_pending<ID: ExecutionId>(
-        journal: &ExecutionJournal<ID>,
-    ) -> PotentiallyPending {
-        match last_event_excluding_async_responses(journal) {
-            (
-                _,
-                ExecutionEvent {
-                    event:
-                        ExecutionEventInner::Created {
-                            scheduled_at: None, ..
-                        },
-                    ..
-                },
-            ) => PotentiallyPending::PendingNow,
-            (
-                _,
-                ExecutionEvent {
-                    event:
-                        ExecutionEventInner::Created {
-                            scheduled_at: Some(scheduled_at),
-                            ..
-                        },
-                    ..
-                },
-            ) => PotentiallyPending::PendingAfterExpiry(scheduled_at.clone()),
-            (
-                _,
-                ExecutionEvent {
-                    event:
-                        ExecutionEventInner::Locked {
-                            executor_name,
-                            expires_at,
-                        },
-                    ..
-                },
-            ) => PotentiallyPending::Locked {
-                executor_name: executor_name.clone(),
-                expires_at: *expires_at,
-            },
-            (
-                _,
-                ExecutionEvent {
-                    event: ExecutionEventInner::IntermittentFailure { expires_at, .. },
-                    ..
-                },
-            ) => PotentiallyPending::PendingAfterExpiry(*expires_at),
-            (
-                _,
-                ExecutionEvent {
-                    event: ExecutionEventInner::IntermittentTimeout { expires_at, .. },
-                    ..
-                },
-            ) => PotentiallyPending::PendingAfterExpiry(*expires_at),
-            (
-                _,
-                ExecutionEvent {
-                    event:
-                        ExecutionEventInner::EventHistory {
-                            event: EventHistory::Yield { .. },
-                            ..
-                        },
-                    ..
-                },
-            ) => PotentiallyPending::PendingNow,
-            (
-                idx,
-                ExecutionEvent {
-                    event:
-                        ExecutionEventInner::EventHistory {
-                            event:
-                                EventHistory::JoinNextBlocking {
-                                    joinset_id: expected_join_set_id,
-                                    ..
-                                },
-                            ..
-                        },
-                    ..
-                },
-            ) => {
-                // pending if this event is followed by an async response
-                if journal
-                    .events
-                    .iter()
-                    .skip(idx + 1)
-                    .find(|event| {
-                        matches!(event, ExecutionEvent {
-                            event:
-                                ExecutionEventInner::EventHistory{event:
-                                    EventHistory::EventHistoryAsyncResponse { joinset_id, .. },
-                                .. },
-                        .. }
-                        if joinset_id == expected_join_set_id)
-                    })
-                    .is_some()
-                {
-                    PotentiallyPending::PendingNow
-                } else {
-                    PotentiallyPending::PendingAfterExternalEvent
-                }
-            }
-            _ => PotentiallyPending::NotPending,
-        }
-    }
-
-    fn last_event_excluding_async_responses<ID: ExecutionId>(
-        journal: &ExecutionJournal<ID>,
-    ) -> (usize, &ExecutionEvent<ID>) {
-        journal
-            .events
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_idx, event)| {
-                !matches!(
-                    event,
-                    ExecutionEvent {
-                        event: ExecutionEventInner::EventHistory {
-                            event: EventHistory::EventHistoryAsyncResponse { .. },
-                            ..
-                        },
-                        ..
-                    }
-                )
-            })
-            .expect_or_log("must contain at least one non-async-response event")
     }
 }
 
@@ -602,7 +329,11 @@ impl<ID: ExecutionId> DbTask<ID> {
     #[instrument(skip_all)]
     pub(crate) fn tick(&mut self, request: DbTickRequest<ID>) -> DbTickResponse<ID> {
         let DbTickRequest { request } = request;
-
+        if tracing::enabled!(Level::TRACE) {
+            trace!("Received {request:?}");
+        } else {
+            debug!("Received {request}");
+        }
         let resp = match request {
             DbRequest::ExecutionSpecific(request) => self.handle_specific(request),
             DbRequest::General(request) => self.handle_general(request),
@@ -612,7 +343,6 @@ impl<ID: ExecutionId> DbTask<ID> {
     }
 
     fn handle_general(&mut self, request: GeneralRequest<ID>) -> DbTickResponse<ID> {
-        trace!("Received {request:?}");
         match request {
             GeneralRequest::FetchPending {
                 batch_size,
@@ -713,11 +443,6 @@ impl<ID: ExecutionId> DbTask<ID> {
 
     #[instrument(skip_all, fields(execution_id = %request.execution_id()))]
     fn handle_specific(&mut self, request: ExecutionSpecificRequest<ID>) -> DbTickResponse<ID> {
-        if tracing::enabled!(Level::TRACE) {
-            trace!("Received {request:?}");
-        } else {
-            debug!("Received {request}");
-        }
         match request {
             ExecutionSpecificRequest::Append {
                 execution_id,
@@ -1000,9 +725,8 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::{time::now, FinishedExecutionResult};
-
     use super::*;
+    use crate::{storage::EventHistory, time::now, FinishedExecutionResult};
     use assert_matches::assert_matches;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
     use std::time::Duration;
