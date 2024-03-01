@@ -164,15 +164,12 @@ mod tests {
         ) -> Result<Version, DbError> {
             debug!("run");
             tokio::time::sleep(Duration::from_millis(10)).await;
-            let finished_event = ExecutionEvent {
-                created_at: now(),
-                event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionResult::None),
-                },
+            let finished_event = ExecutionEventInner::Finished {
+                result: Ok(SupportedFunctionResult::None),
             };
             let version = self
                 .db_connection
-                .append(execution_id, version, finished_event.clone())
+                .append(now(), execution_id, version, finished_event.clone())
                 .await?;
 
             Ok(version)
@@ -259,8 +256,8 @@ mod tests {
         let execution_id = WorkflowId::generate();
         db_connection
             .create(
-                execution_id.clone(),
                 now(),
+                execution_id.clone(),
                 SOME_FFQN.to_owned(),
                 Params::default(),
                 None,

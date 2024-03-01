@@ -25,7 +25,7 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
     // After optional expiry(`scheduled_at`) interpreted as pending.
-    #[display(fmt = "Created({ffqn})")]
+    #[display(fmt = "Created({ffqn}, `{scheduled_at:?}`)")]
     Created {
         // execution_id: ID,
         ffqn: FunctionFqn,
@@ -36,7 +36,7 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     // Created by an executor.
     // Either immediately followed by an execution request by an executor or
     // after expiry immediately followed by WaitingForExecutor by a scheduler.
-    #[display(fmt = "Locked")]
+    #[display(fmt = "Locked(`{expires_at}`, `{executor_name}`)")]
     Locked {
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
@@ -44,7 +44,7 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     // Created by the executor holding last lock.
     // Processed by a scheduler.
     // After expiry interpreted as pending.
-    #[display(fmt = "IntermittentFailure")]
+    #[display(fmt = "IntermittentFailure(`{expires_at}`)")]
     IntermittentFailure {
         expires_at: DateTime<Utc>,
         reason: String,
@@ -52,7 +52,7 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     // Created by the executor holding last lock.
     // Processed by a scheduler.
     // After expiry interpreted as pending.
-    #[display(fmt = "IntermittentTimeout")]
+    #[display(fmt = "IntermittentTimeout(`{expires_at}`)")]
     IntermittentTimeout { expires_at: DateTime<Utc> },
     // Created by the executor holding last lock.
     // Processed by a scheduler if a parent execution needs to be notified,
@@ -67,6 +67,19 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
 
     #[display(fmt = "EventHistory({event})")]
     EventHistory { event: EventHistory<ID> },
+}
+
+impl<ID: ExecutionId> ExecutionEventInner<ID> {
+    fn appendable_only_in_lock(&self) -> bool {
+        match self {
+            Self::Locked { .. }
+            | Self::IntermittentFailure { .. }
+            | Self::IntermittentTimeout { .. }
+            | Self::Finished { .. } => true,
+            Self::EventHistory { event } => event.appendable_only_in_lock(),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
@@ -116,6 +129,12 @@ pub(crate) enum EventHistory<ID: ExecutionId> {
     JoinNextBlocking {
         joinset_id: ID,
     },
+}
+
+impl<ID: ExecutionId> EventHistory<ID> {
+    fn appendable_only_in_lock(&self) -> bool {
+        !matches!(self, Self::EventHistoryAsyncResponse { .. })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -191,8 +210,8 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static {
     /// Specialized `append` which does not require a version.
     async fn create(
         &self,
-        execution_id: ID,
         created_at: DateTime<Utc>,
+        execution_id: ID,
         ffqn: FunctionFqn,
         params: Params,
         parent: Option<ID>,
@@ -211,9 +230,10 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static {
 
     async fn append(
         &self,
+        created_at: DateTime<Utc>,
         execution_id: ID,
         version: Version,
-        event: ExecutionEvent<ID>,
+        event: ExecutionEventInner<ID>,
     ) -> Result<AppendResponse, DbError>;
 
     async fn get(&self, execution_id: ID) -> Result<ExecutionHistory<ID>, DbError>;
@@ -285,7 +305,8 @@ pub(crate) mod journal {
 
         pub(crate) fn validate_push(
             &mut self,
-            event: ExecutionEvent<ID>,
+            created_at: DateTime<Utc>,
+            event: ExecutionEventInner<ID>,
         ) -> Result<(), RowSpecificError> {
             let pending_state = self.pending_state();
             if pending_state == PendingState::Finished {
@@ -295,35 +316,39 @@ pub(crate) mod journal {
             if let ExecutionEventInner::Locked {
                 executor_name,
                 expires_at,
-            } = &event.event
+            } = &event
             {
-                if *expires_at <= event.created_at {
+                if *expires_at <= created_at {
                     return Err(RowSpecificError::ValidationFailed("invalid expiry date"));
                 }
-                match pending_state {
+                match &pending_state {
                     PendingState::PendingNow => {} // ok to lock
                     PendingState::PendingAfterExpiry(pending_start) => {
-                        if pending_start <= event.created_at {
+                        if *pending_start <= created_at {
                             // pending now, ok to lock
                         } else {
-                            return Err(RowSpecificError::ValidationFailed("already locked"));
+                            return Err(RowSpecificError::ValidationFailed(
+                                "cannot append {event} event, not yet pending",
+                            ));
                         }
                     }
                     PendingState::Locked {
                         executor_name: locked_by,
                         expires_at,
                     } => {
-                        if *executor_name == locked_by {
+                        if executor_name == locked_by {
                             // we allow extending the lock
-                        } else if expires_at <= event.created_at {
+                        } else if *expires_at <= created_at {
                             // we allow locking after the old lock expired
                         } else {
-                            return Err(RowSpecificError::ValidationFailed("already locked"));
+                            return Err(RowSpecificError::ValidationFailed(
+                                "cannot append {event}, already in {pending_state} state",
+                            ));
                         }
                     }
                     PendingState::BlockedByJoinSet => {
                         return Err(RowSpecificError::ValidationFailed(
-                            "cannot transition to Locked from BlockedByJoinSet",
+                            "cannot append Locked event when in BlockedByJoinSet state",
                         ));
                     }
                     PendingState::Finished => {
@@ -331,7 +356,13 @@ pub(crate) mod journal {
                     }
                 }
             }
-            self.events.push_back(event);
+            let locked_now = matches!(pending_state, PendingState::Locked { expires_at,.. } if expires_at > created_at);
+            if !event.appendable_only_in_lock() {
+                return Err(RowSpecificError::ValidationFailed(
+                    "cannot append {event} event in {pending_state} state",
+                ));
+            }
+            self.events.push_back(ExecutionEvent { event, created_at });
             Ok(())
         }
 
@@ -454,7 +485,7 @@ pub(crate) mod journal {
     #[derive(Debug, derive_more::Display, PartialEq, Eq)]
     pub(crate) enum PendingState {
         PendingNow,
-        #[display(fmt = "Locked(`{expires_at}`)")]
+        #[display(fmt = "Locked(`{expires_at}`,`{executor_name}`)")]
         Locked {
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,

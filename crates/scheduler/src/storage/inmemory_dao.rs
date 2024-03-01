@@ -58,9 +58,10 @@ pub(super) mod api {
         },
         #[display(fmt = "Insert({event})")]
         Append {
+            created_at: DateTime<Utc>,
             execution_id: ID,
             version: Version,
-            event: ExecutionEvent<ID>,
+            event: ExecutionEventInner<ID>,
             #[derivative(Debug = "ignore")]
             resp_sender: oneshot::Sender<Result<AppendResponse, RowSpecificError>>,
         },
@@ -445,13 +446,14 @@ impl<ID: ExecutionId> DbTask<ID> {
     fn handle_specific(&mut self, request: ExecutionSpecificRequest<ID>) -> DbTickResponse<ID> {
         match request {
             ExecutionSpecificRequest::Append {
+                created_at,
                 execution_id,
                 version,
                 event,
                 resp_sender,
             } => DbTickResponse::AppendResult {
                 resp_sender,
-                payload: self.append(execution_id, version, event),
+                payload: self.append(created_at, execution_id, version, event),
             },
             ExecutionSpecificRequest::Lock {
                 created_at,
@@ -512,41 +514,33 @@ impl<ID: ExecutionId> DbTask<ID> {
         executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
     ) -> Result<LockResponse<ID>, RowSpecificError> {
-        let event = ExecutionEvent {
-            created_at,
-            event: ExecutionEventInner::Locked {
-                executor_name,
-                expires_at,
-            },
+        let event = ExecutionEventInner::Locked {
+            executor_name,
+            expires_at,
         };
-        self.append(execution_id.clone(), version, event).map(|_| {
-            let journal = self.journals.get(&execution_id).unwrap_or_log();
-            (journal.event_history(), journal.version())
-        })
+        self.append(created_at, execution_id.clone(), version, event)
+            .map(|_| {
+                let journal = self.journals.get(&execution_id).unwrap_or_log();
+                (journal.event_history(), journal.version())
+            })
     }
 
     fn append(
         &mut self,
+        created_at: DateTime<Utc>,
         execution_id: ID,
         version: Version,
-        event: ExecutionEvent<ID>,
+        event: ExecutionEventInner<ID>,
     ) -> Result<AppendResponse, RowSpecificError> {
         if let ExecutionEventInner::Created {
             ffqn,
             params,
             parent,
             scheduled_at,
-        } = event.event
+        } = event
         {
             return if version == 0 {
-                self.create(
-                    event.created_at,
-                    execution_id,
-                    ffqn,
-                    params,
-                    scheduled_at,
-                    parent,
-                )
+                self.create(created_at, execution_id, ffqn, params, scheduled_at, parent)
             } else {
                 warn!("Wrong version");
                 return Err(RowSpecificError::VersionMismatch);
@@ -559,7 +553,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         if version != journal.version() {
             return Err(RowSpecificError::VersionMismatch);
         }
-        journal.validate_push(event)?;
+        journal.validate_push(created_at, event)?;
         let version = journal.version();
         self.index.update(execution_id, &self.journals);
         Ok(version)
@@ -583,23 +577,21 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
     #[instrument(skip_all, %execution_id)]
     async fn create(
         &self,
-        execution_id: ID,
         created_at: DateTime<Utc>,
+        execution_id: ID,
         ffqn: FunctionFqn,
         params: Params,
         parent: Option<ID>,
         scheduled_at: Option<DateTime<Utc>>,
     ) -> Result<AppendResponse, DbError> {
-        let event = ExecutionEvent {
-            created_at,
-            event: ExecutionEventInner::Created {
-                ffqn,
-                params,
-                parent,
-                scheduled_at,
-            },
+        let event = ExecutionEventInner::Created {
+            ffqn,
+            params,
+            parent,
+            scheduled_at,
         };
-        self.append(execution_id, Version::default(), event).await
+        self.append(created_at, execution_id, Version::default(), event)
+            .await
     }
 
     #[instrument(skip_all)]
@@ -685,12 +677,14 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
     #[instrument(skip_all, %execution_id)]
     async fn append(
         &self,
+        created_at: DateTime<Utc>,
         execution_id: ID,
         version: Version,
-        event: ExecutionEvent<ID>,
+        event: ExecutionEventInner<ID>,
     ) -> Result<Version, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Append {
+            created_at,
             execution_id,
             version,
             event,
@@ -744,23 +738,21 @@ pub(crate) mod tests {
         #[instrument(skip_all, %execution_id)]
         async fn create(
             &self,
-            execution_id: ID,
             created_at: DateTime<Utc>,
+            execution_id: ID,
             ffqn: FunctionFqn,
             params: Params,
             parent: Option<ID>,
             scheduled_at: Option<DateTime<Utc>>,
         ) -> Result<AppendResponse, DbError> {
-            let event = ExecutionEvent {
-                created_at,
-                event: ExecutionEventInner::Created {
-                    ffqn,
-                    params,
-                    parent,
-                    scheduled_at,
-                },
+            let event = ExecutionEventInner::Created {
+                ffqn,
+                params,
+                parent,
+                scheduled_at,
             };
-            self.append(execution_id, Version::default(), event).await
+            self.append(created_at, execution_id, Version::default(), event)
+                .await
         }
 
         async fn fetch_pending(
@@ -837,11 +829,13 @@ pub(crate) mod tests {
 
         async fn append(
             &self,
+            created_at: DateTime<Utc>,
             execution_id: ID,
             version: Version,
-            event: ExecutionEvent<ID>,
+            event: ExecutionEventInner<ID>,
         ) -> Result<AppendResponse, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Append {
+                created_at,
                 execution_id,
                 version,
                 event,
@@ -926,8 +920,8 @@ pub(crate) mod tests {
         {
             version = db_connection
                 .create(
-                    execution_id.clone(),
                     now(),
+                    execution_id.clone(),
                     SOME_FFQN.to_owned(),
                     Params::default(),
                     None,
@@ -1005,15 +999,12 @@ pub(crate) mod tests {
         sleep(Duration::from_millis(499)).await;
         {
             info!("Intermittent timeout: {}", now());
-            let event = ExecutionEvent {
-                created_at: now(),
-                event: ExecutionEventInner::IntermittentTimeout {
-                    expires_at: now() + lock_expiry,
-                },
+            let event = ExecutionEventInner::IntermittentTimeout {
+                expires_at: now() + lock_expiry,
             };
 
             version = db_connection
-                .append(execution_id.clone(), version, event)
+                .append(now(), execution_id.clone(), version, event)
                 .await
                 .unwrap_or_log();
             assert_eq!(
@@ -1084,14 +1075,11 @@ pub(crate) mod tests {
         {
             info!("Yield: {}", now());
 
-            let event = ExecutionEvent {
-                created_at: now(),
-                event: ExecutionEventInner::EventHistory {
-                    event: EventHistory::Yield,
-                },
+            let event = ExecutionEventInner::EventHistory {
+                event: EventHistory::Yield,
             };
             version = db_connection
-                .append(execution_id.clone(), version, event)
+                .append(now(), execution_id.clone(), version, event)
                 .await
                 .unwrap_or_log();
         }
@@ -1117,15 +1105,12 @@ pub(crate) mod tests {
         sleep(Duration::from_millis(300)).await;
         {
             info!("Finish: {}", now());
-            let event = ExecutionEvent {
-                created_at: now(),
-                event: ExecutionEventInner::Finished {
-                    result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
-                },
+            let event = ExecutionEventInner::Finished {
+                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
             };
 
             db_connection
-                .append(execution_id.clone(), version, event)
+                .append(now(), execution_id.clone(), version, event)
                 .await
                 .unwrap_or_log();
         }
