@@ -67,16 +67,26 @@ impl<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID> + Send + 'static> Exec
                     worker,
                     _phantom_data: PhantomData,
                 };
+                let mut old_err = None;
                 loop {
-                    let mut instant = now_tokio_instant();
-                    instant += task.max_tick_sleep;
-                    let _ = task
+                    let sleep_until = now_tokio_instant() + task.max_tick_sleep;
+                    let res = task
                         .tick(ExecTickRequest {
                             executed_at: now(),
                             batch_size,
                         })
                         .await;
-                    tokio::time::sleep_until(instant).await;
+                    match (res, &old_err) {
+                        (Ok(_), _) => {
+                            old_err = None;
+                        }
+                        (Err(err), Some(old)) if err == *old => {}
+                        (Err(err), _) => {
+                            warn!("Tick failed: {err:?}");
+                            old_err = Some(err);
+                        }
+                    }
+                    tokio::time::sleep_until(sleep_until).await;
                 }
             }
             .instrument(span),
@@ -85,7 +95,6 @@ impl<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID> + Send + 'static> Exec
         ExecutorTaskHandle { abort_handle }
     }
 
-    // TODO: logging
     #[instrument(skip_all)]
     async fn tick(
         &mut self,
