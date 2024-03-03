@@ -30,6 +30,7 @@
               pkg-config
               rustToolchain
               wasm-tools
+              lldb
             ];
           };
         }

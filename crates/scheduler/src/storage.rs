@@ -1,13 +1,13 @@
 pub(crate) mod inmemory_dao;
 
-use std::sync::Arc;
-
+use crate::FinishedExecutionResult;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::Params;
+use concepts::SupportedFunctionResult;
 use concepts::{ExecutionId, FunctionFqn};
-
-use crate::FinishedExecutionResult;
+use std::borrow::Cow;
+use std::sync::Arc;
 
 pub type Version = usize;
 
@@ -20,7 +20,7 @@ pub(crate) struct ExecutionEvent<ID: ExecutionId> {
     pub(crate) event: ExecutionEventInner<ID>,
 }
 
-#[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
+#[derive(Clone, Debug, derive_more::Display, PartialEq, Eq, arbitrary::Arbitrary)]
 pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
@@ -29,6 +29,7 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     Created {
         // execution_id: ID,
         ffqn: FunctionFqn,
+        #[arbitrary(default)]
         params: Params,
         parent: Option<ID>,
         scheduled_at: Option<DateTime<Utc>>,
@@ -58,7 +59,10 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     // Processed by a scheduler if a parent execution needs to be notified,
     // also when
     #[display(fmt = "Finished")]
-    Finished { result: FinishedExecutionResult<ID> },
+    Finished {
+        #[arbitrary(value = Ok(SupportedFunctionResult::None))]
+        result: FinishedExecutionResult<ID>,
+    },
     // Created by an external system or a scheduler during a race.
     // Processed by the executor holding the last Lock.
     // Imediately followed by Finished by a scheduler.
@@ -82,7 +86,7 @@ impl<ID: ExecutionId> ExecutionEventInner<ID> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
 pub(crate) enum EventHistory<ID: ExecutionId> {
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     // Returns execution to `PotentiallyPending::PendingNow` state.
@@ -111,6 +115,7 @@ pub(crate) enum EventHistory<ID: ExecutionId> {
         joinset_id: ID,
         child_execution_id: ID,
         ffqn: FunctionFqn,
+        #[arbitrary(default)]
         params: Params,
     },
     // Execution continues without blocking as the next pending response is in the journal.
@@ -137,7 +142,7 @@ impl<ID: ExecutionId> EventHistory<ID> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, arbitrary::Arbitrary)]
 pub(crate) enum EventHistoryAsyncResponse<ID: ExecutionId> {
     // Created by a scheduler sometime after DelayedUntilAsyncRequest.
     DelayFinishedAsyncResponse {
@@ -146,6 +151,7 @@ pub(crate) enum EventHistoryAsyncResponse<ID: ExecutionId> {
     // Created by a scheduler sometime after ChildExecutionRequested.
     ChildExecutionAsyncResponse {
         child_execution_id: ID,
+        #[arbitrary(value = Ok(SupportedFunctionResult::None))]
         result: FinishedExecutionResult<ID>,
     },
 }
@@ -161,7 +167,7 @@ pub enum DbConnectionError {
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
 pub enum RowSpecificError {
     #[error("validation failed: {0}")]
-    ValidationFailed(&'static str),
+    ValidationFailed(Cow<'static, str>),
     #[error("version mismatch")]
     VersionMismatch,
     #[error("not found")]
@@ -244,7 +250,7 @@ pub(crate) mod journal {
     use crate::storage::{ExecutionHistory, RowSpecificError, Version};
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn, Params};
-    use std::collections::VecDeque;
+    use std::{borrow::Cow, collections::VecDeque};
     use tracing_unwrap::OptionExt;
 
     #[derive(Debug)]
@@ -310,7 +316,9 @@ pub(crate) mod journal {
         ) -> Result<(), RowSpecificError> {
             let pending_state = self.pending_state();
             if pending_state == PendingState::Finished {
-                return Err(RowSpecificError::ValidationFailed("already finished"));
+                return Err(RowSpecificError::ValidationFailed(Cow::Borrowed(
+                    "already finished",
+                )));
             }
 
             if let ExecutionEventInner::Locked {
@@ -319,7 +327,9 @@ pub(crate) mod journal {
             } = &event
             {
                 if *expires_at <= created_at {
-                    return Err(RowSpecificError::ValidationFailed("invalid expiry date"));
+                    return Err(RowSpecificError::ValidationFailed(Cow::Borrowed(
+                        "invalid expiry date",
+                    )));
                 }
                 match &pending_state {
                     PendingState::PendingNow => {} // ok to lock
@@ -327,9 +337,9 @@ pub(crate) mod journal {
                         if *pending_start <= created_at {
                             // pending now, ok to lock
                         } else {
-                            return Err(RowSpecificError::ValidationFailed(
-                                "cannot append {event} event, not yet pending",
-                            ));
+                            return Err(RowSpecificError::ValidationFailed(Cow::Owned(format!(
+                                "cannot append {event} event, not yet pending"
+                            ))));
                         }
                     }
                     PendingState::Locked {
@@ -341,15 +351,15 @@ pub(crate) mod journal {
                         } else if *expires_at <= created_at {
                             // we allow locking after the old lock expired
                         } else {
-                            return Err(RowSpecificError::ValidationFailed(
-                                "cannot append {event}, already in {pending_state} state",
-                            ));
+                            return Err(RowSpecificError::ValidationFailed(Cow::Owned(format!(
+                                "cannot append {event}, already in {pending_state} state"
+                            ))));
                         }
                     }
                     PendingState::BlockedByJoinSet => {
-                        return Err(RowSpecificError::ValidationFailed(
+                        return Err(RowSpecificError::ValidationFailed(Cow::Borrowed(
                             "cannot append Locked event when in BlockedByJoinSet state",
-                        ));
+                        )));
                     }
                     PendingState::Finished => {
                         unreachable!() // handled at the beginning of the function
@@ -358,9 +368,9 @@ pub(crate) mod journal {
             }
             let locked_now = matches!(pending_state, PendingState::Locked { expires_at,.. } if expires_at > created_at);
             if !event.appendable_only_in_lock() {
-                return Err(RowSpecificError::ValidationFailed(
-                    "cannot append {event} event in {pending_state} state",
-                ));
+                return Err(RowSpecificError::ValidationFailed(Cow::Owned(format!(
+                    "cannot append {event} event in {pending_state} state"
+                ))));
             }
             self.events.push_back(ExecutionEvent { event, created_at });
             Ok(())

@@ -18,7 +18,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn, Params};
 use derivative::Derivative;
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -486,9 +489,9 @@ impl<ID: ExecutionId> DbTask<ID> {
         parent: Option<ID>,
     ) -> Result<AppendResponse, RowSpecificError> {
         if self.journals.contains_key(&execution_id) {
-            return Err(RowSpecificError::ValidationFailed(
+            return Err(RowSpecificError::ValidationFailed(Cow::Borrowed(
                 "execution is already initialized",
-            ));
+            )));
         }
         let journal = ExecutionJournal::new(
             execution_id.clone(),
@@ -1113,6 +1116,54 @@ pub(crate) mod tests {
                 .append(now(), execution_id.clone(), version, event)
                 .await
                 .unwrap_or_log();
+        }
+    }
+
+    #[tokio::test]
+    async fn proptest() {
+        set_up();
+
+        let raw_data: Vec<u8> = {
+            let len = madsim::rand::random::<u16>() as usize;
+            let mut raw_data = Vec::with_capacity(len);
+            while raw_data.len() < len {
+                raw_data.push(madsim::rand::random::<u8>());
+            }
+            raw_data
+        };
+        let mut unstructured = arbitrary::Unstructured::new(&raw_data);
+
+        let db_task = DbTask::new();
+        let db_task = Arc::new(std::sync::Mutex::new(db_task));
+        let db_connection = TickBasedDbConnection {
+            db_task: db_task.clone(),
+        };
+        let execution_id = WorkflowId::generate();
+        let mut version;
+        // Create
+        {
+            version = db_connection
+                .create(
+                    now(),
+                    execution_id.clone(),
+                    SOME_FFQN.to_owned(),
+                    Params::default(),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_or_log();
+        }
+        let events = unstructured.int_in_range(5..=10).unwrap_or_log();
+        for _ in 0..events {
+            let event: ExecutionEventInner<WorkflowId> = unstructured.arbitrary().unwrap_or_log();
+            match db_connection
+                .append(now(), execution_id.clone(), version, event)
+                .await
+            {
+                Ok(new_version) => version = new_version,
+                Err(err) => debug!("Ignoring {err:?}"),
+            }
         }
     }
 }
