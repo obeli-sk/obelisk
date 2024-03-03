@@ -91,6 +91,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arbtest"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23909d5fb517fac2a8a4c887e847dbe41dd22ec46914586f5727980d0a193fdc"
+dependencies = [
+ "arbitrary",
+]
+
+[[package]]
 name = "assert-json-diff"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2054,6 +2063,7 @@ name = "scheduler"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
+ "arbtest",
  "assert_matches",
  "async-channel",
  "async-trait",

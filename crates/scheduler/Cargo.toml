@@ -28,6 +28,7 @@ wasmtime.workspace = true
 [dev-dependencies]
 madsim.workspace = true
 tracing-subscriber.workspace = true
+arbtest = "0.3.1"
 
 [lints]
 workspace = true
