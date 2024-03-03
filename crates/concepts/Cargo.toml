@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 val-json.workspace = true
 
+arbitrary.workspace = true
 derive_more.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

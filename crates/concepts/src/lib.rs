@@ -94,6 +94,15 @@ impl std::cmp::PartialEq<FunctionFqnStr<'_>> for FunctionFqn {
     }
 }
 
+impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(FunctionFqn::new(
+            u.arbitrary::<String>()?,
+            u.arbitrary::<String>()?,
+        ))
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct FunctionFqnStr<'a> {
     pub ifc_fqn: &'a str,
@@ -237,7 +246,17 @@ pub mod workflow_id {
 
     use crate::ExecutionId;
 
-    #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    #[derive(
+        Debug,
+        Clone,
+        derive_more::Display,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        arbitrary::Arbitrary,
+    )]
     pub struct WorkflowId(Arc<String>);
     impl WorkflowId {
         #[must_use]
