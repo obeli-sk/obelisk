@@ -1120,7 +1120,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn proptest() {
+    async fn generative_proptest() {
         set_up();
 
         let raw_data: Vec<u8> = {

@@ -23,3 +23,9 @@ Enable Madsim by setting the `RUSTFLAGS` envvar or by editing `.cargo/config.tom
 ```toml
 rustflags = ["--cfg", "tokio_unstable", "--cfg", "madsim"]
 ```
+
+
+### Generative testing
+Madsim is used also for property based testing.
+Enable test reruns using `MADSIM_TEST_NUM=10000` and thread based parallelism
+using `MADSIM_TEST_JOBS=8`. All generative tests start with `generative_` prefix.
