@@ -367,7 +367,7 @@ pub(crate) mod journal {
                 }
             }
             let locked_now = matches!(pending_state, PendingState::Locked { expires_at,.. } if expires_at > created_at);
-            if !event.appendable_only_in_lock() {
+            if locked_now && !event.appendable_only_in_lock() {
                 return Err(RowSpecificError::ValidationFailed(Cow::Owned(format!(
                     "cannot append {event} event in {pending_state} state"
                 ))));
