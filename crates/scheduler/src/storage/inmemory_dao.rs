@@ -116,7 +116,7 @@ mod index {
             &self,
             journals: &'a HashMap<ID, ExecutionJournal<ID>>,
             batch_size: usize,
-            expiring_before: DateTime<Utc>,
+            expiring_at_or_before: DateTime<Utc>,
             ffqns: Vec<concepts::FunctionFqn>,
         ) -> Vec<(&'a ExecutionJournal<ID>, Option<DateTime<Utc>>)> {
             let mut pending = self
@@ -124,20 +124,23 @@ mod index {
                 .iter()
                 .map(|id| (journals.get(id).unwrap_or_log(), None))
                 .collect::<Vec<_>>();
-            pending.extend(self.pending_scheduled.range(..expiring_before).flat_map(
-                |(scheduled_at, ids)| {
-                    ids.iter()
-                        .map(|id| (journals.get(id).unwrap_or_log(), Some(scheduled_at.clone())))
-                },
-            ));
+            pending.extend(
+                self.pending_scheduled
+                    .range(..=expiring_at_or_before)
+                    .flat_map(|(scheduled_at, ids)| {
+                        ids.iter().map(|id| {
+                            (journals.get(id).unwrap_or_log(), Some(scheduled_at.clone()))
+                        })
+                    }),
+            );
             // filter by currently pending
             pending.retain(|(journal, _)| match journal.pending_state() {
                 PendingState::PendingNow => true,
-                PendingState::PendingAfterExpiry(pending_after)
+                PendingState::PendingAt(pending_at)
                 | PendingState::Locked {
-                    expires_at: pending_after,
+                    expires_at: pending_at,
                     ..
-                } => pending_after < expiring_before,
+                } => pending_at <= expiring_at_or_before,
                 state @ PendingState::BlockedByJoinSet | state @ PendingState::Finished => {
                     // Update was not called after modifying the journal.
                     error!("Expected pending, got {state}. Journal: {journal:?}");
@@ -167,8 +170,7 @@ mod index {
                 PendingState::PendingNow => {
                     self.pending.insert(execution_id);
                 }
-                PendingState::PendingAfterExpiry(expires_at)
-                | PendingState::Locked { expires_at, .. } => {
+                PendingState::PendingAt(expires_at) | PendingState::Locked { expires_at, .. } => {
                     self.pending_scheduled
                         .entry(expires_at)
                         .or_default()
@@ -545,7 +547,7 @@ impl<ID: ExecutionId> DbTask<ID> {
             return if version == 0 {
                 self.create(created_at, execution_id, ffqn, params, scheduled_at, parent)
             } else {
-                warn!("Wrong version");
+                info!("Wrong version");
                 return Err(RowSpecificError::VersionMismatch);
             };
         }
@@ -966,15 +968,11 @@ pub(crate) mod tests {
                 .await
                 .unwrap_or_log();
             assert!(event_history.is_empty());
-            // check that the lock will be expired after lock_expiry
+            // check that the lock is expired after lock_expiry
             assert_eq!(
                 1,
                 db_connection
-                    .fetch_pending(
-                        1,
-                        now() + lock_expiry + Duration::from_millis(1), // FIXME
-                        vec![SOME_FFQN.to_owned()],
-                    )
+                    .fetch_pending(1, now() + lock_expiry, vec![SOME_FFQN.to_owned()],)
                     .await
                     .unwrap_or_log()
                     .len()
@@ -1013,11 +1011,7 @@ pub(crate) mod tests {
             assert_eq!(
                 1,
                 db_connection
-                    .fetch_pending(
-                        1,
-                        now() + Duration::from_secs(1), // FIXME
-                        vec![SOME_FFQN.to_owned()],
-                    )
+                    .fetch_pending(1, now() + lock_expiry, vec![SOME_FFQN.to_owned()],)
                     .await
                     .unwrap_or_log()
                     .len()

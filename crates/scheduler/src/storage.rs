@@ -333,7 +333,7 @@ pub(crate) mod journal {
                 }
                 match &pending_state {
                     PendingState::PendingNow => {} // ok to lock
-                    PendingState::PendingAfterExpiry(pending_start) => {
+                    PendingState::PendingAt(pending_start) => {
                         if *pending_start <= created_at {
                             // pending now, ok to lock
                         } else {
@@ -424,7 +424,7 @@ pub(crate) mod journal {
                             scheduled_at: Some(scheduled_at),
                             ..
                         },
-                    ) => Some(PendingState::PendingAfterExpiry(scheduled_at.clone())),
+                    ) => Some(PendingState::PendingAt(scheduled_at.clone())),
 
                     (_, ExecutionEventInner::Finished { .. }) => Some(PendingState::Finished),
 
@@ -440,11 +440,11 @@ pub(crate) mod journal {
                     }),
 
                     (_, ExecutionEventInner::IntermittentFailure { expires_at, .. }) => {
-                        Some(PendingState::PendingAfterExpiry(*expires_at))
+                        Some(PendingState::PendingAt(*expires_at))
                     }
 
                     (_, ExecutionEventInner::IntermittentTimeout { expires_at, .. }) => {
-                        Some(PendingState::PendingAfterExpiry(*expires_at))
+                        Some(PendingState::PendingAt(*expires_at))
                     }
 
                     (
@@ -500,8 +500,8 @@ pub(crate) mod journal {
             executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
         },
-        #[display(fmt = "PendingAfterExpiry(`{_0}`)")]
-        PendingAfterExpiry(DateTime<Utc>), // e.g. created with a schedule, intermittent timeout/failure
+        #[display(fmt = "PendingAt(`{_0}`)")]
+        PendingAt(DateTime<Utc>), // e.g. created with a schedule, intermittent timeout/failure
         BlockedByJoinSet,
         Finished,
     }
