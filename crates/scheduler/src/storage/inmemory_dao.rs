@@ -213,7 +213,7 @@ impl<ID: ExecutionId> DbTaskHandle<ID> {
 
     pub async fn close(&mut self) {
         self.client_to_store_req_sender.take();
-        debug!("Gracefully closing");
+        trace!("Gracefully closing");
         while !self.abort_handle.is_finished() {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
@@ -315,7 +315,6 @@ impl<ID: ExecutionId> DbTask<ID> {
                     debug!("Failed to send back the response");
                 }
             }
-            info!("Database task finished");
         })
         .abort_handle();
 

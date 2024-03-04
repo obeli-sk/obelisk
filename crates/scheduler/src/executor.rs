@@ -5,9 +5,16 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn};
-use std::{marker::PhantomData, time::Duration};
+use std::{
+    marker::PhantomData,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tokio::task::AbortHandle;
-use tracing::{debug, info_span, instrument, warn, Instrument};
+use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
 
 pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     db_connection: DB,
@@ -31,20 +38,6 @@ struct ExecutionProgress<ID: ExecutionId> {
     result: Result<Version, DbError>,
 }
 
-pub struct ExecutorTaskHandle {
-    abort_handle: AbortHandle,
-}
-
-impl Drop for ExecutorTaskHandle {
-    fn drop(&mut self) {
-        if self.abort_handle.is_finished() {
-            return;
-        }
-        warn!("Aborting the task");
-        self.abort_handle.abort();
-    }
-}
-
 impl<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID> + Send + 'static> ExecTask<ID, DB, W> {
     pub fn spawn_new(
         db_connection: DB,
@@ -56,6 +49,8 @@ impl<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID> + Send + 'static> Exec
         batch_size: usize,
     ) -> ExecutorTaskHandle {
         let span = info_span!("executor", ?ffqns);
+        let is_closing: Arc<AtomicBool> = Default::default();
+        let is_closing_inner = is_closing.clone();
         let abort_handle = tokio::spawn(
             async move {
                 let mut task = Self {
@@ -86,13 +81,19 @@ impl<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID> + Send + 'static> Exec
                             old_err = Some(err);
                         }
                     }
+                    if is_closing_inner.load(Ordering::Relaxed) {
+                        return;
+                    }
                     tokio::time::sleep_until(sleep_until).await;
                 }
             }
             .instrument(span),
         )
         .abort_handle();
-        ExecutorTaskHandle { abort_handle }
+        ExecutorTaskHandle {
+            abort_handle,
+            is_closing,
+        }
     }
 
     #[instrument(skip_all)]
@@ -134,6 +135,32 @@ impl<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID> + Send + 'static> Exec
             });
         }
         Ok(executions)
+    }
+}
+
+pub struct ExecutorTaskHandle {
+    is_closing: Arc<AtomicBool>,
+    abort_handle: AbortHandle,
+}
+
+impl ExecutorTaskHandle {
+    pub async fn close(&self) {
+        trace!("Gracefully closing");
+        self.is_closing.store(true, Ordering::Relaxed);
+        while !self.abort_handle.is_finished() {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        info!("Gracefully closed");
+    }
+}
+
+impl Drop for ExecutorTaskHandle {
+    fn drop(&mut self) {
+        if self.abort_handle.is_finished() {
+            return;
+        }
+        warn!("Aborting the task");
+        self.abort_handle.abort();
     }
 }
 
@@ -247,7 +274,7 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(1))
         })
         .await;
-        drop(exec_task);
+        exec_task.close().await;
         db_task.close().await;
     }
 
