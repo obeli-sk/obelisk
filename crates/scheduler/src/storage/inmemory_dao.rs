@@ -134,13 +134,13 @@ mod index {
                     }),
             );
             // filter by currently pending
-            pending.retain(|(journal, _)| match journal.pending_state() {
+            pending.retain(|(journal, _)| match &journal.pending_state {
                 PendingState::PendingNow => true,
                 PendingState::PendingAt(pending_at)
                 | PendingState::Locked {
                     expires_at: pending_at,
                     ..
-                } => pending_at <= expiring_at_or_before,
+                } => *pending_at <= expiring_at_or_before,
                 state @ PendingState::BlockedByJoinSet | state @ PendingState::Finished => {
                     // Update was not called after modifying the journal.
                     error!("Expected pending, got {state}. Journal: {journal:?}");
@@ -166,7 +166,7 @@ mod index {
             }
             let journal = journals.get(&execution_id).unwrap_or_log();
             // Add it again if needed
-            match journal.pending_state() {
+            match journal.pending_state {
                 PendingState::PendingNow => {
                     self.pending.insert(execution_id);
                 }
@@ -557,7 +557,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         if version != journal.version() {
             return Err(RowSpecificError::VersionMismatch);
         }
-        journal.validate_push(created_at, event)?;
+        journal.append(created_at, event)?;
         let version = journal.version();
         self.index.update(execution_id, &self.journals);
         Ok(version)

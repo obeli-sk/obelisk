@@ -27,7 +27,6 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     // After optional expiry(`scheduled_at`) interpreted as pending.
     #[display(fmt = "Created({ffqn}, `{scheduled_at:?}`)")]
     Created {
-        // execution_id: ID,
         ffqn: FunctionFqn,
         #[arbitrary(default)]
         params: Params,
@@ -256,6 +255,7 @@ pub(crate) mod journal {
     #[derive(Debug)]
     pub(crate) struct ExecutionJournal<ID: ExecutionId> {
         execution_id: ID,
+        pub(crate) pending_state: PendingState,
         events: VecDeque<ExecutionEvent<ID>>,
     }
 
@@ -268,6 +268,10 @@ pub(crate) mod journal {
             parent: Option<ID>,
             created_at: DateTime<Utc>,
         ) -> Self {
+            let pending_state = match scheduled_at {
+                Some(pending_at) => PendingState::PendingAt(pending_at),
+                None => PendingState::PendingNow,
+            };
             let event = ExecutionEvent {
                 event: ExecutionEventInner::Created {
                     ffqn,
@@ -279,6 +283,7 @@ pub(crate) mod journal {
             };
             Self {
                 execution_id,
+                pending_state,
                 events: VecDeque::from([event]),
             }
         }
@@ -309,13 +314,12 @@ pub(crate) mod journal {
             &self.execution_id
         }
 
-        pub(crate) fn validate_push(
+        pub(crate) fn append(
             &mut self,
             created_at: DateTime<Utc>,
             event: ExecutionEventInner<ID>,
         ) -> Result<(), RowSpecificError> {
-            let pending_state = self.pending_state();
-            if pending_state == PendingState::Finished {
+            if self.pending_state == PendingState::Finished {
                 return Err(RowSpecificError::ValidationFailed(Cow::Borrowed(
                     "already finished",
                 )));
@@ -331,7 +335,7 @@ pub(crate) mod journal {
                         "invalid expiry date",
                     )));
                 }
-                match &pending_state {
+                match &self.pending_state {
                     PendingState::PendingNow => {} // ok to lock
                     PendingState::PendingAt(pending_start) => {
                         if *pending_start <= created_at {
@@ -352,7 +356,8 @@ pub(crate) mod journal {
                             // we allow locking after the old lock expired
                         } else {
                             return Err(RowSpecificError::ValidationFailed(Cow::Owned(format!(
-                                "cannot append {event}, already in {pending_state} state"
+                                "cannot append {event}, already in {}",
+                                self.pending_state
                             ))));
                         }
                     }
@@ -366,47 +371,17 @@ pub(crate) mod journal {
                     }
                 }
             }
-            let locked_now = matches!(pending_state, PendingState::Locked { expires_at,.. } if expires_at > created_at);
+            let locked_now = matches!(self.pending_state, PendingState::Locked { expires_at,.. } if expires_at > created_at);
             if locked_now && !event.appendable_only_in_lock() {
                 return Err(RowSpecificError::ValidationFailed(Cow::Owned(format!(
-                    "cannot append {event} event in {pending_state} state"
+                    "cannot append {event} event in {}",
+                    self.pending_state
                 ))));
             }
             self.events.push_back(ExecutionEvent { event, created_at });
-            Ok(())
-        }
-
-        pub(crate) fn event_history(&self) -> Vec<EventHistory<ID>> {
-            self.events
-                .iter()
-                .filter_map(|event| {
-                    if let ExecutionEventInner::EventHistory { event: eh, .. } = &event.event {
-                        Some(eh.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        }
-
-        pub(crate) fn params(&self) -> Params {
-            match self.events.front().expect_or_log("must be not empty") {
-                ExecutionEvent {
-                    event: ExecutionEventInner::Created { params, .. },
-                    ..
-                } => Some(params),
-                _ => None,
-            }
-            .expect_or_log("first event must be `Created`")
-            .clone()
-        }
-
-        pub(crate) fn as_execution_history(&self) -> ExecutionHistory<ID> {
-            (self.events.iter().cloned().collect(), self.version())
-        }
-
-        pub(crate) fn pending_state(&self) -> PendingState {
-            self.events
+            // update the state
+            self.pending_state = self
+                .events
                 .iter()
                 .enumerate()
                 .rev()
@@ -488,7 +463,37 @@ pub(crate) mod journal {
                     }
                     _ => None,
                 })
-                .expect_or_log("journal must begin with Created event")
+                .expect_or_log("journal must begin with Created event");
+            Ok(())
+        }
+
+        pub(crate) fn event_history(&self) -> Vec<EventHistory<ID>> {
+            self.events
+                .iter()
+                .filter_map(|event| {
+                    if let ExecutionEventInner::EventHistory { event: eh, .. } = &event.event {
+                        Some(eh.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+
+        pub(crate) fn params(&self) -> Params {
+            match self.events.front().expect_or_log("must be not empty") {
+                ExecutionEvent {
+                    event: ExecutionEventInner::Created { params, .. },
+                    ..
+                } => Some(params),
+                _ => None,
+            }
+            .expect_or_log("first event must be `Created`")
+            .clone()
+        }
+
+        pub(crate) fn as_execution_history(&self) -> ExecutionHistory<ID> {
+            (self.events.iter().cloned().collect(), self.version())
         }
     }
 
