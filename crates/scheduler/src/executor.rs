@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_tick_based() {
+    async fn stochastic_execute_tick_based() {
         set_up();
         let db_task = Arc::new(std::sync::Mutex::new(DbTask::new()));
         let db_connection = TickBasedDbConnection {
@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_executor_tick_db_task() {
+    async fn stochastic_execute_executor_tick_db_task() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().unwrap_or_log();
@@ -253,7 +253,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_task_based() {
+    async fn stochastic_execute_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
         let lock_expiry = Duration::from_secs(1);

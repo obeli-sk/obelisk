@@ -876,7 +876,7 @@ pub(crate) mod tests {
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
 
     #[tokio::test]
-    async fn lifecycle_tick_based() {
+    async fn stochastic_lifecycle_tick_based() {
         set_up();
         let db_task = DbTask::new();
         let db_task = Arc::new(std::sync::Mutex::new(db_task));
@@ -887,7 +887,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn lifecycle_task_based() {
+    async fn stochastic_lifecycle_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
         let client_to_store_req_sender = db_task.sender().unwrap_or_log();
@@ -1113,7 +1113,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn generative_proptest() {
+    async fn stochastic_proptest() {
         set_up();
 
         let raw_data: Vec<u8> = {
