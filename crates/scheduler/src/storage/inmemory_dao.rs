@@ -420,6 +420,7 @@ impl<ID: ExecutionId> DbTask<ID> {
             let item = (
                 journal.id().clone(),
                 journal.version(), // updated later
+                journal.ffqn().clone(),
                 journal.params(),
                 Vec::default(), // updated later
                 scheduled_at,
@@ -427,7 +428,7 @@ impl<ID: ExecutionId> DbTask<ID> {
             payload.push(item);
         }
         // Lock all, update the version and event history.
-        for (execution_id, version, _, event_history, _) in payload.iter_mut() {
+        for (execution_id, version, _, _, event_history, _) in payload.iter_mut() {
             let (new_event_history, new_version) = self
                 .lock(
                     created_at,
@@ -724,7 +725,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{storage::EventHistory, time::now, FinishedExecutionResult};
+    use crate::{storage::HistoryEvent, time::now, FinishedExecutionResult};
     use assert_matches::assert_matches;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
     use std::time::Duration;
@@ -1071,8 +1072,8 @@ pub(crate) mod tests {
         {
             info!("Yield: {}", now());
 
-            let event = ExecutionEventInner::EventHistory {
-                event: EventHistory::Yield,
+            let event = ExecutionEventInner::HistoryEvent {
+                event: HistoryEvent::Yield,
             };
             version = db_connection
                 .append(now(), execution_id.clone(), version, event)
@@ -1094,7 +1095,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap_or_log();
             assert_eq!(1, event_history.len());
-            assert_eq!(vec![EventHistory::Yield], event_history);
+            assert_eq!(vec![HistoryEvent::Yield], event_history);
             version = current_version;
         }
         // Finish

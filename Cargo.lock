@@ -2071,8 +2071,11 @@ dependencies = [
  "tracing-subscriber",
  "tracing-unwrap",
  "ulid",
+ "utils",
  "val-json",
  "wasmtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -2836,11 +2839,11 @@ dependencies = [
 name = "utils"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "concepts",
  "indexmap",
  "madsim-tokio",
  "test-programs-fibo-workflow-builder",
+ "thiserror",
  "tracing",
  "tracing-unwrap",
  "val-json",

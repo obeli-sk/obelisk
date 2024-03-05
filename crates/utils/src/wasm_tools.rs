@@ -1,16 +1,27 @@
-use anyhow::{anyhow, bail};
-use concepts::{FnName, FunctionFqn, FunctionMetadata, FunctionMetadataError, IfcFqnName};
-use std::collections::HashMap;
+use concepts::{FnName, FunctionFqn, FunctionMetadata, IfcFqnName};
+use std::{collections::HashMap, error::Error};
 use tracing_unwrap::OptionExt;
 use val_json::{TypeWrapper, UnsupportedTypeError};
 use wit_component::DecodedWasm;
 use wit_parser::{Resolve, WorldId, WorldItem, WorldKey};
 
-pub fn decode(wasm: &[u8]) -> Result<(Resolve, WorldId), anyhow::Error> {
-    let decoded = wit_component::decode(wasm)?;
+#[derive(Debug, thiserror::Error)]
+pub enum DecodeError {
+    #[error(transparent)]
+    ParseError(Box<dyn Error>),
+    #[error("wasm is not a component")]
+    NotAComponent,
+    #[error("empty packages are not supported")]
+    EmptyPackage,
+    #[error("empty interfaces are not supported")]
+    EmptyInterface,
+}
+
+pub fn decode(wasm: &[u8]) -> Result<(Resolve, WorldId), DecodeError> {
+    let decoded = wit_component::decode(wasm).map_err(|err| DecodeError::ParseError(err.into()))?;
     match decoded {
         DecodedWasm::Component(resolve, world_id) => Ok((resolve, world_id)),
-        DecodedWasm::WitPackage(..) => bail!("cannot parse component"),
+        DecodedWasm::WitPackage(..) => Err(DecodeError::NotAComponent),
     }
 }
 
@@ -24,29 +35,29 @@ pub struct PackageIfcFns<'a> {
 pub fn exported_ifc_fns<'a>(
     resolve: &'a Resolve,
     world_id: &'a WorldId,
-) -> Result<Vec<PackageIfcFns<'a>>, anyhow::Error> {
+) -> Result<Vec<PackageIfcFns<'a>>, DecodeError> {
     let world = resolve
         .worlds
         .get(*world_id)
-        .ok_or_else(|| anyhow!("world must exist"))?;
+        .expect_or_log("world must exist");
     ifc_fns(resolve, world.exports.iter())
 }
 
 pub fn imported_ifc_fns<'a>(
     resolve: &'a Resolve,
     world_id: &'a WorldId,
-) -> Result<Vec<PackageIfcFns<'a>>, anyhow::Error> {
+) -> Result<Vec<PackageIfcFns<'a>>, DecodeError> {
     let world = resolve
         .worlds
         .get(*world_id)
-        .ok_or_else(|| anyhow!("world must exist"))?;
+        .expect_or_log("world must exist");
     ifc_fns(resolve, world.imports.iter())
 }
 
 fn ifc_fns<'a>(
     resolve: &'a Resolve,
     iter: impl Iterator<Item = (&'a WorldKey, &'a WorldItem)>,
-) -> Result<Vec<PackageIfcFns<'a>>, anyhow::Error> {
+) -> Result<Vec<PackageIfcFns<'a>>, DecodeError> {
     iter.filter_map(|(_, item)| match item {
         wit_parser::WorldItem::Interface(ifc) => {
             let ifc = resolve.interfaces.get(*ifc).unwrap_or_log();
@@ -55,10 +66,10 @@ fn ifc_fns<'a>(
                 .and_then(|pkg| resolve.packages.get(pkg))
                 .map(|p| &p.name)
             else {
-                return Some(Err(anyhow!("empty packages are not supported")));
+                return Some(Err(DecodeError::EmptyPackage));
             };
             let Some(ifc_name) = ifc.name.as_deref() else {
-                return Some(Err(anyhow!("empty interfaces are not supported")));
+                return Some(Err(DecodeError::EmptyInterface));
             };
             Some(Ok(PackageIfcFns {
                 package_name,
@@ -69,6 +80,15 @@ fn ifc_fns<'a>(
         _ => None,
     })
     .collect::<Result<Vec<_>, _>>()
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum FunctionMetadataError {
+    #[error("{0}")]
+    UnsupportedType(#[from] UnsupportedTypeError),
+
+    #[error("unsupported return type in {fqn}, got type `{ty}`")]
+    UnsupportedReturnType { fqn: String, ty: String },
 }
 
 pub fn functions_to_metadata(
@@ -133,30 +153,30 @@ pub fn group_by_ifc_to_fn_names<'a>(
 }
 
 pub fn is_limit_reached(reason: &str) -> bool {
+    // FIXME: use let trap = err.downcast::<Trap>().unwrap();
     reason.starts_with("maximum concurrent ")
 }
 
 #[cfg(test)]
 mod tests {
+    use tracing_unwrap::ResultExt;
 
-    #[tokio::test]
-    async fn test_exported_interfaces() -> Result<(), anyhow::Error> {
+    #[test]
+    fn test_exported_interfaces() {
         let wasm_path = test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW;
-        let wasm = std::fs::read(wasm_path)?;
-        let (resolve, world_id) = super::decode(&wasm)?;
-        let exported_interfaces = super::exported_ifc_fns(&resolve, &world_id)?;
+        let wasm = std::fs::read(wasm_path).unwrap_or_log();
+        let (resolve, world_id) = super::decode(&wasm).unwrap_or_log();
+        let exported_interfaces = super::exported_ifc_fns(&resolve, &world_id).unwrap_or_log();
         println!(" {exported_interfaces:#?}",);
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_imported_functions() -> Result<(), anyhow::Error> {
+    #[test]
+    fn test_imported_functions() {
         let wasm_path = test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW;
-        let wasm = std::fs::read(wasm_path)?;
-        let (resolve, world_id) = super::decode(&wasm)?;
-        let exported_interfaces = super::imported_ifc_fns(&resolve, &world_id)?;
+        let wasm = std::fs::read(wasm_path).unwrap_or_log();
+        let (resolve, world_id) = super::decode(&wasm).unwrap_or_log();
+        let exported_interfaces = super::imported_ifc_fns(&resolve, &world_id).unwrap_or_log();
         println!(" {exported_interfaces:#?}");
         assert_eq!(exported_interfaces.len(), 2);
-        Ok(())
     }
 }

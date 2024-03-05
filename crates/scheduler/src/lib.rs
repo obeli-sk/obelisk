@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::ExecutionId;
@@ -10,19 +12,42 @@ mod storage;
 mod testing;
 
 mod worker {
-    use self::storage::{DbError, EventHistory, Version};
+    use std::{borrow::Cow, error::Error};
+
+    use self::storage::{HistoryEvent, Version};
     use super::*;
+    use concepts::FunctionFqn;
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum WorkerError {
+        #[error("intermittent error: `{reason}`, {err:?}")]
+        IntermittentError {
+            reason: Cow<'static, str>,
+            err: Box<dyn Error + Send>,
+        },
+        // #[error("intermittent timeout")]
+        // IntermittentTimeout,
+        #[error(transparent)]
+        FatalError(#[from] FatalError),
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum FatalError {
+        #[error("non-determinism detected: `{0}`")]
+        NonDeterminismDetected(Cow<'static, str>),
+    }
 
     #[async_trait]
     pub trait Worker<ID: ExecutionId> {
         async fn run(
-            &self,
+            &mut self,
             execution_id: ID,
+            ffqn: FunctionFqn,
             params: Params,
-            event_history: Vec<EventHistory<ID>>,
+            event_history: Vec<HistoryEvent<ID>>,
             version: Version,
             lock_expires_at: DateTime<Utc>,
-        ) -> Result<Version, DbError>;
+        ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)>;
     }
 }
 
@@ -34,11 +59,11 @@ pub enum FinishedExecutionError<ID: ExecutionId> {
     PermanentTimeout,
     // TODO PermanentFailure when error retries are implemented
     #[error("non-determinism detected, reason: `{0}`")]
-    NonDeterminismDetected(String),
-    #[error("uncategorized error")]
-    UncategorizedError, //TODO: add reason?
+    NonDeterminismDetected(Cow<'static, str>),
+    #[error("uncategorized error: `{0}`")]
+    UncategorizedError(Cow<'static, str>), // intermittent failure that is not retried
     #[error("cancelled, reason: `{0}`")]
-    Cancelled(String),
+    Cancelled(Cow<'static, str>),
     #[error("continuing as {execution_id}")]
     ContinueAsNew {
         // TODO: Move to the OK part of the result

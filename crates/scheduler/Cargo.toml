@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 concepts.workspace = true
+utils.workspace = true
 val-json.workspace = true
 
 arbitrary.workspace = true
@@ -23,6 +24,8 @@ tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
 tracing-unwrap.workspace = true
 tracing.workspace = true
 ulid.workspace = true
+wasmtime-wasi-http.workspace = true
+wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 
 [dev-dependencies]

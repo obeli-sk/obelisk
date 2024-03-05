@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 use tracing_unwrap::OptionExt;
-use val_json::{TypeWrapper, UnsupportedTypeError, ValWrapper};
+use val_json::{TypeWrapper, ValWrapper};
 
 #[derive(Hash, Clone, PartialEq, Eq)]
 pub struct Name<T> {
@@ -139,15 +139,6 @@ impl std::cmp::PartialEq<FunctionFqn> for FunctionFqnStr<'_> {
     fn eq(&self, other: &FunctionFqn) -> bool {
         *self.ifc_fqn == *other.ifc_fqn && *self.function_name == *other.function_name
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum FunctionMetadataError {
-    #[error("{0}")]
-    UnsupportedType(#[from] UnsupportedTypeError),
-
-    #[error("unsupported return type in {fqn}, got type `{ty}`")]
-    UnsupportedReturnType { fqn: String, ty: String },
 }
 
 #[derive(Clone, Debug)]

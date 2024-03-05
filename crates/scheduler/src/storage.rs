@@ -47,7 +47,8 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     #[display(fmt = "IntermittentFailure(`{expires_at}`)")]
     IntermittentFailure {
         expires_at: DateTime<Utc>,
-        reason: String,
+        #[arbitrary(value = Cow::Borrowed("reason"))]
+        reason: Cow<'static, str>,
     },
     // Created by the executor holding last lock.
     // Processed by a scheduler.
@@ -68,8 +69,8 @@ pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
     #[display(fmt = "CancelRequest")]
     CancelRequest,
 
-    #[display(fmt = "EventHistory({event})")]
-    EventHistory { event: EventHistory<ID> },
+    #[display(fmt = "HistoryEvent({event})")]
+    HistoryEvent { event: HistoryEvent<ID> },
 }
 
 impl<ID: ExecutionId> ExecutionEventInner<ID> {
@@ -79,14 +80,21 @@ impl<ID: ExecutionId> ExecutionEventInner<ID> {
             | Self::IntermittentFailure { .. }
             | Self::IntermittentTimeout { .. }
             | Self::Finished { .. } => true,
-            Self::EventHistory { event } => event.appendable_only_in_lock(),
+            Self::HistoryEvent { event } => event.appendable_only_in_lock(),
             _ => false,
         }
+    }
+
+    pub fn is_retry(&self) -> bool {
+        matches!(
+            self,
+            Self::IntermittentFailure { .. } | Self::IntermittentTimeout { .. }
+        )
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
-pub(crate) enum EventHistory<ID: ExecutionId> {
+pub(crate) enum HistoryEvent<ID: ExecutionId> {
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     // Returns execution to `PotentiallyPending::PendingNow` state.
     Yield,
@@ -123,10 +131,10 @@ pub(crate) enum EventHistory<ID: ExecutionId> {
         joinset_id: ID,
     },
     // Moves the execution to `PotentiallyPending::PendingNow` if it is currently blocked on `JoinNextBlocking`.
-    #[display(fmt = "EventHistoryAsyncResponse({joinset_id})")]
-    EventHistoryAsyncResponse {
+    #[display(fmt = "AsyncResponse({joinset_id})")]
+    AsyncResponse {
         joinset_id: ID,
-        response: EventHistoryAsyncResponse<ID>,
+        response: AsyncResponse<ID>,
     },
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     // Execution is `PotentiallyPending::BlockedByJoinSet` until the next response of the joinset arrives.
@@ -135,14 +143,14 @@ pub(crate) enum EventHistory<ID: ExecutionId> {
     },
 }
 
-impl<ID: ExecutionId> EventHistory<ID> {
+impl<ID: ExecutionId> HistoryEvent<ID> {
     fn appendable_only_in_lock(&self) -> bool {
-        !matches!(self, Self::EventHistoryAsyncResponse { .. })
+        !matches!(self, Self::AsyncResponse { .. })
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, arbitrary::Arbitrary)]
-pub(crate) enum EventHistoryAsyncResponse<ID: ExecutionId> {
+pub(crate) enum AsyncResponse<ID: ExecutionId> {
     // Created by a scheduler sometime after DelayedUntilAsyncRequest.
     DelayFinishedAsyncResponse {
         delay_id: ID,
@@ -184,12 +192,13 @@ pub enum DbError {
 pub type AppendResponse = Version;
 pub type PendingExecution<ID> = (ID, Version, Params, Option<DateTime<Utc>>);
 pub type ExecutionHistory<ID> = (Vec<ExecutionEvent<ID>>, Version);
-pub type LockResponse<ID> = (Vec<EventHistory<ID>>, Version);
+pub type LockResponse<ID> = (Vec<HistoryEvent<ID>>, Version);
 pub type LockPendingResponse<ID> = Vec<(
     ID,
     Version,
+    FunctionFqn,
     Params,
-    Vec<EventHistory<ID>>,
+    Vec<HistoryEvent<ID>>,
     Option<DateTime<Utc>>,
 )>;
 
@@ -245,7 +254,7 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static {
 }
 
 pub(crate) mod journal {
-    use super::{EventHistory, ExecutionEvent, ExecutionEventInner, ExecutorName};
+    use super::{ExecutionEvent, ExecutionEventInner, ExecutorName, HistoryEvent};
     use crate::storage::{ExecutionHistory, RowSpecificError, Version};
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn, Params};
@@ -297,6 +306,7 @@ pub(crate) mod journal {
         }
 
         pub(crate) fn ffqn(&self) -> &FunctionFqn {
+            // TODO: extract to a struct field
             match self.events.get(0) {
                 Some(ExecutionEvent {
                     event: ExecutionEventInner::Created { ffqn, .. },
@@ -424,16 +434,16 @@ pub(crate) mod journal {
 
                     (
                         _,
-                        ExecutionEventInner::EventHistory {
-                            event: EventHistory::Yield { .. },
+                        ExecutionEventInner::HistoryEvent {
+                            event: HistoryEvent::Yield { .. },
                             ..
                         },
                     ) => Some(PendingState::PendingNow),
                     (
                         idx,
-                        ExecutionEventInner::EventHistory {
+                        ExecutionEventInner::HistoryEvent {
                             event:
-                                EventHistory::JoinNextBlocking {
+                                HistoryEvent::JoinNextBlocking {
                                     joinset_id: expected_join_set_id,
                                     ..
                                 },
@@ -448,8 +458,8 @@ pub(crate) mod journal {
                             .find(|event| {
                                 matches!(event, ExecutionEvent {
                                 event:
-                                    ExecutionEventInner::EventHistory{event:
-                                        EventHistory::EventHistoryAsyncResponse { joinset_id, .. },
+                                    ExecutionEventInner::HistoryEvent{event:
+                                        HistoryEvent::AsyncResponse { joinset_id, .. },
                                     .. },
                             .. }
                             if expected_join_set_id == joinset_id)
@@ -467,11 +477,11 @@ pub(crate) mod journal {
             Ok(())
         }
 
-        pub(crate) fn event_history(&self) -> Vec<EventHistory<ID>> {
+        pub(crate) fn event_history(&self) -> Vec<HistoryEvent<ID>> {
             self.events
                 .iter()
                 .filter_map(|event| {
-                    if let ExecutionEventInner::EventHistory { event: eh, .. } = &event.event {
+                    if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {
                         Some(eh.clone())
                     } else {
                         None
