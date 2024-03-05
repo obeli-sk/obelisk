@@ -1,7 +1,4 @@
-use crate::{
-    wasm_tools::{self, functions_to_metadata, is_limit_reached},
-    ActivityFailed, SupportedFunctionResult,
-};
+use crate::{ActivityFailed, SupportedFunctionResult};
 use anyhow::Context;
 use concepts::workflow_id::WorkflowId;
 use concepts::{FunctionFqn, FunctionMetadata};
@@ -9,84 +6,8 @@ use std::{collections::HashMap, fmt::Debug, ops::DerefMut, sync::Arc};
 use tokio::sync::{Mutex, MutexGuard};
 use tracing::{debug, trace};
 use tracing_unwrap::OptionExt;
+use utils::wasm_tools::{self, functions_to_metadata, is_limit_reached};
 use wasmtime::{component::Val, Engine};
-
-mod http {
-    // wasmtime/crates/wasi-http/tests/all/main.rs
-    use std::sync::Arc;
-    use wasmtime::{
-        component::{Resource, ResourceTable},
-        Engine, Store,
-    };
-    use wasmtime_wasi::preview2::{WasiCtx, WasiCtxBuilder, WasiView};
-    use wasmtime_wasi_http::{
-        types::{self, HostFutureIncomingResponse, OutgoingRequest},
-        WasiHttpCtx, WasiHttpView,
-    };
-
-    type RequestSender = Arc<
-        dyn Fn(&mut Ctx, OutgoingRequest) -> wasmtime::Result<Resource<HostFutureIncomingResponse>>
-            + Send
-            + Sync,
-    >;
-
-    pub(crate) struct Ctx {
-        table: ResourceTable,
-        wasi: WasiCtx,
-        http: WasiHttpCtx,
-        send_request: Option<RequestSender>,
-    }
-
-    impl WasiView for Ctx {
-        fn table(&self) -> &ResourceTable {
-            &self.table
-        }
-        fn table_mut(&mut self) -> &mut ResourceTable {
-            &mut self.table
-        }
-        fn ctx(&self) -> &WasiCtx {
-            &self.wasi
-        }
-        fn ctx_mut(&mut self) -> &mut WasiCtx {
-            &mut self.wasi
-        }
-    }
-
-    impl WasiHttpView for Ctx {
-        fn ctx(&mut self) -> &mut WasiHttpCtx {
-            &mut self.http
-        }
-
-        fn table(&mut self) -> &mut ResourceTable {
-            &mut self.table
-        }
-
-        fn send_request(
-            &mut self,
-            request: OutgoingRequest,
-        ) -> wasmtime::Result<Resource<HostFutureIncomingResponse>> {
-            if let Some(send_request) = self.send_request.clone() {
-                send_request(self, request)
-            } else {
-                types::default_send_request(self, request)
-            }
-        }
-    }
-
-    pub(crate) fn store(engine: &Engine) -> Store<Ctx> {
-        // Create our wasi context.
-        let mut builder = WasiCtxBuilder::new();
-        let ctx = Ctx {
-            table: ResourceTable::new(),
-            wasi: builder.build(),
-            http: WasiHttpCtx {},
-
-            send_request: None,
-        };
-
-        Store::new(engine, ctx)
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::module_name_repetitions)]
@@ -126,14 +47,14 @@ enum PreloadHolder {
     Preinstance,
     Instance(
         wasmtime::component::Instance,
-        Mutex<wasmtime::Store<http::Ctx>>,
+        Mutex<wasmtime::Store<utils::wasi_http::Ctx>>,
     ),
 }
 
 pub struct Activity {
     engine: Arc<Engine>,
     functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
-    instance_pre: wasmtime::component::InstancePre<http::Ctx>,
+    instance_pre: wasmtime::component::InstancePre<utils::wasi_http::Ctx>,
     preload_holder: PreloadHolder,
     pub(crate) wasm_path: String,
 }
@@ -154,7 +75,7 @@ impl Activity {
         let functions_to_metadata = functions_to_metadata(exported_interfaces)?;
         debug!("Decoded functions {:?}", functions_to_metadata.keys());
         trace!("Decoded functions {functions_to_metadata:#?}");
-        let instance_pre: wasmtime::component::InstancePre<http::Ctx> = {
+        let instance_pre: wasmtime::component::InstancePre<utils::wasi_http::Ctx> = {
             let mut linker = wasmtime::component::Linker::new(&engine);
             wasmtime_wasi::preview2::command::add_to_linker(&mut linker)?;
             wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(
@@ -169,7 +90,7 @@ impl Activity {
         let preload_holder = match config.preload {
             ActivityPreload::Preinstance => PreloadHolder::Preinstance,
             ActivityPreload::Instance => {
-                let mut store = http::store(&engine);
+                let mut store = utils::wasi_http::store(&engine);
                 let instance = instance_pre.instantiate_async(&mut store).await?;
                 PreloadHolder::Instance(instance, Mutex::new(store))
             }
@@ -188,7 +109,7 @@ impl Activity {
         preload_holder: &PreloadHolder,
     ) -> Option<(
         &wasmtime::component::Instance,
-        MutexGuard<wasmtime::Store<http::Ctx>>,
+        MutexGuard<wasmtime::Store<utils::wasi_http::Ctx>>,
     )> {
         match preload_holder {
             PreloadHolder::Instance(instance, mutex) => {
@@ -230,7 +151,7 @@ impl Activity {
                 store_guard = store_guard2;
                 (instance, store_guard.deref_mut())
             } else {
-                store = http::store(&self.engine);
+                store = utils::wasi_http::store(&self.engine);
                 instance_owned = self
                     .instance_pre
                     .instantiate_async(&mut store)

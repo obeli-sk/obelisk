@@ -1962,6 +1962,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "tracing-unwrap",
+ "utils",
  "val-json",
  "wasmtime",
  "wasmtime-wasi",
@@ -2829,6 +2830,25 @@ dependencies = [
  "form_urlencoded",
  "idna",
  "percent-encoding",
+]
+
+[[package]]
+name = "utils"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "concepts",
+ "indexmap",
+ "madsim-tokio",
+ "test-programs-fibo-workflow-builder",
+ "tracing",
+ "tracing-unwrap",
+ "val-json",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+ "wit-component",
+ "wit-parser",
 ]
 
 [[package]]

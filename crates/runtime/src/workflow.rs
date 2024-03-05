@@ -2,7 +2,6 @@ use crate::database::ActivityQueueSender;
 use crate::error::{ExecutionError, HostFunctionError, WorkflowFailed};
 use crate::event_history::{CurrentEventHistory, Event, EventHistory};
 use crate::host_activity::{HostImports, HOST_ACTIVITY_IFC};
-use crate::wasm_tools::{self, functions_to_metadata, is_limit_reached};
 use crate::SupportedFunctionResult;
 use anyhow::{anyhow, Context};
 use concepts::workflow_id::WorkflowId;
@@ -14,6 +13,7 @@ use std::ops::Deref;
 use std::{fmt::Debug, sync::Arc};
 use strum::EnumString;
 use tracing::{debug, debug_span, info, trace, Instrument};
+use utils::wasm_tools::{self, functions_to_metadata, is_limit_reached};
 use wasmtime::component::Val;
 use wasmtime::AsContextMut;
 use wasmtime::{

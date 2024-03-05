@@ -1,5 +1,5 @@
 [package]
-name = "runtime"
+name = "utils"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -7,19 +7,10 @@ rust-version.workspace = true
 
 [dependencies]
 concepts.workspace = true
-utils.workspace = true
 val-json.workspace = true
 
 anyhow.workspace = true
-assert_matches.workspace = true
-async-channel.workspace = true
-async-trait.workspace = true
-futures-util.workspace = true
 indexmap.workspace = true
-lazy_static.workspace = true
-strum.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
 tracing-unwrap.workspace = true
 tracing.workspace = true
 wasmtime-wasi-http.workspace = true

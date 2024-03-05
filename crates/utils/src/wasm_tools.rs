@@ -71,7 +71,7 @@ fn ifc_fns<'a>(
     .collect::<Result<Vec<_>, _>>()
 }
 
-pub(crate) fn functions_to_metadata(
+pub fn functions_to_metadata(
     exported_interfaces: Vec<PackageIfcFns>,
 ) -> Result<HashMap<FunctionFqn, FunctionMetadata>, FunctionMetadataError> {
     let mut functions_to_results = HashMap::new();
@@ -132,7 +132,7 @@ pub fn group_by_ifc_to_fn_names<'a>(
     ifcs_to_fn_names
 }
 
-pub(crate) fn is_limit_reached(reason: &str) -> bool {
+pub fn is_limit_reached(reason: &str) -> bool {
     reason.starts_with("maximum concurrent ")
 }
 
