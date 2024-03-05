@@ -1,14 +1,14 @@
 use crate::{
     storage::{
         DbConnection, DbConnectionError, DbError, ExecutionEvent, ExecutionEventInner,
-        ExecutorName, Version,
+        ExecutorName, HistoryEvent, Version,
     },
     time::{now, now_tokio_instant},
     worker::{FatalError, Worker, WorkerError},
     FinishedExecutionError,
 };
 use chrono::{DateTime, TimeDelta, Utc};
-use concepts::{ExecutionId, FunctionFqn, SupportedFunctionResult};
+use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
 use std::{
     marker::PhantomData,
     sync::{
@@ -112,57 +112,70 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                 lock_expires_at,
             )
             .await?;
-
         let mut executions = Vec::new();
         for (execution_id, version, ffqn, params, event_history, _) in locked {
-            let run_span = info_span!("worker::run", %execution_id, %ffqn);
-            run_span.in_scope(|| {
-                if enabled!(Level::TRACE) {
-                    trace!(?params, version, "Starting");
-                } else {
-                    debug!("Starting");
-                }
-            });
+            // TODO: concurrency
             let result = self
-                .worker
-                .run(
+                .run_execution(
                     execution_id.clone(),
+                    version,
                     ffqn,
                     params,
                     event_history,
-                    version,
                     lock_expires_at,
                 )
-                .instrument(run_span.clone())
                 .await;
-            async {
-                if enabled!(Level::TRACE) {
-                    trace!(?result, version, "Finished");
-                } else {
-                    debug!("Finished");
-                }
-                // Map the WorkerError to an intermittent or a permanent failure.
-                let result = match self
-                    .worker_result_to_execution_event(&execution_id, result)
-                    .await
-                {
-                    Ok((event, version)) => {
-                        self.db_connection
-                            .append(now(), execution_id.clone(), version, event)
-                            .await
-                    }
-                    Err(err) => Err(err),
-                };
-
-                executions.push(ExecutionProgress {
-                    execution_id,
-                    result,
-                });
-            }
-            .instrument(run_span)
-            .await;
+            executions.push(ExecutionProgress {
+                execution_id,
+                result,
+            });
         }
         Ok(executions)
+    }
+
+    #[instrument(skip_all, fields(%execution_id, %ffqn))]
+    async fn run_execution(
+        &mut self,
+        execution_id: ID,
+        version: Version,
+        ffqn: FunctionFqn,
+        params: Params,
+        event_history: Vec<HistoryEvent<ID>>,
+        lock_expires_at: DateTime<Utc>,
+    ) -> Result<Version, DbError> {
+        if enabled!(Level::TRACE) {
+            trace!(?params, version, "Starting");
+        } else {
+            debug!("Starting");
+        }
+        let result = self
+            .worker
+            .run(
+                execution_id.clone(),
+                ffqn,
+                params,
+                event_history,
+                version,
+                lock_expires_at,
+            )
+            .await;
+        if enabled!(Level::TRACE) {
+            trace!(?result, version, "Finished");
+        } else {
+            debug!("Finished");
+        }
+        // Map the WorkerError to an intermittent or a permanent failure.
+        match self
+            .worker_result_to_execution_event(&execution_id, result)
+            .await
+        {
+            Ok((event, version)) => {
+                self.db_connection
+                    .append(now(), execution_id.clone(), version, event)
+                    .await
+            }
+            Err(err) => Err(err),
+        }
     }
 
     async fn worker_result_to_execution_event(
