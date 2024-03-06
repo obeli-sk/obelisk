@@ -5,7 +5,7 @@
 //! When inserting, the row in the journal must contain a version that must be equal
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::{
-    api::{DbRequest, DbTickRequest, ExecutionSpecificRequest, GeneralRequest},
+    api::{DbRequest, ExecutionSpecificRequest, GeneralRequest},
     index::JournalsIndex,
 };
 use super::{journal::ExecutionJournal, ExecutionEvent, ExecutionEventInner, ExecutorName};
@@ -33,12 +33,6 @@ use tracing_unwrap::{OptionExt, ResultExt};
 
 pub(super) mod api {
     use super::*;
-
-    #[derive(Debug)]
-    pub(super) struct DbTickRequest<ID: ExecutionId> {
-        // TODO: Simplify
-        pub(crate) request: DbRequest<ID>,
-    }
 
     #[derive(Debug, derive_more::Display)]
     pub(super) enum DbRequest<ID: ExecutionId> {
@@ -311,7 +305,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         let abort_handle = tokio::spawn(async move {
             let mut task = Self::new();
             while let Some(request) = client_to_store_receiver.recv().await {
-                let resp = task.tick(DbTickRequest { request }).send_response();
+                let resp = task.tick(request).send_response();
                 if resp.is_err() {
                     debug!("Failed to send back the response");
                 }
@@ -333,8 +327,7 @@ impl<ID: ExecutionId> DbTask<ID> {
     }
 
     #[instrument(skip_all)]
-    pub(crate) fn tick(&mut self, request: DbTickRequest<ID>) -> DbTickResponse<ID> {
-        let DbTickRequest { request } = request;
+    pub(crate) fn tick(&mut self, request: DbRequest<ID>) -> DbTickResponse<ID> {
         if tracing::enabled!(Level::TRACE)
             || matches!(
                 request,
@@ -790,11 +783,7 @@ pub(crate) mod tests {
                 ffqns,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self
-                .db_task
-                .lock()
-                .unwrap_or_log()
-                .tick(DbTickRequest { request });
+            let response = self.db_task.lock().unwrap_or_log().tick(request);
             Ok(assert_matches!(response, DbTickResponse::FetchPending {  payload, .. } => payload))
         }
 
@@ -817,11 +806,7 @@ pub(crate) mod tests {
                 expires_at,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self
-                .db_task
-                .lock()
-                .unwrap_or_log()
-                .tick(DbTickRequest { request });
+            let response = self.db_task.lock().unwrap_or_log().tick(request);
             Ok(assert_matches!(response, DbTickResponse::LockPending {  payload, .. } => payload))
         }
 
@@ -841,11 +826,7 @@ pub(crate) mod tests {
                 expires_at,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self
-                .db_task
-                .lock()
-                .unwrap_or_log()
-                .tick(DbTickRequest { request });
+            let response = self.db_task.lock().unwrap_or_log().tick(request);
             assert_matches!(response, DbTickResponse::Lock { payload, .. } => payload)
                 .map_err(|err| DbError::RowSpecific(err))
         }
@@ -864,11 +845,7 @@ pub(crate) mod tests {
                 event,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self
-                .db_task
-                .lock()
-                .unwrap_or_log()
-                .tick(DbTickRequest { request });
+            let response = self.db_task.lock().unwrap_or_log().tick(request);
             assert_matches!(response, DbTickResponse::AppendResult { payload, .. } => payload)
                 .map_err(|err| DbError::RowSpecific(err))
         }
@@ -878,11 +855,7 @@ pub(crate) mod tests {
                 execution_id,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self
-                .db_task
-                .lock()
-                .unwrap_or_log()
-                .tick(DbTickRequest { request });
+            let response = self.db_task.lock().unwrap_or_log().tick(request);
             assert_matches!(response, DbTickResponse::Get { payload, .. } => payload)
                 .map_err(|err| DbError::RowSpecific(err))
         }

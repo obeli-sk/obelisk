@@ -189,7 +189,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             Err((err, new_version)) => {
                 debug!("Execution failed: {err:?}");
                 let (event_history, received_version) =
-                    self.db_connection.get(execution_id.clone()).await?;
+                    self.db_connection.get(execution_id.clone()).await?; // This can come from a cache
                 if received_version != new_version {
                     return Err(DbError::RowSpecific(
                         crate::storage::RowSpecificError::VersionMismatch,
