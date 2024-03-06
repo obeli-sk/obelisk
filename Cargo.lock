@@ -1655,6 +1655,7 @@ checksum = "e86697c916019a8588c99b5fac3cead74ec0b4b819707a682fd4d23fa0ce1ba1"
 name = "scheduler"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "arbitrary",
  "assert_matches",
  "async-channel",

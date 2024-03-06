@@ -277,11 +277,12 @@ mod tests {
         time::now,
         worker::WorkerResult,
     };
+    use anyhow::anyhow;
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params, SupportedFunctionResult};
     use indexmap::IndexMap;
-    use std::{future::Future, sync::Arc};
+    use std::{borrow::Cow, future::Future, sync::Arc};
     use tracing::info;
     use tracing_unwrap::{OptionExt, ResultExt};
 
@@ -323,8 +324,8 @@ mod tests {
 
     async fn tick_fn<DB: DbConnection<WorkflowId> + Clone + Sync>(
         db_connection: DB,
-        config: ExecConfig,
-        worker_results_rev: SimpleWorkerResultMap,
+        config: ExecConfig,                        // TODO: Introduce Context
+        worker_results_rev: SimpleWorkerResultMap, // TODO: Reverse in constructor
     ) {
         let mut executor = ExecTask {
             db_connection: db_connection.clone(),
@@ -360,7 +361,17 @@ mod tests {
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
-        execute(db_connection, exec_config, worker_results_rev, tick_fn).await;
+        let execution_history =
+            execute(db_connection, exec_config, worker_results_rev, tick_fn).await;
+        assert_matches!(
+            execution_history[2],
+            ExecutionEvent {
+                event: ExecutionEventInner::Finished {
+                    result: Ok(SupportedFunctionResult::None),
+                },
+                created_at: _,
+            }
+        );
     }
 
     #[tokio::test]
@@ -383,8 +394,18 @@ mod tests {
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
-        execute(db_connection, exec_config, worker_results_rev, tick_fn).await;
+        let execution_history =
+            execute(db_connection, exec_config, worker_results_rev, tick_fn).await;
         db_task.close().await;
+        assert_matches!(
+            execution_history[2],
+            ExecutionEvent {
+                event: ExecutionEventInner::Finished {
+                    result: Ok(SupportedFunctionResult::None),
+                },
+                created_at: _,
+            }
+        );
     }
 
     #[tokio::test]
@@ -416,7 +437,7 @@ mod tests {
             worker,
             exec_config.clone(),
         );
-        execute(
+        let execution_history = execute(
             db_task.as_db_connection().unwrap_or_log(),
             exec_config,
             worker_results_rev,
@@ -425,6 +446,15 @@ mod tests {
         .await;
         exec_task.close().await;
         db_task.close().await;
+        assert_matches!(
+            execution_history[2],
+            ExecutionEvent {
+                event: ExecutionEventInner::Finished {
+                    result: Ok(SupportedFunctionResult::None),
+                },
+                created_at: _,
+            }
+        );
     }
 
     async fn execute<
@@ -436,7 +466,7 @@ mod tests {
         exec_config: ExecConfig,
         worker_results_rev: SimpleWorkerResultMap,
         mut tick: T,
-    ) {
+    ) -> Vec<ExecutionEvent<WorkflowId>> {
         info!("Now: {}", now());
         tick(
             db_connection.clone(),
@@ -466,28 +496,104 @@ mod tests {
             worker_results_rev.clone(),
         )
         .await;
-        // check that DB contains the result.
-        let (history, _) = db_connection.get(execution_id).await.unwrap_or_log();
-        assert_eq!(3, history.len(), "Unexpected {history:?}");
+        let (execution_history, _) = db_connection.get(execution_id).await.unwrap_or_log();
+        // check that DB contains Created and Locked events.
         assert_matches!(
-            history[0],
+            execution_history[0],
             ExecutionEvent {
                 event: ExecutionEventInner::Created { .. },
-                ..
+                created_at: actually_created_at,
+            }
+            if created_at == actually_created_at
+        );
+        let last_created_at = assert_matches!(
+            execution_history[1],
+            ExecutionEvent {
+                event: ExecutionEventInner::Locked { .. },
+                created_at: updated_at
+            } if created_at <= updated_at
+             => updated_at
+        );
+        assert_matches!(execution_history[2], ExecutionEvent {
+            event: _,
+            created_at: executed_at,
+        } if executed_at >= last_created_at);
+        execution_history
+    }
+
+    #[tokio::test]
+    async fn stochastic_test_failure_retry_success() {
+        set_up();
+        let exec_config = ExecConfig {
+            ffqns: vec![SOME_FFQN.to_owned()],
+            executor_name: Arc::new("exec1".to_string()),
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            max_tick_sleep: Duration::from_millis(500),
+            max_retries: 1,
+            retry_exp_backoff: TimeDelta::zero(),
+        };
+
+        let mut db_task = DbTask::spawn_new(1);
+        let worker_results_rev = {
+            let failed_result: WorkerResult = Err((
+                WorkerError::IntermittentError {
+                    reason: Cow::Borrowed("fail"),
+                    err: anyhow!("").into(),
+                },
+                2,
+            ));
+            let finished_result: WorkerResult = Ok((SupportedFunctionResult::None, 4));
+
+            let mut worker_results_rev = IndexMap::new();
+            worker_results_rev.insert(2, (vec![], failed_result));
+            worker_results_rev.insert(4, (vec![], finished_result));
+            worker_results_rev.reverse();
+            Arc::new(std::sync::Mutex::new(worker_results_rev))
+        };
+        let worker = SimpleWorker {
+            db_connection: db_task.as_db_connection().unwrap_or_log(),
+            worker_results_rev: worker_results_rev.clone(),
+        };
+        let exec_task = ExecTask::spawn_new(
+            db_task.as_db_connection().unwrap_or_log(),
+            worker,
+            exec_config.clone(),
+        );
+        let execution_history = execute(
+            db_task.as_db_connection().unwrap_or_log(),
+            exec_config,
+            worker_results_rev,
+            |_, _, _| tokio::time::sleep(Duration::from_secs(1)),
+        )
+        .await;
+        exec_task.close().await;
+        db_task.close().await;
+        assert_matches!(
+            &execution_history[2],
+            ExecutionEvent {
+                event: ExecutionEventInner::IntermittentFailure {
+                    reason,
+                    expires_at: _
+                },
+                created_at: _,
+            } if *reason == Cow::Borrowed("fail")
+        );
+        assert_matches!(
+            execution_history[3],
+            ExecutionEvent {
+                event: ExecutionEventInner::Locked { .. },
+                created_at: _
             }
         );
         assert_matches!(
-            history[1],
+            execution_history[4],
             ExecutionEvent {
-                event: ExecutionEventInner::Locked { .. },
-                ..
+                event: ExecutionEventInner::Finished {
+                    result: Ok(SupportedFunctionResult::None),
+                },
+                created_at: _,
             }
         );
-        assert_matches!(history[2], ExecutionEvent {
-            created_at: executed_at,
-            event: ExecutionEventInner::Finished {
-                result: Ok(SupportedFunctionResult::None),
-            },
-        } if executed_at >= created_at);
     }
 }

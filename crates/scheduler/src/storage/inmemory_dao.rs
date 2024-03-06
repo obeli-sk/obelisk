@@ -36,6 +36,7 @@ pub(super) mod api {
 
     #[derive(Debug)]
     pub(super) struct DbTickRequest<ID: ExecutionId> {
+        // TODO: Simplify
         pub(crate) request: DbRequest<ID>,
     }
 
@@ -334,10 +335,27 @@ impl<ID: ExecutionId> DbTask<ID> {
     #[instrument(skip_all)]
     pub(crate) fn tick(&mut self, request: DbTickRequest<ID>) -> DbTickResponse<ID> {
         let DbTickRequest { request } = request;
-        if tracing::enabled!(Level::TRACE) {
-            trace!("Received {request:?}");
+        if tracing::enabled!(Level::TRACE)
+            || matches!(
+                request,
+                DbRequest::General(GeneralRequest::LockPending { .. })
+            )
+        {
+            match &request {
+                DbRequest::General(..) => trace!("Received {request:?}"),
+                DbRequest::ExecutionSpecific(specific) => trace!(
+                    execution_id = %specific.execution_id(),
+                    "Received {request:?}"
+                ),
+            }
         } else {
-            debug!("Received {request}");
+            match &request {
+                DbRequest::General(..) => debug!("Received {request}"),
+                DbRequest::ExecutionSpecific(specific) => debug!(
+                    execution_id = %specific.execution_id(),
+                    "Received {request}"
+                ),
+            }
         }
         let resp = match request {
             DbRequest::ExecutionSpecific(request) => self.handle_specific(request),
