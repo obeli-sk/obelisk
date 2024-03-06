@@ -1,31 +1,29 @@
-[package]
-name = "workflow-cli"
-version.workspace = true
-authors.workspace = true
-categories = ["wasm"]
-keywords = ["webassembly", "wasm"]
-readme = "README.md"
-edition.workspace = true
-rust-version.workspace = true
+# [package]
+# name = "workflow-cli"
+# version.workspace = true
+# authors.workspace = true
+# categories = ["wasm"]
+# keywords = ["webassembly", "wasm"]
+# readme = "README.md"
+# edition.workspace = true
+# rust-version.workspace = true
 
-[dependencies]
-concepts.workspace = true
-runtime.workspace = true
-val-json.workspace = true
+# [dependencies]
+# concepts.workspace = true
+# runtime.workspace = true
+# val-json.workspace = true
 
-anyhow.workspace = true
-tokio = { workspace = true, features = ["full"] }
-tracing-subscriber.workspace = true
-wasmtime = { workspace = true, features = ["parallel-compilation"] }
+# anyhow.workspace = true
+# tokio = { workspace = true, features = ["full"] }
+# tracing-subscriber.workspace = true
+# wasmtime = { workspace = true, features = ["parallel-compilation"] }
 
 [workspace]
 resolver = "2"
 members = [
     "crates/concepts",
-    "crates/runtime",
     "crates/scheduler",
-    "crates/testing/benches",
-    "crates/testing/cargo-component-builder",
+    # "crates/testing/cargo-component-builder",
     "crates/testing/test-programs/fibo/activity",
     "crates/testing/test-programs/fibo/activity/builder",
     "crates/testing/test-programs/fibo/workflow",
@@ -48,7 +46,7 @@ members = [
     "crates/testing/test-programs/sleep/activity/builder",
     "crates/testing/test-programs/sleep/workflow",
     "crates/testing/test-programs/sleep/workflow/builder",
-    "crates/testing/tests",
+    # "crates/testing/tests",
     "crates/utils",
     "crates/val-json",
 ]
@@ -62,7 +60,6 @@ rust-version = "1.73.0"
 [workspace.dependencies]
 cargo-component-builder.path = "crates/testing/cargo-component-builder"
 concepts.path = "crates/concepts"
-runtime.path = "crates/runtime"
 scheduler.path = "crates/scheduler/"
 test-programs-fibo-activity-builder.path = "crates/testing/test-programs/fibo/activity/builder"
 test-programs-fibo-workflow-builder.path = "crates/testing/test-programs/fibo/workflow/builder"
@@ -143,5 +140,6 @@ clippy.explicit_deref_methods = "allow"     # Lots of false positives.
 clippy.missing_errors_doc = "allow"         # Allow missing docs for now
 clippy.missing_panics_doc = "allow"         # Allow missing docs for now
 clippy.trivially_copy_pass_by_ref = "allow" # Lots of false positives.
-[lints]
-workspace = true
+
+# [lints]
+# workspace = true
