@@ -38,8 +38,7 @@ enum ActivityPreloadHolder {
     Instance(Option<wasmtime::component::Instance>),
 }
 
-struct ActivityWorker<DB: DbConnection<WorkflowId> + Send> {
-    db_connection: DB,
+struct ActivityWorker {
     engine: Arc<Engine>,
     functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
     wasm_path: Arc<String>,
@@ -60,10 +59,10 @@ pub enum ActivityError {
     InstantiationError(Arc<String>, Box<dyn Error>),
 }
 
-impl<DB: DbConnection<WorkflowId> + Send> ActivityWorker<DB> {
+impl ActivityWorker {
     #[tracing::instrument(skip_all, fields(wasm_path))]
-    pub async fn new_with_config(
-        db_connection: DB,
+    pub async fn new_with_config<DB: DbConnection<WorkflowId>>(
+        _db_connection: DB,
         wasm_path: Arc<String>,
         config: &ActivityConfig,
         engine: Arc<Engine>,
@@ -114,7 +113,6 @@ impl<DB: DbConnection<WorkflowId> + Send> ActivityWorker<DB> {
             }
         };
         Ok(Self {
-            db_connection,
             engine,
             functions_to_metadata,
             preload_holder,
@@ -126,7 +124,7 @@ impl<DB: DbConnection<WorkflowId> + Send> ActivityWorker<DB> {
 }
 
 #[async_trait]
-impl<DB: DbConnection<WorkflowId> + Sync> Worker<WorkflowId> for ActivityWorker<DB> {
+impl Worker<WorkflowId> for ActivityWorker {
     async fn run(
         &mut self,
         _execution_id: WorkflowId,
@@ -144,7 +142,7 @@ impl<DB: DbConnection<WorkflowId> + Sync> Worker<WorkflowId> for ActivityWorker<
     }
 }
 
-impl<DB: DbConnection<WorkflowId> + Sync> ActivityWorker<DB> {
+impl ActivityWorker {
     #[tracing::instrument(skip_all)]
     pub(crate) async fn run(
         &mut self,
