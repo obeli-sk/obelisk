@@ -42,7 +42,7 @@ pub mod worker {
     #[async_trait]
     pub trait Worker<ID: ExecutionId> {
         async fn run(
-            &mut self,
+            &self,
             execution_id: ID,
             ffqn: FunctionFqn,
             params: Params,

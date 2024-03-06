@@ -24,6 +24,7 @@ pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     db_connection: DB,
     worker: W,
     config: ExecConfig,
+    task_limiter: Arc<tokio::sync::Mutex<tokio::sync::Semaphore>>,
     _phantom_data: PhantomData<fn(ID) -> ID>,
 }
 
@@ -52,7 +53,12 @@ pub struct ExecConfig {
 impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync + 'static>
     ExecTask<ID, DB, W>
 {
-    pub fn spawn_new(db_connection: DB, worker: W, config: ExecConfig) -> ExecutorTaskHandle {
+    pub fn spawn_new(
+        db_connection: DB,
+        worker: W,
+        config: ExecConfig,
+        task_limiter: Arc<tokio::sync::Mutex<tokio::sync::Semaphore>>,
+    ) -> ExecutorTaskHandle {
         let span = info_span!("executor", executor_name = %config.executor_name);
         let is_closing: Arc<AtomicBool> = Default::default();
         let is_closing_inner = is_closing.clone();
@@ -62,6 +68,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                     db_connection,
                     worker,
                     config,
+                    task_limiter,
                     _phantom_data: PhantomData,
                 };
                 let mut old_err = None;
@@ -112,7 +119,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             .await?;
         let mut executions = Vec::new();
         for (execution_id, version, ffqn, params, event_history, _) in locked {
-            // TODO: concurrency
+            // TODO: concurrency, timeouts, semaphore
             let result = self
                 .run_execution(
                     execution_id.clone(),
@@ -301,7 +308,7 @@ mod tests {
     #[async_trait]
     impl<DB: DbConnection<WorkflowId> + Sync> Worker<WorkflowId> for SimpleWorker<DB> {
         async fn run(
-            &mut self,
+            &self,
             _execution_id: WorkflowId,
             ffqn: FunctionFqn,
             _params: Params,
@@ -334,6 +341,7 @@ mod tests {
                 worker_results_rev,
             },
             config,
+            task_limiter: Arc::new(tokio::sync::Mutex::new(tokio::sync::Semaphore::new(1))),
             _phantom_data: Default::default(),
         };
         let _ = executor.tick(ExecTickRequest { executed_at: now() }).await;
@@ -436,6 +444,7 @@ mod tests {
             db_task.as_db_connection().unwrap_or_log(),
             worker,
             exec_config.clone(),
+            Arc::new(tokio::sync::Mutex::new(tokio::sync::Semaphore::new(1))),
         );
         let execution_history = execute(
             db_task.as_db_connection().unwrap_or_log(),
@@ -559,6 +568,7 @@ mod tests {
             db_task.as_db_connection().unwrap_or_log(),
             worker,
             exec_config.clone(),
+            Arc::new(tokio::sync::Mutex::new(tokio::sync::Semaphore::new(1))),
         );
         let execution_history = execute(
             db_task.as_db_connection().unwrap_or_log(),

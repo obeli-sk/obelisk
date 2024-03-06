@@ -9,7 +9,7 @@ use scheduler::{
 };
 use std::{borrow::Cow, collections::HashMap, error::Error, fmt::Debug, sync::Arc};
 use tracing::{debug, enabled, trace, Level};
-use tracing_unwrap::OptionExt;
+use tracing_unwrap::{OptionExt, ResultExt};
 use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
 
@@ -35,7 +35,7 @@ pub struct ActivityConfig {
 enum ActivityPreloadHolder {
     None,
     Preinstance(wasmtime::component::InstancePre<utils::wasi_http::Ctx>),
-    Instance(Option<wasmtime::component::Instance>),
+    Instance(std::sync::Mutex<Vec<wasmtime::component::Instance>>),
 }
 
 struct ActivityWorker {
@@ -101,16 +101,7 @@ impl ActivityWorker {
                 };
                 ActivityPreloadHolder::Preinstance(instance_pre)
             }
-            ActivityPreload::Instance => {
-                let mut store = utils::wasi_http::store(&engine);
-                let instance = linker
-                    .instantiate_async(&mut store, &component)
-                    .await
-                    .map_err(|err| {
-                        ActivityError::InstantiationError(wasm_path.clone(), err.into())
-                    })?;
-                ActivityPreloadHolder::Instance(Some(instance))
-            }
+            ActivityPreload::Instance => ActivityPreloadHolder::Instance(Default::default()),
         };
         Ok(Self {
             engine,
@@ -126,7 +117,7 @@ impl ActivityWorker {
 #[async_trait]
 impl Worker<WorkflowId> for ActivityWorker {
     async fn run(
-        &mut self,
+        &self,
         _execution_id: WorkflowId,
         ffqn: FunctionFqn,
         params: Params,
@@ -145,7 +136,7 @@ impl Worker<WorkflowId> for ActivityWorker {
 impl ActivityWorker {
     #[tracing::instrument(skip_all)]
     pub(crate) async fn run(
-        &mut self,
+        &self,
         ffqn: FunctionFqn,
         params: Params,
     ) -> Result<SupportedFunctionResult, WorkerError> {
@@ -156,11 +147,10 @@ impl ActivityWorker {
             .results_len;
         trace!("Params: {params:?}, results_len:{results_len}",);
         let mut store = utils::wasi_http::store(&self.engine);
-        let instance;
+
         let instance = match &self.preload_holder {
             ActivityPreloadHolder::None => {
-                instance = self
-                    .linker
+                self.linker
                     .instantiate_async(&mut store, &self.component)
                     .await
                     .map_err(|err| {
@@ -169,11 +159,10 @@ impl ActivityWorker {
                             reason: Cow::Borrowed("cannot instantiate"),
                             err: err.into(),
                         }
-                    })?;
-                &instance
+                    })?
             }
             ActivityPreloadHolder::Preinstance(instance_pre) => {
-                instance = instance_pre
+                instance_pre
                     .instantiate_async(&mut store)
                     .await
                     .map_err(|err| {
@@ -182,28 +171,20 @@ impl ActivityWorker {
                             reason: Cow::Borrowed("cannot instantiate"),
                             err: err.into(),
                         }
-                    })?;
-                &instance
+                    })?
             }
-            ActivityPreloadHolder::Instance(Some(instance)) => instance, // TODO: replace after guest panic
-            ActivityPreloadHolder::Instance(None) => {
-                instance = self
-                    .linker
-                    .instantiate_async(&mut store, &self.component)
-                    .await
-                    .map_err(|err| {
-                        //TODO: limit reached etc
-                        WorkerError::IntermittentError {
+            ActivityPreloadHolder::Instance(mutex) => {
+                let last_instance = mutex.lock().unwrap_or_log().pop();
+                match last_instance {
+                    Some(instance) => instance,
+                    None => self
+                        .linker
+                        .instantiate_async(&mut store, &self.component)
+                        .await
+                        .map_err(|err| WorkerError::IntermittentError {
                             reason: Cow::Borrowed("cannot instantiate"),
                             err: err.into(),
-                        }
-                    })?;
-
-                self.preload_holder = ActivityPreloadHolder::Instance(Some(instance));
-                if let ActivityPreloadHolder::Instance(Some(instance)) = &self.preload_holder {
-                    instance
-                } else {
-                    unreachable!("preload_holder was just created")
+                        })?,
                 }
             }
         };
@@ -227,7 +208,7 @@ impl ActivityWorker {
             .map_err(|err| WorkerError::IntermittentError {
                 reason: Cow::Borrowed("wasm function call error"),
                 err: err.into(),
-            })?;
+            })?; // guest panic exits here
         let results = SupportedFunctionResult::new(results);
         func.post_return_async(&mut store)
             .await
@@ -235,6 +216,10 @@ impl ActivityWorker {
                 reason: Cow::Borrowed("wasm post function call error"),
                 err: err.into(),
             })?;
+
+        if let ActivityPreloadHolder::Instance(mutex) = &self.preload_holder {
+            mutex.lock().unwrap_or_log().push(instance)
+        }
         Ok(results)
     }
 
