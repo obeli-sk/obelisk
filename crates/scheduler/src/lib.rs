@@ -18,6 +18,8 @@ mod worker {
     use super::*;
     use concepts::FunctionFqn;
 
+    pub type WorkerResult = Result<(SupportedFunctionResult, Version), (WorkerError, Version)>;
+
     #[derive(Debug, thiserror::Error)]
     pub enum WorkerError {
         #[error("intermittent error: `{reason}`, {err:?}")]
@@ -47,7 +49,7 @@ mod worker {
             event_history: Vec<HistoryEvent<ID>>,
             version: Version,
             lock_expires_at: DateTime<Utc>,
-        ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)>;
+        ) -> WorkerResult;
     }
 }
 

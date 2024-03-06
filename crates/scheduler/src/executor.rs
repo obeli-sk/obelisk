@@ -4,11 +4,11 @@ use crate::{
         ExecutorName, HistoryEvent, Version,
     },
     time::{now, now_tokio_instant},
-    worker::{FatalError, Worker, WorkerError},
+    worker::{FatalError, Worker, WorkerError, WorkerResult},
     FinishedExecutionError,
 };
 use chrono::{DateTime, TimeDelta, Utc};
-use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
+use concepts::{ExecutionId, FunctionFqn, Params};
 use std::{
     marker::PhantomData,
     sync::{
@@ -148,7 +148,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         } else {
             debug!("Starting");
         }
-        let result = self
+        let worker_result = self
             .worker
             .run(
                 execution_id.clone(),
@@ -160,13 +160,13 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             )
             .await;
         if enabled!(Level::TRACE) {
-            trace!(?result, version, "Finished");
+            trace!(?worker_result, version, "Finished");
         } else {
             debug!("Finished");
         }
         // Map the WorkerError to an intermittent or a permanent failure.
         match self
-            .worker_result_to_execution_event(&execution_id, result)
+            .worker_result_to_execution_event(&execution_id, worker_result)
             .await
         {
             Ok((event, version)) => {
@@ -181,9 +181,9 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
     async fn worker_result_to_execution_event(
         &self,
         execution_id: &ID,
-        result: Result<(SupportedFunctionResult, Version), (WorkerError, Version)>,
+        worker_result: WorkerResult,
     ) -> Result<(ExecutionEventInner<ID>, Version), DbError> {
-        match result {
+        match worker_result {
             Ok((result, version)) => Ok((
                 ExecutionEventInner::Finished { result: Ok(result) },
                 version,
@@ -277,10 +277,12 @@ mod tests {
             DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
         },
         time::now,
+        worker::WorkerResult,
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params, SupportedFunctionResult};
+    use indexmap::IndexMap;
     use std::{future::Future, sync::Arc};
     use tracing::info;
     use tracing_unwrap::{OptionExt, ResultExt};
@@ -290,9 +292,11 @@ mod tests {
     }
 
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
-
+    type SimpleWorkerResultMap =
+        Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent<WorkflowId>>, WorkerResult)>>>;
     struct SimpleWorker<DB: DbConnection<WorkflowId> + Send> {
         db_connection: DB,
+        worker_results_rev: SimpleWorkerResultMap,
     }
 
     #[async_trait]
@@ -305,22 +309,30 @@ mod tests {
             events: Vec<HistoryEvent<WorkflowId>>,
             version: Version,
             _lock_expires_at: DateTime<Utc>,
-        ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
+        ) -> WorkerResult {
             assert_eq!(SOME_FFQN, ffqn);
-            assert!(events.is_empty());
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            Ok((SupportedFunctionResult::None, version))
+            let (expected_version, (expected_eh, worker_result)) = self
+                .worker_results_rev
+                .lock()
+                .unwrap_or_log()
+                .pop()
+                .unwrap_or_log();
+            assert_eq!(expected_version, version);
+            assert_eq!(expected_eh, events);
+            worker_result
         }
     }
 
     async fn tick_fn<DB: DbConnection<WorkflowId> + Clone + Sync>(
         db_connection: DB,
         config: ExecConfig,
+        worker_results_rev: SimpleWorkerResultMap,
     ) {
         let mut executor = ExecTask {
             db_connection: db_connection.clone(),
             worker: SimpleWorker {
                 db_connection: db_connection.clone(),
+                worker_results_rev,
             },
             config,
             _phantom_data: Default::default(),
@@ -344,11 +356,17 @@ mod tests {
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
         };
-        execute(db_connection, exec_config, tick_fn).await;
+        let worker_results_rev = {
+            let finished_result: WorkerResult = Ok((SupportedFunctionResult::None, 2));
+            let mut worker_results_rev = IndexMap::from([(2, (vec![], finished_result))]);
+            worker_results_rev.reverse();
+            Arc::new(std::sync::Mutex::new(worker_results_rev))
+        };
+        execute(db_connection, exec_config, worker_results_rev, tick_fn).await;
     }
 
     #[tokio::test]
-    async fn stochastic_execute_executor_tick_db_task() {
+    async fn stochastic_execute_executor_tick_based_db_task_based() {
         set_up();
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
@@ -361,7 +379,13 @@ mod tests {
         };
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().unwrap_or_log();
-        execute(db_connection, exec_config, tick_fn).await;
+        let worker_results_rev = {
+            let finished_result: WorkerResult = Ok((SupportedFunctionResult::None, 2));
+            let mut worker_results_rev = IndexMap::from([(2, (vec![], finished_result))]);
+            worker_results_rev.reverse();
+            Arc::new(std::sync::Mutex::new(worker_results_rev))
+        };
+        execute(db_connection, exec_config, worker_results_rev, tick_fn).await;
         db_task.close().await;
     }
 
@@ -379,8 +403,15 @@ mod tests {
         };
 
         let mut db_task = DbTask::spawn_new(1);
+        let worker_results_rev = {
+            let finished_result: WorkerResult = Ok((SupportedFunctionResult::None, 2));
+            let mut worker_results_rev = IndexMap::from([(2, (vec![], finished_result))]);
+            worker_results_rev.reverse();
+            Arc::new(std::sync::Mutex::new(worker_results_rev))
+        };
         let worker = SimpleWorker {
             db_connection: db_task.as_db_connection().unwrap_or_log(),
+            worker_results_rev: worker_results_rev.clone(),
         };
         let exec_task = ExecTask::spawn_new(
             db_task.as_db_connection().unwrap_or_log(),
@@ -390,7 +421,8 @@ mod tests {
         execute(
             db_task.as_db_connection().unwrap_or_log(),
             exec_config,
-            |_, _| tokio::time::sleep(Duration::from_secs(1)),
+            worker_results_rev,
+            |_, _, _| tokio::time::sleep(Duration::from_secs(1)),
         )
         .await;
         exec_task.close().await;
@@ -399,15 +431,21 @@ mod tests {
 
     async fn execute<
         DB: DbConnection<WorkflowId> + Clone + Sync,
-        T: FnMut(DB, ExecConfig) -> F,
+        T: FnMut(DB, ExecConfig, SimpleWorkerResultMap) -> F,
         F: Future<Output = ()>,
     >(
         db_connection: DB,
         exec_config: ExecConfig,
+        worker_results_rev: SimpleWorkerResultMap,
         mut tick: T,
     ) {
         info!("Now: {}", now());
-        tick(db_connection.clone(), exec_config.clone()).await;
+        tick(
+            db_connection.clone(),
+            exec_config.clone(),
+            worker_results_rev.clone(),
+        )
+        .await;
         // Create an execution
         let execution_id = WorkflowId::generate();
         db_connection
@@ -424,7 +462,12 @@ mod tests {
 
         // execute!
         let requested_execution_at = now();
-        tick(db_connection.clone(), exec_config.clone()).await;
+        tick(
+            db_connection.clone(),
+            exec_config.clone(),
+            worker_results_rev.clone(),
+        )
+        .await;
         // check that DB contains the result.
         let (history, _) = db_connection.get(execution_id).await.unwrap_or_log();
         assert_eq!(3, history.len(), "Unexpected {history:?}");
