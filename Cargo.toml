@@ -23,7 +23,7 @@ resolver = "2"
 members = [
     "crates/concepts",
     "crates/scheduler",
-    # "crates/testing/cargo-component-builder",
+    "crates/testing/cargo-component-builder",
     "crates/testing/test-programs/fibo/activity",
     "crates/testing/test-programs/fibo/activity/builder",
     "crates/testing/test-programs/fibo/workflow",
@@ -46,9 +46,9 @@ members = [
     "crates/testing/test-programs/sleep/activity/builder",
     "crates/testing/test-programs/sleep/workflow",
     "crates/testing/test-programs/sleep/workflow/builder",
-    # "crates/testing/tests",
     "crates/utils",
     "crates/val-json",
+    "crates/wasm-workers",
 ]
 
 [workspace.package]

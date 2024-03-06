@@ -15,13 +15,13 @@ pub type ExecutorName = Arc<String>;
 
 #[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
 #[display(fmt = "{event}")]
-pub(crate) struct ExecutionEvent<ID: ExecutionId> {
-    pub(crate) created_at: DateTime<Utc>,
-    pub(crate) event: ExecutionEventInner<ID>,
+pub struct ExecutionEvent<ID: ExecutionId> {
+    pub created_at: DateTime<Utc>,
+    pub event: ExecutionEventInner<ID>,
 }
 
 #[derive(Clone, Debug, derive_more::Display, PartialEq, Eq, arbitrary::Arbitrary)]
-pub(crate) enum ExecutionEventInner<ID: ExecutionId> {
+pub enum ExecutionEventInner<ID: ExecutionId> {
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
     // After optional expiry(`scheduled_at`) interpreted as pending.
@@ -94,7 +94,7 @@ impl<ID: ExecutionId> ExecutionEventInner<ID> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
-pub(crate) enum HistoryEvent<ID: ExecutionId> {
+pub enum HistoryEvent<ID: ExecutionId> {
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     // Returns execution to `PotentiallyPending::PendingNow` state.
     Yield,

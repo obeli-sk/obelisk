@@ -20,8 +20,6 @@ use std::{
 use tokio::task::AbortHandle;
 use tracing::{debug, enabled, info, info_span, instrument, trace, warn, Instrument, Level};
 
-pub mod activity_worker;
-
 pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     db_connection: DB,
     worker: W,

@@ -2533,6 +2533,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-workers"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "assert_matches",
+ "async-channel",
+ "async-trait",
+ "cfg-if",
+ "chrono",
+ "concepts",
+ "derivative",
+ "derive_more",
+ "indexmap",
+ "madsim",
+ "madsim-tokio",
+ "scheduler",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-unwrap",
+ "ulid",
+ "utils",
+ "val-json",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+]
+
+[[package]]
 name = "wasmparser"
 version = "0.118.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

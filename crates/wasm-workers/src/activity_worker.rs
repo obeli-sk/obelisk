@@ -1,12 +1,12 @@
-use crate::{
-    storage::{DbConnection, HistoryEvent, Version},
-    worker::{Worker, WorkerError},
-};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::workflow_id::WorkflowId;
 use concepts::{FunctionFqn, FunctionMetadata};
 use concepts::{Params, SupportedFunctionResult};
+use scheduler::{
+    storage::{DbConnection, HistoryEvent, Version},
+    worker::{Worker, WorkerError},
+};
 use std::{borrow::Cow, collections::HashMap, error::Error, fmt::Debug, sync::Arc};
 use tracing::{debug, enabled, trace, Level};
 use tracing_unwrap::OptionExt;

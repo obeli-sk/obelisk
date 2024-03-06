@@ -5,13 +5,13 @@ use chrono::{DateTime, Utc};
 use concepts::ExecutionId;
 use concepts::{Params, SupportedFunctionResult};
 
-mod executor;
-mod storage;
+pub mod executor;
+pub mod storage;
 
 #[cfg(test)]
 mod testing;
 
-mod worker {
+pub mod worker {
     use std::{borrow::Cow, error::Error};
 
     use self::storage::{HistoryEvent, Version};
