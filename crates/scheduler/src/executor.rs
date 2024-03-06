@@ -446,9 +446,10 @@ mod tests {
         .await;
         // Create an execution
         let execution_id = WorkflowId::generate();
+        let created_at = now();
         db_connection
             .create(
-                now(),
+                created_at,
                 execution_id.clone(),
                 SOME_FFQN.to_owned(),
                 Params::default(),
@@ -459,7 +460,6 @@ mod tests {
             .unwrap_or_log();
 
         // execute!
-        let requested_execution_at = now();
         tick(
             db_connection.clone(),
             exec_config.clone(),
@@ -488,6 +488,6 @@ mod tests {
             event: ExecutionEventInner::Finished {
                 result: Ok(SupportedFunctionResult::None),
             },
-        } if executed_at >= requested_execution_at);
+        } if executed_at >= created_at);
     }
 }
