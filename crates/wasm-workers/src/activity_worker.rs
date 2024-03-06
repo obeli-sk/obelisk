@@ -14,13 +14,12 @@ use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ActivityPreload {
+pub enum ActivityPreloadStrategy {
     None,
     Preinstance,
-    Instance,
 }
 
-impl Default for ActivityPreload {
+impl Default for ActivityPreloadStrategy {
     fn default() -> Self {
         Self::None
     }
@@ -29,22 +28,16 @@ impl Default for ActivityPreload {
 #[derive(Debug, Default, PartialEq, Eq)]
 #[allow(clippy::module_name_repetitions)]
 pub struct ActivityConfig {
-    pub preload: ActivityPreload,
-}
-
-enum ActivityPreloadHolder {
-    None,
-    Preinstance(wasmtime::component::InstancePre<utils::wasi_http::Ctx>),
-    Instance(std::sync::Mutex<Vec<wasmtime::component::Instance>>),
+    pub preload: ActivityPreloadStrategy,
 }
 
 struct ActivityWorker {
     engine: Arc<Engine>,
     functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
-    wasm_path: Arc<String>,
-    preload_holder: ActivityPreloadHolder,
     linker: wasmtime::component::Linker<utils::wasi_http::Ctx>,
     component: wasmtime::component::Component,
+    instance_pre: Option<wasmtime::component::InstancePre<utils::wasi_http::Ctx>>,
+    instances: std::sync::Mutex<Vec<wasmtime::component::Instance>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -91,25 +84,21 @@ impl ActivityWorker {
         // Compile the wasm component
         let component = wasmtime::component::Component::from_binary(&engine, &wasm)
             .map_err(|err| ActivityError::InstantiationError(wasm_path.clone(), err.into()))?;
-        let preload_holder = match config.preload {
-            ActivityPreload::None => ActivityPreloadHolder::None,
-            ActivityPreload::Preinstance => {
-                let instance_pre: wasmtime::component::InstancePre<utils::wasi_http::Ctx> = {
-                    linker.instantiate_pre(&component).map_err(|err| {
-                        ActivityError::InstantiationError(wasm_path.clone(), err.into())
-                    })?
-                };
-                ActivityPreloadHolder::Preinstance(instance_pre)
+        let instance_pre = match config.preload {
+            ActivityPreloadStrategy::None => None,
+            ActivityPreloadStrategy::Preinstance => {
+                Some(linker.instantiate_pre(&component).map_err(|err| {
+                    ActivityError::InstantiationError(wasm_path.clone(), err.into())
+                })?)
             }
-            ActivityPreload::Instance => ActivityPreloadHolder::Instance(Default::default()),
         };
         Ok(Self {
             engine,
             functions_to_metadata,
-            preload_holder,
-            wasm_path,
             linker,
             component,
+            instance_pre,
+            instances: Default::default(),
         })
     }
 }
@@ -147,48 +136,25 @@ impl ActivityWorker {
             .results_len;
         trace!("Params: {params:?}, results_len:{results_len}",);
         let mut store = utils::wasi_http::store(&self.engine);
-
-        let instance = match &self.preload_holder {
-            ActivityPreloadHolder::None => {
-                self.linker
-                    .instantiate_async(&mut store, &self.component)
-                    .await
-                    .map_err(|err| {
-                        //TODO: limit reached etc
-                        WorkerError::IntermittentError {
-                            reason: Cow::Borrowed("cannot instantiate"),
-                            err: err.into(),
-                        }
-                    })?
-            }
-            ActivityPreloadHolder::Preinstance(instance_pre) => {
-                instance_pre
-                    .instantiate_async(&mut store)
-                    .await
-                    .map_err(|err| {
-                        //TODO: limit reached etc
-                        WorkerError::IntermittentError {
-                            reason: Cow::Borrowed("cannot instantiate"),
-                            err: err.into(),
-                        }
-                    })?
-            }
-            ActivityPreloadHolder::Instance(mutex) => {
-                let last_instance = mutex.lock().unwrap_or_log().pop();
-                match last_instance {
-                    Some(instance) => instance,
-                    None => self
-                        .linker
-                        .instantiate_async(&mut store, &self.component)
-                        .await
-                        .map_err(|err| WorkerError::IntermittentError {
-                            reason: Cow::Borrowed("cannot instantiate"),
-                            err: err.into(),
-                        })?,
-                }
-            }
+        let instance = self.instances.lock().unwrap_or_log().pop();
+        let instance = match (instance, &self.instance_pre) {
+            (Some(instance), _) => instance,
+            (None, Some(instance_pre)) => instance_pre
+                .instantiate_async(&mut store)
+                .await
+                .map_err(|err| WorkerError::IntermittentError {
+                    reason: Cow::Borrowed("cannot instantiate"),
+                    err: err.into(),
+                })?,
+            (None, None) => self
+                .linker
+                .instantiate_async(&mut store, &self.component)
+                .await
+                .map_err(|err| WorkerError::IntermittentError {
+                    reason: Cow::Borrowed("cannot instantiate"),
+                    err: err.into(),
+                })?,
         };
-
         let func = {
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
@@ -217,9 +183,8 @@ impl ActivityWorker {
                 err: err.into(),
             })?;
 
-        if let ActivityPreloadHolder::Instance(mutex) = &self.preload_holder {
-            mutex.lock().unwrap_or_log().push(instance)
-        }
+        self.instances.lock().unwrap_or_log().push(instance);
+
         Ok(results)
     }
 
