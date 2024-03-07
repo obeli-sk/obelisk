@@ -74,16 +74,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                 loop {
                     let sleep_until = now_tokio_instant() + task.config.max_tick_sleep;
                     let res = task.tick(ExecTickRequest { executed_at: now() }).await;
-                    match (res, &old_err) {
-                        (Ok(_), _) => {
-                            old_err = None;
-                        }
-                        (Err(err), Some(old)) if err == *old => {}
-                        (Err(err), _) => {
-                            warn!("Tick failed: {err:?}");
-                            old_err = Some(err);
-                        }
-                    }
+                    Self::log_err_if_new(res, &mut old_err);
                     if is_closing_inner.load(Ordering::Relaxed) {
                         return;
                     }
@@ -96,6 +87,22 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         ExecutorTaskHandle {
             abort_handle,
             is_closing,
+        }
+    }
+
+    fn log_err_if_new(
+        res: Result<Vec<ExecutionProgress<ID>>, DbConnectionError>,
+        old_err: &mut Option<DbConnectionError>,
+    ) {
+        match (res, &old_err) {
+            (Ok(_), _) => {
+                *old_err = None;
+            }
+            (Err(err), Some(old)) if err == *old => {}
+            (Err(err), _) => {
+                warn!("Tick failed: {err:?}");
+                *old_err = Some(err);
+            }
         }
     }
 
