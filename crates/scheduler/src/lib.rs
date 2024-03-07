@@ -1,9 +1,8 @@
-use std::borrow::Cow;
-
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::ExecutionId;
 use concepts::{Params, SupportedFunctionResult};
+use std::borrow::Cow;
 
 pub mod executor;
 pub mod storage;
@@ -40,7 +39,7 @@ pub mod worker {
     }
 
     #[async_trait]
-    pub trait Worker<ID: ExecutionId> {
+    pub trait Worker<ID: ExecutionId>: Clone {
         async fn run(
             &self,
             execution_id: ID,

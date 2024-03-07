@@ -24,7 +24,7 @@ pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     db_connection: DB,
     worker: W,
     config: ExecConfig,
-    task_limiter: Arc<tokio::sync::Mutex<tokio::sync::Semaphore>>,
+    task_limiter: Arc<tokio::sync::Semaphore>,
     _phantom_data: PhantomData<fn(ID) -> ID>,
 }
 
@@ -33,10 +33,9 @@ struct ExecTickRequest {
     executed_at: DateTime<Utc>,
 }
 
-#[derive(Debug)]
 struct ExecutionProgress<ID: ExecutionId> {
     execution_id: ID,
-    result: Result<Version, DbError>,
+    abort_handle: tokio::task::AbortHandle,
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +44,7 @@ pub struct ExecConfig {
     executor_name: ExecutorName,
     lock_expiry: Duration,
     max_tick_sleep: Duration,
-    batch_size: usize,
+    batch_size: u32,
     retry_exp_backoff: TimeDelta,
     max_retries: u32,
 }
@@ -57,7 +56,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         db_connection: DB,
         worker: W,
         config: ExecConfig,
-        task_limiter: Arc<tokio::sync::Mutex<tokio::sync::Semaphore>>,
+        task_limiter: Arc<tokio::sync::Semaphore>,
     ) -> ExecutorTaskHandle {
         let span = info_span!("executor", executor_name = %config.executor_name);
         let is_closing: Arc<AtomicBool> = Default::default();
@@ -100,61 +99,101 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         }
     }
 
+    async fn acquire_task_permits(&self) -> Vec<tokio::sync::OwnedSemaphorePermit> {
+        let mut locks = Vec::new();
+        for _ in 0..self.config.batch_size {
+            if let Ok(permit) = self.task_limiter.clone().acquire_owned().await {
+                locks.push(permit);
+            }
+        }
+        locks
+    }
+
     #[instrument(skip_all)]
     async fn tick(
         &mut self,
         request: ExecTickRequest,
     ) -> Result<Vec<ExecutionProgress<ID>>, DbConnectionError> {
         let lock_expires_at = request.executed_at + self.config.lock_expiry;
-        let locked = self
+        let permits = self.acquire_task_permits().await;
+        if permits.is_empty() {
+            return Ok(vec![]);
+        }
+        let locked_executions = self
             .db_connection
             .lock_pending(
-                self.config.batch_size,
+                permits.len(),
                 request.executed_at, // fetch expiring before now
                 self.config.ffqns.clone(),
                 request.executed_at, // lock created at - now
                 self.config.executor_name.clone(),
                 lock_expires_at,
             )
-            .await?;
+            .await?
+            .into_iter()
+            .zip(permits);
+
         let mut executions = Vec::new();
-        for (execution_id, version, ffqn, params, event_history, _) in locked {
-            // TODO: concurrency, timeouts, semaphore
-            let result = self
-                .run_execution(
-                    execution_id.clone(),
-                    version,
-                    ffqn,
-                    params,
-                    event_history,
-                    lock_expires_at,
+        for ((execution_id, version, ffqn, params, event_history, _), permit) in locked_executions {
+            // TODO: timeouts, clean shutdown
+            let abort_handle = {
+                let execution_id = execution_id.clone();
+                let worker = self.worker.clone();
+                let db_connection = self.db_connection.clone();
+                let max_retries = self.config.max_retries;
+                let retry_exp_backoff = self.config.retry_exp_backoff;
+                let span = info_span!("worker", %execution_id, %ffqn,);
+                tokio::spawn(
+                    async move {
+                        if let Err(err) = Self::run_worker(
+                            worker,
+                            db_connection,
+                            execution_id,
+                            version,
+                            ffqn,
+                            params,
+                            event_history,
+                            lock_expires_at,
+                            max_retries,
+                            retry_exp_backoff,
+                        )
+                        .await
+                        {
+                            info!("Execution failed: {err:?}");
+                        }
+                        drop(permit);
+                    }
+                    .instrument(span),
                 )
-                .await;
+                .abort_handle()
+            };
             executions.push(ExecutionProgress {
                 execution_id,
-                result,
+                abort_handle,
             });
         }
         Ok(executions)
     }
 
     #[instrument(skip_all, fields(%execution_id, %ffqn))]
-    async fn run_execution(
-        &mut self,
+    async fn run_worker(
+        worker: W,
+        db_connection: DB,
         execution_id: ID,
         version: Version,
         ffqn: FunctionFqn,
         params: Params,
         event_history: Vec<HistoryEvent<ID>>,
         lock_expires_at: DateTime<Utc>,
+        max_retries: u32,
+        retry_exp_backoff: TimeDelta,
     ) -> Result<Version, DbError> {
         if enabled!(Level::TRACE) {
             trace!(?params, version, "Starting");
         } else {
             debug!("Starting");
         }
-        let worker_result = self
-            .worker
+        let worker_result = worker
             .run(
                 execution_id.clone(),
                 ffqn,
@@ -170,12 +209,17 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             debug!("Finished");
         }
         // Map the WorkerError to an intermittent or a permanent failure.
-        match self
-            .worker_result_to_execution_event(&execution_id, worker_result)
-            .await
+        match Self::worker_result_to_execution_event(
+            &db_connection,
+            &execution_id,
+            worker_result,
+            max_retries,
+            retry_exp_backoff,
+        )
+        .await
         {
             Ok((event, version)) => {
-                self.db_connection
+                db_connection
                     .append(now(), execution_id.clone(), version, event)
                     .await
             }
@@ -184,9 +228,11 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
     }
 
     async fn worker_result_to_execution_event(
-        &self,
+        db_connection: &DB,
         execution_id: &ID,
         worker_result: WorkerResult,
+        max_retries: u32,
+        retry_exp_backoff: TimeDelta,
     ) -> Result<(ExecutionEventInner<ID>, Version), DbError> {
         match worker_result {
             Ok((result, version)) => Ok((
@@ -196,7 +242,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             Err((err, new_version)) => {
                 debug!("Execution failed: {err:?}");
                 let (event_history, received_version) =
-                    self.db_connection.get(execution_id.clone()).await?; // This can come from a cache
+                    db_connection.get(execution_id.clone()).await?; // This can come from a cache
                 if received_version != new_version {
                     return Err(DbError::RowSpecific(
                         crate::storage::RowSpecificError::VersionMismatch,
@@ -204,7 +250,9 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                 }
                 match err {
                     WorkerError::IntermittentError { reason, err: _ } => {
-                        if let Some(expires_at) = self.can_be_retried(&event_history) {
+                        if let Some(expires_at) =
+                            Self::can_be_retried(&event_history, max_retries, retry_exp_backoff)
+                        {
                             debug!("Retrying execution at {expires_at}");
                             Ok((
                                 ExecutionEventInner::IntermittentFailure { expires_at, reason },
@@ -231,14 +279,17 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         }
     }
 
-    fn can_be_retried(&self, event_history: &Vec<ExecutionEvent<ID>>) -> Option<DateTime<Utc>> {
+    fn can_be_retried(
+        event_history: &Vec<ExecutionEvent<ID>>,
+        max_retries: u32,
+        retry_exp_backoff: TimeDelta,
+    ) -> Option<DateTime<Utc>> {
         let already_retried_count = event_history
             .iter()
             .filter(|event| event.event.is_retry())
             .count() as u32;
-        if already_retried_count < self.config.max_retries {
-            let duration =
-                self.config.retry_exp_backoff * 2_i32.saturating_pow(already_retried_count);
+        if already_retried_count < max_retries {
+            let duration = retry_exp_backoff * 2_i32.saturating_pow(already_retried_count);
             let expires_at = crate::time::now() + duration;
             Some(expires_at)
         } else {
@@ -300,6 +351,8 @@ mod tests {
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
     type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent<WorkflowId>>, WorkerResult)>>>;
+
+    #[derive(Clone)]
     struct SimpleWorker<DB: DbConnection<WorkflowId> + Send> {
         db_connection: DB,
         worker_results_rev: SimpleWorkerResultMap,
@@ -329,10 +382,10 @@ mod tests {
         }
     }
 
-    async fn tick_fn<DB: DbConnection<WorkflowId> + Clone + Sync>(
+    async fn tick_fn<DB: DbConnection<WorkflowId> + Sync>(
         db_connection: DB,
-        config: ExecConfig,                        // TODO: Introduce Context
-        worker_results_rev: SimpleWorkerResultMap, // TODO: Reverse in constructor
+        config: ExecConfig,
+        worker_results_rev: SimpleWorkerResultMap,
     ) {
         let mut executor = ExecTask {
             db_connection: db_connection.clone(),
@@ -341,10 +394,20 @@ mod tests {
                 worker_results_rev,
             },
             config,
-            task_limiter: Arc::new(tokio::sync::Mutex::new(tokio::sync::Semaphore::new(1))),
+            task_limiter: Arc::new(tokio::sync::Semaphore::new(1)),
             _phantom_data: Default::default(),
         };
-        let _ = executor.tick(ExecTickRequest { executed_at: now() }).await;
+        let mut execution_progress_vec = executor
+            .tick(ExecTickRequest { executed_at: now() })
+            .await
+            .unwrap_or_log();
+        loop {
+            execution_progress_vec.retain(|progress| !progress.abort_handle.is_finished());
+            if execution_progress_vec.is_empty() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     #[tokio::test]
@@ -444,7 +507,7 @@ mod tests {
             db_task.as_db_connection().unwrap_or_log(),
             worker,
             exec_config.clone(),
-            Arc::new(tokio::sync::Mutex::new(tokio::sync::Semaphore::new(1))),
+            Arc::new(tokio::sync::Semaphore::new(1)),
         );
         let execution_history = execute(
             db_task.as_db_connection().unwrap_or_log(),
@@ -568,7 +631,7 @@ mod tests {
             db_task.as_db_connection().unwrap_or_log(),
             worker,
             exec_config.clone(),
-            Arc::new(tokio::sync::Mutex::new(tokio::sync::Semaphore::new(1))),
+            Arc::new(tokio::sync::Semaphore::new(1)),
         );
         let execution_history = execute(
             db_task.as_db_connection().unwrap_or_log(),
