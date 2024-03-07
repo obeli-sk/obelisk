@@ -348,7 +348,6 @@ mod tests {
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params, SupportedFunctionResult};
     use indexmap::IndexMap;
     use std::{borrow::Cow, future::Future, sync::Arc};
-    use tracing::info;
     use tracing_unwrap::{OptionExt, ResultExt};
 
     fn set_up() {

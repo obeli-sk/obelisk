@@ -4,10 +4,7 @@
 //!
 //! When inserting, the row in the journal must contain a version that must be equal
 //! to the current number of events in the journal. First change with the expected version wins.
-use self::{
-    api::{DbRequest, ExecutionSpecificRequest, GeneralRequest},
-    index::JournalsIndex,
-};
+use self::index::JournalsIndex;
 use super::{journal::ExecutionJournal, ExecutionEvent, ExecutionEventInner, ExecutorName};
 use crate::storage::journal::PendingState;
 use crate::storage::{
@@ -31,68 +28,153 @@ use tracing::error;
 use tracing::{debug, info, instrument, trace, warn, Level};
 use tracing_unwrap::{OptionExt, ResultExt};
 
-pub(super) mod api {
-    use super::*;
+#[derive(Clone)]
+struct InMemoryDbConnection<ID: ExecutionId> {
+    client_to_store_req_sender: mpsc::Sender<DbRequest<ID>>,
+}
 
-    #[derive(Debug, derive_more::Display)]
-    pub(super) enum DbRequest<ID: ExecutionId> {
-        General(GeneralRequest<ID>),
-        ExecutionSpecific(ExecutionSpecificRequest<ID>),
+#[async_trait]
+impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
+    #[instrument(skip_all, %execution_id)]
+    async fn create(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ID,
+        ffqn: FunctionFqn,
+        params: Params,
+        parent: Option<ID>,
+        scheduled_at: Option<DateTime<Utc>>,
+    ) -> Result<AppendResponse, DbError> {
+        let event = ExecutionEventInner::Created {
+            ffqn,
+            params,
+            parent,
+            scheduled_at,
+        };
+        self.append(created_at, execution_id, Version::default(), event)
+            .await
     }
 
-    #[derive(Derivative)]
-    #[derivative(Debug)]
-    #[derive(derive_more::Display)]
-    pub(super) enum ExecutionSpecificRequest<ID: ExecutionId> {
-        #[display(fmt = "Lock(`{executor_name}`)")]
-        Lock {
-            created_at: DateTime<Utc>,
-            execution_id: ID,
-            version: Version,
-            executor_name: ExecutorName,
-            expires_at: DateTime<Utc>,
-            #[derivative(Debug = "ignore")]
-            resp_sender: oneshot::Sender<Result<LockResponse<ID>, RowSpecificError>>,
-        },
-        #[display(fmt = "Insert({event})")]
-        Append {
-            created_at: DateTime<Utc>,
-            execution_id: ID,
-            version: Version,
-            event: ExecutionEventInner<ID>,
-            #[derivative(Debug = "ignore")]
-            resp_sender: oneshot::Sender<Result<AppendResponse, RowSpecificError>>,
-        },
-        #[display(fmt = "Get")]
-        Get {
-            execution_id: ID,
-            #[derivative(Debug = "ignore")]
-            resp_sender: oneshot::Sender<Result<ExecutionHistory<ID>, RowSpecificError>>,
-        },
+    #[instrument(skip_all)]
+    async fn fetch_pending(
+        &self,
+        batch_size: usize,
+        expiring_before: DateTime<Utc>,
+        ffqns: Vec<FunctionFqn>,
+    ) -> Result<Vec<PendingExecution<ID>>, DbConnectionError> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        let request = DbRequest::General(GeneralRequest::FetchPending {
+            batch_size,
+            expiring_before,
+            ffqns,
+            resp_sender,
+        });
+        self.client_to_store_req_sender
+            .send(request)
+            .await
+            .map_err(|_| DbConnectionError::SendError)?;
+        resp_receiver
+            .await
+            .map_err(|_| DbConnectionError::RecvError)
     }
 
-    #[derive(derive_more::Display, Derivative)]
-    #[derivative(Debug)]
-    pub(super) enum GeneralRequest<ID: ExecutionId> {
-        #[display(fmt = "FetchPending({ffqns:?})")]
-        FetchPending {
-            batch_size: usize,
-            expiring_before: DateTime<Utc>,
-            ffqns: Vec<FunctionFqn>,
-            #[derivative(Debug = "ignore")]
-            resp_sender: oneshot::Sender<Vec<PendingExecution<ID>>>,
-        },
-        #[display(fmt = "LockPending(`{executor_name}`, {ffqns:?})")]
-        LockPending {
-            batch_size: usize,
-            expiring_before: DateTime<Utc>,
-            ffqns: Vec<FunctionFqn>,
-            created_at: DateTime<Utc>,
-            executor_name: ExecutorName,
-            expires_at: DateTime<Utc>,
-            #[derivative(Debug = "ignore")]
-            resp_sender: oneshot::Sender<LockPendingResponse<ID>>,
-        },
+    #[instrument(skip_all)]
+    async fn lock_pending(
+        &self,
+        batch_size: usize,
+        expiring_before: DateTime<Utc>,
+        ffqns: Vec<FunctionFqn>,
+        created_at: DateTime<Utc>,
+        executor_name: ExecutorName,
+        expires_at: DateTime<Utc>,
+    ) -> Result<LockPendingResponse<ID>, DbConnectionError> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        let request = DbRequest::General(GeneralRequest::LockPending {
+            batch_size,
+            expiring_before,
+            ffqns,
+            created_at,
+            executor_name,
+            expires_at,
+            resp_sender,
+        });
+        self.client_to_store_req_sender
+            .send(request)
+            .await
+            .map_err(|_| DbConnectionError::SendError)?;
+        resp_receiver
+            .await
+            .map_err(|_| DbConnectionError::RecvError)
+    }
+
+    #[instrument(skip_all, %execution_id)]
+    async fn lock(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ID,
+        version: Version,
+        executor_name: ExecutorName,
+        expires_at: DateTime<Utc>,
+    ) -> Result<LockResponse<ID>, DbError> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
+            created_at,
+            execution_id,
+            version,
+            executor_name,
+            expires_at,
+            resp_sender,
+        });
+        self.client_to_store_req_sender
+            .send(request)
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
+        resp_receiver
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .map_err(|err| DbError::RowSpecific(err))
+    }
+
+    #[instrument(skip_all, %execution_id)]
+    async fn append(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ID,
+        version: Version,
+        event: ExecutionEventInner<ID>,
+    ) -> Result<Version, DbError> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Append {
+            created_at,
+            execution_id,
+            version,
+            event,
+            resp_sender,
+        });
+        self.client_to_store_req_sender
+            .send(request)
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
+        resp_receiver
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .map_err(|err| DbError::RowSpecific(err))
+    }
+
+    async fn get(&self, execution_id: ID) -> Result<(Vec<ExecutionEvent<ID>>, Version), DbError> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Get {
+            execution_id,
+            resp_sender,
+        });
+        self.client_to_store_req_sender
+            .send(request)
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
+        resp_receiver
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .map_err(|err| DbError::RowSpecific(err))
     }
 }
 
@@ -188,6 +270,67 @@ mod index {
     }
 }
 
+#[derive(Debug, derive_more::Display)]
+enum DbRequest<ID: ExecutionId> {
+    General(GeneralRequest<ID>),
+    ExecutionSpecific(ExecutionSpecificRequest<ID>),
+}
+
+#[derive(Derivative)]
+#[derivative(Debug)]
+#[derive(derive_more::Display)]
+enum ExecutionSpecificRequest<ID: ExecutionId> {
+    #[display(fmt = "Lock(`{executor_name}`)")]
+    Lock {
+        created_at: DateTime<Utc>,
+        execution_id: ID,
+        version: Version,
+        executor_name: ExecutorName,
+        expires_at: DateTime<Utc>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Result<LockResponse<ID>, RowSpecificError>>,
+    },
+    #[display(fmt = "Insert({event})")]
+    Append {
+        created_at: DateTime<Utc>,
+        execution_id: ID,
+        version: Version,
+        event: ExecutionEventInner<ID>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Result<AppendResponse, RowSpecificError>>,
+    },
+    #[display(fmt = "Get")]
+    Get {
+        execution_id: ID,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Result<ExecutionHistory<ID>, RowSpecificError>>,
+    },
+}
+
+#[derive(derive_more::Display, Derivative)]
+#[derivative(Debug)]
+enum GeneralRequest<ID: ExecutionId> {
+    #[display(fmt = "FetchPending({ffqns:?})")]
+    FetchPending {
+        batch_size: usize,
+        expiring_before: DateTime<Utc>,
+        ffqns: Vec<FunctionFqn>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Vec<PendingExecution<ID>>>,
+    },
+    #[display(fmt = "LockPending(`{executor_name}`, {ffqns:?})")]
+    LockPending {
+        batch_size: usize,
+        expiring_before: DateTime<Utc>,
+        ffqns: Vec<FunctionFqn>,
+        created_at: DateTime<Utc>,
+        executor_name: ExecutorName,
+        expires_at: DateTime<Utc>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<LockPendingResponse<ID>>,
+    },
+}
+
 pub(crate) struct DbTaskHandle<ID: ExecutionId> {
     client_to_store_req_sender: Option<mpsc::Sender<DbRequest<ID>>>,
     abort_handle: AbortHandle,
@@ -198,7 +341,7 @@ impl<ID: ExecutionId> DbTaskHandle<ID> {
         self.client_to_store_req_sender.clone()
     }
 
-    pub fn as_db_connection(&self) -> Option<InMemoryDbConnection<ID>> {
+    pub fn as_db_connection(&self) -> Option<impl DbConnection<ID>> {
         self.client_to_store_req_sender
             .as_ref()
             .map(|sender| InMemoryDbConnection {
@@ -580,156 +723,6 @@ impl<ID: ExecutionId> DbTask<ID> {
             return Err(RowSpecificError::NotFound);
         };
         Ok(journal.as_execution_history())
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct InMemoryDbConnection<ID: ExecutionId> {
-    pub(crate) client_to_store_req_sender: mpsc::Sender<DbRequest<ID>>,
-}
-
-#[async_trait]
-impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
-    #[instrument(skip_all, %execution_id)]
-    async fn create(
-        &self,
-        created_at: DateTime<Utc>,
-        execution_id: ID,
-        ffqn: FunctionFqn,
-        params: Params,
-        parent: Option<ID>,
-        scheduled_at: Option<DateTime<Utc>>,
-    ) -> Result<AppendResponse, DbError> {
-        let event = ExecutionEventInner::Created {
-            ffqn,
-            params,
-            parent,
-            scheduled_at,
-        };
-        self.append(created_at, execution_id, Version::default(), event)
-            .await
-    }
-
-    #[instrument(skip_all)]
-    async fn fetch_pending(
-        &self,
-        batch_size: usize,
-        expiring_before: DateTime<Utc>,
-        ffqns: Vec<FunctionFqn>,
-    ) -> Result<Vec<PendingExecution<ID>>, DbConnectionError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::General(GeneralRequest::FetchPending {
-            batch_size,
-            expiring_before,
-            ffqns,
-            resp_sender,
-        });
-        self.client_to_store_req_sender
-            .send(request)
-            .await
-            .map_err(|_| DbConnectionError::SendError)?;
-        resp_receiver
-            .await
-            .map_err(|_| DbConnectionError::RecvError)
-    }
-
-    #[instrument(skip_all)]
-    async fn lock_pending(
-        &self,
-        batch_size: usize,
-        expiring_before: DateTime<Utc>,
-        ffqns: Vec<FunctionFqn>,
-        created_at: DateTime<Utc>,
-        executor_name: ExecutorName,
-        expires_at: DateTime<Utc>,
-    ) -> Result<LockPendingResponse<ID>, DbConnectionError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::General(GeneralRequest::LockPending {
-            batch_size,
-            expiring_before,
-            ffqns,
-            created_at,
-            executor_name,
-            expires_at,
-            resp_sender,
-        });
-        self.client_to_store_req_sender
-            .send(request)
-            .await
-            .map_err(|_| DbConnectionError::SendError)?;
-        resp_receiver
-            .await
-            .map_err(|_| DbConnectionError::RecvError)
-    }
-
-    #[instrument(skip_all, %execution_id)]
-    async fn lock(
-        &self,
-        created_at: DateTime<Utc>,
-        execution_id: ID,
-        version: Version,
-        executor_name: ExecutorName,
-        expires_at: DateTime<Utc>,
-    ) -> Result<LockResponse<ID>, DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
-            created_at,
-            execution_id,
-            version,
-            executor_name,
-            expires_at,
-            resp_sender,
-        });
-        self.client_to_store_req_sender
-            .send(request)
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
-        resp_receiver
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
-            .map_err(|err| DbError::RowSpecific(err))
-    }
-
-    #[instrument(skip_all, %execution_id)]
-    async fn append(
-        &self,
-        created_at: DateTime<Utc>,
-        execution_id: ID,
-        version: Version,
-        event: ExecutionEventInner<ID>,
-    ) -> Result<Version, DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Append {
-            created_at,
-            execution_id,
-            version,
-            event,
-            resp_sender,
-        });
-        self.client_to_store_req_sender
-            .send(request)
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
-        resp_receiver
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
-            .map_err(|err| DbError::RowSpecific(err))
-    }
-
-    async fn get(&self, execution_id: ID) -> Result<(Vec<ExecutionEvent<ID>>, Version), DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Get {
-            execution_id,
-            resp_sender,
-        });
-        self.client_to_store_req_sender
-            .send(request)
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
-        resp_receiver
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
-            .map_err(|err| DbError::RowSpecific(err))
     }
 }
 
