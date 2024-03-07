@@ -35,7 +35,7 @@ struct ExecTickRequest {
 
 struct ExecutionProgress<ID: ExecutionId> {
     execution_id: ID,
-    abort_handle: tokio::task::AbortHandle,
+    abort_handle: AbortHandle,
 }
 
 #[derive(Debug, Clone)]

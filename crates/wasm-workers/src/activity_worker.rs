@@ -31,13 +31,14 @@ pub struct ActivityConfig {
     pub preload: ActivityPreloadStrategy,
 }
 
+#[derive(Clone)]
 struct ActivityWorker {
     engine: Arc<Engine>,
     functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
     linker: wasmtime::component::Linker<utils::wasi_http::Ctx>,
     component: wasmtime::component::Component,
     instance_pre: Option<wasmtime::component::InstancePre<utils::wasi_http::Ctx>>,
-    instances: std::sync::Mutex<Vec<wasmtime::component::Instance>>,
+    instances: Arc<std::sync::Mutex<Vec<wasmtime::component::Instance>>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -59,6 +60,7 @@ impl ActivityWorker {
         wasm_path: Arc<String>,
         config: &ActivityConfig,
         engine: Arc<Engine>,
+        instances: Arc<std::sync::Mutex<Vec<wasmtime::component::Instance>>>,
     ) -> Result<Self, ActivityError> {
         let wasm = std::fs::read(wasm_path.as_ref())
             .map_err(|err| ActivityError::CannotOpen(wasm_path.clone(), err))?;
@@ -98,7 +100,7 @@ impl ActivityWorker {
             linker,
             component,
             instance_pre,
-            instances: Default::default(),
+            instances,
         })
     }
 }
