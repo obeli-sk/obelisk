@@ -20,6 +20,17 @@ use std::{
 use tokio::task::AbortHandle;
 use tracing::{debug, enabled, info, info_span, instrument, trace, warn, Instrument, Level};
 
+#[derive(Debug, Clone)]
+pub struct ExecConfig {
+    ffqns: Vec<FunctionFqn>,
+    executor_name: ExecutorName,
+    lock_expiry: Duration,
+    max_tick_sleep: Duration,
+    batch_size: u32,
+    retry_exp_backoff: TimeDelta,
+    max_retries: u32,
+}
+
 pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     db_connection: DB,
     worker: W,
@@ -38,15 +49,30 @@ struct ExecutionProgress<ID: ExecutionId> {
     abort_handle: AbortHandle,
 }
 
-#[derive(Debug, Clone)]
-pub struct ExecConfig {
-    ffqns: Vec<FunctionFqn>,
-    executor_name: ExecutorName,
-    lock_expiry: Duration,
-    max_tick_sleep: Duration,
-    batch_size: u32,
-    retry_exp_backoff: TimeDelta,
-    max_retries: u32,
+pub struct ExecutorTaskHandle {
+    is_closing: Arc<AtomicBool>,
+    abort_handle: AbortHandle,
+}
+
+impl ExecutorTaskHandle {
+    pub async fn close(&self) {
+        trace!("Gracefully closing");
+        self.is_closing.store(true, Ordering::Relaxed);
+        while !self.abort_handle.is_finished() {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        info!("Gracefully closed");
+    }
+}
+
+impl Drop for ExecutorTaskHandle {
+    fn drop(&mut self) {
+        if self.abort_handle.is_finished() {
+            return;
+        }
+        warn!("Aborting the task");
+        self.abort_handle.abort();
+    }
 }
 
 impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync + 'static>
@@ -305,32 +331,6 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
     }
 }
 
-pub struct ExecutorTaskHandle {
-    is_closing: Arc<AtomicBool>,
-    abort_handle: AbortHandle,
-}
-
-impl ExecutorTaskHandle {
-    pub async fn close(&self) {
-        trace!("Gracefully closing");
-        self.is_closing.store(true, Ordering::Relaxed);
-        while !self.abort_handle.is_finished() {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-        info!("Gracefully closed");
-    }
-}
-
-impl Drop for ExecutorTaskHandle {
-    fn drop(&mut self) {
-        if self.abort_handle.is_finished() {
-            return;
-        }
-        warn!("Aborting the task");
-        self.abort_handle.abort();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -546,13 +546,6 @@ mod tests {
         worker_results_rev: SimpleWorkerResultMap,
         mut tick: T,
     ) -> Vec<ExecutionEvent<WorkflowId>> {
-        info!("Now: {}", now());
-        tick(
-            db_connection.clone(),
-            exec_config.clone(),
-            worker_results_rev.clone(),
-        )
-        .await;
         // Create an execution
         let execution_id = WorkflowId::generate();
         let created_at = now();
@@ -567,7 +560,6 @@ mod tests {
             )
             .await
             .unwrap_or_log();
-
         // execute!
         tick(
             db_connection.clone(),
