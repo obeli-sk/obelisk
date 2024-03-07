@@ -9,8 +9,12 @@ rust-version.workspace = true
 concepts.workspace = true
 val-json.workspace = true
 
+cfg-if.workspace = true
+chrono.workspace = true
 indexmap.workspace = true
+madsim.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 tracing-unwrap.workspace = true
 tracing.workspace = true
 wasmtime-wasi-http.workspace = true

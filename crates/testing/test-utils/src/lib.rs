@@ -1,5 +1,5 @@
 static INIT: std::sync::Once = std::sync::Once::new();
-pub(crate) fn set_up() {
+pub fn set_up() {
     INIT.call_once(|| {
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;

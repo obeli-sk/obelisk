@@ -24,8 +24,8 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::AbortHandle,
 };
-use tracing::error;
-use tracing::{debug, info, instrument, trace, warn, Level};
+use tracing::{debug, info, instrument, trace, warn, Instrument, Level};
+use tracing::{error, info_span};
 use tracing_unwrap::{OptionExt, ResultExt};
 
 #[derive(Clone)]
@@ -331,7 +331,7 @@ enum GeneralRequest<ID: ExecutionId> {
     },
 }
 
-pub(crate) struct DbTaskHandle<ID: ExecutionId> {
+pub struct DbTaskHandle<ID: ExecutionId> {
     client_to_store_req_sender: Option<mpsc::Sender<DbRequest<ID>>>,
     abort_handle: AbortHandle,
 }
@@ -370,7 +370,7 @@ impl<ID: ExecutionId> Drop for DbTaskHandle<ID> {
 }
 
 #[derive(Debug)]
-pub(crate) struct DbTask<ID: ExecutionId> {
+pub struct DbTask<ID: ExecutionId> {
     journals: HashMap<ID, ExecutionJournal<ID>>,
     index: JournalsIndex<ID>,
 }
@@ -445,17 +445,20 @@ impl<ID: ExecutionId> DbTask<ID> {
     pub fn spawn_new(rpc_capacity: usize) -> DbTaskHandle<ID> {
         let (client_to_store_req_sender, mut client_to_store_receiver) =
             mpsc::channel::<DbRequest<ID>>(rpc_capacity);
-        let abort_handle = tokio::spawn(async move {
-            let mut task = Self::new();
-            while let Some(request) = client_to_store_receiver.recv().await {
-                let resp = task.tick(request).send_response();
-                if resp.is_err() {
-                    debug!("Failed to send back the response");
+        let abort_handle = tokio::spawn(
+            async move {
+                info!("Spawned inmemory db task");
+                let mut task = Self::new();
+                while let Some(request) = client_to_store_receiver.recv().await {
+                    let resp = task.tick(request).send_response();
+                    if resp.is_err() {
+                        debug!("Failed to send back the response");
+                    }
                 }
             }
-        })
+            .instrument(info_span!("inmemory_db_task")),
+        )
         .abort_handle();
-
         DbTaskHandle {
             abort_handle,
             client_to_store_req_sender: Some(client_to_store_req_sender),
@@ -729,13 +732,14 @@ impl<ID: ExecutionId> DbTask<ID> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{storage::HistoryEvent, time::now, FinishedExecutionResult};
+    use crate::{storage::HistoryEvent, FinishedExecutionResult};
     use assert_matches::assert_matches;
     use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
     use std::time::Duration;
     use tokio::time::sleep;
     use tracing::info;
     use tracing_unwrap::ResultExt;
+    use utils::time::now;
 
     #[derive(Clone)]
     pub(crate) struct TickBasedDbConnection<ID: ExecutionId> {
@@ -855,7 +859,7 @@ pub(crate) mod tests {
     }
 
     fn set_up() {
-        crate::testing::set_up();
+        test_utils::set_up();
     }
 
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");

@@ -3,7 +3,6 @@ use crate::{
         DbConnection, DbConnectionError, DbError, ExecutionEvent, ExecutionEventInner,
         ExecutorName, HistoryEvent, Version,
     },
-    time::{now, now_tokio_instant},
     worker::{FatalError, Worker, WorkerError, WorkerResult},
     FinishedExecutionError,
 };
@@ -19,16 +18,17 @@ use std::{
 };
 use tokio::task::AbortHandle;
 use tracing::{debug, enabled, info, info_span, instrument, trace, warn, Instrument, Level};
+use utils::time::{now, now_tokio_instant};
 
 #[derive(Debug, Clone)]
 pub struct ExecConfig {
-    ffqns: Vec<FunctionFqn>,
-    executor_name: ExecutorName,
-    lock_expiry: Duration,
-    max_tick_sleep: Duration,
-    batch_size: u32,
-    retry_exp_backoff: TimeDelta,
-    max_retries: u32,
+    pub ffqns: Vec<FunctionFqn>,
+    pub executor_name: ExecutorName,
+    pub lock_expiry: Duration,
+    pub max_tick_sleep: Duration,
+    pub batch_size: u32,
+    pub retry_exp_backoff: TimeDelta, // FIXME: TimeDelta vs Duration
+    pub max_retries: u32,
 }
 
 pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
@@ -323,7 +323,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             .count() as u32;
         if already_retried_count < max_retries {
             let duration = retry_exp_backoff * 2_i32.saturating_pow(already_retried_count);
-            let expires_at = crate::time::now() + duration;
+            let expires_at = now() + duration;
             Some(expires_at)
         } else {
             None
@@ -339,7 +339,6 @@ mod tests {
             inmemory_dao::{tests::TickBasedDbConnection, DbTask},
             DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
         },
-        time::now,
         worker::WorkerResult,
     };
     use anyhow::anyhow;
@@ -349,9 +348,10 @@ mod tests {
     use indexmap::IndexMap;
     use std::{borrow::Cow, future::Future, sync::Arc};
     use tracing_unwrap::{OptionExt, ResultExt};
+    use utils::time::now;
 
     fn set_up() {
-        crate::testing::set_up();
+        test_utils::set_up();
     }
 
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
@@ -428,9 +428,8 @@ mod tests {
             max_retries: 0,
             retry_exp_backoff: TimeDelta::zero(),
         };
-        let db_task = Arc::new(std::sync::Mutex::new(DbTask::new()));
         let db_connection = TickBasedDbConnection {
-            db_task: db_task.clone(),
+            db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
         };
         let worker_results_rev = {
             let finished_result: WorkerResult = Ok((SupportedFunctionResult::None, 2));
@@ -464,7 +463,7 @@ mod tests {
             retry_exp_backoff: TimeDelta::zero(),
         };
         let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.as_db_connection().unwrap_or_log();
+        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
         let worker_results_rev = {
             let finished_result: WorkerResult = Ok((SupportedFunctionResult::None, 2));
             let mut worker_results_rev = IndexMap::from([(2, (vec![], finished_result))]);

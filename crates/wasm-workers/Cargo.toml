@@ -31,7 +31,10 @@ wasmtime.workspace = true
 
 [dev-dependencies]
 madsim.workspace = true
-tracing-subscriber.workspace = true
+scheduler.workspace = true
+test-programs-fibo-activity-builder.workspace = true
+test-utils.workspace = true
+utils.workspace = true
 
 [lints]
 workspace = true

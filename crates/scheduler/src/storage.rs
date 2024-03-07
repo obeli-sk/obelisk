@@ -1,4 +1,4 @@
-pub(crate) mod inmemory_dao;
+pub mod inmemory_dao;
 
 use crate::FinishedExecutionResult;
 use async_trait::async_trait;

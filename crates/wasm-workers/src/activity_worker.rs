@@ -13,7 +13,7 @@ use tracing_unwrap::{OptionExt, ResultExt};
 use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivityPreloadStrategy {
     None,
     Preinstance,
@@ -25,7 +25,7 @@ impl Default for ActivityPreloadStrategy {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 #[allow(clippy::module_name_repetitions)]
 pub struct ActivityConfig {
     pub preload: ActivityPreloadStrategy,
@@ -44,21 +44,21 @@ struct ActivityWorker {
 #[derive(thiserror::Error, Debug)]
 pub enum ActivityError {
     #[error("cannot open `{0}` - {1}")]
-    CannotOpen(Arc<String>, std::io::Error),
+    CannotOpen(Cow<'static, str>, std::io::Error),
     #[error("cannot decode `{0}` - {1}")]
-    DecodeError(Arc<String>, wasm_tools::DecodeError),
+    DecodeError(Cow<'static, str>, wasm_tools::DecodeError),
     #[error("cannot decode metadata `{0}` - {1}")]
-    FunctionMetadataError(Arc<String>, wasm_tools::FunctionMetadataError),
+    FunctionMetadataError(Cow<'static, str>, wasm_tools::FunctionMetadataError),
     #[error("cannot instantiate `{0}` - {1}")]
-    InstantiationError(Arc<String>, Box<dyn Error>),
+    InstantiationError(Cow<'static, str>, Box<dyn Error>),
 }
 
 impl ActivityWorker {
     #[tracing::instrument(skip_all, fields(wasm_path))]
-    pub async fn new_with_config<DB: DbConnection<WorkflowId>>(
+    pub fn new_with_config<DB: DbConnection<WorkflowId>>(
         _db_connection: DB,
-        wasm_path: Arc<String>,
-        config: &ActivityConfig,
+        wasm_path: Cow<'static, str>,
+        config: ActivityConfig,
         engine: Arc<Engine>,
         instances: Arc<std::sync::Mutex<Vec<wasmtime::component::Instance>>>,
     ) -> Result<Self, ActivityError> {
@@ -192,5 +192,79 @@ impl ActivityWorker {
 
     pub fn functions(&self) -> impl Iterator<Item = &FunctionFqn> {
         self.functions_to_metadata.keys()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{borrow::Cow, sync::Arc, time::Duration};
+
+    use chrono::TimeDelta;
+    use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params};
+    use scheduler::{
+        executor::{ExecConfig, ExecTask},
+        storage::{inmemory_dao::DbTask, DbConnection},
+    };
+    use tracing::debug;
+    use tracing_unwrap::{OptionExt, ResultExt};
+    use utils::time::now;
+    use wasmtime::component::Val;
+
+    use crate::{activity_engine, EngineConfig};
+
+    use super::{ActivityConfig, ActivityWorker};
+
+    const FIBO_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:fibo/fibo", "fibo"); // func(n: u8) -> u64;
+
+    #[tokio::test]
+    async fn fibo() {
+        test_utils::set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+        // Create an execution
+        let execution_id = WorkflowId::generate();
+        let created_at = now();
+        db_connection
+            .create(
+                created_at,
+                execution_id.clone(),
+                FIBO_FFQN.to_owned(),
+                Params::from([Val::U8(5)]),
+                None,
+                None,
+            )
+            .await
+            .unwrap_or_log();
+
+        let fibo_worker = ActivityWorker::new_with_config(
+            db_connection,
+            Cow::Borrowed(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
+            ActivityConfig::default(),
+            activity_engine(EngineConfig::default()),
+            Default::default(),
+        )
+        .unwrap_or_log();
+
+        let exec_config = ExecConfig {
+            ffqns: vec![FIBO_FFQN.to_owned()],
+            executor_name: Arc::new("exec1".to_string()),
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            max_tick_sleep: Duration::from_millis(500),
+            max_retries: 1,
+            retry_exp_backoff: TimeDelta::zero(),
+        };
+        let exec_task = ExecTask::spawn_new(
+            db_task.as_db_connection().unwrap_or_log(),
+            fibo_worker,
+            exec_config.clone(),
+            Arc::new(tokio::sync::Semaphore::new(1)),
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        //TODO: assert result == 8
+
+        exec_task.close().await;
+        db_task.close().await;
     }
 }

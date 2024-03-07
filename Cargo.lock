@@ -1668,11 +1668,12 @@ dependencies = [
  "indexmap",
  "madsim",
  "madsim-tokio",
+ "test-utils",
  "thiserror",
  "tracing",
- "tracing-subscriber",
  "tracing-unwrap",
  "ulid",
+ "utils",
  "val-json",
 ]
 
@@ -2046,6 +2047,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-utils"
+version = "0.1.0"
+dependencies = [
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2334,8 +2342,11 @@ dependencies = [
 name = "utils"
 version = "0.1.0"
 dependencies = [
+ "cfg-if",
+ "chrono",
  "concepts",
  "indexmap",
+ "madsim",
  "madsim-tokio",
  "test-programs-fibo-workflow-builder",
  "thiserror",
@@ -2550,9 +2561,10 @@ dependencies = [
  "madsim",
  "madsim-tokio",
  "scheduler",
+ "test-programs-fibo-activity-builder",
+ "test-utils",
  "thiserror",
  "tracing",
- "tracing-subscriber",
  "tracing-unwrap",
  "ulid",
  "utils",

@@ -7,9 +7,6 @@ use std::borrow::Cow;
 pub mod executor;
 pub mod storage;
 
-#[cfg(test)]
-mod testing;
-
 pub mod worker {
     use std::{borrow::Cow, error::Error};
 
@@ -72,30 +69,4 @@ pub enum FinishedExecutionError<ID: ExecutionId> {
     },
     #[error("cancelled and starting {execution_id}")]
     CancelledWithNew { execution_id: ID },
-}
-
-pub(crate) mod time {
-    use chrono::DateTime;
-    use chrono::Utc;
-
-    cfg_if::cfg_if! {
-        if #[cfg(all(test, madsim))] {
-            pub(crate) fn now() -> DateTime<Utc> {
-                if madsim::rand::random() {
-                    madsim::time::advance(std::time::Duration::from_millis(1));
-                }
-                DateTime::from(madsim::time::TimeHandle::current().now_time())
-            }
-            pub(crate) fn now_tokio_instant() -> tokio::time::Instant {
-                madsim::time::Instant::now()
-            }
-        } else {
-            pub(crate) fn now() -> DateTime<Utc> {
-                Utc::now()
-            }
-            pub(crate) fn now_tokio_instant() -> tokio::time::Instant {
-                tokio::time::Instant::now()
-            }
-        }
-    }
 }
