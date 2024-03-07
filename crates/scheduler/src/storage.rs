@@ -9,9 +9,11 @@ use concepts::{ExecutionId, FunctionFqn};
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use self::journal::PendingState;
+
 pub type Version = usize;
 
-pub type ExecutorName = Arc<String>;
+pub type ExecutorId = Arc<String>;
 
 #[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
 #[display(fmt = "{event}")]
@@ -38,7 +40,7 @@ pub enum ExecutionEventInner<ID: ExecutionId> {
     // after expiry immediately followed by WaitingForExecutor by a scheduler.
     #[display(fmt = "Locked(`{expires_at}`, `{executor_name}`)")]
     Locked {
-        executor_name: ExecutorName,
+        executor_name: ExecutorId,
         expires_at: DateTime<Utc>,
     },
     // Created by the executor holding last lock.
@@ -191,7 +193,7 @@ pub enum DbError {
 
 pub type AppendResponse = Version;
 pub type PendingExecution<ID> = (ID, Version, Params, Option<DateTime<Utc>>);
-pub type ExecutionHistory<ID> = (Vec<ExecutionEvent<ID>>, Version);
+pub type ExecutionHistory<ID> = (Vec<ExecutionEvent<ID>>, Version, PendingState);
 pub type LockResponse<ID> = (Vec<HistoryEvent<ID>>, Version);
 pub type LockPendingResponse<ID> = Vec<(
     ID,
@@ -210,7 +212,7 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
         fetch_expiring_before: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         lock_created_at: DateTime<Utc>,
-        executor_name: ExecutorName,
+        executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse<ID>, DbConnectionError>;
 
@@ -238,7 +240,7 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
         created_at: DateTime<Utc>,
         execution_id: ID,
         version: Version,
-        executor_name: ExecutorName,
+        executor_name: ExecutorId,
         expires_at: DateTime<Utc>,
     ) -> Result<LockResponse<ID>, DbError>;
 
@@ -253,8 +255,8 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
     async fn get(&self, execution_id: ID) -> Result<ExecutionHistory<ID>, DbError>;
 }
 
-pub(crate) mod journal {
-    use super::{ExecutionEvent, ExecutionEventInner, ExecutorName, HistoryEvent};
+pub mod journal {
+    use super::{ExecutionEvent, ExecutionEventInner, ExecutorId, HistoryEvent};
     use crate::storage::{ExecutionHistory, RowSpecificError, Version};
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn, Params};
@@ -502,17 +504,21 @@ pub(crate) mod journal {
             .clone()
         }
 
-        pub(crate) fn as_execution_history(&self) -> ExecutionHistory<ID> {
-            (self.events.iter().cloned().collect(), self.version())
+        pub fn as_execution_history(&self) -> ExecutionHistory<ID> {
+            (
+                self.events.iter().cloned().collect(),
+                self.version(),
+                self.pending_state.clone(),
+            )
         }
     }
 
-    #[derive(Debug, derive_more::Display, PartialEq, Eq)]
-    pub(crate) enum PendingState {
+    #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
+    pub enum PendingState {
         PendingNow,
         #[display(fmt = "Locked(`{expires_at}`,`{executor_name}`)")]
         Locked {
-            executor_name: ExecutorName,
+            executor_name: ExecutorId, // FIXME `executor_id`
             expires_at: DateTime<Utc>,
         },
         #[display(fmt = "PendingAt(`{_0}`)")]

@@ -8,7 +8,7 @@ pub mod executor;
 pub mod storage;
 
 pub mod worker {
-    use std::{borrow::Cow, error::Error};
+    use std::{borrow::Cow, error::Error, fmt::Display};
 
     use self::storage::{HistoryEvent, Version};
     use super::*;
@@ -36,7 +36,7 @@ pub mod worker {
     }
 
     #[async_trait]
-    pub trait Worker<ID: ExecutionId>: Clone {
+    pub trait Worker<ID: ExecutionId>: Clone + Display {
         async fn run(
             &self,
             execution_id: ID,

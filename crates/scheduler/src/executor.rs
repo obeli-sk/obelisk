@@ -1,7 +1,7 @@
 use crate::{
     storage::{
-        DbConnection, DbConnectionError, DbError, ExecutionEvent, ExecutionEventInner,
-        ExecutorName, HistoryEvent, Version,
+        DbConnection, DbConnectionError, DbError, ExecutionEvent, ExecutionEventInner, ExecutorId,
+        HistoryEvent, Version,
     },
     worker::{FatalError, Worker, WorkerError, WorkerResult},
     FinishedExecutionError,
@@ -23,7 +23,6 @@ use utils::time::{now, now_tokio_instant};
 #[derive(Debug, Clone)]
 pub struct ExecConfig {
     pub ffqns: Vec<FunctionFqn>,
-    pub executor_name: ExecutorName,
     pub lock_expiry: Duration,
     pub max_tick_sleep: Duration,
     pub batch_size: u32,
@@ -36,6 +35,7 @@ pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     worker: W,
     config: ExecConfig,
     task_limiter: Arc<tokio::sync::Semaphore>,
+    executor_id: Arc<String>,
     _phantom_data: PhantomData<fn(ID) -> ID>,
 }
 
@@ -84,16 +84,19 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         config: ExecConfig,
         task_limiter: Arc<tokio::sync::Semaphore>,
     ) -> ExecutorTaskHandle {
-        let span = info_span!("executor", executor_name = %config.executor_name);
+        let executor_id = Arc::new(format!("{worker}"));
+        let span = info_span!("executor", worker = %executor_id);
         let is_closing: Arc<AtomicBool> = Default::default();
         let is_closing_inner = is_closing.clone();
         let abort_handle = tokio::spawn(
             async move {
+                info!("Spawned executor");
                 let mut task = Self {
                     db_connection,
                     worker,
                     config,
                     task_limiter,
+                    executor_id,
                     _phantom_data: PhantomData,
                 };
                 let mut old_err = None;
@@ -159,7 +162,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                 request.executed_at, // fetch expiring before now
                 self.config.ffqns.clone(),
                 request.executed_at, // lock created at - now
-                self.config.executor_name.clone(),
+                self.executor_id.clone(),
                 lock_expires_at,
             )
             .await?
@@ -274,7 +277,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             )),
             Err((err, new_version)) => {
                 debug!("Execution failed: {err:?}");
-                let (event_history, received_version) =
+                let (event_history, received_version, _) =
                     db_connection.get(execution_id.clone()).await?; // This can come from a cache
                 if received_version != new_version {
                     return Err(DbError::RowSpecific(
@@ -331,6 +334,22 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
     }
 }
 
+#[derive(derive_more::Display, Clone, Debug)]
+#[display(fmt = "{prefix}_{id}")]
+pub struct WorkerId {
+    prefix: &'static str,
+    id: ulid::Ulid,
+}
+
+impl WorkerId {
+    pub fn new(prefix: &'static str) -> Self {
+        Self {
+            prefix,
+            id: ulid::Ulid::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,7 +377,8 @@ mod tests {
     type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent<WorkflowId>>, WorkerResult)>>>;
 
-    #[derive(Clone)]
+    #[derive(Clone, derive_more::Display)]
+    #[display(fmt = "SimpleWorker")]
     struct SimpleWorker<DB: DbConnection<WorkflowId> + Send> {
         db_connection: DB,
         worker_results_rev: SimpleWorkerResultMap,
@@ -401,6 +421,7 @@ mod tests {
             },
             config,
             task_limiter: Arc::new(tokio::sync::Semaphore::new(1)),
+            executor_id: Arc::new("SimpleWorker".to_string()),
             _phantom_data: Default::default(),
         };
         let mut execution_progress_vec = executor
@@ -421,7 +442,6 @@ mod tests {
         set_up();
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
-            executor_name: Arc::new("exec1".to_string()),
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             max_tick_sleep: Duration::from_millis(500),
@@ -455,7 +475,6 @@ mod tests {
         set_up();
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
-            executor_name: Arc::new("exec1".to_string()),
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             max_tick_sleep: Duration::from_millis(500),
@@ -489,7 +508,6 @@ mod tests {
         set_up();
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
-            executor_name: Arc::new("exec1".to_string()),
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             max_tick_sleep: Duration::from_millis(500),
@@ -565,7 +583,7 @@ mod tests {
             worker_results_rev.clone(),
         )
         .await;
-        let (execution_history, _) = db_connection.get(execution_id).await.unwrap_or_log();
+        let (execution_history, _, _) = db_connection.get(execution_id).await.unwrap_or_log();
         // check that DB contains Created and Locked events.
         assert_matches!(
             execution_history[0],
@@ -595,7 +613,6 @@ mod tests {
         set_up();
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
-            executor_name: Arc::new("exec1".to_string()),
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             max_tick_sleep: Duration::from_millis(500),

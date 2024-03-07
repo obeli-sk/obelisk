@@ -3,12 +3,13 @@ use chrono::{DateTime, Utc};
 use concepts::workflow_id::WorkflowId;
 use concepts::{FunctionFqn, FunctionMetadata};
 use concepts::{Params, SupportedFunctionResult};
+use scheduler::executor::WorkerId;
 use scheduler::{
     storage::{DbConnection, HistoryEvent, Version},
     worker::{Worker, WorkerError},
 };
 use std::{borrow::Cow, collections::HashMap, error::Error, fmt::Debug, sync::Arc};
-use tracing::{debug, enabled, trace, Level};
+use tracing::{debug, enabled, info, info_span, trace, Level};
 use tracing_unwrap::{OptionExt, ResultExt};
 use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
@@ -31,8 +32,10 @@ pub struct ActivityConfig {
     pub preload: ActivityPreloadStrategy,
 }
 
-#[derive(Clone)]
+#[derive(Clone, derive_more::Display)]
+#[display(fmt = "{id}")]
 struct ActivityWorker {
+    id: WorkerId,
     engine: Arc<Engine>,
     functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
     linker: wasmtime::component::Linker<utils::wasi_http::Ctx>,
@@ -62,45 +65,50 @@ impl ActivityWorker {
         engine: Arc<Engine>,
         instances: Arc<std::sync::Mutex<Vec<wasmtime::component::Instance>>>,
     ) -> Result<Self, ActivityError> {
-        let wasm = std::fs::read(wasm_path.as_ref())
-            .map_err(|err| ActivityError::CannotOpen(wasm_path.clone(), err))?;
-        let (resolve, world_id) = wasm_tools::decode(&wasm)
-            .map_err(|err| ActivityError::DecodeError(wasm_path.clone(), err))?;
-        let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
-            .map_err(|err| ActivityError::DecodeError(wasm_path.clone(), err))?;
-        let functions_to_metadata = wasm_tools::functions_to_metadata(exported_interfaces)
-            .map_err(|err| ActivityError::FunctionMetadataError(wasm_path.clone(), err))?;
-        if enabled!(Level::TRACE) {
-            trace!("Decoded functions {functions_to_metadata:#?}");
-        } else {
-            debug!("Decoded functions {:?}", functions_to_metadata.keys());
-        }
-        let mut linker = wasmtime::component::Linker::new(&engine);
-
-        wasmtime_wasi::preview2::command::add_to_linker(&mut linker)
-            .map_err(|err| ActivityError::InstantiationError(wasm_path.clone(), err.into()))?;
-        wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(&mut linker, |t| t)
-            .map_err(|err| ActivityError::InstantiationError(wasm_path.clone(), err.into()))?;
-        wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t)
-            .map_err(|err| ActivityError::InstantiationError(wasm_path.clone(), err.into()))?;
-        // Compile the wasm component
-        let component = wasmtime::component::Component::from_binary(&engine, &wasm)
-            .map_err(|err| ActivityError::InstantiationError(wasm_path.clone(), err.into()))?;
-        let instance_pre = match config.preload {
-            ActivityPreloadStrategy::None => None,
-            ActivityPreloadStrategy::Preinstance => {
-                Some(linker.instantiate_pre(&component).map_err(|err| {
-                    ActivityError::InstantiationError(wasm_path.clone(), err.into())
-                })?)
+        let id = WorkerId::new("act");
+        info_span!("ActivityWorker", worker = %id).in_scope(|| {
+            info!(%wasm_path, "Reading");
+            let wasm = std::fs::read(wasm_path.as_ref())
+                .map_err(|err| ActivityError::CannotOpen(wasm_path.clone(), err))?;
+            let (resolve, world_id) = wasm_tools::decode(&wasm)
+                .map_err(|err| ActivityError::DecodeError(wasm_path.clone(), err))?;
+            let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
+                .map_err(|err| ActivityError::DecodeError(wasm_path.clone(), err))?;
+            let functions_to_metadata = wasm_tools::functions_to_metadata(exported_interfaces)
+                .map_err(|err| ActivityError::FunctionMetadataError(wasm_path.clone(), err))?;
+            if enabled!(Level::TRACE) {
+                trace!(ffqns = ?functions_to_metadata.keys(), "Decoded functions {functions_to_metadata:#?}");
+            } else {
+                debug!(ffqns = ?functions_to_metadata.keys(), "Decoded functions" );
             }
-        };
-        Ok(Self {
-            engine,
-            functions_to_metadata,
-            linker,
-            component,
-            instance_pre,
-            instances,
+            let mut linker = wasmtime::component::Linker::new(&engine);
+
+            wasmtime_wasi::preview2::command::add_to_linker(&mut linker)
+                .map_err(|err| ActivityError::InstantiationError(wasm_path.clone(), err.into()))?;
+            wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(&mut linker, |t| t)
+                .map_err(|err| ActivityError::InstantiationError(wasm_path.clone(), err.into()))?;
+            wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t)
+                .map_err(|err| ActivityError::InstantiationError(wasm_path.clone(), err.into()))?;
+            // Compile the wasm component
+            let component = wasmtime::component::Component::from_binary(&engine, &wasm)
+                .map_err(|err| ActivityError::InstantiationError(wasm_path.clone(), err.into()))?;
+            let instance_pre = match config.preload {
+                ActivityPreloadStrategy::None => None,
+                ActivityPreloadStrategy::Preinstance => {
+                    Some(linker.instantiate_pre(&component).map_err(|err| {
+                        ActivityError::InstantiationError(wasm_path.clone(), err.into())
+                    })?)
+                }
+            };
+            Ok(Self {
+                id,
+                engine,
+                functions_to_metadata,
+                linker,
+                component,
+                instance_pre,
+                instances,
+            })
         })
     }
 }
@@ -199,11 +207,15 @@ impl ActivityWorker {
 mod tests {
     use std::{borrow::Cow, sync::Arc, time::Duration};
 
+    use assert_matches::assert_matches;
     use chrono::TimeDelta;
-    use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params};
+    use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params, SupportedFunctionResult};
     use scheduler::{
         executor::{ExecConfig, ExecTask},
-        storage::{inmemory_dao::DbTask, DbConnection},
+        storage::{
+            inmemory_dao::DbTask, journal::PendingState, DbConnection, ExecutionEvent,
+            ExecutionEventInner,
+        },
     };
     use tracing::debug;
     use tracing_unwrap::{OptionExt, ResultExt};
@@ -219,8 +231,34 @@ mod tests {
     #[tokio::test]
     async fn fibo() {
         test_utils::set_up();
+
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+
+        let fibo_worker = ActivityWorker::new_with_config(
+            db_connection.clone(),
+            Cow::Borrowed(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
+            ActivityConfig::default(),
+            activity_engine(EngineConfig::default()),
+            Default::default(),
+        )
+        .unwrap_or_log();
+
+        let exec_config = ExecConfig {
+            ffqns: vec![FIBO_FFQN.to_owned()],
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            max_tick_sleep: Duration::from_millis(500),
+            max_retries: 1,
+            retry_exp_backoff: TimeDelta::zero(),
+        };
+        let exec_task = ExecTask::spawn_new(
+            db_task.as_db_connection().unwrap_or_log(),
+            fibo_worker,
+            exec_config.clone(),
+            Arc::new(tokio::sync::Semaphore::new(1)),
+        );
+
         // Create an execution
         let execution_id = WorkflowId::generate();
         let created_at = now();
@@ -236,33 +274,21 @@ mod tests {
             .await
             .unwrap_or_log();
 
-        let fibo_worker = ActivityWorker::new_with_config(
-            db_connection,
-            Cow::Borrowed(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
-            ActivityConfig::default(),
-            activity_engine(EngineConfig::default()),
-            Default::default(),
-        )
-        .unwrap_or_log();
-
-        let exec_config = ExecConfig {
-            ffqns: vec![FIBO_FFQN.to_owned()],
-            executor_name: Arc::new("exec1".to_string()),
-            batch_size: 1,
-            lock_expiry: Duration::from_secs(1),
-            max_tick_sleep: Duration::from_millis(500),
-            max_retries: 1,
-            retry_exp_backoff: TimeDelta::zero(),
+        let execution_events = loop {
+            let (execution_events, _, pending_state) = db_connection
+                .get(execution_id.clone())
+                .await
+                .unwrap_or_log();
+            if pending_state == PendingState::Finished {
+                break execution_events;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         };
-        let exec_task = ExecTask::spawn_new(
-            db_task.as_db_connection().unwrap_or_log(),
-            fibo_worker,
-            exec_config.clone(),
-            Arc::new(tokio::sync::Semaphore::new(1)),
-        );
-        tokio::time::sleep(Duration::from_secs(1)).await;
 
-        //TODO: assert result == 8
+        let fibo = *assert_matches!(execution_events.last().unwrap_or_log(),
+            ExecutionEvent { event: ExecutionEventInner::Finished { result: Ok(SupportedFunctionResult::Single(Val::U64(result))) }, .. } => result);
+        assert_eq!(8, fibo);
+        drop(db_connection);
 
         exec_task.close().await;
         db_task.close().await;
