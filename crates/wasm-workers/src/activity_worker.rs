@@ -213,10 +213,7 @@ mod tests {
     };
     use scheduler::{
         executor::{ExecConfig, ExecTask},
-        storage::{
-            inmemory_dao::DbTask, journal::PendingState, DbConnection, ExecutionEvent,
-            ExecutionEventInner,
-        },
+        storage::{inmemory_dao::DbTask, DbConnection},
     };
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
@@ -259,7 +256,7 @@ mod tests {
             Arc::new(tokio::sync::Semaphore::new(1)),
         );
 
-        // Create an execution
+        // Create an execution.
         let execution_id = ActivityId::generate();
         let created_at = now();
         db_connection
@@ -273,20 +270,9 @@ mod tests {
             )
             .await
             .unwrap_or_log();
-
-        let execution_events = loop {
-            let (execution_events, _, pending_state) = db_connection
-                .get(execution_id.clone())
-                .await
-                .unwrap_or_log();
-            if pending_state == PendingState::Finished {
-                break execution_events;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        };
-
-        let fibo = *assert_matches!(execution_events.last().unwrap_or_log(),
-            ExecutionEvent { event: ExecutionEventInner::Finished { result: Ok(SupportedFunctionResult::Single(Val::U64(result))) }, .. } => result);
+        // Check the result.
+        let fibo = assert_matches!(db_connection.obtain_finished_result(execution_id).await.unwrap_or_log(),
+            Ok(SupportedFunctionResult::Single(Val::U64(val))) => val);
         assert_eq!(8, fibo);
         drop(db_connection);
 

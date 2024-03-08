@@ -1,6 +1,7 @@
 pub mod inmemory_dao;
 
 use crate::FinishedExecutionResult;
+use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::Params;
@@ -8,6 +9,8 @@ use concepts::SupportedFunctionResult;
 use concepts::{ExecutionId, FunctionFqn};
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::time::Duration;
+use tracing_unwrap::OptionExt;
 
 use self::journal::PendingState;
 
@@ -253,6 +256,23 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
     ) -> Result<AppendResponse, DbError>;
 
     async fn get(&self, execution_id: ID) -> Result<ExecutionHistory<ID>, DbError>;
+
+    async fn obtain_finished_result(
+        &self,
+        execution_id: ID,
+    ) -> Result<FinishedExecutionResult<ID>, DbError> {
+        let mut execution_events = loop {
+            let (execution_events, _, pending_state) = self.get(execution_id.clone()).await?;
+            if pending_state == PendingState::Finished {
+                break execution_events;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        Ok(
+            assert_matches!(execution_events.pop().expect_or_log("must not be empty"),
+            ExecutionEvent { event: ExecutionEventInner::Finished { result, .. } ,..}=> result),
+        )
+    }
 }
 
 pub mod journal {
