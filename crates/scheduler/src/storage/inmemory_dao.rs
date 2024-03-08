@@ -5,7 +5,7 @@
 //! When inserting, the row in the journal must contain a version that must be equal
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::index::JournalsIndex;
-use super::{journal::ExecutionJournal, ExecutionEvent, ExecutionEventInner, ExecutorId};
+use super::{journal::ExecutionJournal, ExecutionEvent, ExecutionEventInner, ExecutorName};
 use crate::storage::journal::PendingState;
 use crate::storage::{
     AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
@@ -85,7 +85,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         expiring_before: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         created_at: DateTime<Utc>,
-        executor_name: ExecutorId,
+        executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse<ID>, DbConnectionError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
@@ -113,7 +113,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         created_at: DateTime<Utc>,
         execution_id: ID,
         version: Version,
-        executor_name: ExecutorId,
+        executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
     ) -> Result<LockResponse<ID>, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
@@ -285,7 +285,7 @@ enum ExecutionSpecificRequest<ID: ExecutionId> {
         created_at: DateTime<Utc>,
         execution_id: ID,
         version: Version,
-        executor_name: ExecutorId,
+        executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<LockResponse<ID>, RowSpecificError>>,
@@ -324,7 +324,7 @@ enum GeneralRequest<ID: ExecutionId> {
         expiring_before: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         created_at: DateTime<Utc>,
-        executor_name: ExecutorId,
+        executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<LockPendingResponse<ID>>,
@@ -478,6 +478,7 @@ impl<ID: ExecutionId> DbTask<ID> {
             || matches!(
                 request,
                 DbRequest::General(GeneralRequest::LockPending { .. })
+                    | DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Get { .. })
             )
         {
             match &request {
@@ -673,7 +674,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         created_at: DateTime<Utc>,
         execution_id: ID,
         version: Version,
-        executor_name: ExecutorId,
+        executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
     ) -> Result<LockResponse<ID>, RowSpecificError> {
         let event = ExecutionEventInner::Locked {
@@ -791,7 +792,7 @@ pub(crate) mod tests {
             expiring_before: DateTime<Utc>,
             ffqns: Vec<FunctionFqn>,
             created_at: DateTime<Utc>,
-            executor_name: ExecutorId,
+            executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
         ) -> Result<LockPendingResponse<ID>, DbConnectionError> {
             let request = DbRequest::General(GeneralRequest::LockPending {
@@ -812,7 +813,7 @@ pub(crate) mod tests {
             created_at: DateTime<Utc>,
             execution_id: ID,
             version: Version,
-            executor_name: ExecutorId,
+            executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
         ) -> Result<LockResponse<ID>, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {

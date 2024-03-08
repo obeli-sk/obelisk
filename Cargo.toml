@@ -106,6 +106,7 @@ tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracing-unwrap = { version = "0.10", features = ["log-location"] }
 ulid = "1.1.0"
+valuable = { version = "0.1.0", features = ["derive"] }
 wasmtime = { version = "17.0", default-features = false, features = [
     # remove "parallel-compilation"
     "component-model",

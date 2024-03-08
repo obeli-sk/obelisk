@@ -1,13 +1,13 @@
 use crate::{
     storage::{
-        DbConnection, DbConnectionError, DbError, ExecutionEvent, ExecutionEventInner, ExecutorId,
-        HistoryEvent, Version,
+        DbConnection, DbConnectionError, DbError, ExecutionEvent, ExecutionEventInner,
+        ExecutorName, HistoryEvent, Version,
     },
     worker::{FatalError, Worker, WorkerError, WorkerResult},
     FinishedExecutionError,
 };
 use chrono::{DateTime, TimeDelta, Utc};
-use concepts::{ExecutionId, FunctionFqn, Params};
+use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params};
 use std::{
     marker::PhantomData,
     sync::{
@@ -35,7 +35,7 @@ pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     worker: W,
     config: ExecConfig,
     task_limiter: Arc<tokio::sync::Semaphore>,
-    executor_id: Arc<String>,
+    executor_name: ExecutorName,
     _phantom_data: PhantomData<fn(ID) -> ID>,
 }
 
@@ -84,8 +84,11 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         config: ExecConfig,
         task_limiter: Arc<tokio::sync::Semaphore>,
     ) -> ExecutorTaskHandle {
-        let executor_id = Arc::new(format!("{worker}"));
-        let span = info_span!("executor", worker = %executor_id);
+        let executor_id = ExecutorId::generate();
+        let span = info_span!("executor",
+            executor = %executor_id,
+            worker = worker.as_value()
+        );
         let is_closing: Arc<AtomicBool> = Default::default();
         let is_closing_inner = is_closing.clone();
         let abort_handle = tokio::spawn(
@@ -96,7 +99,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                     worker,
                     config,
                     task_limiter,
-                    executor_id,
+                    executor_name: Arc::new(executor_id.to_string()),
                     _phantom_data: PhantomData,
                 };
                 let mut old_err = None;
@@ -162,7 +165,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                 request.executed_at, // fetch expiring before now
                 self.config.ffqns.clone(),
                 request.executed_at, // lock created at - now
-                self.executor_id.clone(),
+                self.executor_name.clone(),
                 lock_expires_at,
             )
             .await?
@@ -368,6 +371,14 @@ mod tests {
         worker_results_rev: SimpleWorkerResultMap,
     }
 
+    impl<DB: DbConnection<WorkflowId> + Send> valuable::Valuable for SimpleWorker<DB> {
+        fn as_value(&self) -> valuable::Value<'_> {
+            "SimpleWorker".as_value()
+        }
+
+        fn visit(&self, visit: &mut dyn valuable::Visit) {}
+    }
+
     #[async_trait]
     impl<DB: DbConnection<WorkflowId> + Sync> Worker<WorkflowId> for SimpleWorker<DB> {
         async fn run(
@@ -405,7 +416,7 @@ mod tests {
             },
             config,
             task_limiter: Arc::new(tokio::sync::Semaphore::new(1)),
-            executor_id: Arc::new("SimpleWorker".to_string()),
+            executor_name: Arc::new("SimpleWorker".to_string()),
             _phantom_data: Default::default(),
         };
         let mut execution_progress_vec = executor

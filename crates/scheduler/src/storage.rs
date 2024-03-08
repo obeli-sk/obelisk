@@ -16,7 +16,7 @@ use self::journal::PendingState;
 
 pub type Version = usize;
 
-pub type ExecutorId = Arc<String>;
+pub type ExecutorName = Arc<String>;
 
 #[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
 #[display(fmt = "{event}")]
@@ -43,7 +43,7 @@ pub enum ExecutionEventInner<ID: ExecutionId> {
     // after expiry immediately followed by WaitingForExecutor by a scheduler.
     #[display(fmt = "Locked(`{expires_at}`, `{executor_name}`)")]
     Locked {
-        executor_name: ExecutorId,
+        executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
     },
     // Created by the executor holding last lock.
@@ -215,7 +215,7 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
         fetch_expiring_before: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         lock_created_at: DateTime<Utc>,
-        executor_id: ExecutorId,
+        executor_id: ExecutorName,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse<ID>, DbConnectionError>;
 
@@ -243,7 +243,7 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
         created_at: DateTime<Utc>,
         execution_id: ID,
         version: Version,
-        executor_name: ExecutorId,
+        executor_name: ExecutorName,
         expires_at: DateTime<Utc>,
     ) -> Result<LockResponse<ID>, DbError>;
 
@@ -276,7 +276,7 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
 }
 
 pub mod journal {
-    use super::{ExecutionEvent, ExecutionEventInner, ExecutorId, HistoryEvent};
+    use super::{ExecutionEvent, ExecutionEventInner, ExecutorName, HistoryEvent};
     use crate::storage::{ExecutionHistory, RowSpecificError, Version};
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn, Params};
@@ -538,7 +538,7 @@ pub mod journal {
         PendingNow,
         #[display(fmt = "Locked(`{expires_at}`,`{executor_name}`)")]
         Locked {
-            executor_name: ExecutorId, // FIXME `executor_id`
+            executor_name: ExecutorName,
             expires_at: DateTime<Utc>,
         },
         #[display(fmt = "PendingAt(`{_0}`)")]

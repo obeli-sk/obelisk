@@ -24,6 +24,7 @@ tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
 tracing-unwrap.workspace = true
 tracing.workspace = true
 ulid.workspace = true
+valuable.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true

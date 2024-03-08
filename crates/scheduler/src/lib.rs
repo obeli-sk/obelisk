@@ -36,7 +36,7 @@ pub mod worker {
     }
 
     #[async_trait]
-    pub trait Worker<ID: ExecutionId>: Clone + Display {
+    pub trait Worker<ID: ExecutionId>: Clone + valuable::Valuable {
         async fn run(
             &self,
             execution_id: ID,

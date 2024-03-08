@@ -25,11 +25,13 @@ tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
 tracing-unwrap.workspace = true
 tracing.workspace = true
 ulid.workspace = true
+valuable.workspace = true
 wasmtime-wasi-http.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 
 [dev-dependencies]
+futures-util.workspace = true
 madsim.workspace = true
 scheduler.workspace = true
 test-programs-fibo-activity-builder.workspace = true

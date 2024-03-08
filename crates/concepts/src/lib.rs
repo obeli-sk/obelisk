@@ -313,12 +313,12 @@ pub mod prefixed_ulid {
 
     pub mod prefix {
         pub struct Act;
-        pub struct Wrk;
+        pub struct Exe;
         pub struct Wfw;
     }
 
     pub type ActivityId = PrefixedUlid<prefix::Act>;
-    pub type WorkerId = PrefixedUlid<prefix::Wrk>;
+    pub type ExecutorId = PrefixedUlid<prefix::Exe>;
     pub type WorkflowId = PrefixedUlid<prefix::Wfw>;
 
     impl<'a> Arbitrary<'a> for WorkflowId {
