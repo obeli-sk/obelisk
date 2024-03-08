@@ -354,14 +354,18 @@ mod tests {
         const FIBO_INPUT: u8 = 1;
         const EXECUTORS: u8 = 4;
         const EXECUTIONS: usize = 10;
+        const PERMITS: usize = 1000;
+        const BATCH_SIZE: u32 = 1;
         test_utils::set_up();
         std::panic::set_hook(Box::new(tracing_panic_hook));
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executors = env_or_default("EXECUTORS", EXECUTORS);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
         let recycle_instances = env_or_default("RECYCLE", false).then(Default::default);
+        let permits = env_or_default("PERMITS", PERMITS);
+        let batch_size = env_or_default("BATCH_SIZE", BATCH_SIZE);
 
-        let mut db_task = DbTask::spawn_new(1);
+        let db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
 
         let fibo_worker = ActivityWorker::new_with_config(
@@ -400,13 +404,14 @@ mod tests {
             .await;
 
         // spawn executors
-        let exec_tasks = (0..executors)
+        let task_limiter = Arc::new(tokio::sync::Semaphore::new(permits));
+        let _exec_tasks = (0..executors)
             .map(|_| {
                 let exec_config = ExecConfig {
                     ffqns: vec![FIBO_FFQN.to_owned()],
-                    batch_size: 1,
+                    batch_size,
                     lock_expiry: Duration::from_secs(10),
-                    max_tick_sleep: Duration::from_millis(500),
+                    max_tick_sleep: Duration::from_millis(0),
                     max_retries: 0,
                     retry_exp_backoff: TimeDelta::zero(),
                 };
@@ -414,7 +419,7 @@ mod tests {
                     db_task.as_db_connection().unwrap_or_log(),
                     fibo_worker.clone(),
                     exec_config.clone(),
-                    Arc::new(tokio::sync::Semaphore::new(1)),
+                    task_limiter.clone(),
                 )
             })
             .collect::<Vec<_>>();
@@ -431,12 +436,5 @@ mod tests {
                 Ok(SupportedFunctionResult::Single(Val::U64(_)))
             );
         }
-
-        drop(db_connection);
-        info!("Closing executors");
-        for exec_task in exec_tasks {
-            exec_task.close().await;
-        }
-        db_task.close().await;
     }
 }
