@@ -138,10 +138,10 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         }
     }
 
-    async fn acquire_task_permits(&self) -> Vec<tokio::sync::OwnedSemaphorePermit> {
+    fn acquire_task_permits(&self) -> Vec<tokio::sync::OwnedSemaphorePermit> {
         let mut locks = Vec::new();
         for _ in 0..self.config.batch_size {
-            if let Ok(permit) = self.task_limiter.clone().acquire_owned().await {
+            if let Ok(permit) = self.task_limiter.clone().try_acquire_owned() {
                 locks.push(permit);
             }
         }
@@ -154,14 +154,14 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         request: ExecTickRequest,
     ) -> Result<Vec<ExecutionProgress<ID>>, DbConnectionError> {
         let lock_expires_at = request.executed_at + self.config.lock_expiry;
-        let permits = self.acquire_task_permits().await;
+        let permits = self.acquire_task_permits();
         if permits.is_empty() {
             return Ok(vec![]);
         }
         let locked_executions = self
             .db_connection
             .lock_pending(
-                permits.len(),
+                permits.len(),       // batch size
                 request.executed_at, // fetch expiring before now
                 self.config.ffqns.clone(),
                 request.executed_at, // lock created at - now
