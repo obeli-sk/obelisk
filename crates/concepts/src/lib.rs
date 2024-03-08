@@ -230,20 +230,16 @@ pub trait ExecutionId:
 }
 
 pub mod prefixed_ulid {
+    use arbitrary::Arbitrary;
+
     use crate::ExecutionId;
     use std::{
         fmt::{Debug, Display},
         hash::Hash,
         marker::PhantomData,
-        str::FromStr,
-        sync::Arc,
     };
-    use tracing_unwrap::ResultExt;
 
-    #[derive(
-        derive_more::Display,
-        // arbitrary::Arbitrary,
-    )]
+    #[derive(derive_more::Display)]
     #[display(fmt = "{prefix}_{id}")]
     pub struct PrefixedUlid<T: 'static> {
         prefix: &'static str,
@@ -251,160 +247,86 @@ pub mod prefixed_ulid {
         phantom_data: PhantomData<fn(T) -> T>,
     }
 
-    impl<T> Debug for PrefixedUlid<T> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            Display::fmt(&self, f)
-        }
-    }
-
-    impl<T> Clone for PrefixedUlid<T> {
-        fn clone(&self) -> Self {
-            Self {
-                prefix: self.prefix,
-                id: self.id.clone(),
-                phantom_data: self.phantom_data.clone(),
-            }
-        }
-    }
-
-    impl<T> Hash for PrefixedUlid<T> {
-        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-            self.prefix.hash(state);
-            self.id.hash(state);
-            self.phantom_data.hash(state);
-        }
-    }
-
-    impl<T> ExecutionId for PrefixedUlid<T> {
-        fn generate() -> Self {
+    impl<T> PrefixedUlid<T> {
+        fn new(id: ulid::Ulid) -> Self {
             Self {
                 prefix: std::any::type_name::<T>().rsplit("::").next().unwrap(),
-                id: ulid::Ulid::new(),
+                id,
                 phantom_data: PhantomData,
             }
         }
     }
 
-    impl<T> PartialEq for PrefixedUlid<T> {
-        fn eq(&self, other: &Self) -> bool {
-            self.id == other.id
+    impl<T> ExecutionId for PrefixedUlid<T> {
+        fn generate() -> Self {
+            Self::new(ulid::Ulid::new())
         }
     }
 
-    impl<T> Eq for PrefixedUlid<T> {}
+    mod impls {
+        use super::*;
 
-    impl<T> PartialOrd for PrefixedUlid<T> {
-        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-            self.id.partial_cmp(&other.id)
+        impl<T> Debug for PrefixedUlid<T> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                Display::fmt(&self, f)
+            }
         }
-    }
 
-    impl<T> Ord for PrefixedUlid<T> {
-        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            self.id.cmp(&other.id)
+        impl<T> Clone for PrefixedUlid<T> {
+            fn clone(&self) -> Self {
+                Self {
+                    prefix: self.prefix,
+                    id: self.id.clone(),
+                    phantom_data: self.phantom_data.clone(),
+                }
+            }
+        }
+
+        impl<T> Hash for PrefixedUlid<T> {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                self.prefix.hash(state);
+                self.id.hash(state);
+                self.phantom_data.hash(state);
+            }
+        }
+
+        impl<T> PartialEq for PrefixedUlid<T> {
+            fn eq(&self, other: &Self) -> bool {
+                self.id == other.id
+            }
+        }
+
+        impl<T> Eq for PrefixedUlid<T> {}
+
+        impl<T> PartialOrd for PrefixedUlid<T> {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                self.id.partial_cmp(&other.id)
+            }
+        }
+
+        impl<T> Ord for PrefixedUlid<T> {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                self.id.cmp(&other.id)
+            }
         }
     }
 
     pub mod prefix {
         pub struct Act;
         pub struct Wrk;
-    }
-
-    #[derive(
-        Debug,
-        Clone,
-        derive_more::Display,
-        PartialEq,
-        Eq,
-        Hash,
-        PartialOrd,
-        Ord,
-        arbitrary::Arbitrary,
-    )]
-    pub struct WorkflowId(Arc<String>);
-    impl WorkflowId {
-        #[must_use]
-        pub fn generate() -> WorkflowId {
-            ExecutionId::generate()
-        }
-
-        #[must_use]
-        pub fn new(s: String) -> Self {
-            Self(Arc::new(s))
-        }
-    }
-
-    impl ExecutionId for WorkflowId {
-        #[must_use]
-        fn generate() -> WorkflowId {
-            ulid::Ulid::new().to_string().parse().unwrap_or_log() // ulid is 26 chars long
-        }
-    }
-
-    impl AsRef<WorkflowId> for WorkflowId {
-        fn as_ref(&self) -> &WorkflowId {
-            self
-        }
-    }
-
-    const MIN_LEN: usize = 1;
-    const MAX_LEN: usize = 32;
-
-    impl FromStr for WorkflowId {
-        type Err = ParseError;
-
-        fn from_str(s: &str) -> Result<Self, Self::Err> {
-            if s.len() < MIN_LEN {
-                return Err(ParseError::TooShort);
-            }
-            if s.len() > MAX_LEN {
-                return Err(ParseError::TooLong);
-            }
-            if s.chars()
-                .all(|x| x.is_alphanumeric() || x == '_' || x == '-')
-            {
-                Ok(Self(Arc::new(s.to_string())))
-            } else {
-                Err(ParseError::IllegalCharacters)
-            }
-        }
-    }
-
-    #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-    pub enum ParseError {
-        #[error("workflow id too long, maximal length: {MAX_LEN}")]
-        TooLong,
-        #[error("workflow id too short, minimal length: {MIN_LEN}")]
-        TooShort,
-        #[error("only alphanumeric characters, `_` and `-` are allowed in workflow id")]
-        IllegalCharacters,
+        pub struct Wfw;
     }
 
     pub type ActivityId = PrefixedUlid<prefix::Act>;
     pub type WorkerId = PrefixedUlid<prefix::Wrk>;
+    pub type WorkflowId = PrefixedUlid<prefix::Wfw>;
 
-    #[cfg(test)]
-    mod tests {
-        use crate::prefixed_ulid::MAX_LEN;
-
-        use super::{ParseError, WorkflowId};
-
-        #[test]
-        fn parse_workflow_id() {
-            assert_eq!("w1".parse::<WorkflowId>().unwrap().to_string(), "w1");
-            assert_eq!(
-                "w1-2_ID".parse::<WorkflowId>().unwrap().to_string(),
-                "w1-2_ID"
-            );
-            assert_eq!(
-                "w1\n".parse::<WorkflowId>().unwrap_err(),
-                ParseError::IllegalCharacters
-            );
-            assert_eq!("".parse::<WorkflowId>().unwrap_err(), ParseError::TooShort);
-            assert_eq!(
-                "x".repeat(MAX_LEN + 1).parse::<WorkflowId>().unwrap_err(),
-                ParseError::TooLong
-            );
+    impl<'a> Arbitrary<'a> for WorkflowId {
+        fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+            Ok(Self::new(ulid::Ulid::from_parts(
+                u.arbitrary()?,
+                u.arbitrary()?,
+            )))
         }
     }
 }
