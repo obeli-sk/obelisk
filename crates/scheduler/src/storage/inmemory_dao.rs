@@ -734,7 +734,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::{storage::HistoryEvent, FinishedExecutionResult};
     use assert_matches::assert_matches;
-    use concepts::{workflow_id::WorkflowId, FunctionFqnStr};
+    use concepts::{prefixed_ulid::WorkflowId, FunctionFqnStr};
     use std::time::Duration;
     use tokio::time::sleep;
     use tracing::info;

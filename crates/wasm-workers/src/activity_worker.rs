@@ -1,9 +1,8 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::workflow_id::WorkflowId;
-use concepts::{FunctionFqn, FunctionMetadata};
+use concepts::prefixed_ulid::{ActivityId, WorkerId};
+use concepts::{ExecutionId, FunctionFqn, FunctionMetadata};
 use concepts::{Params, SupportedFunctionResult};
-use scheduler::executor::WorkerId;
 use scheduler::{
     storage::{DbConnection, HistoryEvent, Version},
     worker::{Worker, WorkerError},
@@ -33,9 +32,9 @@ pub struct ActivityConfig {
 }
 
 #[derive(Clone, derive_more::Display)]
-#[display(fmt = "{id}")]
+#[display(fmt = "{worker_id}")]
 struct ActivityWorker {
-    id: WorkerId,
+    worker_id: WorkerId,
     engine: Arc<Engine>,
     functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
     linker: wasmtime::component::Linker<utils::wasi_http::Ctx>,
@@ -58,15 +57,15 @@ pub enum ActivityError {
 
 impl ActivityWorker {
     #[tracing::instrument(skip_all, fields(wasm_path))]
-    pub fn new_with_config<DB: DbConnection<WorkflowId>>(
+    pub fn new_with_config<DB: DbConnection<ActivityId>>(
         _db_connection: DB,
         wasm_path: Cow<'static, str>,
         config: ActivityConfig,
         engine: Arc<Engine>,
         instances: Arc<std::sync::Mutex<Vec<wasmtime::component::Instance>>>,
     ) -> Result<Self, ActivityError> {
-        let id = WorkerId::new("act");
-        info_span!("ActivityWorker", worker = %id).in_scope(|| {
+        let worker_id = WorkerId::generate();
+        info_span!("ActivityWorker", worker = %worker_id).in_scope(|| {
             info!(%wasm_path, "Reading");
             let wasm = std::fs::read(wasm_path.as_ref())
                 .map_err(|err| ActivityError::CannotOpen(wasm_path.clone(), err))?;
@@ -101,7 +100,7 @@ impl ActivityWorker {
                 }
             };
             Ok(Self {
-                id,
+                worker_id,
                 engine,
                 functions_to_metadata,
                 linker,
@@ -114,13 +113,13 @@ impl ActivityWorker {
 }
 
 #[async_trait]
-impl Worker<WorkflowId> for ActivityWorker {
+impl Worker<ActivityId> for ActivityWorker {
     async fn run(
         &self,
-        _execution_id: WorkflowId,
+        _execution_id: ActivityId,
         ffqn: FunctionFqn,
         params: Params,
-        events: Vec<HistoryEvent<WorkflowId>>,
+        events: Vec<HistoryEvent<ActivityId>>,
         version: Version,
         _lock_expires_at: DateTime<Utc>, // TODO
     ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
@@ -209,7 +208,9 @@ mod tests {
 
     use assert_matches::assert_matches;
     use chrono::TimeDelta;
-    use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params, SupportedFunctionResult};
+    use concepts::{
+        prefixed_ulid::ActivityId, ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult,
+    };
     use scheduler::{
         executor::{ExecConfig, ExecTask},
         storage::{
@@ -217,7 +218,6 @@ mod tests {
             ExecutionEventInner,
         },
     };
-    use tracing::debug;
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
     use wasmtime::component::Val;
@@ -260,7 +260,7 @@ mod tests {
         );
 
         // Create an execution
-        let execution_id = WorkflowId::generate();
+        let execution_id = ActivityId::generate();
         let created_at = now();
         db_connection
             .create(

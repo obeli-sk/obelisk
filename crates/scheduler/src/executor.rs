@@ -334,22 +334,6 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
     }
 }
 
-#[derive(derive_more::Display, Clone, Debug)]
-#[display(fmt = "{prefix}_{id}")]
-pub struct WorkerId {
-    prefix: &'static str,
-    id: ulid::Ulid,
-}
-
-impl WorkerId {
-    pub fn new(prefix: &'static str) -> Self {
-        Self {
-            prefix,
-            id: ulid::Ulid::new(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,7 +347,7 @@ mod tests {
     use anyhow::anyhow;
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::{workflow_id::WorkflowId, FunctionFqnStr, Params, SupportedFunctionResult};
+    use concepts::{prefixed_ulid::WorkflowId, FunctionFqnStr, Params, SupportedFunctionResult};
     use indexmap::IndexMap;
     use std::{borrow::Cow, future::Future, sync::Arc};
     use tracing_unwrap::{OptionExt, ResultExt};

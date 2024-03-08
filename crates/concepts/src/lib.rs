@@ -222,20 +222,93 @@ impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
     }
 }
 
-// FIXME: rename to UniqueId
 pub trait ExecutionId:
-    Clone + Hash + Display + Debug + Eq + PartialEq + Send + Sync + std::cmp::Ord + 'static
+    Clone + Hash + Display + Debug + Eq + PartialEq + Send + Sync + Ord + 'static
 {
     #[must_use]
     fn generate() -> Self;
 }
 
-pub mod workflow_id {
-    use std::{str::FromStr, sync::Arc};
-
+pub mod prefixed_ulid {
+    use crate::ExecutionId;
+    use std::{
+        fmt::{Debug, Display},
+        hash::Hash,
+        marker::PhantomData,
+        str::FromStr,
+        sync::Arc,
+    };
     use tracing_unwrap::ResultExt;
 
-    use crate::ExecutionId;
+    #[derive(
+        derive_more::Display,
+        // arbitrary::Arbitrary,
+    )]
+    #[display(fmt = "{prefix}_{id}")]
+    pub struct PrefixedUlid<T: 'static> {
+        prefix: &'static str,
+        id: ulid::Ulid,
+        phantom_data: PhantomData<fn(T) -> T>,
+    }
+
+    impl<T> Debug for PrefixedUlid<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            Display::fmt(&self, f)
+        }
+    }
+
+    impl<T> Clone for PrefixedUlid<T> {
+        fn clone(&self) -> Self {
+            Self {
+                prefix: self.prefix,
+                id: self.id.clone(),
+                phantom_data: self.phantom_data.clone(),
+            }
+        }
+    }
+
+    impl<T> Hash for PrefixedUlid<T> {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.prefix.hash(state);
+            self.id.hash(state);
+            self.phantom_data.hash(state);
+        }
+    }
+
+    impl<T> ExecutionId for PrefixedUlid<T> {
+        fn generate() -> Self {
+            Self {
+                prefix: std::any::type_name::<T>().rsplit("::").next().unwrap(),
+                id: ulid::Ulid::new(),
+                phantom_data: PhantomData,
+            }
+        }
+    }
+
+    impl<T> PartialEq for PrefixedUlid<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.id == other.id
+        }
+    }
+
+    impl<T> Eq for PrefixedUlid<T> {}
+
+    impl<T> PartialOrd for PrefixedUlid<T> {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            self.id.partial_cmp(&other.id)
+        }
+    }
+
+    impl<T> Ord for PrefixedUlid<T> {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.id.cmp(&other.id)
+        }
+    }
+
+    pub mod prefix {
+        pub struct Act;
+        pub struct Wrk;
+    }
 
     #[derive(
         Debug,
@@ -307,9 +380,12 @@ pub mod workflow_id {
         IllegalCharacters,
     }
 
+    pub type ActivityId = PrefixedUlid<prefix::Act>;
+    pub type WorkerId = PrefixedUlid<prefix::Wrk>;
+
     #[cfg(test)]
     mod tests {
-        use crate::workflow_id::MAX_LEN;
+        use crate::prefixed_ulid::MAX_LEN;
 
         use super::{ParseError, WorkflowId};
 
