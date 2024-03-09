@@ -24,6 +24,7 @@ use utils::time::{now, now_tokio_instant};
 pub struct ExecConfig {
     pub ffqns: Vec<FunctionFqn>,
     pub lock_expiry: Duration,
+    pub lock_expiry_leeway: Duration,
     pub max_tick_sleep: Duration,
     pub batch_size: u32,
     pub retry_exp_backoff: Duration,
@@ -41,6 +42,7 @@ impl ExecConfig {
         Ok(ValidExecConfig {
             ffqns: self.ffqns,
             lock_expiry: self.lock_expiry,
+            lock_expiry_leeway: self.lock_expiry_leeway,
             max_tick_sleep: self.max_tick_sleep,
             batch_size: self.batch_size,
             retry_exp_backoff: TimeDelta::from_std(self.retry_exp_backoff)?,
@@ -53,6 +55,7 @@ impl ExecConfig {
 pub struct ValidExecConfig {
     pub ffqns: Vec<FunctionFqn>,
     pub lock_expiry: Duration,
+    pub lock_expiry_leeway: Duration,
     pub max_tick_sleep: Duration,
     pub batch_size: u32,
     pub retry_exp_backoff: TimeDelta,
@@ -182,12 +185,12 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         &mut self,
         request: ExecTickRequest,
     ) -> Result<Vec<ExecutionProgress<ID>>, DbConnectionError> {
-        let lock_expires_at = request.executed_at + self.config.lock_expiry;
         let locked_executions = {
             let mut permits = self.acquire_task_permits();
             if permits.is_empty() {
                 return Ok(vec![]);
             }
+            let lock_expires_at = request.executed_at + self.config.lock_expiry;
             let locked_executions = self
                 .db_connection
                 .lock_pending(
@@ -206,17 +209,19 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             assert_eq!(permits.len(), locked_executions.len());
             locked_executions.into_iter().zip(permits)
         };
+        let execution_deadline =
+            request.executed_at + self.config.lock_expiry - self.config.lock_expiry_leeway;
 
         let mut executions = Vec::new();
         for ((execution_id, version, ffqn, params, event_history, _), permit) in locked_executions {
-            // TODO: timeouts, clean shutdown
-            let abort_handle = {
+            let join_handle = {
                 let execution_id = execution_id.clone();
                 let worker = self.worker.clone();
                 let db_connection = self.db_connection.clone();
                 let max_retries = self.config.max_retries;
                 let retry_exp_backoff = self.config.retry_exp_backoff;
                 let span = info_span!("worker", %execution_id, %ffqn,);
+                // TODO: wait for termination of all spawned tasks in `close`.
                 tokio::spawn(
                     async move {
                         let res = Self::run_worker(
@@ -227,7 +232,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                             ffqn,
                             params,
                             event_history,
-                            lock_expires_at,
+                            execution_deadline,
                             max_retries,
                             retry_exp_backoff,
                         )
@@ -239,11 +244,10 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                     }
                     .instrument(span),
                 )
-                .abort_handle()
             };
             executions.push(ExecutionProgress {
                 execution_id,
-                abort_handle,
+                abort_handle: join_handle.abort_handle(),
             });
         }
         Ok(executions)
@@ -258,7 +262,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         ffqn: FunctionFqn,
         params: Params,
         event_history: Vec<HistoryEvent<ID>>,
-        lock_expires_at: DateTime<Utc>,
+        execution_deadline: DateTime<Utc>,
         max_retries: u32,
         retry_exp_backoff: TimeDelta,
     ) -> Result<Version, DbError> {
@@ -274,7 +278,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                 params,
                 event_history,
                 version,
-                lock_expires_at,
+                execution_deadline,
             )
             .await;
         if enabled!(Level::TRACE) {
@@ -423,7 +427,7 @@ mod tests {
             _params: Params,
             events: Vec<HistoryEvent<WorkflowId>>,
             version: Version,
-            _lock_expires_at: DateTime<Utc>,
+            _execution_deadline: DateTime<Utc>,
         ) -> WorkerResult {
             assert_eq!(SOME_FFQN, ffqn);
             let (expected_version, (expected_eh, worker_result)) = self
@@ -474,7 +478,8 @@ mod tests {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            max_tick_sleep: Duration::from_millis(500),
+            lock_expiry_leeway: Duration::from_millis(100),
+            max_tick_sleep: Duration::from_millis(100),
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
         }
@@ -509,7 +514,8 @@ mod tests {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            max_tick_sleep: Duration::from_millis(500),
+            lock_expiry_leeway: Duration::from_millis(100),
+            max_tick_sleep: Duration::from_millis(100),
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
         }
@@ -544,7 +550,8 @@ mod tests {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            max_tick_sleep: Duration::from_millis(500),
+            lock_expiry_leeway: Duration::from_millis(100),
+            max_tick_sleep: Duration::from_millis(100),
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
         }
@@ -651,7 +658,8 @@ mod tests {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            max_tick_sleep: Duration::from_millis(500),
+            lock_expiry_leeway: Duration::from_millis(100),
+            max_tick_sleep: Duration::from_millis(100),
             max_retries: 1,
             retry_exp_backoff: Duration::ZERO,
         }

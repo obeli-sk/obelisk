@@ -117,7 +117,7 @@ impl Worker<ActivityId> for ActivityWorker {
         params: Params,
         events: Vec<HistoryEvent<ActivityId>>,
         version: Version,
-        _lock_expires_at: DateTime<Utc>, // TODO
+        _execution_deadline: DateTime<Utc>, // TODO
     ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
         assert!(events.is_empty());
         self.run(ffqn, params)
@@ -286,7 +286,8 @@ mod tests {
             ffqns: vec![FIBO_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            max_tick_sleep: Duration::from_millis(500),
+            lock_expiry_leeway: Duration::from_millis(100),
+            max_tick_sleep: Duration::from_millis(100),
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
         }
@@ -397,8 +398,9 @@ mod tests {
                 let exec_config = ExecConfig {
                     ffqns: vec![FIBO_FFQN.to_owned()],
                     batch_size,
-                    lock_expiry: Duration::from_millis(100),
-                    max_tick_sleep: Duration::from_millis(0),
+                    lock_expiry: Duration::from_secs(1),
+                    lock_expiry_leeway: Duration::from_millis(100),
+                    max_tick_sleep: Duration::from_millis(10),
                     max_retries: 0,
                     retry_exp_backoff: Duration::ZERO,
                 }

@@ -44,7 +44,7 @@ pub mod worker {
             params: Params,
             event_history: Vec<HistoryEvent<ID>>,
             version: Version,
-            lock_expires_at: DateTime<Utc>,
+            execution_deadline: DateTime<Utc>,
         ) -> WorkerResult;
     }
 }
