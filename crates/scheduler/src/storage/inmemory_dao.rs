@@ -5,11 +5,11 @@
 //! When inserting, the row in the journal must contain a version that must be equal
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::index::JournalsIndex;
-use super::{journal::ExecutionJournal, ExecutionEvent, ExecutionEventInner, ExecutorName};
+use super::{journal::ExecutionJournal, ExecutionEventInner, ExecutorName};
 use crate::storage::journal::PendingState;
 use crate::storage::{
     AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
-    LockPendingResponse, LockResponse, PendingExecution, RowSpecificError, Version,
+    LockPendingResponse, LockResponse, RowSpecificError, Version,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -53,29 +53,6 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         };
         self.append(created_at, execution_id, Version::default(), event)
             .await
-    }
-
-    #[instrument(skip_all)]
-    async fn fetch_pending(
-        &self,
-        batch_size: usize,
-        expiring_before: DateTime<Utc>,
-        ffqns: Vec<FunctionFqn>,
-    ) -> Result<Vec<PendingExecution<ID>>, DbConnectionError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::General(GeneralRequest::FetchPending {
-            batch_size,
-            expiring_before,
-            ffqns,
-            resp_sender,
-        });
-        self.client_to_store_req_sender
-            .send(request)
-            .await
-            .map_err(|_| DbConnectionError::SendError)?;
-        resp_receiver
-            .await
-            .map_err(|_| DbConnectionError::RecvError)
     }
 
     #[instrument(skip_all)]
@@ -310,14 +287,6 @@ enum ExecutionSpecificRequest<ID: ExecutionId> {
 #[derive(derive_more::Display, Derivative)]
 #[derivative(Debug)]
 enum GeneralRequest<ID: ExecutionId> {
-    #[display(fmt = "FetchPending({ffqns:?})")]
-    FetchPending {
-        batch_size: usize,
-        expiring_before: DateTime<Utc>,
-        ffqns: Vec<FunctionFqn>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Vec<PendingExecution<ID>>>,
-    },
     #[display(fmt = "LockPending(`{executor_name}`, {ffqns:?})")]
     LockPending {
         batch_size: usize,
@@ -388,11 +357,6 @@ impl<ID: ExecutionId> ExecutionSpecificRequest<ID> {
 #[derive(Derivative)]
 #[derivative(Debug)]
 pub(crate) enum DbTickResponse<ID: ExecutionId> {
-    FetchPending {
-        payload: Vec<PendingExecution<ID>>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Vec<PendingExecution<ID>>>,
-    },
     LockPending {
         payload: LockPendingResponse<ID>,
         #[derivative(Debug = "ignore")]
@@ -417,10 +381,6 @@ pub(crate) enum DbTickResponse<ID: ExecutionId> {
 impl<ID: ExecutionId> DbTickResponse<ID> {
     fn send_response(self) -> Result<(), ()> {
         match self {
-            Self::FetchPending {
-                resp_sender,
-                payload,
-            } => resp_sender.send(payload).map_err(|_| ()),
             Self::LockPending {
                 resp_sender,
                 payload,
@@ -507,12 +467,6 @@ impl<ID: ExecutionId> DbTask<ID> {
 
     fn handle_general(&mut self, request: GeneralRequest<ID>) -> DbTickResponse<ID> {
         match request {
-            GeneralRequest::FetchPending {
-                batch_size,
-                expiring_before,
-                ffqns,
-                resp_sender,
-            } => self.fetch_pending(batch_size, expiring_before, ffqns, resp_sender),
             GeneralRequest::LockPending {
                 batch_size,
                 expiring_before,
@@ -530,33 +484,6 @@ impl<ID: ExecutionId> DbTask<ID> {
                 expires_at,
                 resp_sender,
             ),
-        }
-    }
-
-    fn fetch_pending(
-        &self,
-        batch_size: usize,
-        expiring_before: DateTime<Utc>,
-        ffqns: Vec<FunctionFqn>,
-        resp_sender: oneshot::Sender<Vec<PendingExecution<ID>>>,
-    ) -> DbTickResponse<ID> {
-        let pending = self
-            .index
-            .fetch_pending(&self.journals, batch_size, expiring_before, ffqns);
-        let pending = pending
-            .into_iter()
-            .map(|(journal, scheduled_at)| {
-                (
-                    journal.id().clone(),
-                    journal.version(),
-                    journal.params(),
-                    scheduled_at,
-                )
-            })
-            .collect::<Vec<_>>();
-        DbTickResponse::FetchPending {
-            resp_sender,
-            payload: pending,
         }
     }
 
@@ -769,22 +696,6 @@ pub(crate) mod tests {
                 .await
         }
 
-        async fn fetch_pending(
-            &self,
-            batch_size: usize,
-            expiring_before: DateTime<Utc>,
-            ffqns: Vec<FunctionFqn>,
-        ) -> Result<Vec<PendingExecution<ID>>, DbConnectionError> {
-            let request = DbRequest::General(GeneralRequest::FetchPending {
-                batch_size,
-                expiring_before,
-                ffqns,
-                resp_sender: oneshot::channel().0,
-            });
-            let response = self.db_task.lock().unwrap_or_log().tick(request);
-            Ok(assert_matches!(response, DbTickResponse::FetchPending {  payload, .. } => payload))
-        }
-
         #[instrument(skip_all)]
         async fn lock_pending(
             &self,
@@ -866,6 +777,13 @@ pub(crate) mod tests {
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
 
     #[tokio::test]
+    async fn close() {
+        set_up();
+        let mut task = DbTask::<WorkflowId>::spawn_new(1);
+        task.close().await;
+    }
+
+    #[tokio::test]
     async fn stochastic_lifecycle_tick_based() {
         set_up();
         let db_task = DbTask::new();
@@ -888,27 +806,24 @@ pub(crate) mod tests {
         db_task.close().await;
     }
 
-    #[tokio::test]
-    async fn close() {
-        set_up();
-        let mut task = DbTask::<WorkflowId>::spawn_new(1);
-        task.close().await;
-    }
-
     async fn lifecycle(db_connection: impl DbConnection<WorkflowId>) {
         let execution_id = WorkflowId::generate();
+        let exec1 = Arc::new("exec1".to_string());
+        let exec2 = Arc::new("exec2".to_string());
+        let lock_expiry = Duration::from_millis(500);
         assert!(db_connection
-            .fetch_pending(
+            .lock_pending(
                 1,
-                now() + Duration::from_secs(1),
+                now(),
                 vec![SOME_FFQN.to_owned()],
+                now(),
+                exec1.clone(),
+                now() + lock_expiry,
             )
             .await
             .unwrap_or_log()
             .is_empty());
-        let exec1 = Arc::new("exec1".to_string());
-        let exec2 = Arc::new("exec2".to_string());
-        let lock_expiry = Duration::from_millis(500);
+
         let mut version;
         // Create
         {
@@ -924,25 +839,37 @@ pub(crate) mod tests {
                 .await
                 .unwrap_or_log();
         }
-        // FetchPending
+        // LockPending
         sleep(Duration::from_secs(1)).await;
         {
-            info!("FetchPending: {}", now());
-            let pending = db_connection
-                .fetch_pending(
+            info!("LockPending: {}", now());
+            let mut locked_pending = db_connection
+                .lock_pending(
                     1,
-                    now() + Duration::from_secs(1),
+                    now(),
                     vec![SOME_FFQN.to_owned()],
+                    now(),
+                    exec1.clone(),
+                    now() + lock_expiry,
                 )
                 .await
                 .unwrap_or_log();
-            assert_eq!(1, pending.len());
+            assert_eq!(1, locked_pending.len());
+            let row = locked_pending.pop().unwrap();
             assert_eq!(
-                (execution_id.clone(), 1_usize, Params::default(), None),
-                pending[0]
+                (
+                    execution_id.clone(),
+                    2_usize,
+                    SOME_FFQN.to_owned(),
+                    Params::default(),
+                    vec![],
+                    None
+                ),
+                row
             );
+            version = row.1;
         }
-        // Lock
+        // Lock again
         sleep(Duration::from_secs(1)).await;
         {
             info!("Lock: {}", now());
@@ -957,15 +884,6 @@ pub(crate) mod tests {
                 .await
                 .unwrap_or_log();
             assert!(event_history.is_empty());
-            // check that the lock is expired after lock_expiry
-            assert_eq!(
-                1,
-                db_connection
-                    .fetch_pending(1, now() + lock_expiry, vec![SOME_FFQN.to_owned()],)
-                    .await
-                    .unwrap_or_log()
-                    .len()
-            );
             version = current_version;
         }
         // lock expired, another executor issues Lock
@@ -997,14 +915,6 @@ pub(crate) mod tests {
                 .append(now(), execution_id.clone(), version, event)
                 .await
                 .unwrap_or_log();
-            assert_eq!(
-                1,
-                db_connection
-                    .fetch_pending(1, now() + lock_expiry, vec![SOME_FFQN.to_owned()],)
-                    .await
-                    .unwrap_or_log()
-                    .len()
-            );
         }
         // Attempt to lock while in a timeout with exec2
         sleep(Duration::from_millis(300)).await;

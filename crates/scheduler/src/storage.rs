@@ -215,16 +215,9 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
         fetch_expiring_before: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         lock_created_at: DateTime<Utc>,
-        executor_id: ExecutorName,
+        executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse<ID>, DbConnectionError>;
-
-    async fn fetch_pending(
-        &self,
-        batch_size: usize,
-        expiring_before: DateTime<Utc>,
-        ffqns: Vec<FunctionFqn>,
-    ) -> Result<Vec<PendingExecution<ID>>, DbConnectionError>;
 
     /// Specialized `append` which does not require a version.
     async fn create(
