@@ -25,8 +25,8 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::AbortHandle,
 };
+use tracing::info_span;
 use tracing::{debug, info, instrument, trace, warn, Instrument, Level};
-use tracing::{error, info_span};
 use tracing_unwrap::{OptionExt, ResultExt};
 
 #[derive(Clone)]
@@ -339,10 +339,6 @@ pub struct DbTaskHandle<ID: ExecutionId> {
 }
 
 impl<ID: ExecutionId> DbTaskHandle<ID> {
-    fn sender(&self) -> Option<mpsc::Sender<DbRequest<ID>>> {
-        self.client_to_store_req_sender.clone()
-    }
-
     pub fn as_db_connection(&self) -> Option<impl DbConnection<ID>> {
         self.client_to_store_req_sender
             .as_ref()
@@ -886,7 +882,7 @@ pub(crate) mod tests {
     async fn stochastic_lifecycle_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
-        let client_to_store_req_sender = db_task.sender().unwrap_or_log();
+        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap_or_log();
         let db_connection = InMemoryDbConnection {
             client_to_store_req_sender,
         };
@@ -1096,7 +1092,7 @@ pub(crate) mod tests {
     async fn stochastic_lock_expired_means_permanent_timeout_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
-        let client_to_store_req_sender = db_task.sender().unwrap_or_log();
+        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap_or_log();
         let db_connection = InMemoryDbConnection {
             client_to_store_req_sender,
         };

@@ -155,7 +155,7 @@ impl<ID: ExecutionId> HistoryEvent<ID> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, arbitrary::Arbitrary)]
-pub(crate) enum AsyncResponse<ID: ExecutionId> {
+pub enum AsyncResponse<ID: ExecutionId> {
     // Created by a scheduler sometime after DelayedUntilAsyncRequest.
     DelayFinishedAsyncResponse {
         delay_id: ID,
