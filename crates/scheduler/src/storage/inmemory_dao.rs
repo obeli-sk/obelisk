@@ -207,18 +207,6 @@ mod index {
                         })
                     }),
             );
-            // filter by currently pending
-            pending.retain(|(journal, _)| match &journal.pending_state {
-                PendingState::PendingNow => true,
-                PendingState::PendingAt(pending_at) => *pending_at <= expiring_at_or_before,
-                state @ PendingState::BlockedByJoinSet
-                | state @ PendingState::Finished
-                | state @ PendingState::Locked { .. } => {
-                    // Update was not called after modifying the journal.
-                    error!("Expected pending, got {state}. Journal: {journal:?}");
-                    panic!("pending index must only contain pending executions")
-                }
-            });
             // filter by ffqn
             pending.retain(|(journal, _)| ffqns.contains(journal.ffqn()));
             pending.truncate(batch_size);
