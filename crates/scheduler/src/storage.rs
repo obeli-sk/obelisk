@@ -206,6 +206,7 @@ pub type LockPendingResponse<ID> = Vec<(
     Vec<HistoryEvent<ID>>,
     Option<DateTime<Utc>>,
 )>;
+pub type CleanupExpiredLocks = usize; // number of expired locks
 
 #[async_trait]
 pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
@@ -266,6 +267,11 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
             ExecutionEvent { event: ExecutionEventInner::Finished { result, .. } ,..}=> result),
         )
     }
+
+    async fn cleanup_expired_locks(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<CleanupExpiredLocks, DbConnectionError>;
 }
 
 pub mod journal {
@@ -335,7 +341,7 @@ pub mod journal {
             self.events.len()
         }
 
-        pub(crate) fn id(&self) -> &ID {
+        pub(crate) fn execution_id(&self) -> &ID {
             &self.execution_id
         }
 

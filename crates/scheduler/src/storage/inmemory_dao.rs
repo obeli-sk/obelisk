@@ -5,6 +5,7 @@
 //! When inserting, the row in the journal must contain a version that must be equal
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::index::JournalsIndex;
+use super::CleanupExpiredLocks;
 use super::{journal::ExecutionJournal, ExecutionEventInner, ExecutorName};
 use crate::storage::journal::PendingState;
 use crate::storage::{
@@ -84,6 +85,22 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
             .map_err(|_| DbConnectionError::RecvError)
     }
 
+    #[instrument(skip_all)]
+    async fn cleanup_expired_locks(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<CleanupExpiredLocks, DbConnectionError> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        let request = DbRequest::General(GeneralRequest::CleanupExpiredLocks { now, resp_sender });
+        self.client_to_store_req_sender
+            .send(request)
+            .await
+            .map_err(|_| DbConnectionError::SendError)?;
+        resp_receiver
+            .await
+            .map_err(|_| DbConnectionError::RecvError)
+    }
+
     #[instrument(skip_all, %execution_id)]
     async fn lock(
         &self,
@@ -138,6 +155,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
             .map_err(|err| DbError::RowSpecific(err))
     }
 
+    #[instrument(skip_all, %execution_id)]
     async fn get(&self, execution_id: ID) -> Result<ExecutionHistory<ID>, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Get {
@@ -163,6 +181,8 @@ mod index {
         pending: BTreeSet<ID>,
         pending_scheduled: BTreeMap<DateTime<Utc>, BTreeSet<ID>>,
         pending_scheduled_rev: HashMap<ID, DateTime<Utc>>,
+        locked: BTreeMap<DateTime<Utc>, BTreeSet<ID>>,
+        locked_rev: HashMap<ID, DateTime<Utc>>,
     }
 
     impl<ID: ExecutionId> JournalsIndex<ID> {
@@ -190,21 +210,27 @@ mod index {
             // filter by currently pending
             pending.retain(|(journal, _)| match &journal.pending_state {
                 PendingState::PendingNow => true,
-                PendingState::PendingAt(pending_at)
-                | PendingState::Locked {
-                    expires_at: pending_at,
-                    ..
-                } => *pending_at <= expiring_at_or_before,
-                state @ PendingState::BlockedByJoinSet | state @ PendingState::Finished => {
+                PendingState::PendingAt(pending_at) => *pending_at <= expiring_at_or_before,
+                state @ PendingState::BlockedByJoinSet
+                | state @ PendingState::Finished
+                | state @ PendingState::Locked { .. } => {
                     // Update was not called after modifying the journal.
                     error!("Expected pending, got {state}. Journal: {journal:?}");
-                    panic!("index must only contain pending executions")
+                    panic!("pending index must only contain pending executions")
                 }
             });
             // filter by ffqn
             pending.retain(|(journal, _)| ffqns.contains(journal.ffqn()));
             pending.truncate(batch_size);
             pending
+        }
+
+        pub(super) fn fetch_expired(&self, now: DateTime<Utc>) -> Vec<ID> {
+            self.locked
+                .range(..=now)
+                .flat_map(|(_scheduled_at, ids)| ids)
+                .cloned()
+                .collect()
         }
 
         pub(super) fn update(
@@ -218,18 +244,29 @@ mod index {
                 let ids = self.pending_scheduled.get_mut(&schedule).unwrap_or_log();
                 ids.remove(&execution_id);
             }
+            if let Some(schedule) = self.locked_rev.remove(&execution_id) {
+                let ids = self.locked.get_mut(&schedule).unwrap();
+                ids.remove(&execution_id);
+            }
             let journal = journals.get(&execution_id).unwrap_or_log();
             // Add it again if needed
             match journal.pending_state {
                 PendingState::PendingNow => {
                     self.pending.insert(execution_id);
                 }
-                PendingState::PendingAt(expires_at) | PendingState::Locked { expires_at, .. } => {
+                PendingState::PendingAt(expires_at) => {
                     self.pending_scheduled
                         .entry(expires_at)
                         .or_default()
                         .insert(execution_id.clone());
                     self.pending_scheduled_rev.insert(execution_id, expires_at);
+                }
+                PendingState::Locked { expires_at, .. } => {
+                    self.locked
+                        .entry(expires_at)
+                        .or_default()
+                        .insert(execution_id.clone());
+                    self.locked_rev.insert(execution_id, expires_at);
                 }
                 PendingState::BlockedByJoinSet | PendingState::Finished => {}
             }
@@ -242,6 +279,8 @@ mod index {
                 pending: Default::default(),
                 pending_scheduled: Default::default(),
                 pending_scheduled_rev: Default::default(),
+                locked: Default::default(),
+                locked_rev: Default::default(),
             }
         }
     }
@@ -298,6 +337,12 @@ enum GeneralRequest<ID: ExecutionId> {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<LockPendingResponse<ID>>,
     },
+    #[display(fmt = "CleanupExpiredLocks(`{now}`)")]
+    CleanupExpiredLocks {
+        now: DateTime<Utc>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<CleanupExpiredLocks>,
+    },
 }
 
 pub struct DbTaskHandle<ID: ExecutionId> {
@@ -306,7 +351,7 @@ pub struct DbTaskHandle<ID: ExecutionId> {
 }
 
 impl<ID: ExecutionId> DbTaskHandle<ID> {
-    pub fn sender(&self) -> Option<mpsc::Sender<DbRequest<ID>>> {
+    fn sender(&self) -> Option<mpsc::Sender<DbRequest<ID>>> {
         self.client_to_store_req_sender.clone()
     }
 
@@ -376,6 +421,10 @@ pub(crate) enum DbTickResponse<ID: ExecutionId> {
         payload: Result<ExecutionHistory<ID>, RowSpecificError>,
         resp_sender: oneshot::Sender<Result<ExecutionHistory<ID>, RowSpecificError>>,
     },
+    CleanupExpiredLocks {
+        payload: CleanupExpiredLocks,
+        resp_sender: oneshot::Sender<CleanupExpiredLocks>,
+    },
 }
 
 impl<ID: ExecutionId> DbTickResponse<ID> {
@@ -394,6 +443,10 @@ impl<ID: ExecutionId> DbTickResponse<ID> {
                 payload,
             } => resp_sender.send(payload).map_err(|_| ()),
             Self::Get {
+                payload,
+                resp_sender,
+            } => resp_sender.send(payload).map_err(|_| ()),
+            Self::CleanupExpiredLocks {
                 payload,
                 resp_sender,
             } => resp_sender.send(payload).map_err(|_| ()),
@@ -484,6 +537,9 @@ impl<ID: ExecutionId> DbTask<ID> {
                 expires_at,
                 resp_sender,
             ),
+            GeneralRequest::CleanupExpiredLocks { now, resp_sender } => {
+                self.cleanup_expired_locks(now, resp_sender)
+            }
         }
     }
 
@@ -503,7 +559,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         let mut payload = Vec::with_capacity(pending.len());
         for (journal, scheduled_at) in pending {
             let item = (
-                journal.id().clone(),
+                journal.execution_id().clone(),
                 journal.version(), // updated later
                 journal.ffqn().clone(),
                 journal.params(),
@@ -655,12 +711,41 @@ impl<ID: ExecutionId> DbTask<ID> {
         };
         Ok(journal.as_execution_history())
     }
+
+    fn cleanup_expired_locks(
+        &mut self,
+        now: DateTime<Utc>,
+        resp_sender: oneshot::Sender<CleanupExpiredLocks>,
+    ) -> DbTickResponse<ID> {
+        let expired = self.index.fetch_expired(now);
+        let len = expired.len();
+        for execution_id in expired {
+            let journal = self.journals.get(&execution_id).unwrap();
+            self.append(
+                now,
+                journal.execution_id().clone(),
+                journal.version(),
+                ExecutionEventInner::Finished {
+                    result: Err(crate::FinishedExecutionError::PermanentTimeout),
+                },
+            )
+            .expect_or_log("must be lockable within the same transaction");
+            self.index.update(execution_id, &self.journals);
+        }
+        DbTickResponse::CleanupExpiredLocks {
+            payload: len,
+            resp_sender,
+        }
+    }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{storage::HistoryEvent, FinishedExecutionResult};
+    use crate::{
+        storage::{ExecutionEvent, HistoryEvent},
+        FinishedExecutionResult,
+    };
     use assert_matches::assert_matches;
     use concepts::{prefixed_ulid::WorkflowId, FunctionFqnStr};
     use std::time::Duration;
@@ -676,26 +761,6 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<ID: ExecutionId> DbConnection<ID> for TickBasedDbConnection<ID> {
-        #[instrument(skip_all, %execution_id)]
-        async fn create(
-            &self,
-            created_at: DateTime<Utc>,
-            execution_id: ID,
-            ffqn: FunctionFqn,
-            params: Params,
-            parent: Option<ID>,
-            scheduled_at: Option<DateTime<Utc>>,
-        ) -> Result<AppendResponse, DbError> {
-            let event = ExecutionEventInner::Created {
-                ffqn,
-                params,
-                parent,
-                scheduled_at,
-            };
-            self.append(created_at, execution_id, Version::default(), event)
-                .await
-        }
-
         #[instrument(skip_all)]
         async fn lock_pending(
             &self,
@@ -717,6 +782,41 @@ pub(crate) mod tests {
             });
             let response = self.db_task.lock().unwrap_or_log().tick(request);
             Ok(assert_matches!(response, DbTickResponse::LockPending {  payload, .. } => payload))
+        }
+
+        #[instrument(skip_all)]
+        async fn cleanup_expired_locks(
+            &self,
+            now: DateTime<Utc>,
+        ) -> Result<CleanupExpiredLocks, DbConnectionError> {
+            let request = DbRequest::General(GeneralRequest::CleanupExpiredLocks {
+                now,
+                resp_sender: oneshot::channel().0,
+            });
+            let response = self.db_task.lock().unwrap_or_log().tick(request);
+            Ok(
+                assert_matches!(response, DbTickResponse::CleanupExpiredLocks { payload, .. } => payload),
+            )
+        }
+
+        #[instrument(skip_all, %execution_id)]
+        async fn create(
+            &self,
+            created_at: DateTime<Utc>,
+            execution_id: ID,
+            ffqn: FunctionFqn,
+            params: Params,
+            parent: Option<ID>,
+            scheduled_at: Option<DateTime<Utc>>,
+        ) -> Result<AppendResponse, DbError> {
+            let event = ExecutionEventInner::Created {
+                ffqn,
+                params,
+                parent,
+                scheduled_at,
+            };
+            self.append(created_at, execution_id, Version::default(), event)
+                .await
         }
 
         async fn lock(
@@ -827,7 +927,7 @@ pub(crate) mod tests {
         let mut version;
         // Create
         {
-            version = db_connection
+            db_connection
                 .create(
                     now(),
                     execution_id.clone(),
@@ -869,40 +969,6 @@ pub(crate) mod tests {
             );
             version = row.1;
         }
-        // Lock again
-        sleep(Duration::from_secs(1)).await;
-        {
-            info!("Lock: {}", now());
-            let (event_history, current_version) = db_connection
-                .lock(
-                    now(),
-                    execution_id.clone(),
-                    version,
-                    exec1.clone(),
-                    now() + lock_expiry,
-                )
-                .await
-                .unwrap_or_log();
-            assert!(event_history.is_empty());
-            version = current_version;
-        }
-        // lock expired, another executor issues Lock
-        sleep(lock_expiry).await;
-        {
-            info!("Lock after expiry: {}", now());
-            let (event_history, current_version) = db_connection
-                .lock(
-                    now(),
-                    execution_id.clone(),
-                    version,
-                    exec1.clone(),
-                    now() + lock_expiry,
-                )
-                .await
-                .unwrap_or_log();
-            assert!(event_history.is_empty());
-            version = current_version;
-        }
         // intermittent timeout
         sleep(Duration::from_millis(499)).await;
         {
@@ -916,8 +982,8 @@ pub(crate) mod tests {
                 .await
                 .unwrap_or_log();
         }
-        // Attempt to lock while in a timeout with exec2
-        sleep(Duration::from_millis(300)).await;
+        // Attempt to lock while in a timeout
+        sleep(lock_expiry - Duration::from_millis(100)).await;
         {
             info!("Attempt to lock using exec2: {}", now());
             assert!(db_connection
@@ -933,7 +999,7 @@ pub(crate) mod tests {
             // Version is not changed
         }
         // Lock using exec1
-        sleep(Duration::from_millis(700)).await;
+        sleep(Duration::from_millis(100)).await;
         {
             info!("Extend lock using exec1: {}", now());
             let (event_history, current_version) = db_connection
@@ -950,6 +1016,21 @@ pub(crate) mod tests {
             version = current_version;
         }
         sleep(Duration::from_millis(700)).await;
+        // Attempt to lock using exec2 while in a lock
+        {
+            info!("Attempt to lock using exec2: {}", now());
+            assert!(db_connection
+                .lock(
+                    now(),
+                    execution_id.clone(),
+                    version,
+                    exec2.clone(),
+                    now() + lock_expiry,
+                )
+                .await
+                .is_err());
+            // Version is not changed
+        }
         // Extend the lock using exec1
         {
             info!("Extend lock using exec1: {}", now());
@@ -1010,6 +1091,94 @@ pub(crate) mod tests {
                 .await
                 .unwrap_or_log();
         }
+    }
+
+    #[tokio::test]
+    async fn stochastic_lock_expired_means_permanent_timeout_tick_based() {
+        set_up();
+        let db_task = DbTask::new();
+        let db_task = Arc::new(std::sync::Mutex::new(db_task));
+        let db_connection = TickBasedDbConnection {
+            db_task: db_task.clone(),
+        };
+        lock_expired_means_permanent_timeout(db_connection).await;
+    }
+
+    #[tokio::test]
+    async fn stochastic_lock_expired_means_permanent_timeout_task_based() {
+        set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let client_to_store_req_sender = db_task.sender().unwrap_or_log();
+        let db_connection = InMemoryDbConnection {
+            client_to_store_req_sender,
+        };
+        lock_expired_means_permanent_timeout(db_connection).await;
+        db_task.close().await;
+    }
+
+    async fn lock_expired_means_permanent_timeout(db_connection: impl DbConnection<WorkflowId>) {
+        let execution_id = WorkflowId::generate();
+        let exec1 = Arc::new("exec1".to_string());
+        let lock_expiry = Duration::from_millis(500);
+        // Create
+        {
+            db_connection
+                .create(
+                    now(),
+                    execution_id.clone(),
+                    SOME_FFQN.to_owned(),
+                    Params::default(),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_or_log();
+        }
+        // LockPending
+        {
+            info!("LockPending: {}", now());
+            let mut locked_pending = db_connection
+                .lock_pending(
+                    1,
+                    now(),
+                    vec![SOME_FFQN.to_owned()],
+                    now(),
+                    exec1.clone(),
+                    now() + lock_expiry,
+                )
+                .await
+                .unwrap_or_log();
+            assert_eq!(1, locked_pending.len());
+            let row = locked_pending.pop().unwrap();
+            assert_eq!(
+                (
+                    execution_id.clone(),
+                    2_usize,
+                    SOME_FFQN.to_owned(),
+                    Params::default(),
+                    vec![],
+                    None
+                ),
+                row
+            );
+        }
+        // Wait for lock expiry
+        sleep(Duration::from_secs(1)).await;
+        let expired = db_connection.cleanup_expired_locks(now()).await.unwrap();
+        assert_eq!(1, expired);
+        let (mut execution_history, _version, pending_state) =
+            db_connection.get(execution_id).await.unwrap();
+        assert_eq!(PendingState::Finished, pending_state);
+        let last_event = execution_history.pop().unwrap();
+        assert_matches!(
+            last_event,
+            ExecutionEvent {
+                event: ExecutionEventInner::Finished {
+                    result: Err(crate::FinishedExecutionError::PermanentTimeout)
+                },
+                ..
+            }
+        );
     }
 
     #[tokio::test]
