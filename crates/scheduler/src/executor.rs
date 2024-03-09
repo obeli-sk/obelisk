@@ -183,23 +183,29 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         request: ExecTickRequest,
     ) -> Result<Vec<ExecutionProgress<ID>>, DbConnectionError> {
         let lock_expires_at = request.executed_at + self.config.lock_expiry;
-        let permits = self.acquire_task_permits();
-        if permits.is_empty() {
-            return Ok(vec![]);
-        }
-        let locked_executions = self
-            .db_connection
-            .lock_pending(
-                permits.len(),       // batch size
-                request.executed_at, // fetch expiring before now
-                self.config.ffqns.clone(),
-                request.executed_at, // lock created at - now
-                self.executor_name.clone(),
-                lock_expires_at,
-            )
-            .await?
-            .into_iter()
-            .zip(permits);
+        let locked_executions = {
+            let mut permits = self.acquire_task_permits();
+            if permits.is_empty() {
+                return Ok(vec![]);
+            }
+            let locked_executions = self
+                .db_connection
+                .lock_pending(
+                    permits.len(),       // batch size
+                    request.executed_at, // fetch expiring before now
+                    self.config.ffqns.clone(),
+                    request.executed_at, // lock created at - now
+                    self.executor_name.clone(),
+                    lock_expires_at,
+                )
+                .await?;
+            // Drop permits if too many were allocated.
+            while permits.len() > locked_executions.len() {
+                permits.pop();
+            }
+            assert_eq!(permits.len(), locked_executions.len());
+            locked_executions.into_iter().zip(permits)
+        };
 
         let mut executions = Vec::new();
         for ((execution_id, version, ffqn, params, event_history, _), permit) in locked_executions {
@@ -213,7 +219,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                 let span = info_span!("worker", %execution_id, %ffqn,);
                 tokio::spawn(
                     async move {
-                        if let Err(err) = Self::run_worker(
+                        let res = Self::run_worker(
                             worker,
                             db_connection,
                             execution_id,
@@ -225,8 +231,8 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                             max_retries,
                             retry_exp_backoff,
                         )
-                        .await
-                        {
+                        .await;
+                        if let Err(err) = res {
                             info!("Execution failed: {err:?}");
                         }
                         drop(permit);
@@ -405,7 +411,7 @@ mod tests {
             "SimpleWorker".as_value()
         }
 
-        fn visit(&self, visit: &mut dyn valuable::Visit) {}
+        fn visit(&self, _visit: &mut dyn valuable::Visit) {}
     }
 
     #[async_trait]
