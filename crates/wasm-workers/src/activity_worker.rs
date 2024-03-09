@@ -240,7 +240,6 @@ mod tests {
     use super::*;
     use crate::{activity_engine, EngineConfig};
     use assert_matches::assert_matches;
-    use chrono::TimeDelta;
     use concepts::{
         prefixed_ulid::ActivityId, ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult,
     };
@@ -289,8 +288,10 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             max_tick_sleep: Duration::from_millis(500),
             max_retries: 0,
-            retry_exp_backoff: TimeDelta::zero(),
-        };
+            retry_exp_backoff: Duration::ZERO,
+        }
+        .validate()
+        .unwrap();
         let exec_task = ExecTask::spawn_new(
             db_task.as_db_connection().unwrap_or_log(),
             fibo_worker,
@@ -399,8 +400,10 @@ mod tests {
                     lock_expiry: Duration::from_millis(100),
                     max_tick_sleep: Duration::from_millis(0),
                     max_retries: 0,
-                    retry_exp_backoff: TimeDelta::zero(),
-                };
+                    retry_exp_backoff: Duration::ZERO,
+                }
+                .validate()
+                .unwrap();
                 ExecTask::spawn_new(
                     db_task.as_db_connection().unwrap_or_log(),
                     fibo_worker.clone(),

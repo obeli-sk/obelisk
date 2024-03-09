@@ -26,14 +26,43 @@ pub struct ExecConfig {
     pub lock_expiry: Duration,
     pub max_tick_sleep: Duration,
     pub batch_size: u32,
-    pub retry_exp_backoff: TimeDelta, // FIXME: TimeDelta vs Duration
+    pub retry_exp_backoff: Duration,
+    pub max_retries: u32,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error(transparent)]
+    OutOfRange(#[from] chrono::OutOfRangeError),
+}
+
+impl ExecConfig {
+    pub fn validate(self) -> Result<ValidExecConfig, ValidationError> {
+        Ok(ValidExecConfig {
+            ffqns: self.ffqns,
+            lock_expiry: self.lock_expiry,
+            max_tick_sleep: self.max_tick_sleep,
+            batch_size: self.batch_size,
+            retry_exp_backoff: TimeDelta::from_std(self.retry_exp_backoff)?,
+            max_retries: self.max_retries,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidExecConfig {
+    pub ffqns: Vec<FunctionFqn>,
+    pub lock_expiry: Duration,
+    pub max_tick_sleep: Duration,
+    pub batch_size: u32,
+    pub retry_exp_backoff: TimeDelta,
     pub max_retries: u32,
 }
 
 pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     db_connection: DB,
     worker: W,
-    config: ExecConfig,
+    config: ValidExecConfig,
     task_limiter: Arc<tokio::sync::Semaphore>,
     executor_name: ExecutorName,
     _phantom_data: PhantomData<fn(ID) -> ID>,
@@ -81,7 +110,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
     pub fn spawn_new(
         db_connection: DB,
         worker: W,
-        config: ExecConfig,
+        config: ValidExecConfig,
         task_limiter: Arc<tokio::sync::Semaphore>,
     ) -> ExecutorTaskHandle {
         let executor_id = ExecutorId::generate();
@@ -405,7 +434,7 @@ mod tests {
 
     async fn tick_fn<DB: DbConnection<WorkflowId> + Sync>(
         db_connection: DB,
-        config: ExecConfig,
+        config: ValidExecConfig,
         worker_results_rev: SimpleWorkerResultMap,
     ) {
         let mut executor = ExecTask {
@@ -441,8 +470,10 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             max_tick_sleep: Duration::from_millis(500),
             max_retries: 0,
-            retry_exp_backoff: TimeDelta::zero(),
-        };
+            retry_exp_backoff: Duration::ZERO,
+        }
+        .validate()
+        .unwrap();
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
         };
@@ -474,8 +505,10 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             max_tick_sleep: Duration::from_millis(500),
             max_retries: 0,
-            retry_exp_backoff: TimeDelta::zero(),
-        };
+            retry_exp_backoff: Duration::ZERO,
+        }
+        .validate()
+        .unwrap();
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
         let worker_results_rev = {
@@ -507,8 +540,10 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             max_tick_sleep: Duration::from_millis(500),
             max_retries: 0,
-            retry_exp_backoff: TimeDelta::zero(),
-        };
+            retry_exp_backoff: Duration::ZERO,
+        }
+        .validate()
+        .unwrap();
 
         let mut db_task = DbTask::spawn_new(1);
         let worker_results_rev = {
@@ -549,11 +584,11 @@ mod tests {
 
     async fn execute<
         DB: DbConnection<WorkflowId> + Clone + Sync,
-        T: FnMut(DB, ExecConfig, SimpleWorkerResultMap) -> F,
+        T: FnMut(DB, ValidExecConfig, SimpleWorkerResultMap) -> F,
         F: Future<Output = ()>,
     >(
         db_connection: DB,
-        exec_config: ExecConfig,
+        exec_config: ValidExecConfig,
         worker_results_rev: SimpleWorkerResultMap,
         mut tick: T,
     ) -> Vec<ExecutionEvent<WorkflowId>> {
@@ -612,8 +647,10 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             max_tick_sleep: Duration::from_millis(500),
             max_retries: 1,
-            retry_exp_backoff: TimeDelta::zero(),
-        };
+            retry_exp_backoff: Duration::ZERO,
+        }
+        .validate()
+        .unwrap();
 
         let mut db_task = DbTask::spawn_new(1);
         let worker_results_rev = {
