@@ -8,7 +8,7 @@ pub mod executor;
 pub mod storage;
 
 pub mod worker {
-    use std::{borrow::Cow, error::Error, fmt::Display};
+    use std::{borrow::Cow, error::Error};
 
     use self::storage::{HistoryEvent, Version};
     use super::*;

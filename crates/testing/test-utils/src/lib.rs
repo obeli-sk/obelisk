@@ -8,7 +8,6 @@ pub fn set_up() {
         tracing_subscriber::registry()
             .with(
                 tracing_subscriber::fmt::layer()
-                    .without_time()
                     .with_target(false)
                     .with_thread_ids(true),
             )

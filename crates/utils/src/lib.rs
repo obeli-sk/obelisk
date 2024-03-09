@@ -9,11 +9,14 @@ pub mod time {
         if #[cfg(all(test, madsim))] {
             pub fn now() -> DateTime<Utc> {
                 if madsim::rand::random() {
-                    madsim::time::advance(std::time::Duration::from_millis(1));
+                    madsim::time::advance(std::time::Duration::from_millis(madsim::rand::random()));
                 }
                 DateTime::from(madsim::time::TimeHandle::current().now_time())
             }
             pub fn now_tokio_instant() -> tokio::time::Instant {
+                if madsim::rand::random() {
+                    madsim::time::advance(std::time::Duration::from_millis(madsim::rand::random()));
+                }
                 madsim::time::Instant::now()
             }
         } else {

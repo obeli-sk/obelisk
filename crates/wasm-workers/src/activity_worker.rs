@@ -249,9 +249,13 @@ mod tests {
         executor::{ExecConfig, ExecTask},
         storage::{inmemory_dao::DbTask, DbConnection},
     };
-    use std::{borrow::Cow, sync::Arc, time::Duration};
+    use std::{
+        borrow::Cow,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
     use test_utils::env_or_default;
-    use tracing::info;
+    use tracing::{info, warn};
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
     use wasmtime::component::Val;
@@ -354,24 +358,28 @@ mod tests {
         const FIBO_INPUT: u8 = 1;
         const EXECUTORS: u8 = 4;
         const EXECUTIONS: usize = 10;
+        const RECYCLE: bool = false;
         const PERMITS: usize = 1000;
         const BATCH_SIZE: u32 = 1;
+        const PRELOAD: bool = false;
+
         test_utils::set_up();
         std::panic::set_hook(Box::new(tracing_panic_hook));
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executors = env_or_default("EXECUTORS", EXECUTORS);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
-        let recycle_instances = env_or_default("RECYCLE", false).then(Default::default);
+        let recycle_instances = env_or_default("RECYCLE", RECYCLE).then(Default::default);
         let permits = env_or_default("PERMITS", PERMITS);
         let batch_size = env_or_default("BATCH_SIZE", BATCH_SIZE);
+        let preload = env_or_default("PRELOAD", PRELOAD);
 
-        let db_task = DbTask::spawn_new(1);
+        let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
 
         let fibo_worker = ActivityWorker::new_with_config(
             db_connection.clone(),
             ActivityConfig {
-                preload: true,
+                preload,
                 wasm_path: Cow::Borrowed(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
@@ -381,6 +389,28 @@ mod tests {
         )
         .unwrap_or_log();
 
+        // spawn executors
+        let task_limiter = Arc::new(tokio::sync::Semaphore::new(permits));
+        let exec_tasks = (0..executors)
+            .map(|_| {
+                let exec_config = ExecConfig {
+                    ffqns: vec![FIBO_FFQN.to_owned()],
+                    batch_size,
+                    lock_expiry: Duration::from_millis(100),
+                    max_tick_sleep: Duration::from_millis(0),
+                    max_retries: 0,
+                    retry_exp_backoff: TimeDelta::zero(),
+                };
+                ExecTask::spawn_new(
+                    db_task.as_db_connection().unwrap_or_log(),
+                    fibo_worker.clone(),
+                    exec_config.clone(),
+                    task_limiter.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let stopwatch = Instant::now();
         // create executions
         let execution_ids = futures_util::stream::iter(0..executions)
             .map(|_| async {
@@ -402,28 +432,6 @@ mod tests {
             .buffer_unordered(executions)
             .collect::<Vec<_>>()
             .await;
-
-        // spawn executors
-        let task_limiter = Arc::new(tokio::sync::Semaphore::new(permits));
-        let _exec_tasks = (0..executors)
-            .map(|_| {
-                let exec_config = ExecConfig {
-                    ffqns: vec![FIBO_FFQN.to_owned()],
-                    batch_size,
-                    lock_expiry: Duration::from_secs(10),
-                    max_tick_sleep: Duration::from_millis(0),
-                    max_retries: 0,
-                    retry_exp_backoff: TimeDelta::zero(),
-                };
-                ExecTask::spawn_new(
-                    db_task.as_db_connection().unwrap_or_log(),
-                    fibo_worker.clone(),
-                    exec_config.clone(),
-                    task_limiter.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
-
         info!("Waiting for results");
         for execution_id in execution_ids {
             info!(%execution_id, "Checking");
@@ -436,5 +444,11 @@ mod tests {
                 Ok(SupportedFunctionResult::Single(Val::U64(_)))
             );
         }
+        warn!("Finished in {} ms", stopwatch.elapsed().as_millis());
+        drop(db_connection);
+        for exec_task in exec_tasks {
+            exec_task.close().await;
+        }
+        db_task.close().await;
     }
 }
