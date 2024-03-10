@@ -27,45 +27,12 @@ pub struct ExecConfig {
     pub lock_expiry_leeway: Duration,
     pub max_tick_sleep: Duration,
     pub batch_size: u32,
-    pub retry_exp_backoff: Duration,
-    pub max_retries: u32,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ValidationError {
-    #[error(transparent)]
-    OutOfRange(#[from] chrono::OutOfRangeError),
-}
-
-impl ExecConfig {
-    pub fn validate(self) -> Result<ValidExecConfig, ValidationError> {
-        Ok(ValidExecConfig {
-            ffqns: self.ffqns,
-            lock_expiry: self.lock_expiry,
-            lock_expiry_leeway: self.lock_expiry_leeway,
-            max_tick_sleep: self.max_tick_sleep,
-            batch_size: self.batch_size,
-            retry_exp_backoff: TimeDelta::from_std(self.retry_exp_backoff)?,
-            max_retries: self.max_retries,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ValidExecConfig {
-    pub ffqns: Vec<FunctionFqn>,
-    pub lock_expiry: Duration,
-    pub lock_expiry_leeway: Duration,
-    pub max_tick_sleep: Duration,
-    pub batch_size: u32,
-    pub retry_exp_backoff: TimeDelta,
-    pub max_retries: u32,
 }
 
 pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     db_connection: DB,
     worker: W,
-    config: ValidExecConfig,
+    config: ExecConfig,
     task_limiter: Arc<tokio::sync::Semaphore>,
     executor_name: ExecutorName,
     _phantom_data: PhantomData<fn(ID) -> ID>,
@@ -113,7 +80,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
     pub fn spawn_new(
         db_connection: DB,
         worker: W,
-        config: ValidExecConfig,
+        config: ExecConfig,
         task_limiter: Arc<tokio::sync::Semaphore>,
     ) -> ExecutorTaskHandle {
         let executor_id = ExecutorId::generate();
@@ -213,27 +180,33 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             request.executed_at + self.config.lock_expiry - self.config.lock_expiry_leeway;
 
         let mut executions = Vec::new();
-        for ((execution_id, version, ffqn, params, event_history, _), permit) in locked_executions {
+        // (execution_id, version, ffqn, params, event_history, _)
+        for (locked_execution, permit) in locked_executions {
+            let execution_id = locked_execution.execution_id.clone();
             let join_handle = {
                 let execution_id = execution_id.clone();
                 let worker = self.worker.clone();
                 let db_connection = self.db_connection.clone();
-                let max_retries = self.config.max_retries;
-                let retry_exp_backoff = self.config.retry_exp_backoff;
-                let span = info_span!("worker", %execution_id, %ffqn,);
+                let span = info_span!("worker", %execution_id, ffqn = %locked_execution.ffqn,);
                 // TODO: wait for termination of all spawned tasks in `close`.
                 tokio::spawn(
                     async move {
+                        let Ok(retry_exp_backoff) =
+                            TimeDelta::from_std(locked_execution.retry_exp_backoff)
+                        else {
+                            warn!("Invalid `retry_exp_backoff`");
+                            return;
+                        };
                         let res = Self::run_worker(
                             worker,
                             db_connection,
                             execution_id,
-                            version,
-                            ffqn,
-                            params,
-                            event_history,
+                            locked_execution.version,
+                            locked_execution.ffqn,
+                            locked_execution.params,
+                            locked_execution.event_history,
                             execution_deadline,
-                            max_retries,
+                            locked_execution.max_retries,
                             retry_exp_backoff,
                         )
                         .await;
@@ -444,7 +417,7 @@ mod tests {
 
     async fn tick_fn<DB: DbConnection<WorkflowId> + Sync>(
         db_connection: DB,
-        config: ValidExecConfig,
+        config: ExecConfig,
         worker_results_rev: SimpleWorkerResultMap,
     ) {
         let mut executor = ExecTask {
@@ -480,11 +453,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
             max_tick_sleep: Duration::from_millis(100),
-            max_retries: 0,
-            retry_exp_backoff: Duration::ZERO,
-        }
-        .validate()
-        .unwrap();
+        };
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
         };
@@ -495,7 +464,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
         let execution_history =
-            execute(db_connection, exec_config, worker_results_rev, tick_fn).await;
+            execute(db_connection, exec_config, worker_results_rev, 0, tick_fn).await;
         assert_matches!(
             execution_history[2],
             ExecutionEvent {
@@ -516,11 +485,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
             max_tick_sleep: Duration::from_millis(100),
-            max_retries: 0,
-            retry_exp_backoff: Duration::ZERO,
-        }
-        .validate()
-        .unwrap();
+        };
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
         let worker_results_rev = {
@@ -530,7 +495,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
         let execution_history =
-            execute(db_connection, exec_config, worker_results_rev, tick_fn).await;
+            execute(db_connection, exec_config, worker_results_rev, 0, tick_fn).await;
         db_task.close().await;
         assert_matches!(
             execution_history[2],
@@ -552,11 +517,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
             max_tick_sleep: Duration::from_millis(100),
-            max_retries: 0,
-            retry_exp_backoff: Duration::ZERO,
-        }
-        .validate()
-        .unwrap();
+        };
 
         let mut db_task = DbTask::spawn_new(1);
         let worker_results_rev = {
@@ -579,6 +540,7 @@ mod tests {
             db_task.as_db_connection().unwrap_or_log(),
             exec_config,
             worker_results_rev,
+            0,
             |_, _, _| tokio::time::sleep(Duration::from_secs(1)),
         )
         .await;
@@ -597,12 +559,13 @@ mod tests {
 
     async fn execute<
         DB: DbConnection<WorkflowId> + Clone + Sync,
-        T: FnMut(DB, ValidExecConfig, SimpleWorkerResultMap) -> F,
+        T: FnMut(DB, ExecConfig, SimpleWorkerResultMap) -> F,
         F: Future<Output = ()>,
     >(
         db_connection: DB,
-        exec_config: ValidExecConfig,
+        exec_config: ExecConfig,
         worker_results_rev: SimpleWorkerResultMap,
+        max_retries: u32,
         mut tick: T,
     ) -> Vec<ExecutionEvent<WorkflowId>> {
         // Create an execution
@@ -616,6 +579,8 @@ mod tests {
                 Params::default(),
                 None,
                 None,
+                Duration::ZERO,
+                max_retries,
             )
             .await
             .unwrap_or_log();
@@ -660,11 +625,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
             max_tick_sleep: Duration::from_millis(100),
-            max_retries: 1,
-            retry_exp_backoff: Duration::ZERO,
-        }
-        .validate()
-        .unwrap();
+        };
 
         let mut db_task = DbTask::spawn_new(1);
         let worker_results_rev = {
@@ -697,6 +658,7 @@ mod tests {
             db_task.as_db_connection().unwrap_or_log(),
             exec_config,
             worker_results_rev,
+            1,
             |_, _, _| tokio::time::sleep(Duration::from_secs(1)),
         )
         .await;

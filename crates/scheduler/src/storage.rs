@@ -1,5 +1,6 @@
 pub mod inmemory_dao;
 
+use self::journal::PendingState;
 use crate::FinishedExecutionResult;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
@@ -11,8 +12,6 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing_unwrap::OptionExt;
-
-use self::journal::PendingState;
 
 pub type Version = usize;
 
@@ -37,6 +36,8 @@ pub enum ExecutionEventInner<ID: ExecutionId> {
         params: Params,
         parent: Option<ID>,
         scheduled_at: Option<DateTime<Utc>>,
+        retry_exp_backoff: Duration,
+        max_retries: u32,
     },
     // Created by an executor.
     // Either immediately followed by an execution request by an executor or
@@ -198,14 +199,19 @@ pub type AppendResponse = Version;
 pub type PendingExecution<ID> = (ID, Version, Params, Option<DateTime<Utc>>);
 pub type ExecutionHistory<ID> = (Vec<ExecutionEvent<ID>>, Version, PendingState);
 pub type LockResponse<ID> = (Vec<HistoryEvent<ID>>, Version);
-pub type LockPendingResponse<ID> = Vec<(
-    ID,
-    Version,
-    FunctionFqn,
-    Params,
-    Vec<HistoryEvent<ID>>,
-    Option<DateTime<Utc>>,
-)>;
+
+#[derive(Debug, Clone)]
+pub struct LockedExecution<ID: ExecutionId> {
+    pub execution_id: ID,
+    pub version: Version,
+    pub ffqn: FunctionFqn,
+    pub params: Params,
+    pub event_history: Vec<HistoryEvent<ID>>,
+    pub scheduled_at: Option<DateTime<Utc>>,
+    pub retry_exp_backoff: Duration,
+    pub max_retries: u32,
+}
+pub type LockPendingResponse<ID> = Vec<LockedExecution<ID>>;
 pub type CleanupExpiredLocks = usize; // number of expired locks
 
 #[async_trait]
@@ -229,7 +235,20 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
         params: Params,
         parent: Option<ID>,
         scheduled_at: Option<DateTime<Utc>>,
-    ) -> Result<AppendResponse, DbError>;
+        retry_exp_backoff: Duration,
+        max_retries: u32,
+    ) -> Result<AppendResponse, DbError> {
+        let event = ExecutionEventInner::Created {
+            ffqn,
+            params,
+            parent,
+            scheduled_at,
+            retry_exp_backoff,
+            max_retries,
+        };
+        self.append(created_at, execution_id, Version::default(), event)
+            .await
+    }
 
     /// Specialized `append` which returns the event history.
     async fn lock(
@@ -277,9 +296,10 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
 pub mod journal {
     use super::{ExecutionEvent, ExecutionEventInner, ExecutorName, HistoryEvent};
     use crate::storage::{ExecutionHistory, RowSpecificError, Version};
+    use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn, Params};
-    use std::{borrow::Cow, collections::VecDeque};
+    use std::{borrow::Cow, collections::VecDeque, time::Duration};
     use tracing_unwrap::OptionExt;
 
     #[derive(Debug)]
@@ -297,6 +317,8 @@ pub mod journal {
             scheduled_at: Option<DateTime<Utc>>,
             parent: Option<ID>,
             created_at: DateTime<Utc>,
+            retry_exp_backoff: Duration,
+            max_retries: u32,
         ) -> Self {
             let pending_state = match scheduled_at {
                 Some(pending_at) => PendingState::PendingAt(pending_at),
@@ -308,6 +330,8 @@ pub mod journal {
                     params,
                     scheduled_at,
                     parent,
+                    retry_exp_backoff,
+                    max_retries,
                 },
                 created_at,
             };
@@ -511,16 +535,25 @@ pub mod journal {
                 .collect()
         }
 
+        pub(crate) fn retry_exp_backoff(&self) -> Duration {
+            assert_matches!(self.events.front(), Some(ExecutionEvent {
+                event: ExecutionEventInner::Created { retry_exp_backoff, .. },
+                ..
+            }) => *retry_exp_backoff)
+        }
+
+        pub(crate) fn max_retries(&self) -> u32 {
+            assert_matches!(self.events.front(), Some(ExecutionEvent {
+                event: ExecutionEventInner::Created { max_retries, .. },
+                ..
+            }) => *max_retries)
+        }
+
         pub(crate) fn params(&self) -> Params {
-            match self.events.front().expect_or_log("must be not empty") {
-                ExecutionEvent {
-                    event: ExecutionEventInner::Created { params, .. },
-                    ..
-                } => Some(params),
-                _ => None,
-            }
-            .expect_or_log("first event must be `Created`")
-            .clone()
+            assert_matches!(self.events.front(), Some(ExecutionEvent {
+                event: ExecutionEventInner::Created { params, .. },
+                ..
+            }) => params.clone())
         }
 
         pub fn as_execution_history(&self) -> ExecutionHistory<ID> {

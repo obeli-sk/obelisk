@@ -288,11 +288,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
             max_tick_sleep: Duration::from_millis(100),
-            max_retries: 0,
-            retry_exp_backoff: Duration::ZERO,
-        }
-        .validate()
-        .unwrap();
+        };
         let exec_task = ExecTask::spawn_new(
             db_task.as_db_connection().unwrap_or_log(),
             fibo_worker,
@@ -311,6 +307,8 @@ mod tests {
                 Params::from([Val::U8(FIBO_INPUT)]),
                 None,
                 None,
+                Duration::ZERO,
+                0,
             )
             .await
             .unwrap_or_log();
@@ -401,11 +399,7 @@ mod tests {
                     lock_expiry: Duration::from_secs(1),
                     lock_expiry_leeway: Duration::from_millis(100),
                     max_tick_sleep: Duration::from_millis(10),
-                    max_retries: 0,
-                    retry_exp_backoff: Duration::ZERO,
-                }
-                .validate()
-                .unwrap();
+                };
                 ExecTask::spawn_new(
                     db_task.as_db_connection().unwrap_or_log(),
                     fibo_worker.clone(),
@@ -429,6 +423,8 @@ mod tests {
                         Params::from([Val::U8(fibo_input)]),
                         None,
                         None,
+                        Duration::ZERO,
+                        0,
                     )
                     .await
                     .unwrap_or_log();
