@@ -29,8 +29,8 @@ pub mod worker {
             reason: Cow<'static, str>,
             err: Box<dyn Error + Send>,
         },
-        // #[error("intermittent timeout")]
-        // IntermittentTimeout,
+        #[error("intermittent timeout")]
+        IntermittentTimeout,
         #[error(transparent)]
         FatalError(#[from] FatalError),
     }
@@ -39,6 +39,8 @@ pub mod worker {
     pub enum FatalError {
         #[error("non-determinism detected: `{0}`")]
         NonDeterminismDetected(Cow<'static, str>),
+        #[error("not found")]
+        NotFound,
     }
 
     #[async_trait]
@@ -113,7 +115,7 @@ fn can_be_retried_after<'a, ID: ExecutionId>(
     }
 }
 
-type FinishedExecutionResult<ID> = Result<SupportedFunctionResult, FinishedExecutionError<ID>>;
+pub type FinishedExecutionResult<ID> = Result<SupportedFunctionResult, FinishedExecutionError<ID>>;
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
 pub enum FinishedExecutionError<ID: ExecutionId> {
@@ -123,7 +125,7 @@ pub enum FinishedExecutionError<ID: ExecutionId> {
     #[error("non-determinism detected, reason: `{0}`")]
     NonDeterminismDetected(Cow<'static, str>),
     #[error("uncategorized error: `{0}`")]
-    UncategorizedError(Cow<'static, str>), // intermittent failure that is not retried
+    PermanentFailure(Cow<'static, str>), // intermittent failure that is not retried
     #[error("cancelled, reason: `{0}`")]
     Cancelled(Cow<'static, str>),
     #[error("continuing as {execution_id}")]

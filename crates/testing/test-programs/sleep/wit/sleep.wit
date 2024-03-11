@@ -2,4 +2,5 @@ package testing:sleep;
 
 interface sleep {
     sleep: func(millis: u64);
+    sleep-loop: func(millis: u64, iterations: u32);
 }

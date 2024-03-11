@@ -10,6 +10,12 @@ impl crate::bindings::exports::testing::sleep::sleep::Guest for Component {
     fn sleep(millis: u64) {
         std::thread::sleep(Duration::from_millis(millis));
     }
+
+    fn sleep_loop(millis: u64, iterations: u32) {
+        for _ in 0..iterations {
+            std::thread::sleep(Duration::from_millis(millis));
+        }
+    }
 }
 
 impl crate::bindings::exports::wasi::cli::run::Guest for Component {

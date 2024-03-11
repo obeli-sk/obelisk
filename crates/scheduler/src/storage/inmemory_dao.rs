@@ -706,10 +706,10 @@ impl<ID: ExecutionId> DbTask<ID> {
 
             let event = if let Some(duration) = journal.can_be_retried_after() {
                 let expires_at = now + duration;
-                debug!("Retrying execution after {duration:?} at {expires_at}");
+                debug!("Retrying execution with expired lock after {duration:?} at {expires_at}");
                 ExecutionEventInner::IntermittentTimeout { expires_at }
             } else {
-                info!("Marking execution as permanently failed");
+                info!("Marking execution with expired lock as permanently timed out");
                 ExecutionEventInner::Finished {
                     result: Err(FinishedExecutionError::PermanentTimeout),
                 }

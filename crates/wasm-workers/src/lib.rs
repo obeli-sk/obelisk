@@ -19,12 +19,12 @@ impl Default for EngineConfig {
     }
 }
 
-pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
+fn activity_engine(config: EngineConfig) -> Arc<Engine> {
     let mut wasmtime_config = wasmtime::Config::new();
-    // TODO: limit execution with epoch_interruption
     wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
     wasmtime_config.wasm_component_model(true);
     wasmtime_config.async_support(true);
     wasmtime_config.allocation_strategy(config.allocation_strategy);
+    wasmtime_config.epoch_interruption(true);
     Arc::new(Engine::new(&wasmtime_config).unwrap_or_log())
 }

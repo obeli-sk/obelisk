@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ActivityId;
 use concepts::{FunctionFqn, FunctionMetadata};
 use concepts::{Params, SupportedFunctionResult};
+use scheduler::worker::FatalError;
 use scheduler::{
     storage::{DbConnection, HistoryEvent, Version},
     worker::{Worker, WorkerError},
@@ -10,15 +11,17 @@ use scheduler::{
 use std::{borrow::Cow, collections::HashMap, error::Error, fmt::Debug, sync::Arc};
 use tracing::{debug, enabled, info, trace, Level};
 use tracing_unwrap::{OptionExt, ResultExt};
+use utils::time::now;
 use utils::wasm_tools;
-use wasmtime::Store;
 use wasmtime::{component::Val, Engine};
+use wasmtime::{Store, UpdateDeadline};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[allow(clippy::module_name_repetitions)]
 pub struct ActivityConfig {
     pub wasm_path: Cow<'static, str>,
     pub preload: bool,
+    pub epoch_millis: u64,
 }
 
 type MaybeRecycledInstances = Option<
@@ -117,10 +120,10 @@ impl Worker<ActivityId> for ActivityWorker {
         params: Params,
         events: Vec<HistoryEvent<ActivityId>>,
         version: Version,
-        _execution_deadline: DateTime<Utc>, // TODO
+        execution_deadline: DateTime<Utc>,
     ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
         assert!(events.is_empty());
-        self.run(ffqn, params)
+        self.run(ffqn, params, execution_deadline)
             .await
             .map(|supported_result| (supported_result, version))
             .map_err(|err| (err, version))
@@ -133,11 +136,12 @@ impl ActivityWorker {
         &self,
         ffqn: FunctionFqn,
         params: Params,
+        execution_deadline: DateTime<Utc>,
     ) -> Result<SupportedFunctionResult, WorkerError> {
         let results_len = self
             .functions_to_metadata
             .get(&ffqn)
-            .expect_or_log("ffqn must be found")
+            .ok_or(WorkerError::FatalError(FatalError::NotFound))?
             .results_len;
         trace!("Params: {params:?}, results_len:{results_len}",);
 
@@ -171,6 +175,20 @@ impl ActivityWorker {
                 (instance, store)
             }
         };
+        let epoch_millis = self.config.epoch_millis;
+        store.epoch_deadline_callback(move |_store_ctx| {
+            match (execution_deadline - now()).to_std() {
+                Err(_) => {
+                    trace!("Sending OutOfFuel");
+                    Err(wasmtime::Trap::OutOfFuel.into())
+                }
+                Ok(duration) => {
+                    let ticks = u64::try_from(duration.as_millis()).unwrap() / epoch_millis;
+                    trace!("epoch_deadline_callback in {ticks}");
+                    Ok(UpdateDeadline::Yield(ticks))
+                }
+            }
+        });
         let func = {
             let mut exports = instance.exports(&mut store);
             let mut exports_instance = exports.root();
@@ -187,9 +205,16 @@ impl ActivityWorker {
             .collect::<Vec<_>>();
         func.call_async(&mut store, &params, &mut results)
             .await
-            .map_err(|err| WorkerError::IntermittentError {
-                reason: Cow::Borrowed("wasm function call error"),
-                err: err.into(),
+            .map_err(|err| {
+                if matches!(err.downcast_ref(), Some(wasmtime::Trap::OutOfFuel)) {
+                    WorkerError::IntermittentTimeout
+                } else {
+                    let err = err.into();
+                    WorkerError::IntermittentError {
+                        reason: Cow::Owned(format!("wasm function call error: `{err}`")),
+                        err,
+                    }
+                }
             })?; // guest panic exits here
         let results = SupportedFunctionResult::new(results);
         func.post_return_async(&mut store)
@@ -244,9 +269,11 @@ mod tests {
         prefixed_ulid::ActivityId, ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult,
     };
     use futures_util::StreamExt;
+    use rstest::rstest;
     use scheduler::{
         executor::{ExecConfig, ExecTask},
         storage::{inmemory_dao::DbTask, DbConnection},
+        FinishedExecutionError, FinishedExecutionResult,
     };
     use std::{
         borrow::Cow,
@@ -276,6 +303,7 @@ mod tests {
                 wasm_path: Cow::Borrowed(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
+                epoch_millis: 10,
             },
             activity_engine(EngineConfig::default()),
             None,
@@ -287,7 +315,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
-            max_tick_sleep: Duration::from_millis(100),
+            tick_sleep: Duration::from_millis(100),
         };
         let exec_task = ExecTask::spawn_new(
             db_task.as_db_connection().unwrap_or_log(),
@@ -383,6 +411,7 @@ mod tests {
                 wasm_path: Cow::Borrowed(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
+                epoch_millis: 10,
             },
             activity_engine(EngineConfig::default()),
             recycle_instances,
@@ -398,7 +427,7 @@ mod tests {
                     batch_size,
                     lock_expiry: Duration::from_secs(1),
                     lock_expiry_leeway: Duration::from_millis(100),
-                    max_tick_sleep: Duration::from_millis(10),
+                    tick_sleep: Duration::from_millis(10),
                 };
                 ExecTask::spawn_new(
                     db_task.as_db_connection().unwrap_or_log(),
@@ -435,7 +464,6 @@ mod tests {
             .await;
         info!("Waiting for results");
         for execution_id in execution_ids {
-            info!(%execution_id, "Checking");
             // Check that the computation succeded.
             assert_matches!(
                 db_connection
@@ -450,6 +478,91 @@ mod tests {
         for exec_task in exec_tasks {
             exec_task.close().await;
         }
+        db_task.close().await;
+    }
+
+    const SLEEP_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:sleep/sleep", "sleep-loop"); // func(millis: u64, iterations: u32);
+    #[rstest]
+    #[case(100, Err(FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
+    #[case(10, Ok(SupportedFunctionResult::None))] // 0.1s -> Ok
+    #[tokio::test]
+    async fn sleep_timeout(
+        #[case] sleep_iterations: u32,
+        #[case] expected: FinishedExecutionResult<ActivityId>,
+    ) {
+        const SLEEP_MILLIS_PARAM: u64 = 10;
+        const EPOCH_MILLIS: u64 = 10;
+        test_utils::set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+
+        let engine = activity_engine(EngineConfig::default());
+
+        {
+            let engine = engine.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(EPOCH_MILLIS)).await;
+                    engine.increment_epoch();
+                }
+            });
+        }
+
+        let fibo_worker = ActivityWorker::new_with_config(
+            db_connection.clone(),
+            ActivityConfig {
+                preload: true,
+                wasm_path: Cow::Borrowed(
+                    test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                ),
+                epoch_millis: EPOCH_MILLIS,
+            },
+            engine,
+            None,
+        )
+        .unwrap_or_log();
+
+        let exec_config = ExecConfig {
+            ffqns: vec![SLEEP_FFQN.to_owned()],
+            batch_size: 1,
+            lock_expiry: Duration::from_millis(500),
+            lock_expiry_leeway: Duration::from_millis(10),
+            tick_sleep: Duration::from_millis(10),
+        };
+        let exec_task = ExecTask::spawn_new(
+            db_task.as_db_connection().unwrap_or_log(),
+            fibo_worker,
+            exec_config.clone(),
+            Arc::new(tokio::sync::Semaphore::new(1)),
+        );
+
+        // Create an execution.
+        let execution_id = ActivityId::generate();
+        let created_at = now();
+        db_connection
+            .create(
+                created_at,
+                execution_id.clone(),
+                SLEEP_FFQN.to_owned(),
+                Params::from([Val::U64(SLEEP_MILLIS_PARAM), Val::U32(sleep_iterations)]),
+                None,
+                None,
+                Duration::ZERO,
+                0,
+            )
+            .await
+            .unwrap_or_log();
+        // Check the result.
+        assert_matches!(
+            db_connection
+                .obtain_finished_result(execution_id)
+                .await
+                .unwrap_or_log(),
+            expected
+        );
+
+        drop(db_connection);
+        exec_task.close().await;
         db_task.close().await;
     }
 }

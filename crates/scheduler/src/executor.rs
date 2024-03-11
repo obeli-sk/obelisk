@@ -9,6 +9,7 @@ use crate::{
 use chrono::{DateTime, Utc};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params};
 use std::{
+    borrow::Cow,
     marker::PhantomData,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -25,7 +26,7 @@ pub struct ExecConfig {
     pub ffqns: Vec<FunctionFqn>,
     pub lock_expiry: Duration,
     pub lock_expiry_leeway: Duration,
-    pub max_tick_sleep: Duration,
+    pub tick_sleep: Duration,
     pub batch_size: u32,
 }
 
@@ -90,6 +91,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         );
         let is_closing: Arc<AtomicBool> = Default::default();
         let is_closing_inner = is_closing.clone();
+        let tick_sleep = config.tick_sleep;
         let abort_handle = tokio::spawn(
             async move {
                 info!("Spawned executor");
@@ -103,13 +105,12 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                 };
                 let mut old_err = None;
                 loop {
-                    let sleep_until = now_tokio_instant() + task.config.max_tick_sleep;
                     let res = task.tick(ExecTickRequest { executed_at: now() }).await;
                     Self::log_err_if_new(res, &mut old_err);
                     if is_closing_inner.load(Ordering::Relaxed) {
                         return;
                     }
-                    tokio::time::sleep_until(sleep_until).await;
+                    tokio::time::sleep(tick_sleep).await;
                 }
             }
             .instrument(span),
@@ -268,10 +269,13 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         worker_result: WorkerResult,
     ) -> Result<(ExecutionEventInner<ID>, Version), DbError> {
         match worker_result {
-            Ok((result, version)) => Ok((
-                ExecutionEventInner::Finished { result: Ok(result) },
-                version,
-            )),
+            Ok((result, version)) => {
+                info!("Finished successfully");
+                Ok((
+                    ExecutionEventInner::Finished { result: Ok(result) },
+                    version,
+                ))
+            }
             Err((err, new_version)) => {
                 debug!("Execution failed: {err:?}");
                 let execution_history = db_connection.get(execution_id.clone()).await?; // This can come from a cache
@@ -280,32 +284,49 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                         crate::storage::RowSpecificError::VersionMismatch,
                     ));
                 }
-                match err {
+                let event = match err {
                     WorkerError::IntermittentError { reason, err: _ } => {
                         if let Some(duration) = execution_history.can_be_retried_after() {
                             let expires_at = now() + duration;
-                            debug!("Retrying execution after {duration:?} at {expires_at}");
-                            Ok((
-                                ExecutionEventInner::IntermittentFailure { expires_at, reason },
-                                new_version,
-                            ))
+                            debug!("Retrying failed execution after {duration:?} at {expires_at}");
+                            ExecutionEventInner::IntermittentFailure { expires_at, reason }
                         } else {
-                            info!("Marking execution as permanently failed");
-                            Ok((
-                                ExecutionEventInner::Finished {
-                                    result: Err(FinishedExecutionError::UncategorizedError(reason)),
-                                },
-                                new_version,
-                            ))
+                            info!("Permanently failed");
+                            ExecutionEventInner::Finished {
+                                result: Err(FinishedExecutionError::PermanentFailure(reason)),
+                            }
                         }
                     }
-                    WorkerError::FatalError(FatalError::NonDeterminismDetected(reason)) => Ok((
+                    WorkerError::IntermittentTimeout => {
+                        if let Some(duration) = execution_history.can_be_retried_after() {
+                            let expires_at = now() + duration;
+                            debug!(
+                                "Retrying timed out execution after {duration:?} at {expires_at}"
+                            );
+                            ExecutionEventInner::IntermittentTimeout { expires_at }
+                        } else {
+                            info!("Permanently timed out");
+                            ExecutionEventInner::Finished {
+                                result: Err(FinishedExecutionError::PermanentTimeout),
+                            }
+                        }
+                    }
+                    WorkerError::FatalError(FatalError::NonDeterminismDetected(reason)) => {
+                        info!("Non-determinism detected");
                         ExecutionEventInner::Finished {
                             result: Err(FinishedExecutionError::NonDeterminismDetected(reason)),
-                        },
-                        new_version,
-                    )),
-                }
+                        }
+                    }
+                    WorkerError::FatalError(FatalError::NotFound) => {
+                        info!("Not found");
+                        ExecutionEventInner::Finished {
+                            result: Err(FinishedExecutionError::PermanentFailure(Cow::Borrowed(
+                                "not found",
+                            ))),
+                        }
+                    }
+                };
+                Ok((event, new_version))
             }
         }
     }
@@ -415,7 +436,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
-            max_tick_sleep: Duration::from_millis(100),
+            tick_sleep: Duration::from_millis(100),
         };
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
@@ -447,7 +468,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
-            max_tick_sleep: Duration::from_millis(100),
+            tick_sleep: Duration::from_millis(100),
         };
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
@@ -479,7 +500,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
-            max_tick_sleep: Duration::from_millis(100),
+            tick_sleep: Duration::from_millis(100),
         };
 
         let mut db_task = DbTask::spawn_new(1);
@@ -587,7 +608,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
-            max_tick_sleep: Duration::from_millis(100),
+            tick_sleep: Duration::from_millis(100),
         };
 
         let mut db_task = DbTask::spawn_new(1);
