@@ -362,6 +362,7 @@ name = "concepts"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
+ "cfg-if",
  "derive_more",
  "serde_json",
  "thiserror",

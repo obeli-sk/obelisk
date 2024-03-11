@@ -258,8 +258,17 @@ pub mod prefixed_ulid {
     }
 
     impl<T> ExecutionId for PrefixedUlid<T> {
-        fn generate() -> Self {
-            Self::new(ulid::Ulid::new())
+        cfg_if::cfg_if! {
+                if #[cfg(all(test, madsim))] {
+                fn generate() -> Self {
+                    madsim::time::advance(std::time::Duration::from_millis(madsim::rand::random()));
+                    Self::new(ulid::Ulid::new())
+                }
+            } else {
+                fn generate() -> Self {
+                    Self::new(ulid::Ulid::new())
+                }
+            }
         }
     }
 

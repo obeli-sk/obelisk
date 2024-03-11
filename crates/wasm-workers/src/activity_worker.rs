@@ -150,7 +150,10 @@ impl ActivityWorker {
             .as_ref()
             .and_then(|i| i.lock().unwrap_or_log().pop());
         let (instance, mut store) = match (instance, &self.instance_pre) {
-            (Some((instance, store)), _) => (instance, store),
+            (Some((instance, store)), _) => {
+                trace!("Reusing old instance and store");
+                (instance, store)
+            }
             (None, Some(instance_pre)) => {
                 let mut store = utils::wasi_http::store(&self.engine);
                 let instance = instance_pre
@@ -507,7 +510,7 @@ mod tests {
                 }
             });
         }
-
+        let recycled_instances = Some(Default::default());
         let fibo_worker = ActivityWorker::new_with_config(
             db_connection.clone(),
             ActivityConfig {
@@ -518,7 +521,7 @@ mod tests {
                 epoch_millis: EPOCH_MILLIS,
             },
             engine,
-            None,
+            recycled_instances.clone(), // enable recycling
         )
         .unwrap_or_log();
 
@@ -538,6 +541,7 @@ mod tests {
 
         // Create an execution.
         let execution_id = ActivityId::generate();
+        info!("Testing {execution_id}");
         let created_at = now();
         db_connection
             .create(
@@ -559,6 +563,10 @@ mod tests {
                 .await
                 .unwrap_or_log(),
             expected
+        );
+        assert_eq!(
+            Some(if expected.is_ok() { 1 } else { 0 }),
+            recycled_instances.as_ref().map(|i| i.lock().unwrap().len())
         );
 
         drop(db_connection);

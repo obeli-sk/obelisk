@@ -19,7 +19,7 @@ use std::{
 };
 use tokio::task::AbortHandle;
 use tracing::{debug, enabled, info, info_span, instrument, trace, warn, Instrument, Level};
-use utils::time::{now, now_tokio_instant};
+use utils::time::now;
 
 #[derive(Debug, Clone)]
 pub struct ExecConfig {
@@ -44,6 +44,7 @@ struct ExecTickRequest {
     executed_at: DateTime<Utc>,
 }
 
+#[allow(dead_code)] // allowed for testing
 struct ExecutionProgress<ID: ExecutionId> {
     execution_id: ID,
     abort_handle: AbortHandle,

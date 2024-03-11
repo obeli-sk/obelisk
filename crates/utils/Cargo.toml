@@ -12,7 +12,6 @@ val-json.workspace = true
 cfg-if.workspace = true
 chrono.workspace = true
 indexmap.workspace = true
-madsim.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing-unwrap.workspace = true
@@ -24,6 +23,7 @@ wit-component.workspace = true
 wit-parser.workspace = true
 
 [dev-dependencies]
+madsim.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
