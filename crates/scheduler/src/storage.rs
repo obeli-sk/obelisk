@@ -1,6 +1,7 @@
 pub mod inmemory_dao;
 
 use self::journal::PendingState;
+use crate::ExecutionHistory;
 use crate::FinishedExecutionResult;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
@@ -60,7 +61,7 @@ pub enum ExecutionEventInner<ID: ExecutionId> {
     // Processed by a scheduler.
     // After expiry interpreted as pending.
     #[display(fmt = "IntermittentTimeout(`{expires_at}`)")]
-    IntermittentTimeout { expires_at: DateTime<Utc> },
+    IntermittentTimeout { expires_at: DateTime<Utc> }, // TODO: Add executor name
     // Created by the executor holding last lock.
     // Processed by a scheduler if a parent execution needs to be notified,
     // also when
@@ -197,7 +198,6 @@ pub enum DbError {
 
 pub type AppendResponse = Version;
 pub type PendingExecution<ID> = (ID, Version, Params, Option<DateTime<Utc>>);
-pub type ExecutionHistory<ID> = (Vec<ExecutionEvent<ID>>, Version, PendingState);
 pub type LockResponse<ID> = (Vec<HistoryEvent<ID>>, Version);
 
 #[derive(Debug, Clone)]
@@ -275,9 +275,9 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
         execution_id: ID,
     ) -> Result<FinishedExecutionResult<ID>, DbError> {
         let mut execution_events = loop {
-            let (execution_events, _, pending_state) = self.get(execution_id.clone()).await?;
-            if pending_state == PendingState::Finished {
-                break execution_events;
+            let execution_history = self.get(execution_id.clone()).await?;
+            if execution_history.pending_state == PendingState::Finished {
+                break execution_history.execution_events;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         };
@@ -306,7 +306,7 @@ pub mod journal {
     pub(crate) struct ExecutionJournal<ID: ExecutionId> {
         execution_id: ID,
         pub(crate) pending_state: PendingState,
-        events: VecDeque<ExecutionEvent<ID>>,
+        execution_events: VecDeque<ExecutionEvent<ID>>,
     }
 
     impl<ID: ExecutionId> ExecutionJournal<ID> {
@@ -338,21 +338,21 @@ pub mod journal {
             Self {
                 execution_id,
                 pending_state,
-                events: VecDeque::from([event]),
+                execution_events: VecDeque::from([event]),
             }
         }
 
         pub(crate) fn len(&self) -> usize {
-            self.events.len()
+            self.execution_events.len()
         }
 
         pub(crate) fn created_at(&self) -> DateTime<Utc> {
-            self.events.iter().rev().next().unwrap_or_log().created_at
+            self.execution_events.iter().rev().next().unwrap_or_log().created_at
         }
 
         pub(crate) fn ffqn(&self) -> &FunctionFqn {
             // TODO: extract to a struct field
-            match self.events.get(0) {
+            match self.execution_events.get(0) {
                 Some(ExecutionEvent {
                     event: ExecutionEventInner::Created { ffqn, .. },
                     ..
@@ -362,7 +362,7 @@ pub mod journal {
         }
 
         pub(crate) fn version(&self) -> Version {
-            self.events.len()
+            self.execution_events.len()
         }
 
         pub(crate) fn execution_id(&self) -> &ID {
@@ -433,10 +433,10 @@ pub mod journal {
                     self.pending_state
                 ))));
             }
-            self.events.push_back(ExecutionEvent { event, created_at });
+            self.execution_events.push_back(ExecutionEvent { event, created_at });
             // update the state
             self.pending_state = self
-                .events
+                .execution_events
                 .iter()
                 .enumerate()
                 .rev()
@@ -497,7 +497,7 @@ pub mod journal {
                     ) => {
                         // pending if this event is followed by an async response
                         if self
-                            .events
+                            .execution_events
                             .iter()
                             .skip(idx + 1)
                             .find(|event| {
@@ -523,7 +523,7 @@ pub mod journal {
         }
 
         pub(crate) fn event_history(&self) -> Vec<HistoryEvent<ID>> {
-            self.events
+            self.execution_events
                 .iter()
                 .filter_map(|event| {
                     if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {
@@ -536,31 +536,39 @@ pub mod journal {
         }
 
         pub(crate) fn retry_exp_backoff(&self) -> Duration {
-            assert_matches!(self.events.front(), Some(ExecutionEvent {
+            assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
                 event: ExecutionEventInner::Created { retry_exp_backoff, .. },
                 ..
             }) => *retry_exp_backoff)
         }
 
         pub(crate) fn max_retries(&self) -> u32 {
-            assert_matches!(self.events.front(), Some(ExecutionEvent {
+            assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
                 event: ExecutionEventInner::Created { max_retries, .. },
                 ..
             }) => *max_retries)
         }
 
         pub(crate) fn params(&self) -> Params {
-            assert_matches!(self.events.front(), Some(ExecutionEvent {
+            assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
                 event: ExecutionEventInner::Created { params, .. },
                 ..
             }) => params.clone())
         }
 
         pub fn as_execution_history(&self) -> ExecutionHistory<ID> {
-            (
-                self.events.iter().cloned().collect(),
-                self.version(),
-                self.pending_state.clone(),
+            ExecutionHistory {
+                execution_events: self.execution_events.iter().cloned().collect(),
+                version: self.version(),
+                pending_state: self.pending_state.clone(),
+            }
+        }
+
+        pub(crate) fn can_be_retried_after(&self) -> Option<Duration> {
+            crate::can_be_retried_after(
+                self.execution_events.iter(),
+                self.max_retries(),
+                self.retry_exp_backoff(),
             )
         }
     }

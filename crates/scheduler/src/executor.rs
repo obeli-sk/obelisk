@@ -1,12 +1,12 @@
 use crate::{
     storage::{
-        DbConnection, DbConnectionError, DbError, ExecutionEvent, ExecutionEventInner,
-        ExecutorName, HistoryEvent, Version,
+        DbConnection, DbConnectionError, DbError, ExecutionEventInner, ExecutorName, HistoryEvent,
+        Version,
     },
     worker::{FatalError, Worker, WorkerError, WorkerResult},
     FinishedExecutionError,
 };
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params};
 use std::{
     marker::PhantomData,
@@ -191,12 +191,6 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                 // TODO: wait for termination of all spawned tasks in `close`.
                 tokio::spawn(
                     async move {
-                        let Ok(retry_exp_backoff) =
-                            TimeDelta::from_std(locked_execution.retry_exp_backoff)
-                        else {
-                            warn!("Invalid `retry_exp_backoff`");
-                            return;
-                        };
                         let res = Self::run_worker(
                             worker,
                             db_connection,
@@ -206,8 +200,6 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                             locked_execution.params,
                             locked_execution.event_history,
                             execution_deadline,
-                            locked_execution.max_retries,
-                            retry_exp_backoff,
                         )
                         .await;
                         if let Err(err) = res {
@@ -236,8 +228,6 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         params: Params,
         event_history: Vec<HistoryEvent<ID>>,
         execution_deadline: DateTime<Utc>,
-        max_retries: u32,
-        retry_exp_backoff: TimeDelta,
     ) -> Result<Version, DbError> {
         if enabled!(Level::TRACE) {
             trace!(?params, version, "Starting");
@@ -260,14 +250,8 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             debug!("Finished");
         }
         // Map the WorkerError to an intermittent or a permanent failure.
-        match Self::worker_result_to_execution_event(
-            &db_connection,
-            &execution_id,
-            worker_result,
-            max_retries,
-            retry_exp_backoff,
-        )
-        .await
+        match Self::worker_result_to_execution_event(&db_connection, &execution_id, worker_result)
+            .await
         {
             Ok((event, version)) => {
                 db_connection
@@ -282,8 +266,6 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         db_connection: &DB,
         execution_id: &ID,
         worker_result: WorkerResult,
-        max_retries: u32,
-        retry_exp_backoff: TimeDelta,
     ) -> Result<(ExecutionEventInner<ID>, Version), DbError> {
         match worker_result {
             Ok((result, version)) => Ok((
@@ -292,19 +274,17 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             )),
             Err((err, new_version)) => {
                 debug!("Execution failed: {err:?}");
-                let (event_history, received_version, _) =
-                    db_connection.get(execution_id.clone()).await?; // This can come from a cache
-                if received_version != new_version {
+                let execution_history = db_connection.get(execution_id.clone()).await?; // This can come from a cache
+                if execution_history.version != new_version {
                     return Err(DbError::RowSpecific(
                         crate::storage::RowSpecificError::VersionMismatch,
                     ));
                 }
                 match err {
                     WorkerError::IntermittentError { reason, err: _ } => {
-                        if let Some(expires_at) =
-                            Self::can_be_retried(&event_history, max_retries, retry_exp_backoff)
-                        {
-                            debug!("Retrying execution at {expires_at}");
+                        if let Some(duration) = execution_history.can_be_retried_after() {
+                            let expires_at = now() + duration;
+                            debug!("Retrying execution after {duration:?} at {expires_at}");
                             Ok((
                                 ExecutionEventInner::IntermittentFailure { expires_at, reason },
                                 new_version,
@@ -329,24 +309,6 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             }
         }
     }
-
-    fn can_be_retried(
-        event_history: &Vec<ExecutionEvent<ID>>,
-        max_retries: u32,
-        retry_exp_backoff: TimeDelta,
-    ) -> Option<DateTime<Utc>> {
-        let already_retried_count = event_history
-            .iter()
-            .filter(|event| event.event.is_retry())
-            .count() as u32;
-        if already_retried_count < max_retries {
-            let duration = retry_exp_backoff * 2_i32.saturating_pow(already_retried_count);
-            let expires_at = now() + duration;
-            Some(expires_at)
-        } else {
-            None
-        }
-    }
 }
 
 #[cfg(test)]
@@ -358,6 +320,7 @@ mod tests {
             DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
         },
         worker::WorkerResult,
+        ExecutionHistory,
     };
     use anyhow::anyhow;
     use assert_matches::assert_matches;
@@ -466,7 +429,7 @@ mod tests {
         let execution_history =
             execute(db_connection, exec_config, worker_results_rev, 0, tick_fn).await;
         assert_matches!(
-            execution_history[2],
+            execution_history.execution_events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -498,7 +461,7 @@ mod tests {
             execute(db_connection, exec_config, worker_results_rev, 0, tick_fn).await;
         db_task.close().await;
         assert_matches!(
-            execution_history[2],
+            execution_history.execution_events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -547,7 +510,7 @@ mod tests {
         exec_task.close().await;
         db_task.close().await;
         assert_matches!(
-            execution_history[2],
+            execution_history.execution_events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -567,7 +530,7 @@ mod tests {
         worker_results_rev: SimpleWorkerResultMap,
         max_retries: u32,
         mut tick: T,
-    ) -> Vec<ExecutionEvent<WorkflowId>> {
+    ) -> ExecutionHistory<WorkflowId> {
         // Create an execution
         let execution_id = WorkflowId::generate();
         let created_at = now();
@@ -591,28 +554,28 @@ mod tests {
             worker_results_rev.clone(),
         )
         .await;
-        let (execution_history, _, _) = db_connection.get(execution_id).await.unwrap_or_log();
+        let execution_history = db_connection.get(execution_id).await.unwrap_or_log();
         // check that DB contains Created and Locked events.
         assert_matches!(
-            execution_history[0],
+            execution_history.execution_events.get(0).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Created { .. },
                 created_at: actually_created_at,
             }
-            if created_at == actually_created_at
+            if created_at == *actually_created_at
         );
         let last_created_at = assert_matches!(
-            execution_history[1],
+            execution_history.execution_events.get(1).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: updated_at
-            } if created_at <= updated_at
-             => updated_at
+            } if created_at <= *updated_at
+             => *updated_at
         );
-        assert_matches!(execution_history[2], ExecutionEvent {
+        assert_matches!(execution_history.execution_events.get(2).unwrap(), ExecutionEvent {
             event: _,
             created_at: executed_at,
-        } if executed_at >= last_created_at);
+        } if *executed_at >= last_created_at);
         execution_history
     }
 
@@ -665,7 +628,7 @@ mod tests {
         exec_task.close().await;
         db_task.close().await;
         assert_matches!(
-            &execution_history[2],
+            &execution_history.execution_events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::IntermittentFailure {
                     reason,
@@ -675,14 +638,14 @@ mod tests {
             } if *reason == Cow::Borrowed("fail")
         );
         assert_matches!(
-            execution_history[3],
+            execution_history.execution_events.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: _
             }
         );
         assert_matches!(
-            execution_history[4],
+            execution_history.execution_events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),

@@ -12,6 +12,7 @@ use crate::storage::{
     AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
     LockPendingResponse, LockResponse, RowSpecificError, Version,
 };
+use crate::FinishedExecutionError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn, Params};
@@ -702,13 +703,22 @@ impl<ID: ExecutionId> DbTask<ID> {
         let len = expired.len();
         for execution_id in expired {
             let journal = self.journals.get(&execution_id).unwrap();
+
+            let event = if let Some(duration) = journal.can_be_retried_after() {
+                let expires_at = now + duration;
+                debug!("Retrying execution after {duration:?} at {expires_at}");
+                ExecutionEventInner::IntermittentTimeout { expires_at }
+            } else {
+                info!("Marking execution as permanently failed");
+                ExecutionEventInner::Finished {
+                    result: Err(FinishedExecutionError::PermanentTimeout),
+                }
+            };
             self.append(
                 now,
                 journal.execution_id().clone(),
                 journal.version(),
-                ExecutionEventInner::Finished {
-                    result: Err(crate::FinishedExecutionError::PermanentTimeout),
-                },
+                event,
             )
             .expect_or_log("must be lockable within the same transaction");
             self.index.update(execution_id, &self.journals);
@@ -1057,7 +1067,7 @@ pub(crate) mod tests {
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
         };
-        lock_expired_means_permanent_timeout(db_connection).await;
+        lock_expired_means_timeout(db_connection).await;
     }
 
     #[tokio::test]
@@ -1068,17 +1078,15 @@ pub(crate) mod tests {
         let db_connection = InMemoryDbConnection {
             client_to_store_req_sender,
         };
-        lock_expired_means_permanent_timeout(db_connection).await;
+        lock_expired_means_timeout(db_connection).await;
         db_task.close().await;
     }
 
-    async fn lock_expired_means_permanent_timeout(
-        db_connection: impl DbConnection<WorkflowId> + Sync,
-    ) {
+    async fn lock_expired_means_timeout(db_connection: impl DbConnection<WorkflowId> + Sync) {
         let execution_id = WorkflowId::generate();
         let exec1 = Arc::new("exec1".to_string());
-        let lock_expiry = Duration::from_millis(500);
         // Create
+        let retry_exp_backoff = Duration::from_millis(100);
         {
             db_connection
                 .create(
@@ -1088,15 +1096,15 @@ pub(crate) mod tests {
                     Params::default(),
                     None,
                     None,
-                    Duration::ZERO,
-                    0,
+                    retry_exp_backoff,
+                    1,
                 )
                 .await
                 .unwrap_or_log();
         }
-        // LockPending
+        // Lock pending
+        let lock_duration = Duration::from_millis(500);
         {
-            info!("LockPending: {}", now());
             let mut locked_executions = db_connection
                 .lock_pending(
                     1,
@@ -1104,7 +1112,7 @@ pub(crate) mod tests {
                     vec![SOME_FFQN.to_owned()],
                     now(),
                     exec1.clone(),
-                    now() + lock_expiry,
+                    now() + lock_duration,
                 )
                 .await
                 .unwrap_or_log();
@@ -1114,19 +1122,64 @@ pub(crate) mod tests {
             assert_eq!(SOME_FFQN.to_owned(), locked_execution.ffqn);
             assert_eq!(2, locked_execution.version);
         }
-        // Wait for lock expiry
-        sleep(Duration::from_secs(1)).await;
+        // Calling `cleanup_expired_locks` after lock expiry should result in intermittent timeout.
+        sleep(lock_duration).await;
+        {
+            let cleanup_at = now();
+            let expired = db_connection
+                .cleanup_expired_locks(cleanup_at)
+                .await
+                .unwrap();
+            assert_eq!(1, expired);
+            let execution_history = db_connection.get(execution_id.clone()).await.unwrap();
+            let timeout_expiry = cleanup_at + retry_exp_backoff;
+            assert_eq!(
+                PendingState::PendingAt(timeout_expiry),
+                execution_history.pending_state
+            );
+            let last_event = execution_history.last_event();
+            assert_matches!(
+                last_event,
+                ExecutionEvent {
+                    event: ExecutionEventInner::IntermittentTimeout {
+                        expires_at,
+                    },
+                    ..
+                } if *expires_at == timeout_expiry
+            );
+        }
+        // Lock again
+        sleep(retry_exp_backoff).await;
+        {
+            let mut locked_executions = db_connection
+                .lock_pending(
+                    1,
+                    now(),
+                    vec![SOME_FFQN.to_owned()],
+                    now(),
+                    exec1.clone(),
+                    now() + lock_duration,
+                )
+                .await
+                .unwrap_or_log();
+            assert_eq!(1, locked_executions.len());
+            let locked_execution = locked_executions.pop().unwrap();
+            assert_eq!(execution_id, locked_execution.execution_id);
+            assert_eq!(SOME_FFQN.to_owned(), locked_execution.ffqn);
+            assert_eq!(4, locked_execution.version);
+        }
+        // Calling `cleanup_expired_locks` after lock expiry should result in permanent timeout.
+        sleep(lock_duration).await;
         let expired = db_connection.cleanup_expired_locks(now()).await.unwrap();
         assert_eq!(1, expired);
-        let (mut execution_history, _version, pending_state) =
-            db_connection.get(execution_id).await.unwrap();
-        assert_eq!(PendingState::Finished, pending_state);
-        let last_event = execution_history.pop().unwrap();
+        let execution_history = db_connection.get(execution_id).await.unwrap();
+        assert_eq!(PendingState::Finished, execution_history.pending_state);
+        let last_event = execution_history.last_event();
         assert_matches!(
             last_event,
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Err(crate::FinishedExecutionError::PermanentTimeout) // FIXME
+                    result: Err(crate::FinishedExecutionError::PermanentTimeout)
                 },
                 ..
             }
