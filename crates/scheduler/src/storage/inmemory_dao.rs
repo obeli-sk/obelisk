@@ -41,20 +41,20 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
     async fn lock_pending(
         &self,
         batch_size: usize,
-        expiring_before: DateTime<Utc>,
+        pending_at_or_sooner: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         created_at: DateTime<Utc>,
         executor_name: ExecutorName,
-        expires_at: DateTime<Utc>,
+        lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse<ID>, DbConnectionError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::General(GeneralRequest::LockPending {
             batch_size,
-            expiring_before,
+            pending_at_or_sooner,
             ffqns,
             created_at,
             executor_name,
-            expires_at,
+            lock_expires_at,
             resp_sender,
         });
         self.client_to_store_req_sender
@@ -89,7 +89,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         execution_id: ID,
         version: Version,
         executor_name: ExecutorName,
-        expires_at: DateTime<Utc>,
+        lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse<ID>, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
@@ -97,7 +97,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
             execution_id,
             version,
             executor_name,
-            expires_at,
+            lock_expires_at,
             resp_sender,
         });
         self.client_to_store_req_sender
@@ -230,12 +230,15 @@ mod index {
                         .insert(execution_id.clone());
                     self.pending_scheduled_rev.insert(execution_id, expires_at);
                 }
-                PendingState::Locked { expires_at, .. } => {
+                PendingState::Locked {
+                    lock_expires_at,
+                    ..
+                } => {
                     self.locked
-                        .entry(expires_at)
+                        .entry(lock_expires_at)
                         .or_default()
                         .insert(execution_id.clone());
-                    self.locked_rev.insert(execution_id, expires_at);
+                    self.locked_rev.insert(execution_id, lock_expires_at);
                 }
                 PendingState::BlockedByJoinSet | PendingState::Finished => {}
             }
@@ -271,7 +274,7 @@ enum ExecutionSpecificRequest<ID: ExecutionId> {
         execution_id: ID,
         version: Version,
         executor_name: ExecutorName,
-        expires_at: DateTime<Utc>,
+        lock_expires_at: DateTime<Utc>,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<LockResponse<ID>, RowSpecificError>>,
     },
@@ -298,11 +301,11 @@ enum GeneralRequest<ID: ExecutionId> {
     #[display(fmt = "LockPending(`{executor_name}`, {ffqns:?})")]
     LockPending {
         batch_size: usize,
-        expiring_before: DateTime<Utc>,
+        pending_at_or_sooner: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         created_at: DateTime<Utc>,
         executor_name: ExecutorName,
-        expires_at: DateTime<Utc>,
+        lock_expires_at: DateTime<Utc>,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<LockPendingResponse<ID>>,
     },
@@ -384,10 +387,12 @@ pub(crate) enum DbTickResponse<ID: ExecutionId> {
     },
     Get {
         payload: Result<ExecutionHistory<ID>, RowSpecificError>,
+        #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<ExecutionHistory<ID>, RowSpecificError>>,
     },
     CleanupExpiredLocks {
         payload: CleanupExpiredLocks,
+        #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<CleanupExpiredLocks>,
     },
 }
@@ -487,19 +492,19 @@ impl<ID: ExecutionId> DbTask<ID> {
         match request {
             GeneralRequest::LockPending {
                 batch_size,
-                expiring_before,
+                pending_at_or_sooner,
                 ffqns,
                 created_at,
                 executor_name,
-                expires_at,
+                lock_expires_at,
                 resp_sender,
             } => self.lock_pending(
                 batch_size,
-                expiring_before,
+                pending_at_or_sooner,
                 ffqns,
                 created_at,
                 executor_name,
-                expires_at,
+                lock_expires_at,
                 resp_sender,
             ),
             GeneralRequest::CleanupExpiredLocks { now, resp_sender } => {
@@ -515,7 +520,7 @@ impl<ID: ExecutionId> DbTask<ID> {
         ffqns: Vec<FunctionFqn>,
         created_at: DateTime<Utc>,
         executor_name: Arc<String>,
-        expires_at: DateTime<Utc>,
+        lock_expires_at: DateTime<Utc>,
         resp_sender: oneshot::Sender<LockPendingResponse<ID>>,
     ) -> DbTickResponse<ID> {
         let pending = self
@@ -543,7 +548,7 @@ impl<ID: ExecutionId> DbTask<ID> {
                     row.execution_id.clone(),
                     row.version,
                     executor_name.clone(),
-                    expires_at,
+                    lock_expires_at,
                 )
                 .expect_or_log("must be lockable within the same transaction");
             row.version = new_version;
@@ -573,11 +578,17 @@ impl<ID: ExecutionId> DbTask<ID> {
                 execution_id,
                 version,
                 executor_name,
-                expires_at,
+                lock_expires_at,
                 resp_sender,
             } => DbTickResponse::Lock {
                 resp_sender,
-                payload: self.lock(created_at, execution_id, version, executor_name, expires_at),
+                payload: self.lock(
+                    created_at,
+                    execution_id,
+                    version,
+                    executor_name,
+                    lock_expires_at,
+                ),
             },
             ExecutionSpecificRequest::Get {
                 execution_id,
@@ -629,11 +640,11 @@ impl<ID: ExecutionId> DbTask<ID> {
         execution_id: ID,
         version: Version,
         executor_name: ExecutorName,
-        expires_at: DateTime<Utc>,
+        lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse<ID>, RowSpecificError> {
         let event = ExecutionEventInner::Locked {
             executor_name,
-            expires_at,
+            lock_expires_at,
         };
         self.append(created_at, execution_id.clone(), version, event)
             .map(|_| {
@@ -756,19 +767,19 @@ pub(crate) mod tests {
         async fn lock_pending(
             &self,
             batch_size: usize,
-            expiring_before: DateTime<Utc>,
+            pending_at_or_sooner: DateTime<Utc>,
             ffqns: Vec<FunctionFqn>,
             created_at: DateTime<Utc>,
             executor_name: ExecutorName,
-            expires_at: DateTime<Utc>,
+            lock_expires_at: DateTime<Utc>,
         ) -> Result<LockPendingResponse<ID>, DbConnectionError> {
             let request = DbRequest::General(GeneralRequest::LockPending {
                 batch_size,
-                expiring_before,
+                pending_at_or_sooner,
                 ffqns,
                 created_at,
                 executor_name,
-                expires_at,
+                lock_expires_at,
                 resp_sender: oneshot::channel().0,
             });
             let response = self.db_task.lock().unwrap_or_log().tick(request);
@@ -796,14 +807,14 @@ pub(crate) mod tests {
             execution_id: ID,
             version: Version,
             executor_name: ExecutorName,
-            expires_at: DateTime<Utc>,
+            lock_expires_at: DateTime<Utc>,
         ) -> Result<LockResponse<ID>, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
                 created_at,
                 execution_id,
                 version,
                 executor_name,
-                expires_at,
+                lock_expires_at,
                 resp_sender: oneshot::channel().0,
             });
             let response = self.db_task.lock().unwrap_or_log().tick(request);

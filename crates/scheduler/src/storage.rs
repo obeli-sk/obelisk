@@ -43,10 +43,10 @@ pub enum ExecutionEventInner<ID: ExecutionId> {
     // Created by an executor.
     // Either immediately followed by an execution request by an executor or
     // after expiry immediately followed by WaitingForExecutor by a scheduler.
-    #[display(fmt = "Locked(`{expires_at}`, `{executor_name}`)")]
+    #[display(fmt = "Locked(`{lock_expires_at}`, `{executor_name}`)")]
     Locked {
         executor_name: ExecutorName,
-        expires_at: DateTime<Utc>,
+        lock_expires_at: DateTime<Utc>,
     },
     // Created by the executor holding last lock.
     // Processed by a scheduler.
@@ -219,9 +219,9 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
     async fn lock_pending(
         &self,
         batch_size: usize,
-        fetch_expiring_before: DateTime<Utc>,
+        pending_at_or_sooner: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
-        lock_created_at: DateTime<Utc>,
+        created_at: DateTime<Utc>,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse<ID>, DbConnectionError>;
@@ -257,7 +257,7 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
         execution_id: ID,
         version: Version,
         executor_name: ExecutorName,
-        expires_at: DateTime<Utc>,
+        lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse<ID>, DbError>;
 
     async fn append(
@@ -347,7 +347,12 @@ pub mod journal {
         }
 
         pub(crate) fn created_at(&self) -> DateTime<Utc> {
-            self.execution_events.iter().rev().next().unwrap_or_log().created_at
+            self.execution_events
+                .iter()
+                .rev()
+                .next()
+                .unwrap_or_log()
+                .created_at
         }
 
         pub(crate) fn ffqn(&self) -> &FunctionFqn {
@@ -382,10 +387,10 @@ pub mod journal {
 
             if let ExecutionEventInner::Locked {
                 executor_name,
-                expires_at,
+                lock_expires_at,
             } = &event
             {
-                if *expires_at <= created_at {
+                if *lock_expires_at <= created_at {
                     return Err(RowSpecificError::ValidationFailed(Cow::Borrowed(
                         "invalid expiry date",
                     )));
@@ -403,11 +408,11 @@ pub mod journal {
                     }
                     PendingState::Locked {
                         executor_name: locked_by,
-                        expires_at,
+                        lock_expires_at,
                     } => {
                         if executor_name == locked_by {
                             // we allow extending the lock
-                        } else if *expires_at <= created_at {
+                        } else if *lock_expires_at <= created_at {
                             // we allow locking after the old lock expired
                         } else {
                             return Err(RowSpecificError::ValidationFailed(Cow::Owned(format!(
@@ -426,14 +431,15 @@ pub mod journal {
                     }
                 }
             }
-            let locked_now = matches!(self.pending_state, PendingState::Locked { expires_at,.. } if expires_at > created_at);
+            let locked_now = matches!(self.pending_state, PendingState::Locked { lock_expires_at,.. } if lock_expires_at > created_at);
             if locked_now && !event.appendable_only_in_lock() {
                 return Err(RowSpecificError::ValidationFailed(Cow::Owned(format!(
                     "cannot append {event} event in {}",
                     self.pending_state
                 ))));
             }
-            self.execution_events.push_back(ExecutionEvent { event, created_at });
+            self.execution_events
+                .push_back(ExecutionEvent { event, created_at });
             // update the state
             self.pending_state = self
                 .execution_events
@@ -462,11 +468,11 @@ pub mod journal {
                         _,
                         ExecutionEventInner::Locked {
                             executor_name,
-                            expires_at,
+                            lock_expires_at,
                         },
                     ) => Some(PendingState::Locked {
                         executor_name: executor_name.clone(),
-                        expires_at: *expires_at,
+                        lock_expires_at: *lock_expires_at,
                     }),
 
                     (_, ExecutionEventInner::IntermittentFailure { expires_at, .. }) => {
@@ -576,10 +582,10 @@ pub mod journal {
     #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
     pub enum PendingState {
         PendingNow,
-        #[display(fmt = "Locked(`{expires_at}`,`{executor_name}`)")]
+        #[display(fmt = "Locked(`{lock_expires_at}`,`{executor_name}`)")]
         Locked {
             executor_name: ExecutorName,
-            expires_at: DateTime<Utc>,
+            lock_expires_at: DateTime<Utc>,
         },
         #[display(fmt = "PendingAt(`{_0}`)")]
         PendingAt(DateTime<Utc>), // e.g. created with a schedule, intermittent timeout/failure

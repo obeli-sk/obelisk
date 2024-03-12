@@ -12,9 +12,7 @@ pub struct EngineConfig {
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
-            allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(
-                wasmtime::PoolingAllocationConfig::default(),
-            ),
+            allocation_strategy: wasmtime::InstanceAllocationStrategy::pooling(),
         }
     }
 }

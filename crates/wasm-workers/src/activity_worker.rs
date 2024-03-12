@@ -5,7 +5,7 @@ use concepts::{FunctionFqn, FunctionMetadata};
 use concepts::{Params, SupportedFunctionResult};
 use scheduler::worker::FatalError;
 use scheduler::{
-    storage::{DbConnection, HistoryEvent, Version},
+    storage::{HistoryEvent, Version},
     worker::{Worker, WorkerError},
 };
 use std::{borrow::Cow, collections::HashMap, error::Error, fmt::Debug, sync::Arc};
@@ -54,8 +54,7 @@ pub enum ActivityError {
 
 impl ActivityWorker {
     #[tracing::instrument(skip_all, fields(wasm_path))]
-    pub fn new_with_config<DB: DbConnection<ActivityId>>(
-        _db_connection: DB,
+    pub fn new_with_config(
         config: ActivityConfig,
         engine: Arc<Engine>,
         recycled_instances: MaybeRecycledInstances,
@@ -180,9 +179,10 @@ impl ActivityWorker {
         };
         let epoch_millis = self.config.epoch_millis;
         store.epoch_deadline_callback(move |_store_ctx| {
-            match (execution_deadline - now()).to_std() {
+            let delta = execution_deadline - now();
+            match delta.to_std() {
                 Err(_) => {
-                    trace!("Sending OutOfFuel");
+                    trace!(%execution_deadline, %delta, "Sending OutOfFuel");
                     Err(wasmtime::Trap::OutOfFuel.into())
                 }
                 Ok(duration) => {
@@ -237,10 +237,17 @@ impl ActivityWorker {
             Ok(results)
         };
         let deadline_duration = (execution_deadline - now()).to_std().unwrap_or_default();
-        let sleep_until = now_tokio_instant() + deadline_duration;
+        let stopwatch = now_tokio_instant();
+        let sleep_until = stopwatch + deadline_duration;
         tokio::select! {
-            res = call_function => res,
-            _   = tokio::time::sleep_until(sleep_until) => Err(WorkerError::IntermittentTimeout) // Epoch interruption only applies to actively executing wasm.
+            res = call_function =>{
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, res = ?res.as_ref().map(|_|()), "Finished");
+                res
+            },
+            _   = tokio::time::sleep_until(sleep_until) => {
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %now(), "Timed out");
+                Err(WorkerError::IntermittentTimeout) // Epoch interruption only applies to actively executing wasm.
+            }
         }
     }
 
@@ -307,7 +314,6 @@ mod tests {
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
 
         let fibo_worker = ActivityWorker::new_with_config(
-            db_connection.clone(),
             ActivityConfig {
                 preload: true,
                 wasm_path: Cow::Borrowed(
@@ -324,7 +330,7 @@ mod tests {
             ffqns: vec![FIBO_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            lock_expiry_leeway: Duration::from_millis(100),
+            lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::from_millis(100),
         };
         let exec_task = ExecTask::spawn_new(
@@ -360,37 +366,6 @@ mod tests {
         db_task.close().await;
     }
 
-    // FIXME: replace tracing-unwrap with this hook
-    pub fn tracing_panic_hook(panic_info: &std::panic::PanicInfo) {
-        let payload = panic_info.payload();
-
-        #[allow(clippy::manual_map)]
-        let payload = if let Some(s) = payload.downcast_ref::<&str>() {
-            Some(&**s)
-        } else if let Some(s) = payload.downcast_ref::<String>() {
-            Some(s.as_str())
-        } else {
-            None
-        };
-
-        let location = panic_info.location().map(|l| l.to_string());
-
-        let backtrace = std::backtrace::Backtrace::capture();
-        if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
-            tracing::error!(
-                panic.payload = payload,
-                panic.location = location,
-                "A panic occurred: {backtrace}"
-            );
-        } else {
-            tracing::error!(
-                panic.payload = payload,
-                panic.location = location,
-                "A panic occurred",
-            );
-        }
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn fibo_parallel() {
         const FIBO_INPUT: u8 = 1;
@@ -400,10 +375,10 @@ mod tests {
         const PERMITS: usize = 1000;
         const BATCH_SIZE: u32 = 1;
         const PRELOAD: bool = false;
-        const LOCK_EXPIRY_SECS: u64 = 1;
+        const LOCK_EXPIRY_MILLIS: u64 = 100;
+        const EPOCH_MILLIS: u64 = 10;
 
         test_utils::set_up();
-        std::panic::set_hook(Box::new(tracing_panic_hook));
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executors = env_or_default("EXECUTORS", EXECUTORS);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
@@ -411,21 +386,33 @@ mod tests {
         let permits = env_or_default("PERMITS", PERMITS);
         let batch_size = env_or_default("BATCH_SIZE", BATCH_SIZE);
         let preload = env_or_default("PRELOAD", PRELOAD);
-        let lock_expiry_secs = env_or_default("LOCK_EXPIRY_SECS", LOCK_EXPIRY_SECS);
+        let lock_expiry =
+            Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
 
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
 
+        let engine = activity_engine(EngineConfig::default());
+        // Start epoch ticking
+        {
+            let engine = engine.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(EPOCH_MILLIS)).await;
+                    engine.increment_epoch();
+                }
+            });
+        }
+
         let fibo_worker = ActivityWorker::new_with_config(
-            db_connection.clone(),
             ActivityConfig {
                 preload,
                 wasm_path: Cow::Borrowed(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
-                epoch_millis: 10,
+                epoch_millis: EPOCH_MILLIS,
             },
-            activity_engine(EngineConfig::default()),
+            engine,
             recycle_instances,
         )
         .unwrap_or_log();
@@ -437,8 +424,8 @@ mod tests {
                 let exec_config = ExecConfig {
                     ffqns: vec![FIBO_FFQN.to_owned()],
                     batch_size,
-                    lock_expiry: Duration::from_secs(lock_expiry_secs),
-                    lock_expiry_leeway: Duration::from_millis(100),
+                    lock_expiry,
+                    lock_expiry_leeway: Duration::from_millis(10),
                     tick_sleep: Duration::from_millis(10),
                 };
                 ExecTask::spawn_new(
@@ -523,7 +510,6 @@ mod tests {
         }
         let recycled_instances = Some(Default::default());
         let fibo_worker = ActivityWorker::new_with_config(
-            db_connection.clone(),
             ActivityConfig {
                 preload: true,
                 wasm_path: Cow::Borrowed(
