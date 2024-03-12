@@ -495,6 +495,7 @@ mod tests {
     ) {
         const SLEEP_MILLIS_PARAM: u64 = 10;
         const EPOCH_MILLIS: u64 = 10;
+        const LOCK_EXPIRY: Duration = Duration::from_millis(500);
         test_utils::set_up();
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
@@ -528,7 +529,7 @@ mod tests {
         let exec_config = ExecConfig {
             ffqns: vec![SLEEP_FFQN.to_owned()],
             batch_size: 1,
-            lock_expiry: Duration::from_millis(500),
+            lock_expiry: LOCK_EXPIRY,
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::from_millis(10),
         };
