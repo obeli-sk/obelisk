@@ -11,7 +11,7 @@ use scheduler::{
 use std::{borrow::Cow, collections::HashMap, error::Error, fmt::Debug, sync::Arc};
 use tracing::{debug, enabled, info, trace, Level};
 use tracing_unwrap::{OptionExt, ResultExt};
-use utils::time::now;
+use utils::time::{now, now_tokio_instant};
 use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
@@ -192,49 +192,56 @@ impl ActivityWorker {
                 }
             }
         });
-        let func = {
-            let mut exports = instance.exports(&mut store);
-            let mut exports_instance = exports.root();
-            let mut exports_instance = exports_instance
-                .instance(&ffqn.ifc_fqn)
-                .expect_or_log("interface must be found");
-            exports_instance
-                .func(&ffqn.function_name)
-                .expect_or_log("function must be found")
-        };
-        // call func
-        let mut results = std::iter::repeat(Val::Bool(false))
-            .take(results_len)
-            .collect::<Vec<_>>();
-        func.call_async(&mut store, &params, &mut results)
-            .await
-            .map_err(|err| {
-                if matches!(err.downcast_ref(), Some(wasmtime::Trap::OutOfFuel)) {
-                    WorkerError::IntermittentTimeout
-                } else {
-                    let err = err.into();
-                    WorkerError::IntermittentError {
-                        reason: Cow::Owned(format!("wasm function call error: `{err}`")),
-                        err,
+        let call_function = async move {
+            let func = {
+                let mut exports = instance.exports(&mut store);
+                let mut exports_instance = exports.root();
+                let mut exports_instance = exports_instance
+                    .instance(&ffqn.ifc_fqn)
+                    .expect_or_log("interface must be found");
+                exports_instance
+                    .func(&ffqn.function_name)
+                    .expect_or_log("function must be found")
+            };
+            let mut results = std::iter::repeat(Val::Bool(false))
+                .take(results_len)
+                .collect::<Vec<_>>();
+            func.call_async(&mut store, &params, &mut results)
+                .await
+                .map_err(|err| {
+                    if matches!(err.downcast_ref(), Some(wasmtime::Trap::OutOfFuel)) {
+                        WorkerError::IntermittentTimeout
+                    } else {
+                        let err = err.into();
+                        WorkerError::IntermittentError {
+                            reason: Cow::Owned(format!("wasm function call error: `{err}`")),
+                            err,
+                        }
                     }
+                })?; // guest panic exits here
+            let results = SupportedFunctionResult::new(results);
+            func.post_return_async(&mut store).await.map_err(|err| {
+                WorkerError::IntermittentError {
+                    reason: Cow::Borrowed("wasm post function call error"),
+                    err: err.into(),
                 }
-            })?; // guest panic exits here
-        let results = SupportedFunctionResult::new(results);
-        func.post_return_async(&mut store)
-            .await
-            .map_err(|err| WorkerError::IntermittentError {
-                reason: Cow::Borrowed("wasm post function call error"),
-                err: err.into(),
             })?;
 
-        if let Some(recycled_instances) = &self.recycled_instances {
-            recycled_instances
-                .lock()
-                .unwrap_or_log()
-                .push((instance, store));
-        }
+            if let Some(recycled_instances) = &self.recycled_instances {
+                recycled_instances
+                    .lock()
+                    .unwrap_or_log()
+                    .push((instance, store));
+            }
 
-        Ok(results)
+            Ok(results)
+        };
+        let deadline_duration = (execution_deadline - now()).to_std().unwrap_or_default();
+        let sleep_until = now_tokio_instant() + deadline_duration;
+        tokio::select! {
+            res = call_function => res,
+            _   = tokio::time::sleep_until(sleep_until) => Err(WorkerError::IntermittentTimeout) // Epoch interruption only applies to actively executing wasm.
+        }
     }
 
     pub fn functions(&self) -> impl Iterator<Item = &FunctionFqn> {
@@ -263,7 +270,7 @@ const _: () = {
     }
 };
 
-#[cfg(test)]
+#[cfg(all(test, not(madsim)))]
 mod tests {
     use super::*;
     use crate::{activity_engine, EngineConfig};
@@ -393,6 +400,7 @@ mod tests {
         const PERMITS: usize = 1000;
         const BATCH_SIZE: u32 = 1;
         const PRELOAD: bool = false;
+        const LOCK_EXPIRY_SECS: u64 = 1;
 
         test_utils::set_up();
         std::panic::set_hook(Box::new(tracing_panic_hook));
@@ -403,6 +411,7 @@ mod tests {
         let permits = env_or_default("PERMITS", PERMITS);
         let batch_size = env_or_default("BATCH_SIZE", BATCH_SIZE);
         let preload = env_or_default("PRELOAD", PRELOAD);
+        let lock_expiry_secs = env_or_default("LOCK_EXPIRY_SECS", LOCK_EXPIRY_SECS);
 
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
@@ -428,7 +437,7 @@ mod tests {
                 let exec_config = ExecConfig {
                     ffqns: vec![FIBO_FFQN.to_owned()],
                     batch_size,
-                    lock_expiry: Duration::from_secs(1),
+                    lock_expiry: Duration::from_secs(lock_expiry_secs),
                     lock_expiry_leeway: Duration::from_millis(100),
                     tick_sleep: Duration::from_millis(10),
                 };
@@ -486,14 +495,15 @@ mod tests {
 
     const SLEEP_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:sleep/sleep", "sleep-loop"); // func(millis: u64, iterations: u32);
     #[rstest]
-    #[case(100, Err(FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
-    #[case(10, Ok(SupportedFunctionResult::None))] // 0.1s -> Ok
+    #[case(10, 100, Err(FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
+    #[case(10, 10, Ok(SupportedFunctionResult::None))] // 0.1s -> Ok
+    #[case(1500, 1, Err(FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
     #[tokio::test]
-    async fn sleep_timeout(
+    async fn nondeterministic_sleep_timeout(
+        #[case] sleep_millis: u64,
         #[case] sleep_iterations: u32,
         #[case] expected: FinishedExecutionResult<ActivityId>,
     ) {
-        const SLEEP_MILLIS_PARAM: u64 = 10;
         const EPOCH_MILLIS: u64 = 10;
         const LOCK_EXPIRY: Duration = Duration::from_millis(500);
         test_utils::set_up();
@@ -541,6 +551,7 @@ mod tests {
         );
 
         // Create an execution.
+        let stopwatch = Instant::now();
         let execution_id = ActivityId::generate();
         info!("Testing {execution_id}");
         let created_at = now();
@@ -549,7 +560,7 @@ mod tests {
                 created_at,
                 execution_id.clone(),
                 SLEEP_FFQN.to_owned(),
-                Params::from([Val::U64(SLEEP_MILLIS_PARAM), Val::U32(sleep_iterations)]),
+                Params::from([Val::U64(sleep_millis), Val::U32(sleep_iterations)]),
                 None,
                 None,
                 Duration::ZERO,
@@ -569,6 +580,9 @@ mod tests {
             Some(if expected.is_ok() { 1 } else { 0 }),
             recycled_instances.as_ref().map(|i| i.lock().unwrap().len())
         );
+        let stopwatch = stopwatch.elapsed();
+        warn!("Finished in {stopwatch:?}");
+        assert!(stopwatch < LOCK_EXPIRY * 2);
 
         drop(db_connection);
         exec_task.close().await;
