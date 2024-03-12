@@ -10,16 +10,14 @@ rust-version.workspace = true
 val-json.workspace = true
 
 arbitrary.workspace = true
-cfg-if.workspace = true
 derive_more.workspace = true
+getrandom.workspace = true      # Only needed for the madsim patch
 serde_json.workspace = true
 thiserror.workspace = true
 tracing-unwrap.workspace = true
 ulid.workspace = true
 wasmtime.workspace = true
 
-[dependencies-dev]
-madsim.workspace = true
 
 [lints]
 workspace = true

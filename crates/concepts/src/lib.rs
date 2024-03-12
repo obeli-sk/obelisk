@@ -230,9 +230,8 @@ pub trait ExecutionId:
 }
 
 pub mod prefixed_ulid {
-    use arbitrary::Arbitrary;
-
     use crate::ExecutionId;
+    use arbitrary::Arbitrary;
     use std::{
         fmt::{Debug, Display},
         hash::Hash,
@@ -258,17 +257,8 @@ pub mod prefixed_ulid {
     }
 
     impl<T> ExecutionId for PrefixedUlid<T> {
-        cfg_if::cfg_if! {
-                if #[cfg(all(test, madsim))] {
-                fn generate() -> Self {
-                    madsim::time::advance(std::time::Duration::from_millis(madsim::rand::random()));
-                    Self::new(ulid::Ulid::new())
-                }
-            } else {
-                fn generate() -> Self {
-                    Self::new(ulid::Ulid::new())
-                }
-            }
+        fn generate() -> Self {
+            Self::new(ulid::Ulid::new())
         }
     }
 

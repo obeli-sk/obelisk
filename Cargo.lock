@@ -362,8 +362,8 @@ name = "concepts"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
- "cfg-if",
  "derive_more",
+ "getrandom",
  "serde_json",
  "thiserror",
  "tracing-unwrap",
@@ -905,9 +905,8 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
-version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "190092ea657667030ac6a35e305e62fc4dd69fd98ac98631e5d3a2b1575a12b5"
+version = "0.2.9"
+source = "git+https://github.com/madsim-rs/getrandom.git?rev=8daf97e#8daf97e4142635fe28543b2db9022f5e2544bb5c"
 dependencies = [
  "cfg-if",
  "js-sys",
@@ -1602,17 +1601,16 @@ checksum = "e898588f33fdd5b9420719948f9f2a32c922a246964576f71ba7f24f80610fbc"
 
 [[package]]
 name = "ring"
-version = "0.17.8"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c17fa4cb658e3583423e915b9f3acc01cceaee1860e33d59ebae66adc3a2dc0d"
+checksum = "9babe80d5c16becf6594aa32ad2be8fe08498e7ae60b77de8df700e67f191d7e"
 dependencies = [
  "cc",
- "cfg-if",
  "getrandom",
  "libc",
  "spin",
  "untrusted",
- "windows-sys 0.52.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
