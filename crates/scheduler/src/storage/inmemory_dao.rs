@@ -17,11 +17,12 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{ExecutionId, FunctionFqn, Params};
 use derivative::Derivative;
+use hashbrown::{HashMap, HashSet};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
 };
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, oneshot},
     task::AbortHandle,
@@ -179,16 +180,16 @@ mod index {
     #[derive(Debug)]
     pub(super) struct JournalsIndex<ID: ExecutionId> {
         pending: BTreeSet<ID>,
-        pending_scheduled: BTreeMap<DateTime<Utc>, BTreeSet<ID>>,
+        pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ID>>,
         pending_scheduled_rev: HashMap<ID, DateTime<Utc>>,
-        locked: BTreeMap<DateTime<Utc>, BTreeSet<ID>>,
+        locked: BTreeMap<DateTime<Utc>, HashSet<ID>>,
         locked_rev: HashMap<ID, DateTime<Utc>>,
     }
 
     impl<ID: ExecutionId> JournalsIndex<ID> {
         pub(super) fn fetch_pending<'a>(
             &self,
-            journals: &'a HashMap<ID, ExecutionJournal<ID>>,
+            journals: &'a BTreeMap<ID, ExecutionJournal<ID>>,
             batch_size: usize,
             expiring_at_or_before: DateTime<Utc>,
             ffqns: Vec<concepts::FunctionFqn>,
@@ -224,7 +225,7 @@ mod index {
         pub(super) fn update(
             &mut self,
             execution_id: ID,
-            journals: &HashMap<ID, ExecutionJournal<ID>>,
+            journals: &BTreeMap<ID, ExecutionJournal<ID>>,
         ) {
             // Remove the ID from the index (if exists)
             self.pending.remove(&execution_id);
@@ -377,7 +378,7 @@ impl<ID: ExecutionId> Drop for DbTaskHandle<ID> {
 
 #[derive(Debug)]
 pub struct DbTask<ID: ExecutionId> {
-    journals: HashMap<ID, ExecutionJournal<ID>>,
+    journals: BTreeMap<ID, ExecutionJournal<ID>>,
     index: JournalsIndex<ID>,
 }
 

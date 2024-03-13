@@ -179,7 +179,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                     permits.len(),       // batch size
                     request.executed_at, // fetch expiring before now
                     self.config.ffqns.clone(),
-                    request.executed_at, // lock created at - now
+                    request.executed_at, // created at
                     self.executor_name.clone(),
                     lock_expires_at,
                 )
@@ -195,7 +195,6 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             request.executed_at + self.config.lock_expiry - self.config.lock_expiry_leeway;
 
         let mut executions = Vec::new();
-        // (execution_id, version, ffqn, params, event_history, _)
         for (locked_execution, permit) in locked_executions {
             let execution_id = locked_execution.execution_id.clone();
             let join_handle = {
@@ -284,6 +283,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
     ) -> Result<(ExecutionEventInner<ID>, Version), DbError> {
         match worker_result {
             Ok((result, version)) => {
+                // TODO: Add failure retries.
                 info!("Finished successfully");
                 Ok((
                     ExecutionEventInner::Finished { result: Ok(result) },

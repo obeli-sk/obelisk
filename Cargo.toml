@@ -91,6 +91,7 @@ derivative = "2.2.0"
 derive_more = "0.99.17"
 futures-util = "0.3.30"
 getrandom = "=0.2.11" # For madsim patch
+hashbrown = "0.14.3"
 http-body-util = "0.1"
 hyper = "1.1.0"
 hyper-util = "0.1"

@@ -367,17 +367,17 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
-    async fn fibo_parallel() {
+    async fn perf_fibo_parallel() {
         const FIBO_INPUT: u8 = 10;
-        const EXECUTIONS: usize = 20_000;
+        const EXECUTIONS: usize = 20_000; // release: 70_000
         const RECYCLE: bool = true;
         const PRELOAD: bool = true;
         const PERMITS: usize = 1_000_000;
-        const BATCH_SIZE: u32 = 100_000;
+        const BATCH_SIZE: u32 = 10_000;
         const LOCK_EXPIRY_MILLIS: u64 = 1100;
         const TICK_SLEEP_MILLIS: u64 = 0;
         const EPOCH_MILLIS: u64 = 10;
-        const TASKS: u32 = 1;
+        const TASKS: u32 = 1; // release: 6
         const MAX_INSTANCES: u32 = 10_000;
         const DB_RPC_CAPACITY: usize = 1;
 
@@ -517,13 +517,13 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
-    async fn fibo_direct() {
+    async fn perf_fibo_direct() {
         const FIBO_INPUT: u8 = 10;
-        const EXECUTIONS: u32 = 400_000;
+        const EXECUTIONS: u32 = 400_000; // release: 800_000
         const RECYCLE: bool = true;
         const PRELOAD: bool = true;
         const LOCK_EXPIRY_MILLIS: u64 = 1100;
-        const TASKS: u32 = 10000;
+        const TASKS: u32 = 10_000;
         const MAX_INSTANCES: u32 = 10_000;
 
         test_utils::set_up();
