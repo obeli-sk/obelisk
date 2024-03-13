@@ -213,6 +213,15 @@ pub struct LockedExecution<ID: ExecutionId> {
 }
 pub type LockPendingResponse<ID> = Vec<LockedExecution<ID>>;
 pub type CleanupExpiredLocks = usize; // number of expired locks
+pub type AppendBatchResponse = Vec<Result<AppendResponse, RowSpecificError>>;
+
+#[derive(Debug, Clone)]
+pub struct AppendRequest<ID: ExecutionId> {
+    pub created_at: DateTime<Utc>,
+    pub execution_id: ID,
+    pub version: Version,
+    pub event: ExecutionEventInner<ID>,
+}
 
 #[async_trait]
 pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
@@ -267,6 +276,11 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
         version: Version,
         event: ExecutionEventInner<ID>,
     ) -> Result<AppendResponse, DbError>;
+
+    async fn append_batch(
+        &self,
+        append: Vec<AppendRequest<ID>>,
+    ) -> Result<AppendBatchResponse, DbConnectionError>;
 
     async fn get(&self, execution_id: ID) -> Result<ExecutionHistory<ID>, DbError>;
 

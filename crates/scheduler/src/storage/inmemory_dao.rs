@@ -6,7 +6,7 @@
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::index::JournalsIndex;
 use super::{journal::ExecutionJournal, ExecutionEventInner, ExecutorName};
-use super::{CleanupExpiredLocks, LockedExecution};
+use super::{AppendBatchResponse, AppendRequest, CleanupExpiredLocks, LockedExecution};
 use crate::storage::journal::PendingState;
 use crate::storage::{
     AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
@@ -117,7 +117,7 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
         execution_id: ID,
         version: Version,
         event: ExecutionEventInner<ID>,
-    ) -> Result<Version, DbError> {
+    ) -> Result<AppendResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Append {
             created_at,
@@ -134,6 +134,25 @@ impl<ID: ExecutionId> DbConnection<ID> for InMemoryDbConnection<ID> {
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
             .map_err(|err| DbError::RowSpecific(err))
+    }
+
+    #[instrument(skip_all)]
+    async fn append_batch(
+        &self,
+        append: Vec<AppendRequest<ID>>,
+    ) -> Result<AppendBatchResponse, DbConnectionError> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        let request = DbRequest::General(GeneralRequest::AppendBatch {
+            append,
+            resp_sender,
+        });
+        self.client_to_store_req_sender
+            .send(request)
+            .await
+            .map_err(|_| DbConnectionError::SendError)?;
+        resp_receiver
+            .await
+            .map_err(|_| DbConnectionError::RecvError)
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -231,8 +250,7 @@ mod index {
                     self.pending_scheduled_rev.insert(execution_id, expires_at);
                 }
                 PendingState::Locked {
-                    lock_expires_at,
-                    ..
+                    lock_expires_at, ..
                 } => {
                     self.locked
                         .entry(lock_expires_at)
@@ -315,6 +333,12 @@ enum GeneralRequest<ID: ExecutionId> {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<CleanupExpiredLocks>,
     },
+    #[display(fmt = "AppendBatch")]
+    AppendBatch {
+        append: Vec<AppendRequest<ID>>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<AppendBatchResponse>,
+    },
 }
 
 pub struct DbTaskHandle<ID: ExecutionId> {
@@ -385,6 +409,11 @@ pub(crate) enum DbTickResponse<ID: ExecutionId> {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<AppendResponse, RowSpecificError>>,
     },
+    AppendBatchResult {
+        payload: AppendBatchResponse,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<AppendBatchResponse>,
+    },
     Get {
         payload: Result<ExecutionHistory<ID>, RowSpecificError>,
         #[derivative(Debug = "ignore")]
@@ -409,6 +438,10 @@ impl<ID: ExecutionId> DbTickResponse<ID> {
                 payload,
             } => resp_sender.send(payload).map_err(|_| ()),
             Self::AppendResult {
+                resp_sender,
+                payload,
+            } => resp_sender.send(payload).map_err(|_| ()),
+            Self::AppendBatchResult {
                 resp_sender,
                 payload,
             } => resp_sender.send(payload).map_err(|_| ()),
@@ -450,7 +483,7 @@ impl<ID: ExecutionId> DbTask<ID> {
 
     pub(crate) fn new() -> Self {
         Self {
-            journals: HashMap::default(),
+            journals: Default::default(),
             index: JournalsIndex::default(),
         }
     }
@@ -510,6 +543,10 @@ impl<ID: ExecutionId> DbTask<ID> {
             GeneralRequest::CleanupExpiredLocks { now, resp_sender } => {
                 self.cleanup_expired_locks(now, resp_sender)
             }
+            GeneralRequest::AppendBatch {
+                append,
+                resp_sender,
+            } => self.append_batch(append, resp_sender),
         }
     }
 
@@ -739,6 +776,21 @@ impl<ID: ExecutionId> DbTask<ID> {
             resp_sender,
         }
     }
+
+    fn append_batch(
+        &mut self,
+        append: Vec<AppendRequest<ID>>,
+        resp_sender: oneshot::Sender<AppendBatchResponse>,
+    ) -> DbTickResponse<ID> {
+        let payload = append
+            .into_iter()
+            .map(|req| self.append(req.created_at, req.execution_id, req.version, req.event))
+            .collect();
+        DbTickResponse::AppendBatchResult {
+            payload,
+            resp_sender,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -839,6 +891,21 @@ pub(crate) mod tests {
             let response = self.db_task.lock().unwrap_or_log().tick(request);
             assert_matches!(response, DbTickResponse::AppendResult { payload, .. } => payload)
                 .map_err(|err| DbError::RowSpecific(err))
+        }
+
+        async fn append_batch(
+            &self,
+            append: Vec<AppendRequest<ID>>,
+        ) -> Result<AppendBatchResponse, DbConnectionError> {
+            let request = DbRequest::General(GeneralRequest::AppendBatch {
+                append,
+                resp_sender: oneshot::channel().0,
+            });
+
+            let response = self.db_task.lock().unwrap_or_log().tick(request);
+            Ok(
+                assert_matches!(response, DbTickResponse::AppendBatchResult { payload, .. } => payload),
+            )
         }
 
         async fn get(&self, execution_id: ID) -> Result<ExecutionHistory<ID>, DbError> {
