@@ -289,7 +289,7 @@ mod tests {
     use rstest::rstest;
     use scheduler::{
         executor::{ExecConfig, ExecTask},
-        storage::{inmemory_dao::DbTask, DbConnection},
+        storage::{inmemory_dao::DbTask, AppendRequest, DbConnection, ExecutionEventInner},
         FinishedExecutionError, FinishedExecutionResult,
     };
     use std::{
@@ -377,8 +377,9 @@ mod tests {
         const LOCK_EXPIRY_MILLIS: u64 = 1100;
         const TICK_SLEEP_MILLIS: u64 = 0;
         const EPOCH_MILLIS: u64 = 10;
-        const TASKS: u32 = 10;
+        const TASKS: u32 = 1;
         const MAX_INSTANCES: u32 = 10_000;
+        const DB_RPC_CAPACITY: usize = 1;
 
         test_utils::set_up();
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
@@ -393,6 +394,7 @@ mod tests {
             Duration::from_millis(env_or_default("TICK_SLEEP_MILLIS", TICK_SLEEP_MILLIS));
         let tasks = env_or_default("TASKS", TASKS);
         let max_instances = env_or_default("MAX_INSTANCES", MAX_INSTANCES);
+        let db_rpc_capacity = env_or_default("DB_RPC_CAPACITY", DB_RPC_CAPACITY);
 
         let mut pool = wasmtime::PoolingAllocationConfig::default();
         pool.total_component_instances(max_instances);
@@ -416,7 +418,7 @@ mod tests {
         }
 
         // Spawn db
-        let mut db_task = DbTask::spawn_new(1);
+        let mut db_task = DbTask::spawn_new(db_rpc_capacity);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
 
         let fibo_worker = ActivityWorker::new_with_config(
@@ -432,7 +434,42 @@ mod tests {
         )
         .unwrap_or_log();
 
+        // create executions
+        let stopwatch = Instant::now();
+        let fibo_ffqn = FIBO_FFQN.to_owned();
+        let params = Params::from([Val::U8(fibo_input)]);
+        let (append, execution_ids): (_, Vec<_>) = {
+            let now = now();
+            (0..executions)
+                .map(|_| {
+                    let execution_id = ActivityId::generate();
+                    (
+                        AppendRequest {
+                            created_at: now,
+                            execution_id: execution_id.clone(),
+                            version: Version::default(),
+                            event: ExecutionEventInner::Created {
+                                ffqn: fibo_ffqn.clone(),
+                                params: params.clone(),
+                                parent: None,
+                                scheduled_at: None,
+                                retry_exp_backoff: Duration::ZERO,
+                                max_retries: 0,
+                            },
+                        },
+                        execution_id,
+                    )
+                })
+                .unzip()
+        };
+        db_connection.append_batch(append).await.unwrap();
+        warn!(
+            "Created {executions} executions in {:?}",
+            stopwatch.elapsed()
+        );
+
         // spawn executors
+        let stopwatch = Instant::now();
         let task_limiter = if permits == 0 {
             None
         } else {
@@ -441,7 +478,7 @@ mod tests {
         let exec_tasks = (0..tasks)
             .map(|_| {
                 let exec_config = ExecConfig {
-                    ffqns: vec![FIBO_FFQN.to_owned()],
+                    ffqns: vec![fibo_ffqn.clone()],
                     batch_size,
                     lock_expiry,
                     lock_expiry_leeway: Duration::from_millis(10),
@@ -456,31 +493,6 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let stopwatch = Instant::now();
-        // create executions
-        let execution_ids = futures_util::stream::iter(0..executions)
-            .map(|_| async {
-                let execution_id = ActivityId::generate();
-                let created_at = now();
-                db_connection
-                    .create(
-                        created_at,
-                        execution_id.clone(),
-                        FIBO_FFQN.to_owned(),
-                        Params::from([Val::U8(fibo_input)]),
-                        None,
-                        None,
-                        Duration::ZERO,
-                        0,
-                    )
-                    .await
-                    .unwrap_or_log();
-                execution_id
-            })
-            .buffer_unordered(executions)
-            .collect::<Vec<_>>()
-            .await;
-        info!("Waiting for results");
         let mut counter = 0;
         for execution_id in execution_ids {
             // Check that the computation succeded.

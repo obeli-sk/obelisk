@@ -802,7 +802,8 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use concepts::{prefixed_ulid::WorkflowId, FunctionFqnStr};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
+    use test_utils::env_or_default;
     use tokio::time::sleep;
     use tracing::info;
     use tracing_unwrap::ResultExt;
@@ -1312,5 +1313,89 @@ pub(crate) mod tests {
                 Err(err) => debug!("Ignoring {err:?}"),
             }
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
+    async fn perf_lock_pending_parallel() {
+        const EXECUTIONS: usize = 100_000;
+        const BATCH_SIZE: usize = 100_000;
+        const TASKS: usize = 1;
+
+        test_utils::set_up();
+        let executions = env_or_default("EXECUTIONS", EXECUTIONS);
+        let batch_size = env_or_default("BATCH_SIZE", BATCH_SIZE);
+        let tasks = env_or_default("TASKS", TASKS);
+
+        let mut db_task = DbTask::spawn_new(1);
+        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap_or_log();
+        let db_connection = InMemoryDbConnection {
+            client_to_store_req_sender,
+        };
+
+        let stopwatch = Instant::now();
+        let append = {
+            let now = now();
+            let ffqn = SOME_FFQN.to_owned();
+            (0..executions)
+                .map(|_| AppendRequest {
+                    created_at: now,
+                    execution_id: WorkflowId::generate(),
+                    version: Version::default(),
+                    event: ExecutionEventInner::Created {
+                        ffqn: ffqn.clone(),
+                        params: Params::default(),
+                        parent: None,
+                        scheduled_at: None,
+                        retry_exp_backoff: Duration::ZERO,
+                        max_retries: 0,
+                    },
+                })
+                .collect()
+        };
+        warn!(
+            "Created {executions} append entries in {:?}",
+            stopwatch.elapsed()
+        );
+        let stopwatch = Instant::now();
+        db_connection.append_batch(append).await.unwrap();
+        warn!(
+            "Appended {executions} executions in {:?}",
+            stopwatch.elapsed()
+        );
+
+        // spawn executors
+        let exec_name = Arc::new("exec".to_string());
+        let exec_tasks = (0..tasks)
+            .map(|_| {
+                let db_connection = db_connection.clone();
+                let exec_name = exec_name.clone();
+                tokio::spawn(async move {
+                    let target = executions / tasks;
+                    let mut locked = Vec::with_capacity(target);
+                    while locked.len() < target {
+                        let now = now();
+                        let locked_now = db_connection
+                            .lock_pending(
+                                batch_size,
+                                now,
+                                vec![SOME_FFQN.to_owned()],
+                                now,
+                                exec_name.clone(),
+                                now + Duration::from_secs(1),
+                            )
+                            .await
+                            .unwrap();
+                        locked.extend(locked_now.into_iter());
+                    }
+                    locked
+                })
+            })
+            .collect::<Vec<_>>();
+        for task_handle in exec_tasks {
+            let _locked_vec = task_handle.await.unwrap();
+        }
+        warn!("Finished in {} ms", stopwatch.elapsed().as_millis());
+        drop(db_connection);
+        db_task.close().await;
     }
 }
