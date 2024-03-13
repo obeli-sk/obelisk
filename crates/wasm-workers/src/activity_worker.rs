@@ -337,7 +337,7 @@ mod tests {
             db_task.as_db_connection().unwrap_or_log(),
             fibo_worker,
             exec_config.clone(),
-            Arc::new(tokio::sync::Semaphore::new(1)),
+            None,
         );
 
         // Create an execution.
@@ -369,19 +369,19 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn fibo_parallel() {
         const FIBO_INPUT: u8 = 10;
-        const EXECUTORS: u8 = 1;
         const EXECUTIONS: usize = 20_000;
         const RECYCLE: bool = true;
         const PRELOAD: bool = true;
-        const PERMITS: usize = 100_000;
+        const PERMITS: usize = 1_000_000;
         const BATCH_SIZE: u32 = 100_000;
         const LOCK_EXPIRY_MILLIS: u64 = 1100;
+        const TICK_SLEEP_MILLIS: u64 = 0;
         const EPOCH_MILLIS: u64 = 10;
+        const TASKS: u32 = 10;
         const MAX_INSTANCES: u32 = 10_000;
 
         test_utils::set_up();
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
-        let executors = env_or_default("EXECUTORS", EXECUTORS);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
         let recycle_instances = env_or_default("RECYCLE", RECYCLE).then(Default::default);
         let permits = env_or_default("PERMITS", PERMITS);
@@ -389,6 +389,9 @@ mod tests {
         let preload = env_or_default("PRELOAD", PRELOAD);
         let lock_expiry =
             Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
+        let tick_sleep =
+            Duration::from_millis(env_or_default("TICK_SLEEP_MILLIS", TICK_SLEEP_MILLIS));
+        let tasks = env_or_default("TASKS", TASKS);
         let max_instances = env_or_default("MAX_INSTANCES", MAX_INSTANCES);
 
         let mut pool = wasmtime::PoolingAllocationConfig::default();
@@ -430,15 +433,19 @@ mod tests {
         .unwrap_or_log();
 
         // spawn executors
-        let task_limiter = Arc::new(tokio::sync::Semaphore::new(permits));
-        let exec_tasks = (0..executors)
+        let task_limiter = if permits == 0 {
+            None
+        } else {
+            Some(Arc::new(tokio::sync::Semaphore::new(permits)))
+        };
+        let exec_tasks = (0..tasks)
             .map(|_| {
                 let exec_config = ExecConfig {
                     ffqns: vec![FIBO_FFQN.to_owned()],
                     batch_size,
                     lock_expiry,
                     lock_expiry_leeway: Duration::from_millis(10),
-                    tick_sleep: Duration::from_millis(10),
+                    tick_sleep,
                 };
                 ExecTask::spawn_new(
                     db_task.as_db_connection().unwrap_or_log(),
@@ -631,7 +638,7 @@ mod tests {
             db_task.as_db_connection().unwrap_or_log(),
             fibo_worker,
             exec_config.clone(),
-            Arc::new(tokio::sync::Semaphore::new(1)),
+            None,
         );
 
         // Create an execution.

@@ -34,7 +34,7 @@ pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
     db_connection: DB,
     worker: W,
     config: ExecConfig,
-    task_limiter: Arc<tokio::sync::Semaphore>,
+    task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_name: ExecutorName,
     _phantom_data: PhantomData<fn(ID) -> ID>,
 }
@@ -83,7 +83,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         db_connection: DB,
         worker: W,
         config: ExecConfig,
-        task_limiter: Arc<tokio::sync::Semaphore>,
+        task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> ExecutorTaskHandle {
         let executor_id = ExecutorId::generate();
         let span = info_span!("executor",
@@ -139,14 +139,27 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         }
     }
 
-    fn acquire_task_permits(&self) -> Vec<tokio::sync::OwnedSemaphorePermit> {
-        let mut locks = Vec::new();
-        for _ in 0..self.config.batch_size {
-            if let Ok(permit) = self.task_limiter.clone().try_acquire_owned() {
-                locks.push(permit);
+    fn acquire_task_permits(&self) -> Vec<Option<tokio::sync::OwnedSemaphorePermit>> {
+        match &self.task_limiter {
+            Some(task_limiter) => {
+                let mut locks = Vec::new();
+                for _ in 0..self.config.batch_size {
+                    if let Ok(permit) = task_limiter.clone().try_acquire_owned() {
+                        locks.push(Some(permit));
+                    } else {
+                        break;
+                    }
+                }
+                locks
+            }
+            None => {
+                let mut vec = Vec::with_capacity(self.config.batch_size as usize);
+                for _ in 0..self.config.batch_size {
+                    vec.push(None);
+                }
+                vec
             }
         }
-        locks
     }
 
     #[instrument(skip_all)]
@@ -279,7 +292,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             }
             Err((err, new_version)) => {
                 debug!("Execution failed: {err:?}");
-                let execution_history = db_connection.get(execution_id.clone()).await?; // This can come from a cache
+                let execution_history = db_connection.get(execution_id.clone()).await?;
                 if execution_history.version != new_version {
                     return Err(DbError::RowSpecific(
                         crate::storage::RowSpecificError::VersionMismatch,
@@ -412,7 +425,7 @@ mod tests {
                 worker_results_rev,
             },
             config,
-            task_limiter: Arc::new(tokio::sync::Semaphore::new(1)),
+            task_limiter: None,
             executor_name: Arc::new("SimpleWorker".to_string()),
             _phantom_data: Default::default(),
         };
@@ -519,7 +532,7 @@ mod tests {
             db_task.as_db_connection().unwrap_or_log(),
             worker,
             exec_config.clone(),
-            Arc::new(tokio::sync::Semaphore::new(1)),
+            None,
         );
         let execution_history = execute(
             db_task.as_db_connection().unwrap_or_log(),
@@ -637,7 +650,7 @@ mod tests {
             db_task.as_db_connection().unwrap_or_log(),
             worker,
             exec_config.clone(),
-            Arc::new(tokio::sync::Semaphore::new(1)),
+            None,
         );
         let execution_history = execute(
             db_task.as_db_connection().unwrap_or_log(),
