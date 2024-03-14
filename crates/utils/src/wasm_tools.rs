@@ -1,5 +1,8 @@
 use concepts::{FnName, FunctionFqn, FunctionMetadata, IfcFqnName};
-use std::{collections::HashMap, error::Error};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+};
 use tracing_unwrap::OptionExt;
 use val_json::{TypeWrapper, UnsupportedTypeError};
 use wit_component::DecodedWasm;
@@ -87,8 +90,45 @@ pub enum FunctionMetadataError {
     #[error("{0}")]
     UnsupportedType(#[from] UnsupportedTypeError),
 
-    #[error("unsupported return type in {fqn}, got type `{ty}`")]
-    UnsupportedReturnType { fqn: String, ty: String },
+    #[error("unsupported return type in {ffqn}, got type `{ty}`")]
+    UnsupportedReturnType { ffqn: String, ty: String },
+}
+
+pub fn functions_and_result_lengths(
+    exported_interfaces: Vec<PackageIfcFns>,
+) -> Result<HashMap<FunctionFqn, usize>, FunctionMetadataError> {
+    let mut resp = HashMap::new();
+    for PackageIfcFns {
+        package_name,
+        ifc_name,
+        fns,
+    } in exported_interfaces
+    {
+        let ifc_fqn = if let Some(version) = &package_name.version {
+            format!(
+                "{namespace}:{name}/{ifc_name}@{version}",
+                namespace = package_name.namespace,
+                name = package_name.name
+            )
+        } else {
+            format!("{package_name}/{ifc_name}")
+        };
+        for (function_name, function) in fns {
+            let ffqn = FunctionFqn::new(ifc_fqn.clone(), function_name.clone());
+            match &function.results {
+                wit_parser::Results::Anon(_) => Ok(()),
+                wit_parser::Results::Named(named) if named.is_empty() => Ok(()),
+                other @ wit_parser::Results::Named(_) => {
+                    Err(FunctionMetadataError::UnsupportedReturnType {
+                        ffqn: ffqn.to_string(),
+                        ty: format!("{other:?}"),
+                    })
+                }
+            }?;
+            resp.insert(ffqn, function.results.len());
+        }
+    }
+    Ok(resp)
 }
 
 pub fn functions_to_metadata(
@@ -122,7 +162,7 @@ pub fn functions_to_metadata(
                 wit_parser::Results::Named(named) if named.is_empty() => Ok(()),
                 other @ wit_parser::Results::Named(_) => {
                     Err(FunctionMetadataError::UnsupportedReturnType {
-                        fqn: fqn.to_string(),
+                        ffqn: fqn.to_string(),
                         ty: format!("{other:?}"),
                     })
                 }

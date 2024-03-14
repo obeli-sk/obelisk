@@ -1,15 +1,16 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ActivityId;
-use concepts::{FunctionFqn, FunctionMetadata};
+use concepts::FunctionFqn;
 use concepts::{Params, SupportedFunctionResult};
 use scheduler::worker::FatalError;
 use scheduler::{
     storage::{HistoryEvent, Version},
     worker::{Worker, WorkerError},
 };
-use std::{borrow::Cow, collections::HashMap, error::Error, fmt::Debug, sync::Arc};
-use tracing::{debug, enabled, info, trace, Level};
+use std::collections::HashMap;
+use std::{borrow::Cow, error::Error, fmt::Debug, sync::Arc};
+use tracing::{debug, info, trace};
 use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
 use utils::wasm_tools;
@@ -33,7 +34,7 @@ type MaybeRecycledInstances = Option<
 struct ActivityWorker {
     config: ActivityConfig,
     engine: Arc<Engine>,
-    functions_to_metadata: HashMap<FunctionFqn, FunctionMetadata>,
+    ffqns_to_results_len: HashMap<FunctionFqn, usize>,
     linker: wasmtime::component::Linker<utils::wasi_http::Ctx>,
     component: wasmtime::component::Component,
     instance_pre: Option<wasmtime::component::InstancePre<utils::wasi_http::Ctx>>,
@@ -66,13 +67,10 @@ impl ActivityWorker {
             .map_err(|err| ActivityError::DecodeError(config.wasm_path.clone(), err))?;
         let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
             .map_err(|err| ActivityError::DecodeError(config.wasm_path.clone(), err))?;
-        let functions_to_metadata = wasm_tools::functions_to_metadata(exported_interfaces)
+        let ffqns_to_results_len = wasm_tools::functions_and_result_lengths(exported_interfaces)
             .map_err(|err| ActivityError::FunctionMetadataError(config.wasm_path.clone(), err))?;
-        if enabled!(Level::TRACE) {
-            trace!(ffqns = ?functions_to_metadata.keys(), "Decoded functions {functions_to_metadata:#?}");
-        } else {
-            debug!(ffqns = ?functions_to_metadata.keys(), "Decoded functions" );
-        }
+
+        debug!(?ffqns_to_results_len, "Decoded functions");
         let mut linker = wasmtime::component::Linker::new(&engine);
 
         wasmtime_wasi::preview2::command::add_to_linker(&mut linker).map_err(|err| {
@@ -101,7 +99,7 @@ impl ActivityWorker {
         Ok(Self {
             config,
             engine,
-            functions_to_metadata,
+            ffqns_to_results_len,
             linker,
             component,
             instance_pre,
@@ -137,11 +135,10 @@ impl ActivityWorker {
         params: Params,
         execution_deadline: DateTime<Utc>,
     ) -> Result<SupportedFunctionResult, WorkerError> {
-        let results_len = self
-            .functions_to_metadata
+        let results_len = *self
+            .ffqns_to_results_len
             .get(&ffqn)
-            .ok_or(WorkerError::FatalError(FatalError::NotFound))?
-            .results_len;
+            .ok_or(WorkerError::FatalError(FatalError::NotFound))?;
         trace!("Params: {params:?}, results_len:{results_len}",);
 
         let instance = self
@@ -250,10 +247,6 @@ impl ActivityWorker {
             }
         }
     }
-
-    pub fn functions(&self) -> impl Iterator<Item = &FunctionFqn> {
-        self.functions_to_metadata.keys()
-    }
 }
 
 // TODO: implement Valuable for Cow<'_, str>
@@ -285,7 +278,6 @@ mod tests {
     use concepts::{
         prefixed_ulid::ActivityId, ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult,
     };
-    use futures_util::StreamExt;
     use rstest::rstest;
     use scheduler::{
         executor::{ExecConfig, ExecTask},
