@@ -339,6 +339,22 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                             ))),
                         }
                     }
+                    WorkerError::FatalError(FatalError::ParamsParsingError(err)) => {
+                        info!("Error parsing parameters");
+                        ExecutionEventInner::Finished {
+                            result: Err(FinishedExecutionError::PermanentFailure(Cow::Owned(
+                                format!("error parsing parameters: {err:?}"),
+                            ))),
+                        }
+                    }
+                    WorkerError::FatalError(FatalError::ResultParsingError(err)) => {
+                        info!("Error parsing result");
+                        ExecutionEventInner::Finished {
+                            result: Err(FinishedExecutionError::PermanentFailure(Cow::Owned(
+                                format!("error parsing result: {err:?}"),
+                            ))),
+                        }
+                    }
                 };
                 Ok((event, new_version))
             }

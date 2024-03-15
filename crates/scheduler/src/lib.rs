@@ -7,7 +7,6 @@ use std::borrow::Cow;
 use std::time::Duration;
 use storage::journal::PendingState;
 use storage::{ExecutionEvent, Version};
-
 use crate::storage::ExecutionEventInner;
 
 pub mod executor;
@@ -18,7 +17,7 @@ pub mod worker {
 
     use self::storage::{HistoryEvent, Version};
     use super::*;
-    use concepts::FunctionFqn;
+    use concepts::{FunctionFqn, ParamsParsingError, ResultParsingError};
 
     pub type WorkerResult = Result<(SupportedFunctionResult, Version), (WorkerError, Version)>;
 
@@ -41,6 +40,10 @@ pub mod worker {
         NonDeterminismDetected(Cow<'static, str>),
         #[error("not found")]
         NotFound,
+        #[error(transparent)]
+        ParamsParsingError(ParamsParsingError),
+        #[error(transparent)]
+        ResultParsingError(ResultParsingError),
     }
 
     #[async_trait]

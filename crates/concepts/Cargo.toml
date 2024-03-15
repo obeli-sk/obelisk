@@ -18,6 +18,5 @@ tracing-unwrap.workspace = true
 ulid.workspace = true
 wasmtime.workspace = true
 
-
 [lints]
 workspace = true

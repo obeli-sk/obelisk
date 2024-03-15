@@ -200,23 +200,30 @@ impl ActivityWorker {
                     .func(&ffqn.function_name)
                     .expect_or_log("function must be found")
             };
-            let mut results = std::iter::repeat(Val::Bool(false))
-                .take(results_len)
-                .collect::<Vec<_>>();
-            func.call_async(&mut store, &params, &mut results)
-                .await
-                .map_err(|err| {
-                    if matches!(err.downcast_ref(), Some(wasmtime::Trap::OutOfFuel)) {
-                        WorkerError::IntermittentTimeout
-                    } else {
-                        let err = err.into();
-                        WorkerError::IntermittentError {
-                            reason: Cow::Owned(format!("wasm function call error: `{err}`")),
-                            err,
-                        }
+            let param_types = func.params(&store);
+            let mut results = vec![Val::Bool(false); results_len];
+            func.call_async(
+                &mut store,
+                &params
+                    .as_vals(&param_types)
+                    .map_err(|err| WorkerError::FatalError(FatalError::ParamsParsingError(err)))?,
+                &mut results,
+            )
+            .await
+            .map_err(|err| {
+                if matches!(err.downcast_ref(), Some(wasmtime::Trap::OutOfFuel)) {
+                    WorkerError::IntermittentTimeout
+                } else {
+                    let err = err.into();
+                    WorkerError::IntermittentError {
+                        // FIXME: this might be a fatal error, e.g. params mismatch
+                        reason: Cow::Owned(format!("wasm function call error: `{err}`")),
+                        err,
                     }
-                })?; // guest panic exits here
-            let results = SupportedFunctionResult::new(results);
+                }
+            })?; // guest panic exits here
+            let result = SupportedFunctionResult::new(results)
+                .map_err(|err| WorkerError::FatalError(FatalError::ResultParsingError(err)))?;
             func.post_return_async(&mut store).await.map_err(|err| {
                 WorkerError::IntermittentError {
                     reason: Cow::Borrowed("wasm post function call error"),
@@ -231,7 +238,7 @@ impl ActivityWorker {
                     .push((instance, store));
             }
 
-            Ok(results)
+            Ok(result)
         };
         let deadline_duration = (execution_deadline - now()).to_std().unwrap_or_default();
         let stopwatch = now_tokio_instant();
@@ -293,6 +300,7 @@ mod tests {
     use tracing::{info, warn};
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
+    use val_json::wast_val::WastVal;
     use wasmtime::component::Val;
 
     const FIBO_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:fibo/fibo", "fibo"); // func(n: u8) -> u64;
@@ -350,7 +358,7 @@ mod tests {
             .unwrap_or_log();
         // Check the result.
         let fibo = assert_matches!(db_connection.obtain_finished_result(execution_id).await.unwrap_or_log(),
-            Ok(SupportedFunctionResult::Single(Val::U64(val))) => val);
+            Ok(SupportedFunctionResult::Infallible(WastVal::U64(val))) => val);
         assert_eq!(EXPECTED, fibo);
         drop(db_connection);
 
@@ -493,7 +501,7 @@ mod tests {
                     .obtain_finished_result(execution_id)
                     .await
                     .unwrap_or_log(),
-                Ok(SupportedFunctionResult::Single(Val::U64(_)))
+                Ok(SupportedFunctionResult::Infallible(WastVal::U64(_)))
             );
             counter += 1;
         }
@@ -580,7 +588,10 @@ mod tests {
             for res in jh.await.unwrap() {
                 counter += 1;
                 // Check that the computation succeded.
-                assert_matches!(res, Ok(SupportedFunctionResult::Single(Val::U64(_))));
+                assert_matches!(
+                    res,
+                    Ok(SupportedFunctionResult::Infallible(WastVal::U64(_)))
+                );
             }
         }
         warn!(

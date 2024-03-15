@@ -4,7 +4,8 @@ use serde::{
     ser::{Serialize, Serializer},
     Deserialize,
 };
-
+mod core;
+pub mod wast_val;
 pub use deser::deserialize_sequence;
 
 #[derive(Debug, Clone)]
@@ -28,7 +29,7 @@ pub enum ValWrapper {
     // Variant(Variant),
     // Enum(Enum),
     // Option(OptionVal),
-    // Result(ResultVal),
+    // Result(Result<Option<Box<ValWrapper>>, Option<Box<ValWrapper>>>),
     // Flags(Flags),
     // Resource(ResourceAny),
 }
@@ -52,57 +53,6 @@ impl From<ValWrapper> for wasmtime::component::Val {
         }
     }
 }
-
-/*
-impl TryFrom<wasmtime::component::Val> for ValWrapper {
-    type Error = UnsupportedTypeError;
-
-    fn try_from(value: wasmtime::component::Val) -> Result<Self, Self::Error> {
-        match value {
-            wasmtime::component::Val::Bool(v) => Ok(Self::Bool(v)),
-            wasmtime::component::Val::S8(v) => Ok(Self::S8(v)),
-            wasmtime::component::Val::U8(v) => Ok(Self::U8(v)),
-            wasmtime::component::Val::S16(v) => Ok(Self::S16(v)),
-            wasmtime::component::Val::U16(v) => Ok(Self::U16(v)),
-            wasmtime::component::Val::S32(v) => Ok(Self::S32(v)),
-            wasmtime::component::Val::U32(v) => Ok(Self::U32(v)),
-            wasmtime::component::Val::S64(v) => Ok(Self::S64(v)),
-            wasmtime::component::Val::U64(v) => Ok(Self::U64(v)),
-            wasmtime::component::Val::Float32(v) => Ok(Self::Float32(v)),
-            wasmtime::component::Val::Float64(v) => Ok(Self::Float64(v)),
-            wasmtime::component::Val::Char(v) => Ok(Self::Char(v)),
-            wasmtime::component::Val::String(v) => Ok(Self::String(v)),
-            wasmtime::component::Val::List(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Val::Record(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Val::Tuple(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Val::Variant(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Val::Enum(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Val::Option(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Val::Result(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Val::Flags(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Val::Resource(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-        }
-    }
-}
-*/
 
 impl PartialEq for ValWrapper {
     #[allow(clippy::match_same_arms)]
@@ -181,28 +131,6 @@ pub enum TypeWrapper {
     // Borrow(ResourceType),
 }
 
-/*
-impl From<TypeWrapper> for wasmtime::component::Type {
-    fn from(value: TypeWrapper) -> Self {
-        match value {
-            TypeWrapper::Bool => Self::Bool,
-            TypeWrapper::S8 => Self::S8,
-            TypeWrapper::U8 => Self::U8,
-            TypeWrapper::S16 => Self::S16,
-            TypeWrapper::U16 => Self::U16,
-            TypeWrapper::S32 => Self::S32,
-            TypeWrapper::U32 => Self::U32,
-            TypeWrapper::S64 => Self::S64,
-            TypeWrapper::U64 => Self::U64,
-            TypeWrapper::Float32 => Self::Float32,
-            TypeWrapper::Float64 => Self::Float64,
-            TypeWrapper::Char => Self::Char,
-            TypeWrapper::String => Self::String,
-        }
-    }
-}
-*/
-
 #[derive(thiserror::Error, Debug)]
 pub enum UnsupportedTypeError {
     #[error("unsupported type {0}")]
@@ -234,60 +162,6 @@ impl TryFrom<wit_parser::Type> for TypeWrapper {
     }
 }
 
-/*
-impl TryFrom<wasmtime::component::Type> for TypeWrapper {
-    type Error = UnsupportedTypeError;
-
-    fn try_from(value: wasmtime::component::Type) -> Result<Self, Self::Error> {
-        match value {
-            wasmtime::component::Type::Bool => Ok(Self::Bool),
-            wasmtime::component::Type::S8 => Ok(Self::S8),
-            wasmtime::component::Type::U8 => Ok(Self::U8),
-            wasmtime::component::Type::S16 => Ok(Self::S16),
-            wasmtime::component::Type::U16 => Ok(Self::U16),
-            wasmtime::component::Type::S32 => Ok(Self::S32),
-            wasmtime::component::Type::U32 => Ok(Self::U32),
-            wasmtime::component::Type::S64 => Ok(Self::S64),
-            wasmtime::component::Type::U64 => Ok(Self::U64),
-            wasmtime::component::Type::Float32 => Ok(Self::Float32),
-            wasmtime::component::Type::Float64 => Ok(Self::Float64),
-            wasmtime::component::Type::Char => Ok(Self::Char),
-            wasmtime::component::Type::String => Ok(Self::String),
-            wasmtime::component::Type::List(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Type::Record(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Type::Tuple(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Type::Variant(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Type::Enum(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Type::Option(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Type::Result(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Type::Flags(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Type::Own(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-            wasmtime::component::Type::Borrow(_) => {
-                Err(UnsupportedTypeError::UnsupportedType(format!("{value:?}")))
-            }
-        }
-    }
-}
-*/
-
 impl Serialize for ValWrapper {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -315,21 +189,8 @@ impl Serialize for ValWrapper {
 mod tests {
     use crate::TypeWrapper;
 
-    /*
-    use crate::ValWrapper;
-    use serde_json::json;
     #[test]
-    fn serialize_bool_to_json() {
-        let expected = true;
-        let val = wasmtime::component::Val::Bool(true);
-        let wrapper = ValWrapper::try_from(val).unwrap();
-        let json = serde_json::to_value(wrapper).unwrap();
-        assert_eq!(json, json!(expected));
-    }
-    */
-
-    #[test]
-    fn deserialize_types() {
+    fn deserialize_type_u64() {
         let json = r#"["U64"]"#;
         let actual: Vec<TypeWrapper> = serde_json::from_str(json).unwrap();
         assert_eq!(vec![TypeWrapper::U64], actual);

@@ -1,8 +1,5 @@
 use concepts::{FnName, FunctionFqn, FunctionMetadata, IfcFqnName};
-use std::{
-    collections::{HashMap, HashSet},
-    error::Error,
-};
+use std::{collections::HashMap, error::Error};
 use tracing_unwrap::OptionExt;
 use val_json::{TypeWrapper, UnsupportedTypeError};
 use wit_component::DecodedWasm;

@@ -1,13 +1,13 @@
 use std::{
     borrow::Borrow,
+    error::Error,
     fmt::{Debug, Display},
     hash::Hash,
     marker::PhantomData,
     ops::Deref,
     sync::Arc,
 };
-use tracing_unwrap::OptionExt;
-use val_json::{TypeWrapper, ValWrapper};
+use val_json::{wast_val::WastVal, TypeWrapper, ValWrapper};
 
 #[derive(Hash, Clone, PartialEq, Eq)]
 pub struct Name<T> {
@@ -160,65 +160,127 @@ impl FunctionMetadata {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SupportedFunctionResult {
     None,
-    Single(wasmtime::component::Val),
+    Fallible(WastVal, Result<(), ()>),
+    Infallible(WastVal),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ResultParsingError {
+    #[error("multi-value results are not supported")]
+    MultiValue,
+    #[error("conversion error: {0:?}")]
+    ConversionError(#[from] val_json::wast_val::ConversionError),
 }
 
 impl SupportedFunctionResult {
     #[must_use]
-    pub fn new(mut vec: Vec<wasmtime::component::Val>) -> Self {
+    pub fn new(mut vec: Vec<wasmtime::component::Val>) -> Result<Self, ResultParsingError> {
         if vec.is_empty() {
-            Self::None
+            Ok(Self::None)
         } else if vec.len() == 1 {
-            Self::Single(vec.pop().unwrap_or_log())
+            let res = vec.pop().unwrap();
+            let wast_val = WastVal::try_from(res)?;
+            match &wast_val {
+                WastVal::Result(res) => {
+                    let res = res.as_ref().map(|_| ()).map_err(|_| ());
+                    Ok(Self::Fallible(wast_val, res))
+                }
+                _ => Ok(Self::Infallible(wast_val)),
+            }
         } else {
-            unimplemented!("multi-value return types are not supported")
+            Err(ResultParsingError::MultiValue)
         }
     }
 
-    #[must_use]
-    pub fn len(&self) -> usize {
-        match self {
-            Self::None => 0,
-            Self::Single(_) => 1,
-        }
+    pub fn is_fallible_err(&self) -> bool {
+        matches!(self, Self::Fallible(_, Err(())))
     }
 
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        matches!(self, Self::None)
-    }
-}
-
-impl IntoIterator for SupportedFunctionResult {
-    type Item = wasmtime::component::Val;
-    type IntoIter = std::option::IntoIter<wasmtime::component::Val>;
-
-    fn into_iter(self) -> Self::IntoIter {
+    pub fn value(&self) -> Option<&WastVal> {
         match self {
-            Self::None => None.into_iter(),
-            Self::Single(item) => Some(item).into_iter(),
+            SupportedFunctionResult::None => None,
+            SupportedFunctionResult::Infallible(v) => Some(v),
+            SupportedFunctionResult::Fallible(v, _) => Some(v),
         }
     }
 }
 
-#[derive(Debug, Clone, Default, derive_more::Deref, PartialEq, Eq)]
-pub struct Params(Arc<Vec<wasmtime::component::Val>>);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Params {
+    Empty,
+    // TODO Serialized(Arc<Vec<String>>),
+    WastVals(Arc<Vec<WastVal>>),
+    Deserialized(Arc<Vec<wasmtime::component::Val>>),
+}
+
+impl Default for Params {
+    fn default() -> Self {
+        Self::Empty
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+
+pub enum ParamsParsingError {
+    #[error("arity mismatch")]
+    ArityMismatch,
+    #[error("error parsing {idx}-th parameter: `{err:?}`")]
+    ParameterError {
+        idx: usize,
+        err: Box<dyn Error + Send>,
+    },
+}
 
 impl Params {
     pub fn new(params: Vec<wasmtime::component::Val>) -> Self {
-        Self(Arc::new(params))
+        Self::Deserialized(Arc::new(params))
+    }
+
+    // TODO: optimize allocations
+    pub fn as_vals(
+        &self,
+        types: &[wasmtime::component::Type],
+    ) -> Result<Arc<Vec<wasmtime::component::Val>>, ParamsParsingError> {
+        match self {
+            Self::Empty => Ok(Default::default()),
+            Self::Deserialized(vals) => Ok(vals.clone()),
+            Self::WastVals(wast_vals) => {
+                if types.len() != wast_vals.len() {
+                    return Err(ParamsParsingError::ArityMismatch);
+                }
+                let mut vec = Vec::with_capacity(types.len());
+                for (idx, (ty, wast_val)) in types.iter().zip(wast_vals.iter()).enumerate() {
+                    let val = val_json::wast_val::val(wast_val, ty).map_err(|err| {
+                        ParamsParsingError::ParameterError {
+                            idx,
+                            err: err.into(),
+                        }
+                    })?;
+                    vec.push(val);
+                }
+                Ok(Arc::new(vec))
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Empty => 0,
+            Self::Deserialized(vals) => vals.len(),
+            Self::WastVals(vals) => vals.len(),
+        }
     }
 }
 
 impl From<&[wasmtime::component::Val]> for Params {
     fn from(value: &[wasmtime::component::Val]) -> Self {
-        Self(Arc::new(Vec::from(value)))
+        Self::Deserialized(Arc::new(Vec::from(value)))
     }
 }
 
 impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
     fn from(value: [wasmtime::component::Val; N]) -> Self {
-        Self(Arc::new(Vec::from(value)))
+        Self::Deserialized(Arc::new(Vec::from(value)))
     }
 }
 
