@@ -196,11 +196,20 @@ impl SupportedFunctionResult {
         matches!(self, Self::Fallible(_, Err(())))
     }
 
+    pub fn fallible_err(&self) -> Option<Option<&WastVal>> {
+        match self {
+            SupportedFunctionResult::Fallible(WastVal::Result(Err(err)), Err(())) => {
+                Some(err.as_deref())
+            }
+            _ => None,
+        }
+    }
+
     pub fn value(&self) -> Option<&WastVal> {
         match self {
             SupportedFunctionResult::None => None,
-            SupportedFunctionResult::Infallible(v) => Some(v),
             SupportedFunctionResult::Fallible(v, _) => Some(v),
+            SupportedFunctionResult::Infallible(v) => Some(v),
         }
     }
 }

@@ -281,14 +281,28 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         execution_id: &ID,
         worker_result: WorkerResult,
     ) -> Result<(ExecutionEventInner<ID>, Version), DbError> {
-        match worker_result {
-            Ok((result, version)) => {
-                // TODO: Add failure retries.
-                info!("Finished successfully");
-                Ok((
-                    ExecutionEventInner::Finished { result: Ok(result) },
-                    version,
-                ))
+        Ok(match worker_result {
+            Ok((result, new_version)) => {
+                let event = if let Some(exec_err) = result.fallible_err() {
+                    info!("Execution finished with an error result");
+                    let execution_history = db_connection.get(execution_id.clone()).await?;
+                    let reason =
+                        Cow::Owned(format!("Execution returned error result: `{exec_err:?}`"));
+                    if let Some(duration) = execution_history.can_be_retried_after() {
+                        let expires_at = now() + duration;
+                        debug!("Retrying failed execution after {duration:?} at {expires_at}");
+                        ExecutionEventInner::IntermittentFailure { expires_at, reason }
+                    } else {
+                        info!("Permanently failed");
+                        ExecutionEventInner::Finished {
+                            result: Err(FinishedExecutionError::PermanentFailure(reason)),
+                        }
+                    }
+                } else {
+                    info!("Execution finished successfully");
+                    ExecutionEventInner::Finished { result: Ok(result) }
+                };
+                (event, new_version)
             }
             Err((err, new_version)) => {
                 debug!("Execution failed: {err:?}");
@@ -356,9 +370,9 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
                         }
                     }
                 };
-                Ok((event, new_version))
+                (event, new_version)
             }
-        }
+        })
     }
 }
 
@@ -631,7 +645,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stochastic_test_failure_retry_success() {
+    async fn stochastic_retry_on_worker_error() {
         set_up();
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
@@ -643,18 +657,21 @@ mod tests {
 
         let mut db_task = DbTask::spawn_new(1);
         let worker_results_rev = {
-            let failed_result: WorkerResult = Err((
-                WorkerError::IntermittentError {
-                    reason: Cow::Borrowed("fail"),
-                    err: anyhow!("").into(),
-                },
-                2,
-            ));
-            let finished_result: WorkerResult = Ok((SupportedFunctionResult::None, 4));
-
             let mut worker_results_rev = IndexMap::new();
-            worker_results_rev.insert(2, (vec![], failed_result));
-            worker_results_rev.insert(4, (vec![], finished_result));
+            worker_results_rev.insert(
+                2,
+                (
+                    vec![],
+                    Err((
+                        WorkerError::IntermittentError {
+                            reason: Cow::Borrowed("fail"),
+                            err: anyhow!("").into(),
+                        },
+                        2,
+                    )),
+                ),
+            );
+            worker_results_rev.insert(4, (vec![], Ok((SupportedFunctionResult::None, 4))));
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
@@ -700,6 +717,101 @@ mod tests {
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
+                },
+                created_at: _,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn stochastic_retry_on_execution_returning_err() {
+        set_up();
+        let exec_config = ExecConfig {
+            ffqns: vec![SOME_FFQN.to_owned()],
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            lock_expiry_leeway: Duration::from_millis(100),
+            tick_sleep: Duration::from_millis(100),
+        };
+
+        let mut db_task = DbTask::spawn_new(1);
+        let worker_results_rev = {
+            let mut worker_results_rev = IndexMap::new();
+            worker_results_rev.insert(
+                2,
+                (
+                    vec![],
+                    Ok((
+                        SupportedFunctionResult::Fallible(
+                            val_json::wast_val::WastVal::Result(Err(None)),
+                            Err(()),
+                        ),
+                        2,
+                    )),
+                ),
+            );
+            worker_results_rev.insert(
+                4,
+                (
+                    vec![],
+                    Ok((
+                        SupportedFunctionResult::Fallible(
+                            val_json::wast_val::WastVal::Result(Ok(None)),
+                            Ok(()),
+                        ),
+                        4,
+                    )),
+                ),
+            );
+            worker_results_rev.reverse();
+            Arc::new(std::sync::Mutex::new(worker_results_rev))
+        };
+        let worker = SimpleWorker {
+            db_connection: db_task.as_db_connection().unwrap_or_log(),
+            worker_results_rev: worker_results_rev.clone(),
+        };
+        let exec_task = ExecTask::spawn_new(
+            db_task.as_db_connection().unwrap_or_log(),
+            worker,
+            exec_config.clone(),
+            None,
+        );
+        let execution_history = execute(
+            db_task.as_db_connection().unwrap_or_log(),
+            exec_config,
+            worker_results_rev,
+            1,
+            |_, _, _| tokio::time::sleep(Duration::from_secs(1)),
+        )
+        .await;
+        exec_task.close().await;
+        db_task.close().await;
+        let reason = assert_matches!(
+            &execution_history.execution_events.get(2).unwrap(),
+            ExecutionEvent {
+                event: ExecutionEventInner::IntermittentFailure {
+                    reason,
+                    expires_at: _
+                },
+                created_at: _,
+            } => reason.to_string()
+        );
+        assert_eq!("Execution returned error result: `None`", reason);
+        assert_matches!(
+            execution_history.execution_events.get(3).unwrap(),
+            ExecutionEvent {
+                event: ExecutionEventInner::Locked { .. },
+                created_at: _
+            }
+        );
+        assert_matches!(
+            execution_history.execution_events.get(4).unwrap(),
+            ExecutionEvent {
+                event: ExecutionEventInner::Finished {
+                    result: Ok(SupportedFunctionResult::Fallible(
+                        val_json::wast_val::WastVal::Result(Ok(None)),
+                        Ok(())
+                    )),
                 },
                 created_at: _,
             }
