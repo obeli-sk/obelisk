@@ -1,3 +1,4 @@
+use crate::EngineConfig;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ActivityId;
@@ -17,11 +18,20 @@ use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
+pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
+    let mut wasmtime_config = wasmtime::Config::new();
+    wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+    wasmtime_config.wasm_component_model(true);
+    wasmtime_config.async_support(true);
+    wasmtime_config.allocation_strategy(config.allocation_strategy);
+    wasmtime_config.epoch_interruption(true);
+    Arc::new(Engine::new(&wasmtime_config).unwrap_or_log())
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[allow(clippy::module_name_repetitions)]
 pub struct ActivityConfig {
     pub wasm_path: Cow<'static, str>,
-    pub preload: bool,
     pub epoch_millis: u64,
 }
 
@@ -29,15 +39,13 @@ type MaybeRecycledInstances = Option<
     Arc<std::sync::Mutex<Vec<(wasmtime::component::Instance, Store<utils::wasi_http::Ctx>)>>>,
 >;
 
-#[derive(derive_more::Display, Clone)]
-#[display(fmt = "ActivityWorker")]
+#[derive(Clone)]
 struct ActivityWorker {
     config: ActivityConfig,
     engine: Arc<Engine>,
     ffqns_to_results_len: HashMap<FunctionFqn, usize>,
     linker: wasmtime::component::Linker<utils::wasi_http::Ctx>,
     component: wasmtime::component::Component,
-    instance_pre: Option<wasmtime::component::InstancePre<utils::wasi_http::Ctx>>,
     recycled_instances: MaybeRecycledInstances,
 }
 
@@ -88,13 +96,6 @@ impl ActivityWorker {
             wasmtime::component::Component::from_binary(&engine, &wasm).map_err(|err| {
                 ActivityError::InstantiationError(config.wasm_path.clone(), err.into())
             })?;
-        let instance_pre = if config.preload {
-            Some(linker.instantiate_pre(&component).map_err(|err| {
-                ActivityError::InstantiationError(config.wasm_path.clone(), err.into())
-            })?)
-        } else {
-            None
-        };
 
         Ok(Self {
             config,
@@ -102,7 +103,6 @@ impl ActivityWorker {
             ffqns_to_results_len,
             linker,
             component,
-            instance_pre,
             recycled_instances,
         })
     }
@@ -145,23 +145,12 @@ impl ActivityWorker {
             .recycled_instances
             .as_ref()
             .and_then(|i| i.lock().unwrap_or_log().pop());
-        let (instance, mut store) = match (instance, &self.instance_pre) {
-            (Some((instance, store)), _) => {
+        let (instance, mut store) = match instance {
+            Some((instance, store)) => {
                 trace!("Reusing old instance and store");
                 (instance, store)
             }
-            (None, Some(instance_pre)) => {
-                let mut store = utils::wasi_http::store(&self.engine);
-                let instance = instance_pre
-                    .instantiate_async(&mut store)
-                    .await
-                    .map_err(|err| WorkerError::IntermittentError {
-                        reason: Cow::Borrowed("cannot instantiate"),
-                        err: err.into(),
-                    })?;
-                (instance, store)
-            }
-            (None, None) => {
+            None => {
                 let mut store = utils::wasi_http::store(&self.engine);
                 let instance = self
                     .linker
@@ -280,7 +269,7 @@ const _: () = {
 #[cfg(all(test, not(madsim)))]
 mod tests {
     use super::*;
-    use crate::{activity_engine, EngineConfig};
+    use crate::EngineConfig;
     use assert_matches::assert_matches;
     use concepts::{
         prefixed_ulid::ActivityId, ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult,
@@ -288,15 +277,13 @@ mod tests {
     use rstest::rstest;
     use scheduler::{
         executor::{ExecConfig, ExecTask},
-        storage::{inmemory_dao::DbTask, AppendRequest, DbConnection, ExecutionEventInner},
+        storage::{inmemory_dao::DbTask, DbConnection},
         FinishedExecutionError, FinishedExecutionResult,
     };
     use std::{
         borrow::Cow,
-        sync::Arc,
         time::{Duration, Instant},
     };
-    use test_utils::env_or_default;
     use tracing::{info, warn};
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
@@ -315,7 +302,6 @@ mod tests {
 
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
-                preload: true,
                 wasm_path: Cow::Borrowed(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
@@ -366,12 +352,16 @@ mod tests {
         db_task.close().await;
     }
 
+    #[cfg(perf)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_parallel() {
+        use scheduler::storage::{AppendRequest, ExecutionEventInner};
+        use std::sync::Arc;
+        use test_utils::env_or_default;
+
         const FIBO_INPUT: u8 = 10;
         const EXECUTIONS: usize = 20_000; // release: 70_000
         const RECYCLE: bool = true;
-        const PRELOAD: bool = true;
         const PERMITS: usize = 1_000_000;
         const BATCH_SIZE: u32 = 10_000;
         const LOCK_EXPIRY_MILLIS: u64 = 1100;
@@ -387,7 +377,6 @@ mod tests {
         let recycle_instances = env_or_default("RECYCLE", RECYCLE).then(Default::default);
         let permits = env_or_default("PERMITS", PERMITS);
         let batch_size = env_or_default("BATCH_SIZE", BATCH_SIZE);
-        let preload = env_or_default("PRELOAD", PRELOAD);
         let lock_expiry =
             Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
         let tick_sleep =
@@ -423,7 +412,6 @@ mod tests {
 
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
-                preload,
                 wasm_path: Cow::Borrowed(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
@@ -516,12 +504,14 @@ mod tests {
         db_task.close().await;
     }
 
+    #[cfg(perf)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_direct() {
+        use test_utils::env_or_default;
+
         const FIBO_INPUT: u8 = 10;
         const EXECUTIONS: u32 = 400_000; // release: 800_000
         const RECYCLE: bool = true;
-        const PRELOAD: bool = true;
         const LOCK_EXPIRY_MILLIS: u64 = 1100;
         const TASKS: u32 = 10_000;
         const MAX_INSTANCES: u32 = 10_000;
@@ -530,7 +520,6 @@ mod tests {
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
         let recycle_instances = env_or_default("RECYCLE", RECYCLE).then(Default::default);
-        let preload = env_or_default("PRELOAD", PRELOAD);
         let lock_expiry =
             Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
         let tasks = env_or_default("TASKS", TASKS);
@@ -545,7 +534,6 @@ mod tests {
 
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
-                preload,
                 wasm_path: Cow::Borrowed(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
@@ -631,7 +619,6 @@ mod tests {
         let recycled_instances = Some(Default::default());
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
-                preload: true,
                 wasm_path: Cow::Borrowed(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 ),
