@@ -141,15 +141,12 @@ impl ActivityWorker {
             .ok_or(WorkerError::FatalError(FatalError::NotFound))?;
         trace!("Params: {params:?}, results_len:{results_len}",);
 
-        let instance = self
+        let instance_and_store = self
             .recycled_instances
             .as_ref()
             .and_then(|i| i.lock().unwrap_or_log().pop());
-        let (instance, mut store) = match instance {
-            Some((instance, store)) => {
-                trace!("Reusing old instance and store");
-                (instance, store)
-            }
+        let (instance, mut store) = match instance_and_store {
+            Some((instance, store)) => (instance, store),
             None => {
                 let mut store = utils::wasi_http::store(&self.engine);
                 let instance = self

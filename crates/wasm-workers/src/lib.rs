@@ -1,4 +1,5 @@
 pub mod activity_worker;
+pub mod workflow_worker;
 
 pub struct EngineConfig {
     pub allocation_strategy: wasmtime::InstanceAllocationStrategy,
