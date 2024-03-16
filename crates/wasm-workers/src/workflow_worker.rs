@@ -1,7 +1,7 @@
 use crate::EngineConfig;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{ActivityId, WorkflowId};
+use concepts::prefixed_ulid::{ConfigId, WorkflowId};
 use concepts::FunctionFqn;
 use concepts::{Params, SupportedFunctionResult};
 use scheduler::storage::DbConnection;
@@ -32,6 +32,7 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[allow(clippy::module_name_repetitions)]
 pub struct WorkflowConfig {
+    pub config_id: ConfigId,
     pub wasm_path: Cow<'static, str>,
     pub epoch_millis: u64,
 }
@@ -64,7 +65,7 @@ pub enum WorkflowError {
 }
 
 impl<DB: DbConnection<WorkflowId>> WorkflowWorker<DB> {
-    #[tracing::instrument(skip_all, fields(wasm_path))]
+    #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
         config: WorkflowConfig,
         engine: Arc<Engine>,
@@ -112,13 +113,13 @@ impl<DB: DbConnection<WorkflowId>> WorkflowWorker<DB> {
 }
 
 #[async_trait]
-impl<DB: DbConnection<WorkflowId> + Sync> Worker<ActivityId> for WorkflowWorker<DB> {
+impl<DB: DbConnection<WorkflowId> + Sync> Worker<WorkflowId> for WorkflowWorker<DB> {
     async fn run(
         &self,
-        _execution_id: ActivityId,
+        _execution_id: WorkflowId,
         ffqn: FunctionFqn,
         params: Params,
-        events: Vec<HistoryEvent<ActivityId>>,
+        events: Vec<HistoryEvent<WorkflowId>>,
         version: Version,
         execution_deadline: DateTime<Utc>,
     ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
@@ -245,9 +246,9 @@ impl<DB: DbConnection<WorkflowId>> WorkflowWorker<DB> {
     }
 }
 
-// TODO: implement Valuable for Cow<'_, str>
-const _: () = {
-    static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("wasm_path")];
+mod valuable {
+    use super::*;
+    static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
     impl<DB: DbConnection<WorkflowId>> ::valuable::Structable for WorkflowWorker<DB> {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             ::valuable::StructDef::new_static("WorkflowWorker", ::valuable::Fields::Named(FIELDS))
@@ -260,8 +261,10 @@ const _: () = {
         fn visit(&self, visitor: &mut dyn ::valuable::Visit) {
             visitor.visit_named_fields(&::valuable::NamedValues::new(
                 FIELDS,
-                &[::valuable::Value::String(&self.config.wasm_path)],
+                &[::valuable::Value::String(
+                    &self.config.config_id.to_string(),
+                )],
             ));
         }
     }
-};
+}

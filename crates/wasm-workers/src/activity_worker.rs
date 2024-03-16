@@ -1,7 +1,7 @@
 use crate::EngineConfig;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::ActivityId;
+use concepts::prefixed_ulid::{ActivityId, ConfigId};
 use concepts::FunctionFqn;
 use concepts::{Params, SupportedFunctionResult};
 use scheduler::worker::FatalError;
@@ -31,6 +31,7 @@ pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[allow(clippy::module_name_repetitions)]
 pub struct ActivityConfig {
+    pub config_id: ConfigId,
     pub wasm_path: Cow<'static, str>,
     pub epoch_millis: u64,
 }
@@ -62,7 +63,7 @@ pub enum ActivityError {
 }
 
 impl ActivityWorker {
-    #[tracing::instrument(skip_all, fields(wasm_path))]
+    #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
         config: ActivityConfig,
         engine: Arc<Engine>,
@@ -242,9 +243,9 @@ impl ActivityWorker {
     }
 }
 
-// TODO: implement Valuable for Cow<'_, str>
-const _: () = {
-    static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("wasm_path")];
+mod valuable {
+    use super::*;
+    static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
     impl ::valuable::Structable for ActivityWorker {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             ::valuable::StructDef::new_static("ActivityWorker", ::valuable::Fields::Named(FIELDS))
@@ -257,11 +258,13 @@ const _: () = {
         fn visit(&self, visitor: &mut dyn ::valuable::Visit) {
             visitor.visit_named_fields(&::valuable::NamedValues::new(
                 FIELDS,
-                &[::valuable::Value::String(&self.config.wasm_path)],
+                &[::valuable::Value::String(
+                    &self.config.config_id.to_string(),
+                )],
             ));
         }
     }
-};
+}
 
 #[cfg(all(test, not(madsim)))]
 mod tests {
@@ -303,6 +306,7 @@ mod tests {
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
                 epoch_millis: 10,
+                config_id: ConfigId::generate(),
             },
             activity_engine(EngineConfig::default()),
             None,
@@ -620,6 +624,7 @@ mod tests {
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                 ),
                 epoch_millis: EPOCH_MILLIS,
+                config_id: ConfigId::generate(),
             },
             engine,
             recycled_instances.clone(), // enable recycling

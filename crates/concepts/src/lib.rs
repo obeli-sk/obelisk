@@ -385,11 +385,13 @@ pub mod prefixed_ulid {
         pub struct Act;
         pub struct Exe;
         pub struct Wfw;
+        pub struct Conf;
     }
 
     pub type ActivityId = PrefixedUlid<prefix::Act>;
     pub type ExecutorId = PrefixedUlid<prefix::Exe>;
     pub type WorkflowId = PrefixedUlid<prefix::Wfw>;
+    pub type ConfigId = PrefixedUlid<prefix::Conf>;
 
     impl<'a> Arbitrary<'a> for WorkflowId {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
