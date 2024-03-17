@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ActivityId, ConfigId};
 use concepts::FunctionFqn;
 use concepts::{Params, SupportedFunctionResult};
+use derivative::Derivative;
 use scheduler::worker::FatalError;
 use scheduler::{
     storage::{HistoryEvent, Version},
@@ -28,12 +29,15 @@ pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
     Arc::new(Engine::new(&wasmtime_config).unwrap_or_log())
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Clone, Derivative)]
+#[derivative(Debug)]
 #[allow(clippy::module_name_repetitions)]
 pub struct ActivityConfig {
     pub config_id: ConfigId,
     pub wasm_path: Cow<'static, str>,
     pub epoch_millis: u64,
+    #[derivative(Debug = "ignore")]
+    pub recycled_instances: MaybeRecycledInstances,
 }
 
 type MaybeRecycledInstances = Option<
@@ -41,13 +45,12 @@ type MaybeRecycledInstances = Option<
 >;
 
 #[derive(Clone)]
-struct ActivityWorker {
+pub struct ActivityWorker {
     config: ActivityConfig,
     engine: Arc<Engine>,
     ffqns_to_results_len: HashMap<FunctionFqn, usize>,
     linker: wasmtime::component::Linker<utils::wasi_http::Ctx>,
     component: wasmtime::component::Component,
-    recycled_instances: MaybeRecycledInstances,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -67,7 +70,6 @@ impl ActivityWorker {
     pub fn new_with_config(
         config: ActivityConfig,
         engine: Arc<Engine>,
-        recycled_instances: MaybeRecycledInstances,
     ) -> Result<Self, ActivityError> {
         info!("Reading");
         let wasm = std::fs::read(config.wasm_path.as_ref())
@@ -104,7 +106,6 @@ impl ActivityWorker {
             ffqns_to_results_len,
             linker,
             component,
-            recycled_instances,
         })
     }
 }
@@ -143,6 +144,7 @@ impl ActivityWorker {
         trace!("Params: {params:?}, results_len:{results_len}",);
 
         let instance_and_store = self
+            .config
             .recycled_instances
             .as_ref()
             .and_then(|i| i.lock().unwrap_or_log().pop());
@@ -218,7 +220,7 @@ impl ActivityWorker {
                 }
             })?;
 
-            if let Some(recycled_instances) = &self.recycled_instances {
+            if let Some(recycled_instances) = &self.config.recycled_instances {
                 recycled_instances
                     .lock()
                     .unwrap_or_log()
@@ -267,7 +269,7 @@ mod valuable {
 }
 
 #[cfg(all(test, not(madsim)))]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::EngineConfig;
     use assert_matches::assert_matches;
@@ -276,7 +278,7 @@ mod tests {
     };
     use rstest::rstest;
     use scheduler::{
-        executor::{ExecConfig, ExecTask},
+        executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
         storage::{inmemory_dao::DbTask, DbConnection},
         FinishedExecutionError, FinishedExecutionResult,
     };
@@ -290,16 +292,11 @@ mod tests {
     use val_json::wast_val::WastVal;
     use wasmtime::component::Val;
 
-    const FIBO_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:fibo/fibo", "fibo"); // func(n: u8) -> u64;
+    pub const FIBO_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:fibo/fibo", "fibo"); // func(n: u8) -> u64;
 
-    #[tokio::test]
-    async fn fibo_once() {
-        const FIBO_INPUT: u8 = 40;
-        const EXPECTED: u64 = 165580141;
-        test_utils::set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
-
+    pub(crate) fn spawn_fibo_executor<DB: DbConnection<ActivityId>>(
+        db_connection: DB,
+    ) -> ExecutorTaskHandle {
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
                 wasm_path: Cow::Borrowed(
@@ -307,9 +304,9 @@ mod tests {
                 ),
                 epoch_millis: 10,
                 config_id: ConfigId::generate(),
+                recycled_instances: None,
             },
             activity_engine(EngineConfig::default()),
-            None,
         )
         .unwrap_or_log();
 
@@ -320,13 +317,17 @@ mod tests {
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::from_millis(100),
         };
-        let exec_task = ExecTask::spawn_new(
-            db_task.as_db_connection().unwrap_or_log(),
-            fibo_worker,
-            exec_config.clone(),
-            None,
-        );
+        ExecTask::spawn_new(db_connection, fibo_worker, exec_config.clone(), None)
+    }
 
+    #[tokio::test]
+    async fn fibo_once() {
+        const FIBO_INPUT: u8 = 10;
+        const EXPECTED: u64 = 89;
+        test_utils::set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+        let exec_task = spawn_fibo_executor(db_connection.clone());
         // Create an execution.
         let execution_id = ActivityId::generate();
         let created_at = now();
@@ -348,12 +349,10 @@ mod tests {
             Ok(SupportedFunctionResult::Infallible(WastVal::U64(val))) => val);
         assert_eq!(EXPECTED, fibo);
         drop(db_connection);
-
         exec_task.close().await;
         db_task.close().await;
     }
 
-    #[cfg(perf)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_parallel() {
         use scheduler::storage::{AppendRequest, ExecutionEventInner};
@@ -375,7 +374,7 @@ mod tests {
         test_utils::set_up();
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
-        let recycle_instances = env_or_default("RECYCLE", RECYCLE).then(Default::default);
+        let recycled_instances = env_or_default("RECYCLE", RECYCLE).then(Default::default);
         let permits = env_or_default("PERMITS", PERMITS);
         let batch_size = env_or_default("BATCH_SIZE", BATCH_SIZE);
         let lock_expiry =
@@ -413,13 +412,14 @@ mod tests {
 
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
+                config_id: ConfigId::generate(),
                 wasm_path: Cow::Borrowed(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
                 epoch_millis: EPOCH_MILLIS,
+                recycled_instances,
             },
             engine,
-            recycle_instances,
         )
         .unwrap_or_log();
 
@@ -505,7 +505,6 @@ mod tests {
         db_task.close().await;
     }
 
-    #[cfg(perf)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_direct() {
         use test_utils::env_or_default;
@@ -520,7 +519,7 @@ mod tests {
         test_utils::set_up();
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
-        let recycle_instances = env_or_default("RECYCLE", RECYCLE).then(Default::default);
+        let recycled_instances = env_or_default("RECYCLE", RECYCLE).then(Default::default);
         let lock_expiry =
             Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
         let tasks = env_or_default("TASKS", TASKS);
@@ -535,15 +534,16 @@ mod tests {
 
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
+                config_id: ConfigId::generate(),
                 wasm_path: Cow::Borrowed(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
                 epoch_millis: 10,
+                recycled_instances,
             },
             activity_engine(EngineConfig {
                 allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
             }),
-            recycle_instances,
         )
         .unwrap_or_log();
 
@@ -595,10 +595,11 @@ mod tests {
     #[case(10, 10, Ok(SupportedFunctionResult::None))] // 0.1s -> Ok
     #[case(1500, 1, Err(FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
     #[tokio::test]
-    async fn nondeterministic_sleep_timeout(
+    async fn sleep_should_produce_intermittent_timeout(
         #[case] sleep_millis: u64,
         #[case] sleep_iterations: u32,
         #[case] expected: FinishedExecutionResult<ActivityId>,
+        #[values(false, true)] recycle: bool,
     ) {
         const EPOCH_MILLIS: u64 = 10;
         const LOCK_EXPIRY: Duration = Duration::from_millis(500);
@@ -617,7 +618,11 @@ mod tests {
                 }
             });
         }
-        let recycled_instances = Some(Default::default());
+        let recycled_instances = if recycle {
+            Some(Default::default())
+        } else {
+            None
+        };
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
                 wasm_path: Cow::Borrowed(
@@ -625,9 +630,9 @@ mod tests {
                 ),
                 epoch_millis: EPOCH_MILLIS,
                 config_id: ConfigId::generate(),
+                recycled_instances: recycled_instances.clone(),
             },
             engine,
-            recycled_instances.clone(), // enable recycling
         )
         .unwrap_or_log();
 
@@ -671,10 +676,12 @@ mod tests {
                 .unwrap_or_log(),
             expected
         );
-        assert_eq!(
-            Some(if expected.is_ok() { 1 } else { 0 }),
-            recycled_instances.as_ref().map(|i| i.lock().unwrap().len())
-        );
+        if recycle {
+            assert_eq!(
+                Some(if expected.is_ok() { 1 } else { 0 }),
+                recycled_instances.as_ref().map(|i| i.lock().unwrap().len())
+            );
+        }
         let stopwatch = stopwatch.elapsed();
         warn!("Finished in {stopwatch:?}");
         assert!(stopwatch < LOCK_EXPIRY * 2);

@@ -224,7 +224,7 @@ pub struct AppendRequest<ID: ExecutionId> {
 }
 
 #[async_trait]
-pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone {
+pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone + Send + Sync {
     async fn lock_pending(
         &self,
         batch_size: usize,

@@ -406,12 +406,12 @@ mod tests {
 
     #[derive(Clone, derive_more::Display)]
     #[display(fmt = "SimpleWorker")]
-    struct SimpleWorker<DB: DbConnection<WorkflowId> + Send> {
+    struct SimpleWorker<DB: DbConnection<WorkflowId>> {
         db_connection: DB,
         worker_results_rev: SimpleWorkerResultMap,
     }
 
-    impl<DB: DbConnection<WorkflowId> + Send> valuable::Valuable for SimpleWorker<DB> {
+    impl<DB: DbConnection<WorkflowId>> valuable::Valuable for SimpleWorker<DB> {
         fn as_value(&self) -> valuable::Value<'_> {
             "SimpleWorker".as_value()
         }
