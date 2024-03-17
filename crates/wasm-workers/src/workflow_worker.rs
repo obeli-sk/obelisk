@@ -42,7 +42,7 @@ type MaybeRecycledInstances = Option<
 >;
 
 #[derive(Clone)]
-struct WorkflowWorker<DB: DbConnection<WorkflowId>> {
+struct WorkflowWorker<DB: DbConnection> {
     db_connection: DB,
     config: WorkflowConfig,
     engine: Arc<Engine>,
@@ -64,7 +64,7 @@ pub enum WorkflowError {
     InstantiationError(Cow<'static, str>, Box<dyn Error>),
 }
 
-impl<DB: DbConnection<WorkflowId>> WorkflowWorker<DB> {
+impl<DB: DbConnection> WorkflowWorker<DB> {
     #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
         config: WorkflowConfig,
@@ -113,13 +113,13 @@ impl<DB: DbConnection<WorkflowId>> WorkflowWorker<DB> {
 }
 
 #[async_trait]
-impl<DB: DbConnection<WorkflowId> + Sync> Worker<WorkflowId> for WorkflowWorker<DB> {
+impl<DB: DbConnection> Worker<WorkflowId> for WorkflowWorker<DB> {
     async fn run(
         &self,
         _execution_id: WorkflowId,
         ffqn: FunctionFqn,
         params: Params,
-        events: Vec<HistoryEvent<WorkflowId>>,
+        events: Vec<HistoryEvent>,
         version: Version,
         execution_deadline: DateTime<Utc>,
     ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
@@ -131,7 +131,7 @@ impl<DB: DbConnection<WorkflowId> + Sync> Worker<WorkflowId> for WorkflowWorker<
     }
 }
 
-impl<DB: DbConnection<WorkflowId>> WorkflowWorker<DB> {
+impl<DB: DbConnection> WorkflowWorker<DB> {
     #[tracing::instrument(skip_all)]
     pub(crate) async fn run(
         &self,
@@ -249,12 +249,12 @@ impl<DB: DbConnection<WorkflowId>> WorkflowWorker<DB> {
 mod valuable {
     use super::*;
     static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
-    impl<DB: DbConnection<WorkflowId>> ::valuable::Structable for WorkflowWorker<DB> {
+    impl<DB: DbConnection> ::valuable::Structable for WorkflowWorker<DB> {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             ::valuable::StructDef::new_static("WorkflowWorker", ::valuable::Fields::Named(FIELDS))
         }
     }
-    impl<DB: DbConnection<WorkflowId>> ::valuable::Valuable for WorkflowWorker<DB> {
+    impl<DB: DbConnection> ::valuable::Valuable for WorkflowWorker<DB> {
         fn as_value(&self) -> ::valuable::Value<'_> {
             ::valuable::Value::Structable(self)
         }
@@ -266,94 +266,5 @@ mod valuable {
                 )],
             ));
         }
-    }
-}
-
-#[cfg(all(test, not(madsim)))]
-mod tests {
-    use super::*;
-    use crate::{
-        activity_worker::{activity_engine, tests::FIBO_FFQN, ActivityConfig, ActivityWorker},
-        EngineConfig,
-    };
-    use assert_matches::assert_matches;
-    use concepts::{
-        prefixed_ulid::{ActivityId, ConfigId},
-        ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult,
-    };
-    use rstest::rstest;
-    use scheduler::{
-        executor::{ExecConfig, ExecTask},
-        storage::{inmemory_dao::DbTask, DbConnection},
-        FinishedExecutionError, FinishedExecutionResult,
-    };
-    use std::{
-        borrow::Cow,
-        time::{Duration, Instant},
-    };
-    use tracing::{info, warn};
-    use tracing_unwrap::{OptionExt, ResultExt};
-    use utils::time::now;
-    use val_json::wast_val::WastVal;
-    use wasmtime::component::Val;
-
-    #[tokio::test]
-    async fn fibo() {
-        const FIBO_INPUT: u8 = 40;
-        const EXPECTED: u64 = 165580141;
-        test_utils::set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
-
-        let fibo_worker = ActivityWorker::new_with_config(
-            ActivityConfig {
-                wasm_path: Cow::Borrowed(
-                    test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                ),
-                epoch_millis: 10,
-                config_id: ConfigId::generate(),
-                recycled_instances: None,
-            },
-            activity_engine(EngineConfig::default()),
-        )
-        .unwrap_or_log();
-        let activity_exec_config = ExecConfig {
-            ffqns: vec![FIBO_FFQN.to_owned()],
-            batch_size: 1,
-            lock_expiry: Duration::from_secs(1),
-            lock_expiry_leeway: Duration::from_millis(10),
-            tick_sleep: Duration::from_millis(100),
-        };
-        let activity_exec_task = ExecTask::spawn_new(
-            db_task.as_db_connection().unwrap_or_log(),
-            fibo_worker,
-            activity_exec_config.clone(),
-            None,
-        );
-
-        // Create an execution.
-        let execution_id = ActivityId::generate();
-        let created_at = now();
-        db_connection
-            .create(
-                created_at,
-                execution_id.clone(),
-                FIBO_FFQN.to_owned(),
-                Params::from([Val::U8(FIBO_INPUT)]),
-                None,
-                None,
-                Duration::ZERO,
-                0,
-            )
-            .await
-            .unwrap_or_log();
-        // Check the result.
-        let fibo = assert_matches!(db_connection.obtain_finished_result(execution_id).await.unwrap_or_log(),
-            Ok(SupportedFunctionResult::Infallible(WastVal::U64(val))) => val);
-        assert_eq!(EXPECTED, fibo);
-        drop(db_connection);
-
-        activity_exec_task.close().await;
-        db_task.close().await;
     }
 }

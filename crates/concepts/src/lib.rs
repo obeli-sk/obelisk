@@ -294,7 +294,18 @@ impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
 }
 
 pub trait ExecutionId:
-    Clone + Hash + Display + Debug + Eq + PartialEq + Send + Sync + Ord + 'static
+    Clone
+    + Hash
+    + Display
+    + Debug
+    + Eq
+    + PartialEq
+    + Send
+    + Sync
+    + Ord
+    + 'static
+    + TryFrom<Arc<String>>
+    + Into<Arc<String>>
 {
     #[must_use]
     fn generate() -> Self;
@@ -307,23 +318,28 @@ pub mod prefixed_ulid {
         fmt::{Debug, Display},
         hash::Hash,
         marker::PhantomData,
+        sync::Arc,
     };
 
     #[derive(derive_more::Display)]
-    #[display(fmt = "{prefix}_{id}")]
+    #[display(fmt = "{arc}")]
     pub struct PrefixedUlid<T: 'static> {
-        prefix: &'static str,
-        id: ulid::Ulid,
+        arc: Arc<String>,
         phantom_data: PhantomData<fn(T) -> T>,
     }
 
     impl<T> PrefixedUlid<T> {
         fn new(id: ulid::Ulid) -> Self {
+            let prefix = Self::prefix();
+            let arc = Arc::new(format!("{prefix}_{id}"));
             Self {
-                prefix: std::any::type_name::<T>().rsplit("::").next().unwrap(),
-                id,
+                arc,
                 phantom_data: PhantomData,
             }
+        }
+
+        fn prefix() -> &'static str {
+            std::any::type_name::<T>().rsplit("::").next().unwrap()
         }
     }
 
@@ -336,6 +352,26 @@ pub mod prefixed_ulid {
     mod impls {
         use super::*;
 
+        impl<T> Into<Arc<String>> for PrefixedUlid<T> {
+            fn into(self) -> Arc<String> {
+                self.arc
+            }
+        }
+
+        impl<T> TryFrom<Arc<String>> for PrefixedUlid<T> {
+            type Error = &'static str;
+
+            fn try_from(arc: Arc<String>) -> Result<Self, Self::Error> {
+                if !arc.starts_with(Self::prefix()) {
+                    return Err("wrong prefix");
+                }
+                Ok(Self {
+                    arc,
+                    phantom_data: PhantomData,
+                })
+            }
+        }
+
         impl<T> Debug for PrefixedUlid<T> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 Display::fmt(&self, f)
@@ -345,8 +381,7 @@ pub mod prefixed_ulid {
         impl<T> Clone for PrefixedUlid<T> {
             fn clone(&self) -> Self {
                 Self {
-                    prefix: self.prefix,
-                    id: self.id.clone(),
+                    arc: self.arc.clone(),
                     phantom_data: self.phantom_data.clone(),
                 }
             }
@@ -354,15 +389,14 @@ pub mod prefixed_ulid {
 
         impl<T> Hash for PrefixedUlid<T> {
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                self.prefix.hash(state);
-                self.id.hash(state);
+                self.arc.hash(state);
                 self.phantom_data.hash(state);
             }
         }
 
         impl<T> PartialEq for PrefixedUlid<T> {
             fn eq(&self, other: &Self) -> bool {
-                self.id == other.id
+                self.arc == other.arc
             }
         }
 
@@ -370,13 +404,13 @@ pub mod prefixed_ulid {
 
         impl<T> PartialOrd for PrefixedUlid<T> {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                self.id.partial_cmp(&other.id)
+                self.arc.partial_cmp(&other.arc)
             }
         }
 
         impl<T> Ord for PrefixedUlid<T> {
             fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                self.id.cmp(&other.id)
+                self.arc.cmp(&other.arc)
             }
         }
     }

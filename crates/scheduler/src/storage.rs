@@ -6,9 +6,9 @@ use crate::FinishedExecutionResult;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::FunctionFqn;
 use concepts::Params;
 use concepts::SupportedFunctionResult;
-use concepts::{ExecutionId, FunctionFqn};
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,15 +18,17 @@ pub type Version = usize;
 
 pub type ExecutorName = Arc<String>;
 
+pub type ExecutionIdStr = Arc<String>;
+
 #[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
 #[display(fmt = "{event}")]
-pub struct ExecutionEvent<ID: ExecutionId> {
+pub struct ExecutionEvent {
     pub created_at: DateTime<Utc>,
-    pub event: ExecutionEventInner<ID>,
+    pub event: ExecutionEventInner,
 }
 
 #[derive(Clone, Debug, derive_more::Display, PartialEq, Eq, arbitrary::Arbitrary)]
-pub enum ExecutionEventInner<ID: ExecutionId> {
+pub enum ExecutionEventInner {
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
     // After optional expiry(`scheduled_at`) interpreted as pending.
@@ -35,7 +37,7 @@ pub enum ExecutionEventInner<ID: ExecutionId> {
         ffqn: FunctionFqn,
         #[arbitrary(default)]
         params: Params,
-        parent: Option<ID>,
+        parent: Option<ExecutionIdStr>,
         scheduled_at: Option<DateTime<Utc>>,
         retry_exp_backoff: Duration,
         max_retries: u32,
@@ -68,7 +70,7 @@ pub enum ExecutionEventInner<ID: ExecutionId> {
     #[display(fmt = "Finished")]
     Finished {
         #[arbitrary(value = Ok(SupportedFunctionResult::None))]
-        result: FinishedExecutionResult<ID>,
+        result: FinishedExecutionResult,
     },
     // Created by an external system or a scheduler during a race.
     // Processed by the executor holding the last Lock.
@@ -77,10 +79,10 @@ pub enum ExecutionEventInner<ID: ExecutionId> {
     CancelRequest,
 
     #[display(fmt = "HistoryEvent({event})")]
-    HistoryEvent { event: HistoryEvent<ID> },
+    HistoryEvent { event: HistoryEvent },
 }
 
-impl<ID: ExecutionId> ExecutionEventInner<ID> {
+impl ExecutionEventInner {
     fn appendable_only_in_lock(&self) -> bool {
         match self {
             Self::Locked { .. }
@@ -101,7 +103,7 @@ impl<ID: ExecutionId> ExecutionEventInner<ID> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
-pub enum HistoryEvent<ID: ExecutionId> {
+pub enum HistoryEvent {
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     // Returns execution to `PotentiallyPending::PendingNow` state.
     Yield,
@@ -112,22 +114,22 @@ pub enum HistoryEvent<ID: ExecutionId> {
     },
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     JoinSet {
-        joinset_id: ID,
+        joinset_id: ExecutionIdStr,
     },
     // Joinset entry that will be unblocked by DelayFinishedAsyncResponse.
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     #[display(fmt = "DelayedUntilAsyncRequest({joinset_id})")]
     DelayedUntilAsyncRequest {
-        joinset_id: ID,
-        delay_id: ID,
+        joinset_id: ExecutionIdStr,
+        delay_id: ExecutionIdStr,
         expires_at: DateTime<Utc>,
     },
     // Joinset entry that will be unblocked by ChildExecutionRequested.
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     #[display(fmt = "ChildExecutionAsyncRequest({joinset_id})")]
     ChildExecutionAsyncRequest {
-        joinset_id: ID,
-        child_execution_id: ID,
+        joinset_id: ExecutionIdStr,
+        child_execution_id: ExecutionIdStr,
         ffqn: FunctionFqn,
         #[arbitrary(default)]
         params: Params,
@@ -135,38 +137,38 @@ pub enum HistoryEvent<ID: ExecutionId> {
     // Execution continues without blocking as the next pending response is in the journal.
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     JoinNextFetched {
-        joinset_id: ID,
+        joinset_id: ExecutionIdStr,
     },
     // Moves the execution to `PotentiallyPending::PendingNow` if it is currently blocked on `JoinNextBlocking`.
     #[display(fmt = "AsyncResponse({joinset_id})")]
     AsyncResponse {
-        joinset_id: ID,
-        response: AsyncResponse<ID>,
+        joinset_id: ExecutionIdStr,
+        response: AsyncResponse,
     },
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     // Execution is `PotentiallyPending::BlockedByJoinSet` until the next response of the joinset arrives.
     JoinNextBlocking {
-        joinset_id: ID,
+        joinset_id: ExecutionIdStr,
     },
 }
 
-impl<ID: ExecutionId> HistoryEvent<ID> {
+impl HistoryEvent {
     fn appendable_only_in_lock(&self) -> bool {
         !matches!(self, Self::AsyncResponse { .. })
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, arbitrary::Arbitrary)]
-pub enum AsyncResponse<ID: ExecutionId> {
+pub enum AsyncResponse {
     // Created by a scheduler sometime after DelayedUntilAsyncRequest.
     DelayFinishedAsyncResponse {
-        delay_id: ID,
+        delay_id: ExecutionIdStr,
     },
     // Created by a scheduler sometime after ChildExecutionRequested.
     ChildExecutionAsyncResponse {
-        child_execution_id: ID,
+        child_execution_id: ExecutionIdStr,
         #[arbitrary(value = Ok(SupportedFunctionResult::None))]
-        result: FinishedExecutionResult<ID>,
+        result: FinishedExecutionResult,
     },
 }
 
@@ -197,34 +199,34 @@ pub enum DbError {
 }
 
 pub type AppendResponse = Version;
-pub type PendingExecution<ID> = (ID, Version, Params, Option<DateTime<Utc>>);
-pub type LockResponse<ID> = (Vec<HistoryEvent<ID>>, Version);
+pub type PendingExecution = (ExecutionIdStr, Version, Params, Option<DateTime<Utc>>);
+pub type LockResponse = (Vec<HistoryEvent>, Version);
 
 #[derive(Debug, Clone)]
-pub struct LockedExecution<ID: ExecutionId> {
-    pub execution_id: ID,
+pub struct LockedExecution {
+    pub execution_id: ExecutionIdStr,
     pub version: Version,
     pub ffqn: FunctionFqn,
     pub params: Params,
-    pub event_history: Vec<HistoryEvent<ID>>,
+    pub event_history: Vec<HistoryEvent>,
     pub scheduled_at: Option<DateTime<Utc>>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
 }
-pub type LockPendingResponse<ID> = Vec<LockedExecution<ID>>;
+pub type LockPendingResponse = Vec<LockedExecution>;
 pub type CleanupExpiredLocks = usize; // number of expired locks
 pub type AppendBatchResponse = Vec<Result<AppendResponse, RowSpecificError>>;
 
 #[derive(Debug, Clone)]
-pub struct AppendRequest<ID: ExecutionId> {
+pub struct AppendRequest {
     pub created_at: DateTime<Utc>,
-    pub execution_id: ID,
+    pub execution_id: ExecutionIdStr,
     pub version: Version,
-    pub event: ExecutionEventInner<ID>,
+    pub event: ExecutionEventInner,
 }
 
 #[async_trait]
-pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone + Send + Sync {
+pub trait DbConnection: Send + 'static + Clone + Send + Sync {
     async fn lock_pending(
         &self,
         batch_size: usize,
@@ -233,16 +235,16 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone + Send + Sync {
         created_at: DateTime<Utc>,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockPendingResponse<ID>, DbConnectionError>;
+    ) -> Result<LockPendingResponse, DbConnectionError>;
 
     /// Specialized `append` which does not require a version.
     async fn create(
         &self,
         created_at: DateTime<Utc>,
-        execution_id: ID,
+        execution_id: ExecutionIdStr,
         ffqn: FunctionFqn,
         params: Params,
-        parent: Option<ID>,
+        parent: Option<ExecutionIdStr>,
         scheduled_at: Option<DateTime<Utc>>,
         retry_exp_backoff: Duration,
         max_retries: u32,
@@ -263,31 +265,31 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone + Send + Sync {
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
-        execution_id: ID,
+        execution_id: ExecutionIdStr,
         version: Version,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockResponse<ID>, DbError>;
+    ) -> Result<LockResponse, DbError>;
 
     async fn append(
         &self,
         created_at: DateTime<Utc>,
-        execution_id: ID,
+        execution_id: ExecutionIdStr,
         version: Version,
-        event: ExecutionEventInner<ID>,
+        event: ExecutionEventInner,
     ) -> Result<AppendResponse, DbError>;
 
     async fn append_batch(
         &self,
-        append: Vec<AppendRequest<ID>>,
+        append: Vec<AppendRequest>,
     ) -> Result<AppendBatchResponse, DbConnectionError>;
 
-    async fn get(&self, execution_id: ID) -> Result<ExecutionHistory<ID>, DbError>;
+    async fn get(&self, execution_id: ExecutionIdStr) -> Result<ExecutionHistory, DbError>; // FIXME &ExecutionIdStr ?
 
     async fn obtain_finished_result(
         &self,
-        execution_id: ID,
-    ) -> Result<FinishedExecutionResult<ID>, DbError> {
+        execution_id: ExecutionIdStr,
+    ) -> Result<FinishedExecutionResult, DbError> {
         let mut execution_events = loop {
             let execution_history = self.get(execution_id.clone()).await?;
             if execution_history.pending_state == PendingState::Finished {
@@ -308,28 +310,28 @@ pub trait DbConnection<ID: ExecutionId>: Send + 'static + Clone + Send + Sync {
 }
 
 pub mod journal {
-    use super::{ExecutionEvent, ExecutionEventInner, ExecutorName, HistoryEvent};
+    use super::{ExecutionEvent, ExecutionEventInner, ExecutionIdStr, ExecutorName, HistoryEvent};
     use crate::storage::{ExecutionHistory, RowSpecificError, Version};
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
-    use concepts::{ExecutionId, FunctionFqn, Params};
+    use concepts::{FunctionFqn, Params};
     use std::{borrow::Cow, collections::VecDeque, time::Duration};
     use tracing_unwrap::OptionExt;
 
     #[derive(Debug)]
-    pub(crate) struct ExecutionJournal<ID: ExecutionId> {
-        execution_id: ID,
+    pub(crate) struct ExecutionJournal {
+        execution_id: ExecutionIdStr,
         pub(crate) pending_state: PendingState,
-        execution_events: VecDeque<ExecutionEvent<ID>>,
+        execution_events: VecDeque<ExecutionEvent>,
     }
 
-    impl<ID: ExecutionId> ExecutionJournal<ID> {
+    impl ExecutionJournal {
         pub(crate) fn new(
-            execution_id: ID,
+            execution_id: ExecutionIdStr,
             ffqn: FunctionFqn,
             params: Params,
             scheduled_at: Option<DateTime<Utc>>,
-            parent: Option<ID>,
+            parent: Option<ExecutionIdStr>,
             created_at: DateTime<Utc>,
             retry_exp_backoff: Duration,
             max_retries: u32,
@@ -384,14 +386,14 @@ pub mod journal {
             self.execution_events.len()
         }
 
-        pub(crate) fn execution_id(&self) -> &ID {
+        pub(crate) fn execution_id(&self) -> &ExecutionIdStr {
             &self.execution_id
         }
 
         pub(crate) fn append(
             &mut self,
             created_at: DateTime<Utc>,
-            event: ExecutionEventInner<ID>,
+            event: ExecutionEventInner,
         ) -> Result<(), RowSpecificError> {
             if self.pending_state == PendingState::Finished {
                 return Err(RowSpecificError::ValidationFailed(Cow::Borrowed(
@@ -542,7 +544,7 @@ pub mod journal {
             Ok(())
         }
 
-        pub(crate) fn event_history(&self) -> Vec<HistoryEvent<ID>> {
+        pub(crate) fn event_history(&self) -> Vec<HistoryEvent> {
             self.execution_events
                 .iter()
                 .filter_map(|event| {
@@ -576,7 +578,7 @@ pub mod journal {
             }) => params.clone())
         }
 
-        pub fn as_execution_history(&self) -> ExecutionHistory<ID> {
+        pub fn as_execution_history(&self) -> ExecutionHistory {
             ExecutionHistory {
                 execution_events: self.execution_events.iter().cloned().collect(),
                 version: self.version(),

@@ -1,3 +1,4 @@
+use crate::storage::ExecutionEventInner;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -6,8 +7,7 @@ use concepts::{Params, SupportedFunctionResult};
 use std::borrow::Cow;
 use std::time::Duration;
 use storage::journal::PendingState;
-use storage::{ExecutionEvent, Version};
-use crate::storage::ExecutionEventInner;
+use storage::{ExecutionEvent, ExecutionIdStr, Version};
 
 pub mod executor;
 pub mod storage;
@@ -47,13 +47,13 @@ pub mod worker {
     }
 
     #[async_trait]
-    pub trait Worker<ID: ExecutionId>: Clone + valuable::Valuable {
+    pub trait Worker<ID: ExecutionId>: Clone + valuable::Valuable + Send + Sync + 'static {
         async fn run(
             &self,
             execution_id: ID,
             ffqn: FunctionFqn,
             params: Params,
-            event_history: Vec<HistoryEvent<ID>>,
+            event_history: Vec<HistoryEvent>,
             version: Version,
             execution_deadline: DateTime<Utc>,
         ) -> WorkerResult;
@@ -61,13 +61,13 @@ pub mod worker {
 }
 
 #[derive(Debug)]
-pub struct ExecutionHistory<ID: ExecutionId> {
-    execution_events: Vec<ExecutionEvent<ID>>,
+pub struct ExecutionHistory {
+    execution_events: Vec<ExecutionEvent>,
     version: Version,
     pending_state: PendingState,
 }
 
-impl<ID: ExecutionId> ExecutionHistory<ID> {
+impl ExecutionHistory {
     pub fn can_be_retried_after(&self) -> Option<Duration> {
         can_be_retried_after(
             self.execution_events.iter(),
@@ -97,15 +97,15 @@ impl<ID: ExecutionId> ExecutionHistory<ID> {
         }) => params.clone())
     }
 
-    pub fn last_event(&self) -> &ExecutionEvent<ID> {
+    pub fn last_event(&self) -> &ExecutionEvent {
         self.execution_events
             .last()
             .expect("must contain at least one event")
     }
 }
 
-fn can_be_retried_after<'a, ID: ExecutionId>(
-    iter: impl Iterator<Item = &'a ExecutionEvent<ID>>,
+fn can_be_retried_after<'a>(
+    iter: impl Iterator<Item = &'a ExecutionEvent>,
     max_retries: u32,
     retry_exp_backoff: Duration,
 ) -> Option<Duration> {
@@ -118,10 +118,10 @@ fn can_be_retried_after<'a, ID: ExecutionId>(
     }
 }
 
-pub type FinishedExecutionResult<ID> = Result<SupportedFunctionResult, FinishedExecutionError<ID>>;
+pub type FinishedExecutionResult = Result<SupportedFunctionResult, FinishedExecutionError>;
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-pub enum FinishedExecutionError<ID: ExecutionId> {
+pub enum FinishedExecutionError {
     #[error("permanent timeout")]
     PermanentTimeout,
     // TODO PermanentFailure when error retries are implemented
@@ -134,8 +134,6 @@ pub enum FinishedExecutionError<ID: ExecutionId> {
     #[error("continuing as {execution_id}")]
     ContinueAsNew {
         // TODO: Move to the OK part of the result
-        execution_id: ID,
+        execution_id: ExecutionIdStr,
     },
-    #[error("cancelled and starting {execution_id}")]
-    CancelledWithNew { execution_id: ID },
 }

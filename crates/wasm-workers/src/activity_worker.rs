@@ -117,7 +117,7 @@ impl Worker<ActivityId> for ActivityWorker {
         _execution_id: ActivityId,
         ffqn: FunctionFqn,
         params: Params,
-        events: Vec<HistoryEvent<ActivityId>>,
+        events: Vec<HistoryEvent>,
         version: Version,
         execution_deadline: DateTime<Utc>,
     ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
@@ -279,7 +279,7 @@ pub(crate) mod tests {
     use rstest::rstest;
     use scheduler::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
-        storage::{inmemory_dao::DbTask, DbConnection},
+        storage::{inmemory_dao::DbTask, DbConnection, ExecutionIdStr},
         FinishedExecutionError, FinishedExecutionResult,
     };
     use std::{
@@ -294,9 +294,7 @@ pub(crate) mod tests {
 
     pub const FIBO_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:fibo/fibo", "fibo"); // func(n: u8) -> u64;
 
-    pub(crate) fn spawn_fibo_executor<DB: DbConnection<ActivityId>>(
-        db_connection: DB,
-    ) -> ExecutorTaskHandle {
+    pub(crate) fn spawn_fibo_executor<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
                 wasm_path: Cow::Borrowed(
@@ -329,7 +327,7 @@ pub(crate) mod tests {
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
         let exec_task = spawn_fibo_executor(db_connection.clone());
         // Create an execution.
-        let execution_id = ActivityId::generate();
+        let execution_id: ExecutionIdStr = ActivityId::generate().into();
         let created_at = now();
         db_connection
             .create(
@@ -431,7 +429,7 @@ pub(crate) mod tests {
             let now = now();
             (0..executions)
                 .map(|_| {
-                    let execution_id = ActivityId::generate();
+                    let execution_id: ExecutionIdStr = ActivityId::generate().into();
                     (
                         AppendRequest {
                             created_at: now,
@@ -598,7 +596,7 @@ pub(crate) mod tests {
     async fn sleep_should_produce_intermittent_timeout(
         #[case] sleep_millis: u64,
         #[case] sleep_iterations: u32,
-        #[case] expected: FinishedExecutionResult<ActivityId>,
+        #[case] expected: FinishedExecutionResult,
         #[values(false, true)] recycle: bool,
     ) {
         const EPOCH_MILLIS: u64 = 10;
@@ -652,7 +650,7 @@ pub(crate) mod tests {
 
         // Create an execution.
         let stopwatch = Instant::now();
-        let execution_id = ActivityId::generate();
+        let execution_id: ExecutionIdStr = ActivityId::generate().into();
         info!("Testing {execution_id}");
         let created_at = now();
         db_connection

@@ -1,7 +1,7 @@
 use crate::{
     storage::{
-        DbConnection, DbConnectionError, DbError, ExecutionEventInner, ExecutorName, HistoryEvent,
-        Version,
+        DbConnection, DbConnectionError, DbError, ExecutionEventInner, ExecutionIdStr,
+        ExecutorName, HistoryEvent, Version,
     },
     worker::{FatalError, Worker, WorkerError, WorkerResult},
     FinishedExecutionError,
@@ -30,7 +30,7 @@ pub struct ExecConfig {
     pub batch_size: u32,
 }
 
-pub struct ExecTask<ID: ExecutionId, DB: DbConnection<ID>, W: Worker<ID>> {
+pub struct ExecTask<ID: ExecutionId, DB: DbConnection, W: Worker<ID>> {
     db_connection: DB,
     worker: W,
     config: ExecConfig,
@@ -76,8 +76,9 @@ impl Drop for ExecutorTaskHandle {
     }
 }
 
-impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync + 'static>
-    ExecTask<ID, DB, W>
+impl<ID: ExecutionId, DB: DbConnection, W: Worker<ID>> ExecTask<ID, DB, W>
+where
+    <ID as TryFrom<Arc<std::string::String>>>::Error: std::fmt::Debug,
 {
     pub fn spawn_new(
         db_connection: DB,
@@ -197,37 +198,48 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         let mut executions = Vec::new();
         for (locked_execution, permit) in locked_executions {
             let execution_id = locked_execution.execution_id.clone();
-            let join_handle = {
-                let execution_id = execution_id.clone();
-                let worker = self.worker.clone();
-                let db_connection = self.db_connection.clone();
-                let span = info_span!("worker", %execution_id, ffqn = %locked_execution.ffqn,);
-                // TODO: wait for termination of all spawned tasks in `close`.
-                tokio::spawn(
-                    async move {
-                        let res = Self::run_worker(
-                            worker,
-                            db_connection,
-                            execution_id,
-                            locked_execution.version,
-                            locked_execution.ffqn,
-                            locked_execution.params,
-                            locked_execution.event_history,
-                            execution_deadline,
+            match <ExecutionIdStr as TryInto<ID>>::try_into(execution_id) {
+                Ok(execution_id) => {
+                    let join_handle = {
+                        let execution_id = execution_id.clone();
+                        let worker = self.worker.clone();
+                        let db_connection = self.db_connection.clone();
+                        let span =
+                            info_span!("worker", %execution_id, ffqn = %locked_execution.ffqn,);
+                        // TODO: wait for termination of all spawned tasks in `close`.
+                        tokio::spawn(
+                            async move {
+                                let res = Self::run_worker(
+                                    worker,
+                                    db_connection,
+                                    execution_id,
+                                    locked_execution.version,
+                                    locked_execution.ffqn,
+                                    locked_execution.params,
+                                    locked_execution.event_history,
+                                    execution_deadline,
+                                )
+                                .await;
+                                if let Err(err) = res {
+                                    info!("Execution failed: {err:?}");
+                                }
+                                drop(permit);
+                            }
+                            .instrument(span),
                         )
-                        .await;
-                        if let Err(err) = res {
-                            info!("Execution failed: {err:?}");
-                        }
-                        drop(permit);
-                    }
-                    .instrument(span),
-                )
-            };
-            executions.push(ExecutionProgress {
-                execution_id,
-                abort_handle: join_handle.abort_handle(),
-            });
+                    };
+                    executions.push(ExecutionProgress {
+                        execution_id,
+                        abort_handle: join_handle.abort_handle(),
+                    });
+                }
+                Err(err) => {
+                    warn!(
+                        "Execution id `{}` cannot be parsed - {err:?}",
+                        locked_execution.execution_id
+                    );
+                }
+            }
         }
         Ok(executions)
     }
@@ -240,7 +252,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         version: Version,
         ffqn: FunctionFqn,
         params: Params,
-        event_history: Vec<HistoryEvent<ID>>,
+        event_history: Vec<HistoryEvent>,
         execution_deadline: DateTime<Utc>,
     ) -> Result<Version, DbError> {
         if enabled!(Level::TRACE) {
@@ -263,29 +275,35 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
         } else {
             debug!("Finished");
         }
-        // Map the WorkerError to an intermittent or a permanent failure.
-        match Self::worker_result_to_execution_event(&db_connection, &execution_id, worker_result)
-            .await
+
+        let execution_id = execution_id.into();
+        match Self::worker_result_to_execution_event(
+            &db_connection,
+            execution_id.clone(),
+            worker_result,
+        )
+        .await
         {
             Ok((event, version)) => {
                 db_connection
-                    .append(now(), execution_id.clone(), version, event)
+                    .append(now(), execution_id, version, event)
                     .await
             }
             Err(err) => Err(err),
         }
     }
 
+    /// Map the WorkerError to an intermittent or a permanent failure.
     async fn worker_result_to_execution_event(
         db_connection: &DB,
-        execution_id: &ID,
+        execution_id: ExecutionIdStr,
         worker_result: WorkerResult,
-    ) -> Result<(ExecutionEventInner<ID>, Version), DbError> {
+    ) -> Result<(ExecutionEventInner, Version), DbError> {
         Ok(match worker_result {
             Ok((result, new_version)) => {
                 let event = if let Some(exec_err) = result.fallible_err() {
                     info!("Execution finished with an error result");
-                    let execution_history = db_connection.get(execution_id.clone()).await?;
+                    let execution_history = db_connection.get(execution_id).await?;
                     let reason =
                         Cow::Owned(format!("Execution returned error result: `{exec_err:?}`"));
                     if let Some(duration) = execution_history.can_be_retried_after() {
@@ -306,7 +324,7 @@ impl<ID: ExecutionId, DB: DbConnection<ID> + Sync, W: Worker<ID> + Send + Sync +
             }
             Err((err, new_version)) => {
                 debug!("Execution failed: {err:?}");
-                let execution_history = db_connection.get(execution_id.clone()).await?;
+                let execution_history = db_connection.get(execution_id).await?;
                 if execution_history.version != new_version {
                     return Err(DbError::RowSpecific(
                         crate::storage::RowSpecificError::VersionMismatch,
@@ -382,7 +400,7 @@ mod tests {
     use crate::{
         storage::{
             inmemory_dao::{tests::TickBasedDbConnection, DbTask},
-            DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
+            DbConnection, ExecutionEvent, ExecutionEventInner, ExecutionIdStr, HistoryEvent,
         },
         worker::WorkerResult,
         ExecutionHistory,
@@ -402,16 +420,16 @@ mod tests {
 
     const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
     type SimpleWorkerResultMap =
-        Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent<WorkflowId>>, WorkerResult)>>>;
+        Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent>, WorkerResult)>>>;
 
     #[derive(Clone, derive_more::Display)]
     #[display(fmt = "SimpleWorker")]
-    struct SimpleWorker<DB: DbConnection<WorkflowId>> {
+    struct SimpleWorker<DB: DbConnection> {
         db_connection: DB,
         worker_results_rev: SimpleWorkerResultMap,
     }
 
-    impl<DB: DbConnection<WorkflowId>> valuable::Valuable for SimpleWorker<DB> {
+    impl<DB: DbConnection> valuable::Valuable for SimpleWorker<DB> {
         fn as_value(&self) -> valuable::Value<'_> {
             "SimpleWorker".as_value()
         }
@@ -420,13 +438,13 @@ mod tests {
     }
 
     #[async_trait]
-    impl<DB: DbConnection<WorkflowId> + Sync> Worker<WorkflowId> for SimpleWorker<DB> {
+    impl<DB: DbConnection> Worker<WorkflowId> for SimpleWorker<DB> {
         async fn run(
             &self,
             _execution_id: WorkflowId,
             ffqn: FunctionFqn,
             _params: Params,
-            events: Vec<HistoryEvent<WorkflowId>>,
+            events: Vec<HistoryEvent>,
             version: Version,
             _execution_deadline: DateTime<Utc>,
         ) -> WorkerResult {
@@ -443,7 +461,7 @@ mod tests {
         }
     }
 
-    async fn tick_fn<DB: DbConnection<WorkflowId> + Sync>(
+    async fn tick_fn<DB: DbConnection>(
         db_connection: DB,
         config: ExecConfig,
         worker_results_rev: SimpleWorkerResultMap,
@@ -586,7 +604,7 @@ mod tests {
     }
 
     async fn execute<
-        DB: DbConnection<WorkflowId> + Clone + Sync,
+        DB: DbConnection,
         T: FnMut(DB, ExecConfig, SimpleWorkerResultMap) -> F,
         F: Future<Output = ()>,
     >(
@@ -595,9 +613,9 @@ mod tests {
         worker_results_rev: SimpleWorkerResultMap,
         max_retries: u32,
         mut tick: T,
-    ) -> ExecutionHistory<WorkflowId> {
+    ) -> ExecutionHistory {
         // Create an execution
-        let execution_id = WorkflowId::generate();
+        let execution_id: ExecutionIdStr = WorkflowId::generate().into();
         let created_at = now();
         db_connection
             .create(
