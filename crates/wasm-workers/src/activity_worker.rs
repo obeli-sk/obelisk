@@ -268,7 +268,7 @@ mod valuable {
     }
 }
 
-#[cfg(all(test, not(madsim)))]
+#[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::EngineConfig;
@@ -351,6 +351,7 @@ pub(crate) mod tests {
         db_task.close().await;
     }
 
+    #[cfg(all(test, not(madsim)))] // hangs because tick sleep set to zero, and sleep(0)/yield_now is not simulated correctly
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_parallel() {
         use scheduler::storage::{AppendRequest, ExecutionEventInner};
@@ -587,7 +588,7 @@ pub(crate) mod tests {
         );
     }
 
-    const SLEEP_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:sleep/sleep", "sleep-loop"); // func(millis: u64, iterations: u32);
+    #[cfg(all(test, not(madsim)))] // would need wasmtime to use madsim
     #[rstest]
     #[case(10, 100, Err(FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
     #[case(10, 10, Ok(SupportedFunctionResult::None))] // 0.1s -> Ok
@@ -599,6 +600,7 @@ pub(crate) mod tests {
         #[case] expected: FinishedExecutionResult,
         #[values(false, true)] recycle: bool,
     ) {
+        const SLEEP_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:sleep/sleep", "sleep-loop"); // func(millis: u64, iterations: u32);
         const EPOCH_MILLIS: u64 = 10;
         const LOCK_EXPIRY: Duration = Duration::from_millis(500);
         test_utils::set_up();
