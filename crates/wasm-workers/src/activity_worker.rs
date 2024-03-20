@@ -31,7 +31,6 @@ pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
 
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-#[allow(clippy::module_name_repetitions)]
 pub struct ActivityConfig {
     pub config_id: ConfigId,
     pub wasm_path: Cow<'static, str>,
@@ -234,7 +233,7 @@ impl ActivityWorker {
         let sleep_until = stopwatch + deadline_duration;
         tokio::select! {
             res = call_function =>{
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, res = ?res.as_ref().map(|_|()), "Finished");
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, res = ?res.as_ref().map(|_|()).map_err(|_|()), "Finished");
                 res
             },
             _   = tokio::time::sleep_until(sleep_until) => {
@@ -276,25 +275,23 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::ActivityId, ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult,
     };
-    use rstest::rstest;
     use scheduler::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
         storage::{inmemory_dao::DbTask, DbConnection, ExecutionIdStr},
-        FinishedExecutionError, FinishedExecutionResult,
     };
     use std::{
         borrow::Cow,
         time::{Duration, Instant},
     };
-    use tracing::{info, warn};
+    use tracing::warn;
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
     use val_json::wast_val::WastVal;
     use wasmtime::component::Val;
 
-    pub const FIBO_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:fibo/fibo", "fibo"); // func(n: u8) -> u64;
+    pub const FIBO_ACTIVITY_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:fibo/fibo", "fibo"); // func(n: u8) -> u64;
 
-    pub(crate) fn spawn_fibo_executor<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
+    pub(crate) fn spawn_activity_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
                 wasm_path: Cow::Borrowed(
@@ -309,7 +306,7 @@ pub(crate) mod tests {
         .unwrap_or_log();
 
         let exec_config = ExecConfig {
-            ffqns: vec![FIBO_FFQN.to_owned()],
+            ffqns: vec![FIBO_ACTIVITY_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(10),
@@ -325,7 +322,7 @@ pub(crate) mod tests {
         test_utils::set_up();
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
-        let exec_task = spawn_fibo_executor(db_connection.clone());
+        let exec_task = spawn_activity_fibo(db_connection.clone());
         // Create an execution.
         let execution_id: ExecutionIdStr = ActivityId::generate().into();
         let created_at = now();
@@ -333,7 +330,7 @@ pub(crate) mod tests {
             .create(
                 created_at,
                 execution_id.clone(),
-                FIBO_FFQN.to_owned(),
+                FIBO_ACTIVITY_FFQN.to_owned(),
                 Params::from([Val::U8(FIBO_INPUT)]),
                 None,
                 None,
@@ -351,7 +348,7 @@ pub(crate) mod tests {
         db_task.close().await;
     }
 
-    #[cfg(all(test, not(madsim)))] // hangs because tick sleep set to zero, and sleep(0)/yield_now is not simulated correctly
+    #[cfg(all(test, not(madsim)))] // https://github.com/madsim-rs/madsim/issues/198
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_parallel() {
         use scheduler::storage::{AppendRequest, ExecutionEventInner};
@@ -424,33 +421,32 @@ pub(crate) mod tests {
 
         // create executions
         let stopwatch = Instant::now();
-        let fibo_ffqn = FIBO_FFQN.to_owned();
+        let fibo_ffqn = FIBO_ACTIVITY_FFQN.to_owned();
         let params = Params::from([Val::U8(fibo_input)]);
-        let (append, execution_ids): (_, Vec<_>) = {
-            let now = now();
-            (0..executions)
-                .map(|_| {
-                    let execution_id: ExecutionIdStr = ActivityId::generate().into();
-                    (
-                        AppendRequest {
-                            created_at: now,
-                            execution_id: execution_id.clone(),
-                            version: Version::default(),
-                            event: ExecutionEventInner::Created {
-                                ffqn: fibo_ffqn.clone(),
-                                params: params.clone(),
-                                parent: None,
-                                scheduled_at: None,
-                                retry_exp_backoff: Duration::ZERO,
-                                max_retries: 0,
-                            },
-                        },
-                        execution_id,
-                    )
-                })
-                .unzip()
-        };
-        db_connection.append_batch(append).await.unwrap();
+
+        let now = now();
+        let mut execution_ids = Vec::with_capacity(executions);
+        for _ in 0..executions {
+            let execution_id: ExecutionIdStr = ActivityId::generate().into();
+            let req = AppendRequest {
+                created_at: now,
+                execution_id: execution_id.clone(),
+                event: ExecutionEventInner::Created {
+                    ffqn: fibo_ffqn.clone(),
+                    params: params.clone(),
+                    parent: None,
+                    scheduled_at: None,
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
+            };
+            db_connection
+                .append_batch(vec![req], Version::default())
+                .await
+                .unwrap();
+            execution_ids.push(execution_id);
+        }
+
         warn!(
             "Created {executions} executions in {:?}",
             stopwatch.elapsed()
@@ -559,7 +555,7 @@ pub(crate) mod tests {
                         vec.push(
                             fibo_worker
                                 .run(
-                                    FIBO_FFQN.to_owned(),
+                                    FIBO_ACTIVITY_FFQN.to_owned(),
                                     Params::from([Val::U8(fibo_input)]),
                                     execution_deadline,
                                 )
@@ -589,15 +585,15 @@ pub(crate) mod tests {
     }
 
     #[cfg(all(test, not(madsim)))] // would need wasmtime to use madsim
-    #[rstest]
-    #[case(10, 100, Err(FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
+    #[rstest::rstest]
+    #[case(10, 100, Err(scheduler::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
     #[case(10, 10, Ok(SupportedFunctionResult::None))] // 0.1s -> Ok
-    #[case(1500, 1, Err(FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
+    #[case(1500, 1, Err(scheduler::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
     #[tokio::test]
     async fn sleep_should_produce_intermittent_timeout(
         #[case] sleep_millis: u64,
         #[case] sleep_iterations: u32,
-        #[case] expected: FinishedExecutionResult,
+        #[case] expected: scheduler::FinishedExecutionResult,
         #[values(false, true)] recycle: bool,
     ) {
         const SLEEP_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:sleep/sleep", "sleep-loop"); // func(millis: u64, iterations: u32);
@@ -653,7 +649,7 @@ pub(crate) mod tests {
         // Create an execution.
         let stopwatch = Instant::now();
         let execution_id: ExecutionIdStr = ActivityId::generate().into();
-        info!("Testing {execution_id}");
+        warn!("Testing {execution_id}");
         let created_at = now();
         db_connection
             .create(

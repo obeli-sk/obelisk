@@ -12,7 +12,7 @@ use super::{
 use crate::storage::journal::PendingState;
 use crate::storage::{
     AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
-    LockPendingResponse, LockResponse, RowSpecificError, Version,
+    LockPendingResponse, LockResponse, SpecificError, Version,
 };
 use crate::FinishedExecutionError;
 use async_trait::async_trait;
@@ -110,7 +110,7 @@ impl DbConnection for InMemoryDbConnection {
         resp_receiver
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
-            .map_err(|err| DbError::RowSpecific(err))
+            .map_err(|err| DbError::Specific(err))
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -136,26 +136,29 @@ impl DbConnection for InMemoryDbConnection {
         resp_receiver
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
-            .map_err(|err| DbError::RowSpecific(err))
+            .map_err(|err| DbError::Specific(err))
     }
 
     #[instrument(skip_all)]
     async fn append_batch(
         &self,
         append: Vec<AppendRequest>,
-    ) -> Result<AppendBatchResponse, DbConnectionError> {
+        version: Version,
+    ) -> Result<AppendBatchResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::General(GeneralRequest::AppendBatch {
             append,
+            version,
             resp_sender,
         });
         self.client_to_store_req_sender
             .send(request)
             .await
-            .map_err(|_| DbConnectionError::SendError)?;
+            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
         resp_receiver
             .await
-            .map_err(|_| DbConnectionError::RecvError)
+            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .map_err(|err| DbError::Specific(err))
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -172,7 +175,7 @@ impl DbConnection for InMemoryDbConnection {
         resp_receiver
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
-            .map_err(|err| DbError::RowSpecific(err))
+            .map_err(|err| DbError::Specific(err))
     }
 }
 
@@ -297,7 +300,7 @@ enum ExecutionSpecificRequest {
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<LockResponse, RowSpecificError>>,
+        resp_sender: oneshot::Sender<Result<LockResponse, SpecificError>>,
     },
     #[display(fmt = "Insert({event})")]
     Append {
@@ -306,13 +309,13 @@ enum ExecutionSpecificRequest {
         version: Version,
         event: ExecutionEventInner,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendResponse, RowSpecificError>>,
+        resp_sender: oneshot::Sender<Result<AppendResponse, SpecificError>>,
     },
     #[display(fmt = "Get")]
     Get {
         execution_id: ExecutionIdStr,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<ExecutionHistory, RowSpecificError>>,
+        resp_sender: oneshot::Sender<Result<ExecutionHistory, SpecificError>>,
     },
 }
 
@@ -339,8 +342,9 @@ enum GeneralRequest {
     #[display(fmt = "AppendBatch")]
     AppendBatch {
         append: Vec<AppendRequest>,
+        version: Version,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<AppendBatchResponse>,
+        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
     },
 }
 
@@ -403,24 +407,24 @@ pub(crate) enum DbTickResponse {
         resp_sender: oneshot::Sender<LockPendingResponse>,
     },
     Lock {
-        payload: Result<LockResponse, RowSpecificError>,
+        payload: Result<LockResponse, SpecificError>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<LockResponse, RowSpecificError>>,
+        resp_sender: oneshot::Sender<Result<LockResponse, SpecificError>>,
     },
     AppendResult {
-        payload: Result<AppendResponse, RowSpecificError>,
+        payload: Result<AppendResponse, SpecificError>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendResponse, RowSpecificError>>,
+        resp_sender: oneshot::Sender<Result<AppendResponse, SpecificError>>,
     },
     AppendBatchResult {
-        payload: AppendBatchResponse,
+        payload: Result<AppendBatchResponse, SpecificError>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<AppendBatchResponse>,
+        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
     },
     Get {
-        payload: Result<ExecutionHistory, RowSpecificError>,
+        payload: Result<ExecutionHistory, SpecificError>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<ExecutionHistory, RowSpecificError>>,
+        resp_sender: oneshot::Sender<Result<ExecutionHistory, SpecificError>>,
     },
     CleanupExpiredLocks {
         payload: CleanupExpiredLocks,
@@ -548,8 +552,9 @@ impl DbTask {
             }
             GeneralRequest::AppendBatch {
                 append,
+                version,
                 resp_sender,
-            } => self.append_batch(append, resp_sender),
+            } => self.append_batch(append, version, resp_sender),
         }
     }
 
@@ -650,9 +655,9 @@ impl DbTask {
         parent: Option<ExecutionIdStr>,
         retry_exp_backoff: Duration,
         max_retries: u32,
-    ) -> Result<AppendResponse, RowSpecificError> {
+    ) -> Result<AppendResponse, SpecificError> {
         if self.journals.contains_key(&execution_id) {
-            return Err(RowSpecificError::ValidationFailed(Cow::Borrowed(
+            return Err(SpecificError::ValidationFailed(Cow::Borrowed(
                 "execution is already initialized",
             )));
         }
@@ -681,7 +686,7 @@ impl DbTask {
         version: Version,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockResponse, RowSpecificError> {
+    ) -> Result<LockResponse, SpecificError> {
         let event = ExecutionEventInner::Locked {
             executor_name,
             lock_expires_at,
@@ -699,7 +704,7 @@ impl DbTask {
         execution_id: ExecutionIdStr,
         version: Version,
         event: ExecutionEventInner,
-    ) -> Result<AppendResponse, RowSpecificError> {
+    ) -> Result<AppendResponse, SpecificError> {
         if let ExecutionEventInner::Created {
             ffqn,
             params,
@@ -722,15 +727,15 @@ impl DbTask {
                 )
             } else {
                 info!("Wrong version");
-                return Err(RowSpecificError::VersionMismatch);
+                return Err(SpecificError::VersionMismatch);
             };
         }
         // Check version
         let Some(journal) = self.journals.get_mut(&execution_id) else {
-            return Err(RowSpecificError::NotFound);
+            return Err(SpecificError::NotFound);
         };
         if version != journal.version() {
-            return Err(RowSpecificError::VersionMismatch);
+            return Err(SpecificError::VersionMismatch);
         }
         journal.append(created_at, event)?;
         let version = journal.version();
@@ -738,9 +743,9 @@ impl DbTask {
         Ok(version)
     }
 
-    fn get(&mut self, execution_id: ExecutionIdStr) -> Result<ExecutionHistory, RowSpecificError> {
+    fn get(&mut self, execution_id: ExecutionIdStr) -> Result<ExecutionHistory, SpecificError> {
         let Some(journal) = self.journals.get_mut(&execution_id) else {
-            return Err(RowSpecificError::NotFound);
+            return Err(SpecificError::NotFound);
         };
         Ok(journal.as_execution_history())
     }
@@ -783,14 +788,32 @@ impl DbTask {
     fn append_batch(
         &mut self,
         append: Vec<AppendRequest>,
-        resp_sender: oneshot::Sender<AppendBatchResponse>,
+        mut version: Version,
+        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
     ) -> DbTickResponse {
-        let payload = append
-            .into_iter()
-            .map(|req| self.append(req.created_at, req.execution_id, req.version, req.event))
-            .collect();
+        if append.is_empty() {
+            return DbTickResponse::AppendBatchResult {
+                payload: Err(SpecificError::ValidationFailed(Cow::Borrowed(
+                    "empty batch request",
+                ))),
+                resp_sender,
+            };
+        }
+        for req in append {
+            let append_res = self.append(req.created_at, req.execution_id, version, req.event);
+            if let Ok(new_version) = append_res {
+                version = new_version;
+            } else {
+                // FIXME: Rollback on error!
+                return DbTickResponse::AppendBatchResult {
+                    payload: append_res,
+                    resp_sender,
+                };
+            }
+        }
+
         DbTickResponse::AppendBatchResult {
-            payload,
+            payload: Ok(version),
             resp_sender,
         }
     }
@@ -875,7 +898,7 @@ pub(crate) mod tests {
             });
             let response = self.db_task.lock().unwrap_or_log().tick(request);
             assert_matches!(response, DbTickResponse::Lock { payload, .. } => payload)
-                .map_err(|err| DbError::RowSpecific(err))
+                .map_err(|err| DbError::Specific(err))
         }
 
         async fn append(
@@ -894,22 +917,23 @@ pub(crate) mod tests {
             });
             let response = self.db_task.lock().unwrap_or_log().tick(request);
             assert_matches!(response, DbTickResponse::AppendResult { payload, .. } => payload)
-                .map_err(|err| DbError::RowSpecific(err))
+                .map_err(|err| DbError::Specific(err))
         }
 
         async fn append_batch(
             &self,
             append: Vec<AppendRequest>,
-        ) -> Result<AppendBatchResponse, DbConnectionError> {
+            version: Version,
+        ) -> Result<AppendBatchResponse, DbError> {
             let request = DbRequest::General(GeneralRequest::AppendBatch {
                 append,
+                version,
                 resp_sender: oneshot::channel().0,
             });
 
             let response = self.db_task.lock().unwrap_or_log().tick(request);
-            Ok(
-                assert_matches!(response, DbTickResponse::AppendBatchResult { payload, .. } => payload),
-            )
+            assert_matches!(response, DbTickResponse::AppendBatchResult { payload, .. } => payload)
+                .map_err(|err| DbError::Specific(err))
         }
 
         async fn get(&self, execution_id: ExecutionIdStr) -> Result<ExecutionHistory, DbError> {
@@ -919,7 +943,7 @@ pub(crate) mod tests {
             });
             let response = self.db_task.lock().unwrap_or_log().tick(request);
             assert_matches!(response, DbTickResponse::Get { payload, .. } => payload)
-                .map_err(|err| DbError::RowSpecific(err))
+                .map_err(|err| DbError::Specific(err))
         }
     }
 
@@ -1336,31 +1360,33 @@ pub(crate) mod tests {
         };
 
         let stopwatch = Instant::now();
+        let created_at = now();
+        let ffqn = SOME_FFQN.to_owned();
         let append = {
-            let now = now();
-            let ffqn = SOME_FFQN.to_owned();
-            (0..executions)
-                .map(|_| AppendRequest {
-                    created_at: now,
-                    execution_id: WorkflowId::generate().into(),
-                    version: Version::default(),
-                    event: ExecutionEventInner::Created {
-                        ffqn: ffqn.clone(),
-                        params: Params::default(),
-                        parent: None,
-                        scheduled_at: None,
-                        retry_exp_backoff: Duration::ZERO,
-                        max_retries: 0,
-                    },
-                })
-                .collect()
+            (0..executions).map(|_| AppendRequest {
+                created_at,
+                execution_id: WorkflowId::generate().into(),
+                event: ExecutionEventInner::Created {
+                    ffqn: ffqn.clone(),
+                    params: Params::default(),
+                    parent: None,
+                    scheduled_at: None,
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
+            })
         };
         warn!(
             "Created {executions} append entries in {:?}",
             stopwatch.elapsed()
         );
         let stopwatch = Instant::now();
-        db_connection.append_batch(append).await.unwrap();
+        for req in append {
+            db_connection
+                .append_batch(vec![req], Version::default())
+                .await
+                .unwrap();
+        }
         warn!(
             "Appended {executions} executions in {:?}",
             stopwatch.elapsed()

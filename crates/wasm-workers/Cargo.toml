@@ -31,11 +31,13 @@ wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 futures-util.workspace = true
 madsim.workspace = true
 rstest.workspace = true
 scheduler.workspace = true
 test-programs-fibo-activity-builder.workspace = true
+test-programs-fibo-workflow-builder.workspace = true
 test-programs-sleep-activity-builder.workspace = true
 test-utils.workspace = true
 utils.workspace = true

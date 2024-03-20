@@ -1,11 +1,12 @@
 use crate::EngineConfig;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{ConfigId, WorkflowId};
-use concepts::FunctionFqn;
+use concepts::prefixed_ulid::{ActivityId, ConfigId, JoinSetId, WorkflowId};
+use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
+use derivative::Derivative;
 use scheduler::storage::DbConnection;
-use scheduler::worker::FatalError;
+use scheduler::worker::{ChildExecutionRequest, FatalError};
 use scheduler::{
     storage::{HistoryEvent, Version},
     worker::{Worker, WorkerError},
@@ -16,6 +17,7 @@ use tracing::{debug, info, trace};
 use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
 use utils::wasm_tools;
+use wasmtime::component::Linker;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -29,27 +31,27 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
     Arc::new(Engine::new(&wasmtime_config).unwrap_or_log())
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-#[allow(clippy::module_name_repetitions)]
+#[derive(Derivative, Clone)]
+#[derivative(Debug)]
 pub struct WorkflowConfig {
     pub config_id: ConfigId,
     pub wasm_path: Cow<'static, str>,
     pub epoch_millis: u64,
+    #[derivative(Debug = "ignore")]
+    pub recycled_instances: MaybeRecycledInstances, // TODO: change type to an enum enabled/disabled
 }
 
-type MaybeRecycledInstances = Option<
-    Arc<std::sync::Mutex<Vec<(wasmtime::component::Instance, Store<utils::wasi_http::Ctx>)>>>,
->;
+type MaybeRecycledInstances =
+    Option<Arc<std::sync::Mutex<Vec<(wasmtime::component::Instance, Store<WorkflowCtx>)>>>>;
 
 #[derive(Clone)]
 struct WorkflowWorker<DB: DbConnection> {
     db_connection: DB,
     config: WorkflowConfig,
     engine: Arc<Engine>,
-    ffqns_to_results_len: HashMap<FunctionFqn, usize>,
-    linker: wasmtime::component::Linker<utils::wasi_http::Ctx>,
+    exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
+    linker: wasmtime::component::Linker<WorkflowCtx>,
     component: wasmtime::component::Component,
-    recycled_instances: MaybeRecycledInstances,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -60,8 +62,51 @@ pub enum WorkflowError {
     DecodeError(Cow<'static, str>, wasm_tools::DecodeError),
     #[error("cannot decode metadata `{0}` - {1}")]
     FunctionMetadataError(Cow<'static, str>, wasm_tools::FunctionMetadataError),
+    #[error("cannot instantiate `{0}` - cannot add function `{1}` to linker - {2}")]
+    PlumbingImportedFunctionError(Cow<'static, str>, FunctionFqn, Box<dyn Error>),
     #[error("cannot instantiate `{0}` - {1}")]
     InstantiationError(Cow<'static, str>, Box<dyn Error>),
+}
+
+// Generate `host_activities::Host` trait
+wasmtime::component::bindgen!({
+    path: "../../wit/workflow-engine/",
+    async: true,
+    interfaces: "import my-org:workflow-engine/host-activities;",
+});
+
+struct WorkflowCtx {
+    execution_id: WorkflowId,
+}
+impl WorkflowCtx {
+    fn replay_or_interrupt(
+        &self,
+        request: ChildExecutionRequest,
+    ) -> Result<SupportedFunctionResult, HostFunctionError> {
+        Err(HostFunctionError::Interrupt(request))
+    }
+}
+#[async_trait::async_trait]
+impl my_org::workflow_engine::host_activities::Host for WorkflowCtx {
+    async fn noop(&mut self) -> wasmtime::Result<()> {
+        Ok(())
+    }
+    async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
+        Ok(())
+    }
+}
+impl WorkflowCtx {
+    pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), wasmtime::Error> {
+        my_org::workflow_engine::host_activities::add_to_linker(linker, |state: &mut Self| state)
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+enum HostFunctionError {
+    #[error("non deterministic execution: `{0}`")]
+    NonDeterminismDetected(Cow<'static, str>),
+    #[error("interrupt: {}", .0.child_execution_id)]
+    Interrupt(ChildExecutionRequest),
 }
 
 impl<DB: DbConnection> WorkflowWorker<DB> {
@@ -69,7 +114,6 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
     pub fn new_with_config(
         config: WorkflowConfig,
         engine: Arc<Engine>,
-        recycled_instances: MaybeRecycledInstances,
         db_connection: DB,
     ) -> Result<Self, WorkflowError> {
         info!("Reading");
@@ -77,37 +121,95 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
             .map_err(|err| WorkflowError::CannotOpen(config.wasm_path.clone(), err))?;
         let (resolve, world_id) = wasm_tools::decode(&wasm)
             .map_err(|err| WorkflowError::DecodeError(config.wasm_path.clone(), err))?;
-        let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
-            .map_err(|err| WorkflowError::DecodeError(config.wasm_path.clone(), err))?;
-        let ffqns_to_results_len = wasm_tools::functions_and_result_lengths(exported_interfaces)
+        let exported_ffqns_to_results_len = {
+            let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
+                .map_err(|err| WorkflowError::DecodeError(config.wasm_path.clone(), err))?;
+            trace!("Exported functions: {exported_interfaces:?}");
+            wasm_tools::functions_and_result_lengths(exported_interfaces).map_err(|err| {
+                WorkflowError::FunctionMetadataError(config.wasm_path.clone(), err)
+            })?
+        };
+        debug!(?exported_ffqns_to_results_len, "Exported functions");
+        let imported_interfaces = {
+            let imp_fns_to_metadata = wasm_tools::functions_to_metadata(
+                wasm_tools::imported_ifc_fns(&resolve, &world_id)
+                    .map_err(|err| WorkflowError::DecodeError(config.wasm_path.clone(), err))?,
+            )
             .map_err(|err| WorkflowError::FunctionMetadataError(config.wasm_path.clone(), err))?;
+            let imp_ifcs_to_fn_names =
+                wasm_tools::group_by_ifc_to_fn_names(imp_fns_to_metadata.keys());
+            // TODO: remove host functions: imp_ifcs_to_fn_names.remove(HOST_ACTIVITY_IFC_STRING.deref().deref());
+            imp_ifcs_to_fn_names
+        };
+        trace!("Imported interfaces: {imported_interfaces:?}");
 
-        debug!(?ffqns_to_results_len, "Decoded functions");
         let mut linker = wasmtime::component::Linker::new(&engine);
 
-        wasmtime_wasi::preview2::command::add_to_linker(&mut linker).map_err(|err| {
-            WorkflowError::InstantiationError(config.wasm_path.clone(), err.into())
-        })?;
-        wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(&mut linker, |t| t)
-            .map_err(|err| {
-                WorkflowError::InstantiationError(config.wasm_path.clone(), err.into())
-            })?;
-        wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t).map_err(
-            |err| WorkflowError::InstantiationError(config.wasm_path.clone(), err.into()),
-        )?;
         // Compile the wasm component
         let component =
             wasmtime::component::Component::from_binary(&engine, &wasm).map_err(|err| {
                 WorkflowError::InstantiationError(config.wasm_path.clone(), err.into())
             })?;
+        // Mock imported functions
+        for (ifc_fqn, functions) in &imported_interfaces {
+            trace!("Adding imported interface {ifc_fqn} to the linker");
+            if let Ok(mut linker_instance) = linker.instance(ifc_fqn) {
+                for function_name in functions {
+                    let ffqn = FunctionFqn {
+                        ifc_fqn: ifc_fqn.clone(),
+                        function_name: function_name.clone(),
+                    };
+                    trace!("Adding imported function {ffqn} to the linker");
+                    let res = linker_instance.func_new_async(&component, function_name, {
+                        let ffqn = ffqn.clone();
+                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                              params: &[Val],
+                              results: &mut [Val]| {
+                            let execution_id = store_ctx.data().execution_id.clone();
+                            let ffqn = ffqn.clone();
+                            Box::new(async move {
+                                let request = ChildExecutionRequest {
+                                    new_join_set_id: JoinSetId::generate(),
+                                    child_execution_id: ActivityId::generate(),
+                                    ffqn: ffqn,
+                                    params: Params::Vals(Arc::new(Vec::from(params))),
+                                };
+                                trace!("Child request {request:?}");
+                                let res = store_ctx.data().replay_or_interrupt(request);
+                                trace!("Response: {res:?}");
+                                let res = res?;
+                                assert_eq!(results.len(), res.len(), "unexpected results length");
+                                for (idx, item) in res.value().into_iter().enumerate() {
+                                    // results[idx] = item.val(); // needed `ty`
+                                }
+                                todo!()
+                                // Ok(())
+                            })
+                        }
+                    });
+                    if let Err(err) = res {
+                        if err.to_string() == format!("import `{function_name}` not found") {
+                            debug!("Skipping plumbing of {ffqn}");
+                        } else {
+                            return Err(WorkflowError::PlumbingImportedFunctionError(
+                                config.wasm_path.clone(),
+                                ffqn,
+                                err.into(),
+                            ));
+                        }
+                    }
+                }
+            } else {
+                trace!("Skipping interface {ifc_fqn}");
+            }
+        }
         Ok(Self {
             db_connection,
             config,
             engine,
-            ffqns_to_results_len,
+            exported_ffqns_to_results_len,
             linker,
             component,
-            recycled_instances,
         })
     }
 }
@@ -116,7 +218,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
 impl<DB: DbConnection> Worker<WorkflowId> for WorkflowWorker<DB> {
     async fn run(
         &self,
-        _execution_id: WorkflowId,
+        execution_id: WorkflowId,
         ffqn: FunctionFqn,
         params: Params,
         events: Vec<HistoryEvent>,
@@ -124,10 +226,28 @@ impl<DB: DbConnection> Worker<WorkflowId> for WorkflowWorker<DB> {
         execution_deadline: DateTime<Utc>,
     ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
         assert!(events.is_empty());
-        self.run(ffqn, params, execution_deadline)
+        self.run(execution_id, ffqn, params, execution_deadline)
             .await
             .map(|supported_result| (supported_result, version))
-            .map_err(|err| (err, version))
+            .map_err(|err| match err {
+                WorkerError::IntermittentError { err, reason } => {
+                    match err.source()
+                        .and_then(|source| source.downcast_ref::<HostFunctionError>())
+                    {
+                        Some(HostFunctionError::NonDeterminismDetected(reason)) => (
+                            WorkerError::FatalError(FatalError::NonDeterminismDetected(
+                                reason.clone(),
+                            )),
+                            version,
+                        ),
+                        Some(HostFunctionError::Interrupt(request)) => {
+                            (WorkerError::Interrupt(request.clone()), version)
+                        }
+                        None => (WorkerError::IntermittentError { err, reason }, version),
+                    }
+                }
+                err => (err, version),
+            })
     }
 }
 
@@ -135,24 +255,27 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
     #[tracing::instrument(skip_all)]
     pub(crate) async fn run(
         &self,
+        execution_id: WorkflowId,
         ffqn: FunctionFqn,
         params: Params,
         execution_deadline: DateTime<Utc>,
     ) -> Result<SupportedFunctionResult, WorkerError> {
         let results_len = *self
-            .ffqns_to_results_len
+            .exported_ffqns_to_results_len
             .get(&ffqn)
             .ok_or(WorkerError::FatalError(FatalError::NotFound))?;
         trace!("Params: {params:?}, results_len:{results_len}",);
 
         let instance_and_store = self
+            .config
             .recycled_instances
             .as_ref()
             .and_then(|i| i.lock().unwrap_or_log().pop());
         let (instance, mut store) = match instance_and_store {
             Some((instance, store)) => (instance, store),
             None => {
-                let mut store = utils::wasi_http::store(&self.engine);
+                let ctx = WorkflowCtx { execution_id };
+                let mut store = Store::new(&self.engine, ctx);
                 let instance = self
                     .linker
                     .instantiate_async(&mut store, &self.component)
@@ -221,7 +344,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                 }
             })?;
 
-            if let Some(recycled_instances) = &self.recycled_instances {
+            if let Some(recycled_instances) = &self.config.recycled_instances {
                 recycled_instances
                     .lock()
                     .unwrap_or_log()
@@ -235,7 +358,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
         let sleep_until = stopwatch + deadline_duration;
         tokio::select! {
             res = call_function =>{
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, res = ?res.as_ref().map(|_|()), "Finished");
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, res = ?res.as_ref().map(|_|()).map_err(|_|()), "Finished");
                 res
             },
             _   = tokio::time::sleep_until(sleep_until) => {
@@ -266,5 +389,84 @@ mod valuable {
                 )],
             ));
         }
+    }
+}
+
+#[cfg(all(test))]
+mod tests {
+    use super::*;
+    use crate::{activity_worker::activity_engine, EngineConfig};
+    use concepts::{prefixed_ulid::ConfigId, ExecutionId, FunctionFqnStr, Params};
+    use scheduler::{
+        executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
+        storage::{inmemory_dao::DbTask, journal::PendingState, DbConnection, ExecutionIdStr},
+    };
+    use std::{borrow::Cow, time::Duration};
+    use tracing_unwrap::{OptionExt, ResultExt};
+    use utils::time::now;
+    use wasmtime::component::Val;
+
+    pub const FIBO_WORKFLOW_FFQN: FunctionFqnStr =
+        FunctionFqnStr::new("testing:fibo-workflow/workflow", "fiboa"); // fiboa: func(n: u8, iterations: u32) -> u64;
+
+    pub(crate) fn spawn_workflow_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
+        let fibo_worker = WorkflowWorker::new_with_config(
+            WorkflowConfig {
+                wasm_path: Cow::Borrowed(
+                    test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+                ),
+                epoch_millis: 10,
+                config_id: ConfigId::generate(),
+                recycled_instances: None,
+            },
+            activity_engine(EngineConfig::default()),
+            db_connection.clone(),
+        )
+        .unwrap_or_log();
+
+        let exec_config = ExecConfig {
+            ffqns: vec![FIBO_WORKFLOW_FFQN.to_owned()],
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            lock_expiry_leeway: Duration::from_millis(10),
+            tick_sleep: Duration::from_millis(100),
+        };
+        ExecTask::spawn_new(db_connection, fibo_worker, exec_config.clone(), None)
+    }
+
+    #[tokio::test]
+    async fn fibo_workflow_should_schedule_fibo_activity() {
+        const INPUT_N: u8 = 10;
+        const INPUT_ITERATIONS: u32 = 10;
+
+        test_utils::set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+        let workflow_exec_task = spawn_workflow_fibo(db_connection.clone());
+        // Create an execution.
+        let execution_id: ExecutionIdStr = WorkflowId::generate().into();
+        let created_at = now();
+        db_connection
+            .create(
+                created_at,
+                execution_id.clone(),
+                FIBO_WORKFLOW_FFQN.to_owned(),
+                Params::from([Val::U8(INPUT_N), Val::U32(INPUT_ITERATIONS)]),
+                None,
+                None,
+                Duration::ZERO,
+                0,
+            )
+            .await
+            .unwrap_or_log();
+        // Should end as BlockedByJoinSet
+        db_connection
+            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet)
+            .await
+            .unwrap();
+        drop(db_connection);
+
+        workflow_exec_task.close().await;
+        db_task.close().await;
     }
 }

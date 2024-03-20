@@ -9,7 +9,8 @@ pub fn set_up() {
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_target(false)
-                    .with_thread_ids(true),
+                    .with_thread_ids(true)
+                    .json(),
             )
             .with(tracing_subscriber::EnvFilter::from_default_env())
             .init();

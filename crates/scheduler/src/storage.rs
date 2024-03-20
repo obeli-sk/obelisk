@@ -114,21 +114,21 @@ pub enum HistoryEvent {
     },
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     JoinSet {
-        joinset_id: ExecutionIdStr,
+        join_set_id: ExecutionIdStr,
     },
-    // Joinset entry that will be unblocked by DelayFinishedAsyncResponse.
+    // JoinSet entry that will be unblocked by DelayFinishedAsyncResponse.
     // Must be created by the executor in `PotentiallyPending::Locked` state.
-    #[display(fmt = "DelayedUntilAsyncRequest({joinset_id})")]
+    #[display(fmt = "DelayedUntilAsyncRequest({join_set_id})")]
     DelayedUntilAsyncRequest {
-        joinset_id: ExecutionIdStr,
+        join_set_id: ExecutionIdStr,
         delay_id: ExecutionIdStr,
         expires_at: DateTime<Utc>,
     },
-    // Joinset entry that will be unblocked by ChildExecutionRequested.
+    // JoinSet entry that will be unblocked by ChildExecutionRequested.
     // Must be created by the executor in `PotentiallyPending::Locked` state.
-    #[display(fmt = "ChildExecutionAsyncRequest({joinset_id})")]
+    #[display(fmt = "ChildExecutionAsyncRequest({join_set_id})")]
     ChildExecutionAsyncRequest {
-        joinset_id: ExecutionIdStr,
+        join_set_id: ExecutionIdStr,
         child_execution_id: ExecutionIdStr,
         ffqn: FunctionFqn,
         #[arbitrary(default)]
@@ -137,18 +137,18 @@ pub enum HistoryEvent {
     // Execution continues without blocking as the next pending response is in the journal.
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     JoinNextFetched {
-        joinset_id: ExecutionIdStr,
+        join_set_id: ExecutionIdStr,
     },
     // Moves the execution to `PotentiallyPending::PendingNow` if it is currently blocked on `JoinNextBlocking`.
-    #[display(fmt = "AsyncResponse({joinset_id})")]
+    #[display(fmt = "AsyncResponse({join_set_id})")]
     AsyncResponse {
-        joinset_id: ExecutionIdStr,
+        join_set_id: ExecutionIdStr,
         response: AsyncResponse,
     },
     // Must be created by the executor in `PotentiallyPending::Locked` state.
-    // Execution is `PotentiallyPending::BlockedByJoinSet` until the next response of the joinset arrives.
+    // Execution is `PotentiallyPending::BlockedByJoinSet` until the next response of the JoinSet arrives.
     JoinNextBlocking {
-        joinset_id: ExecutionIdStr,
+        join_set_id: ExecutionIdStr,
     },
 }
 
@@ -181,7 +181,7 @@ pub enum DbConnectionError {
 }
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
-pub enum RowSpecificError {
+pub enum SpecificError {
     #[error("validation failed: {0}")]
     ValidationFailed(Cow<'static, str>),
     #[error("version mismatch")]
@@ -195,7 +195,7 @@ pub enum DbError {
     #[error(transparent)]
     Connection(DbConnectionError),
     #[error(transparent)]
-    RowSpecific(RowSpecificError),
+    Specific(SpecificError),
 }
 
 pub type AppendResponse = Version;
@@ -215,13 +215,12 @@ pub struct LockedExecution {
 }
 pub type LockPendingResponse = Vec<LockedExecution>;
 pub type CleanupExpiredLocks = usize; // number of expired locks
-pub type AppendBatchResponse = Vec<Result<AppendResponse, RowSpecificError>>;
+pub type AppendBatchResponse = AppendResponse;
 
 #[derive(Debug, Clone)]
 pub struct AppendRequest {
     pub created_at: DateTime<Utc>,
     pub execution_id: ExecutionIdStr,
-    pub version: Version,
     pub event: ExecutionEventInner,
 }
 
@@ -282,7 +281,8 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
     async fn append_batch(
         &self,
         append: Vec<AppendRequest>,
-    ) -> Result<AppendBatchResponse, DbConnectionError>;
+        version: Version,
+    ) -> Result<AppendBatchResponse, DbError>;
 
     async fn get(&self, execution_id: ExecutionIdStr) -> Result<ExecutionHistory, DbError>; // FIXME &ExecutionIdStr ?
 
@@ -290,17 +290,30 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         &self,
         execution_id: ExecutionIdStr,
     ) -> Result<FinishedExecutionResult, DbError> {
-        let mut execution_events = loop {
-            let execution_history = self.get(execution_id.clone()).await?;
-            if execution_history.pending_state == PendingState::Finished {
-                break execution_history.execution_events;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        };
+        let ExecutionHistory {
+            mut execution_events,
+            ..
+        } = self
+            .wait_for_pending_state(execution_id, PendingState::Finished)
+            .await?;
         Ok(
             assert_matches!(execution_events.pop().expect_or_log("must not be empty"),
-            ExecutionEvent { event: ExecutionEventInner::Finished { result, .. } ,..}=> result),
+            ExecutionEvent { event: ExecutionEventInner::Finished { result, .. } ,..} => result),
         )
+    }
+
+    async fn wait_for_pending_state(
+        &self,
+        execution_id: ExecutionIdStr,
+        expected_pending_state: PendingState,
+    ) -> Result<ExecutionHistory, DbError> {
+        loop {
+            let execution_history = self.get(execution_id.clone()).await?;
+            if execution_history.pending_state == expected_pending_state {
+                return Ok(execution_history);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     async fn cleanup_expired_locks(
@@ -311,7 +324,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
 
 pub mod journal {
     use super::{ExecutionEvent, ExecutionEventInner, ExecutionIdStr, ExecutorName, HistoryEvent};
-    use crate::storage::{ExecutionHistory, RowSpecificError, Version};
+    use crate::storage::{ExecutionHistory, SpecificError, Version};
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::{FunctionFqn, Params};
@@ -394,9 +407,9 @@ pub mod journal {
             &mut self,
             created_at: DateTime<Utc>,
             event: ExecutionEventInner,
-        ) -> Result<(), RowSpecificError> {
+        ) -> Result<(), SpecificError> {
             if self.pending_state == PendingState::Finished {
-                return Err(RowSpecificError::ValidationFailed(Cow::Borrowed(
+                return Err(SpecificError::ValidationFailed(Cow::Borrowed(
                     "already finished",
                 )));
             }
@@ -407,7 +420,7 @@ pub mod journal {
             } = &event
             {
                 if *lock_expires_at <= created_at {
-                    return Err(RowSpecificError::ValidationFailed(Cow::Borrowed(
+                    return Err(SpecificError::ValidationFailed(Cow::Borrowed(
                         "invalid expiry date",
                     )));
                 }
@@ -417,7 +430,7 @@ pub mod journal {
                         if *pending_start <= created_at {
                             // pending now, ok to lock
                         } else {
-                            return Err(RowSpecificError::ValidationFailed(Cow::Owned(format!(
+                            return Err(SpecificError::ValidationFailed(Cow::Owned(format!(
                                 "cannot append {event} event, not yet pending"
                             ))));
                         }
@@ -431,14 +444,14 @@ pub mod journal {
                         } else if *lock_expires_at <= created_at {
                             // we allow locking after the old lock expired
                         } else {
-                            return Err(RowSpecificError::ValidationFailed(Cow::Owned(format!(
+                            return Err(SpecificError::ValidationFailed(Cow::Owned(format!(
                                 "cannot append {event}, already in {}",
                                 self.pending_state
                             ))));
                         }
                     }
                     PendingState::BlockedByJoinSet => {
-                        return Err(RowSpecificError::ValidationFailed(Cow::Borrowed(
+                        return Err(SpecificError::ValidationFailed(Cow::Borrowed(
                             "cannot append Locked event when in BlockedByJoinSet state",
                         )));
                     }
@@ -449,7 +462,7 @@ pub mod journal {
             }
             let locked_now = matches!(self.pending_state, PendingState::Locked { lock_expires_at,.. } if lock_expires_at > created_at);
             if locked_now && !event.appendable_only_in_lock() {
-                return Err(RowSpecificError::ValidationFailed(Cow::Owned(format!(
+                return Err(SpecificError::ValidationFailed(Cow::Owned(format!(
                     "cannot append {event} event in {}",
                     self.pending_state
                 ))));
@@ -511,7 +524,7 @@ pub mod journal {
                         ExecutionEventInner::HistoryEvent {
                             event:
                                 HistoryEvent::JoinNextBlocking {
-                                    joinset_id: expected_join_set_id,
+                                    join_set_id: expected_join_set_id,
                                     ..
                                 },
                             ..
@@ -526,10 +539,10 @@ pub mod journal {
                                 matches!(event, ExecutionEvent {
                                 event:
                                     ExecutionEventInner::HistoryEvent{event:
-                                        HistoryEvent::AsyncResponse { joinset_id, .. },
+                                        HistoryEvent::AsyncResponse { join_set_id, .. },
                                     .. },
                             .. }
-                            if expected_join_set_id == joinset_id)
+                            if expected_join_set_id == join_set_id)
                             })
                             .is_some()
                         {

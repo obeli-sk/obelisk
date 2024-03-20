@@ -31,6 +31,12 @@ impl<T> Display for Name<T> {
     }
 }
 
+impl<T> Debug for Name<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self, f)
+    }
+}
+
 impl<T> Deref for Name<T> {
     type Target = str;
 
@@ -212,6 +218,13 @@ impl SupportedFunctionResult {
             SupportedFunctionResult::Infallible(v) => Some(v),
         }
     }
+
+    pub fn len(&self) -> usize {
+        match self {
+            SupportedFunctionResult::None => 0,
+            _ => 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,7 +232,7 @@ pub enum Params {
     Empty,
     // TODO Serialized(Arc<Vec<String>>),
     WastVals(Arc<Vec<WastVal>>),
-    Deserialized(Arc<Vec<wasmtime::component::Val>>),
+    Vals(Arc<Vec<wasmtime::component::Val>>),
 }
 
 impl Default for Params {
@@ -242,7 +255,7 @@ pub enum ParamsParsingError {
 
 impl Params {
     pub fn new(params: Vec<wasmtime::component::Val>) -> Self {
-        Self::Deserialized(Arc::new(params))
+        Self::Vals(Arc::new(params))
     }
 
     // TODO: optimize allocations
@@ -252,7 +265,7 @@ impl Params {
     ) -> Result<Arc<Vec<wasmtime::component::Val>>, ParamsParsingError> {
         match self {
             Self::Empty => Ok(Default::default()),
-            Self::Deserialized(vals) => Ok(vals.clone()),
+            Self::Vals(vals) => Ok(vals.clone()),
             Self::WastVals(wast_vals) => {
                 if types.len() != wast_vals.len() {
                     return Err(ParamsParsingError::ArityMismatch);
@@ -275,7 +288,7 @@ impl Params {
     pub fn len(&self) -> usize {
         match self {
             Self::Empty => 0,
-            Self::Deserialized(vals) => vals.len(),
+            Self::Vals(vals) => vals.len(),
             Self::WastVals(vals) => vals.len(),
         }
     }
@@ -283,13 +296,13 @@ impl Params {
 
 impl From<&[wasmtime::component::Val]> for Params {
     fn from(value: &[wasmtime::component::Val]) -> Self {
-        Self::Deserialized(Arc::new(Vec::from(value)))
+        Self::Vals(Arc::new(Vec::from(value)))
     }
 }
 
 impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
     fn from(value: [wasmtime::component::Val; N]) -> Self {
-        Self::Deserialized(Arc::new(Vec::from(value)))
+        Self::Vals(Arc::new(Vec::from(value)))
     }
 }
 
@@ -420,12 +433,14 @@ pub mod prefixed_ulid {
         pub struct Exe;
         pub struct Wfw;
         pub struct Conf;
+        pub struct JoinSet;
     }
 
     pub type ActivityId = PrefixedUlid<prefix::Act>;
     pub type ExecutorId = PrefixedUlid<prefix::Exe>;
     pub type WorkflowId = PrefixedUlid<prefix::Wfw>;
     pub type ConfigId = PrefixedUlid<prefix::Conf>;
+    pub type JoinSetId = PrefixedUlid<prefix::JoinSet>;
 
     impl<'a> Arbitrary<'a> for WorkflowId {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {

@@ -17,7 +17,10 @@ pub mod worker {
 
     use self::storage::{HistoryEvent, Version};
     use super::*;
-    use concepts::{FunctionFqn, ParamsParsingError, ResultParsingError};
+    use concepts::{
+        prefixed_ulid::{ActivityId, JoinSetId},
+        FunctionFqn, ParamsParsingError, ResultParsingError,
+    };
 
     pub type WorkerResult = Result<(SupportedFunctionResult, Version), (WorkerError, Version)>;
 
@@ -32,6 +35,16 @@ pub mod worker {
         IntermittentTimeout,
         #[error(transparent)]
         FatalError(#[from] FatalError),
+        #[error("interrupt")]
+        Interrupt(ChildExecutionRequest),
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct ChildExecutionRequest {
+        pub new_join_set_id: JoinSetId,
+        pub child_execution_id: ActivityId, // TODO: unify with WorkflowId as ExecutionId
+        pub ffqn: FunctionFqn,
+        pub params: Params,
     }
 
     #[derive(Debug, thiserror::Error)]

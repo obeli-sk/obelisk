@@ -106,7 +106,7 @@ thiserror = "1.0"
 tokio = { version = "0.2", package = "madsim-tokio" }
 tracing = { version = "0.1", features = ["log"] }
 tracing-chrome = "0.7.1"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 tracing-unwrap = { version = "0.10", features = ["log-location"] }
 ulid = "1.1.0"
 valuable = { version = "0.1.0", features = ["derive"] }
