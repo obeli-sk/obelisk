@@ -6,9 +6,7 @@
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::index::JournalsIndex;
 use super::{journal::ExecutionJournal, ExecutionEventInner, ExecutorName};
-use super::{
-    AppendBatchResponse, AppendRequest, CleanupExpiredLocks, ExecutionIdStr, LockedExecution,
-};
+use super::{AppendBatchResponse, AppendRequest, CleanupExpiredLocks, LockedExecution};
 use crate::storage::journal::PendingState;
 use crate::storage::{
     AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
@@ -17,7 +15,7 @@ use crate::storage::{
 use crate::FinishedExecutionError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::{FunctionFqn, Params};
+use concepts::{ExecutionId, FunctionFqn, Params};
 use derivative::Derivative;
 use hashbrown::{HashMap, HashSet};
 use std::{
@@ -89,7 +87,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         version: Version,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
@@ -117,7 +115,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn append(
         &self,
         created_at: DateTime<Utc>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         version: Version,
         event: ExecutionEventInner,
     ) -> Result<AppendResponse, DbError> {
@@ -143,7 +141,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn append_batch(
         &self,
         batch: Vec<AppendRequest>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
@@ -164,7 +162,7 @@ impl DbConnection for InMemoryDbConnection {
     }
 
     #[instrument(skip_all, %execution_id)]
-    async fn get(&self, execution_id: ExecutionIdStr) -> Result<ExecutionHistory, DbError> {
+    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Get {
             execution_id,
@@ -186,17 +184,17 @@ mod index {
 
     #[derive(Debug)]
     pub(super) struct JournalsIndex {
-        pending: BTreeSet<ExecutionIdStr>,
-        pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ExecutionIdStr>>,
-        pending_scheduled_rev: HashMap<ExecutionIdStr, DateTime<Utc>>,
-        locked: BTreeMap<DateTime<Utc>, HashSet<ExecutionIdStr>>,
-        locked_rev: HashMap<ExecutionIdStr, DateTime<Utc>>,
+        pending: BTreeSet<ExecutionId>,
+        pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ExecutionId>>,
+        pending_scheduled_rev: HashMap<ExecutionId, DateTime<Utc>>,
+        locked: BTreeMap<DateTime<Utc>, HashSet<ExecutionId>>,
+        locked_rev: HashMap<ExecutionId, DateTime<Utc>>,
     }
 
     impl JournalsIndex {
         pub(super) fn fetch_pending<'a>(
             &self,
-            journals: &'a BTreeMap<ExecutionIdStr, ExecutionJournal>,
+            journals: &'a BTreeMap<ExecutionId, ExecutionJournal>,
             batch_size: usize,
             expiring_at_or_before: DateTime<Utc>,
             ffqns: Vec<concepts::FunctionFqn>,
@@ -221,7 +219,7 @@ mod index {
             pending
         }
 
-        pub(super) fn fetch_expired(&self, now: DateTime<Utc>) -> Vec<ExecutionIdStr> {
+        pub(super) fn fetch_expired(&self, now: DateTime<Utc>) -> Vec<ExecutionId> {
             self.locked
                 .range(..=now)
                 .flat_map(|(_scheduled_at, ids)| ids)
@@ -231,8 +229,8 @@ mod index {
 
         pub(super) fn update(
             &mut self,
-            execution_id: ExecutionIdStr,
-            journals: &BTreeMap<ExecutionIdStr, ExecutionJournal>,
+            execution_id: ExecutionId,
+            journals: &BTreeMap<ExecutionId, ExecutionJournal>,
         ) {
             // Remove the ID from the index (if exists)
             self.pending.remove(&execution_id);
@@ -298,7 +296,7 @@ enum ExecutionSpecificRequest {
     #[display(fmt = "Lock(`{executor_name}`)")]
     Lock {
         created_at: DateTime<Utc>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         version: Version,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
@@ -308,7 +306,7 @@ enum ExecutionSpecificRequest {
     #[display(fmt = "Insert({event})")]
     Append {
         created_at: DateTime<Utc>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         version: Version,
         event: ExecutionEventInner,
         #[derivative(Debug = "ignore")]
@@ -316,7 +314,7 @@ enum ExecutionSpecificRequest {
     },
     #[display(fmt = "Get")]
     Get {
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<ExecutionHistory, SpecificError>>,
     },
@@ -345,7 +343,7 @@ enum GeneralRequest {
     #[display(fmt = "AppendBatch")]
     AppendBatch {
         batch: Vec<AppendRequest>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         version: Version,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
@@ -388,12 +386,12 @@ impl Drop for DbTaskHandle {
 
 #[derive(Debug)]
 pub struct DbTask {
-    journals: BTreeMap<ExecutionIdStr, ExecutionJournal>,
+    journals: BTreeMap<ExecutionId, ExecutionJournal>,
     index: JournalsIndex,
 }
 
 impl ExecutionSpecificRequest {
-    fn execution_id(&self) -> &ExecutionIdStr {
+    fn execution_id(&self) -> &ExecutionId {
         match self {
             Self::Lock { execution_id, .. } => execution_id,
             Self::Append { execution_id, .. } => execution_id,
@@ -656,11 +654,11 @@ impl DbTask {
     fn create(
         &mut self,
         created_at: DateTime<Utc>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         ffqn: FunctionFqn,
         params: Params,
         scheduled_at: Option<DateTime<Utc>>,
-        parent: Option<ExecutionIdStr>,
+        parent: Option<ExecutionId>,
         retry_exp_backoff: Duration,
         max_retries: u32,
     ) -> Result<AppendResponse, SpecificError> {
@@ -690,7 +688,7 @@ impl DbTask {
     fn lock(
         &mut self,
         created_at: DateTime<Utc>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         version: Version,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
@@ -709,7 +707,7 @@ impl DbTask {
     fn append(
         &mut self,
         created_at: DateTime<Utc>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         version: Version,
         event: ExecutionEventInner,
     ) -> Result<AppendResponse, SpecificError> {
@@ -750,7 +748,7 @@ impl DbTask {
         Ok(version)
     }
 
-    fn get(&mut self, execution_id: ExecutionIdStr) -> Result<ExecutionHistory, SpecificError> {
+    fn get(&mut self, execution_id: ExecutionId) -> Result<ExecutionHistory, SpecificError> {
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             return Err(SpecificError::NotFound);
         };
@@ -795,7 +793,7 @@ impl DbTask {
     fn append_batch(
         &mut self,
         batch: Vec<AppendRequest>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         mut version: Version,
     ) -> Result<AppendBatchResponse, SpecificError> {
         if batch.is_empty() {
@@ -867,7 +865,7 @@ impl DbTask {
 pub(crate) mod tests {
     use super::*;
     use crate::{
-        storage::{ExecutionEvent, ExecutionIdStr, HistoryEvent},
+        storage::{ExecutionEvent, HistoryEvent},
         FinishedExecutionResult,
     };
     use assert_matches::assert_matches;
@@ -927,7 +925,7 @@ pub(crate) mod tests {
         async fn lock(
             &self,
             created_at: DateTime<Utc>,
-            execution_id: ExecutionIdStr,
+            execution_id: ExecutionId,
             version: Version,
             executor_name: ExecutorName,
             lock_expires_at: DateTime<Utc>,
@@ -948,7 +946,7 @@ pub(crate) mod tests {
         async fn append(
             &self,
             created_at: DateTime<Utc>,
-            execution_id: ExecutionIdStr,
+            execution_id: ExecutionId,
             version: Version,
             event: ExecutionEventInner,
         ) -> Result<AppendResponse, DbError> {
@@ -967,7 +965,7 @@ pub(crate) mod tests {
         async fn append_batch(
             &self,
             batch: Vec<AppendRequest>,
-            execution_id: ExecutionIdStr,
+            execution_id: ExecutionId,
             version: Version,
         ) -> Result<AppendBatchResponse, DbError> {
             let request = DbRequest::General(GeneralRequest::AppendBatch {
@@ -982,7 +980,7 @@ pub(crate) mod tests {
                 .map_err(|err| DbError::Specific(err))
         }
 
-        async fn get(&self, execution_id: ExecutionIdStr) -> Result<ExecutionHistory, DbError> {
+        async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Get {
                 execution_id,
                 resp_sender: oneshot::channel().0,
@@ -1030,7 +1028,7 @@ pub(crate) mod tests {
     }
 
     async fn lifecycle(db_connection: impl DbConnection) {
-        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
+        let execution_id = ExecutionId::generate();
         let exec1 = Arc::new("exec1".to_string());
         let exec2 = Arc::new("exec2".to_string());
         let lock_expiry = Duration::from_millis(500);
@@ -1235,7 +1233,7 @@ pub(crate) mod tests {
     }
 
     async fn lock_expired_means_timeout(db_connection: impl DbConnection) {
-        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
+        let execution_id = ExecutionId::generate();
         let exec1 = Arc::new("exec1".to_string());
         // Create
         let retry_exp_backoff = Duration::from_millis(100);
@@ -1357,7 +1355,7 @@ pub(crate) mod tests {
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
         };
-        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
+        let execution_id = ExecutionId::generate();
         let mut version;
         // Create
         {
@@ -1428,7 +1426,7 @@ pub(crate) mod tests {
             db_connection
                 .append_batch(
                     vec![append_req.clone()],
-                    ExecutionId::generate().into(),
+                    ExecutionId::generate(),
                     Version::default(),
                 )
                 .await
@@ -1484,7 +1482,7 @@ pub(crate) mod tests {
             db_task: db_task.clone(),
         };
 
-        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
+        let execution_id = ExecutionId::generate();
         let created_at = now();
         let batch = vec![
             AppendRequest {

@@ -275,7 +275,7 @@ pub(crate) mod tests {
     use concepts::{ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult};
     use scheduler::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
-        storage::{inmemory_dao::DbTask, DbConnection, ExecutionIdStr},
+        storage::{inmemory_dao::DbTask, DbConnection},
     };
     use std::{
         borrow::Cow,
@@ -322,7 +322,7 @@ pub(crate) mod tests {
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
         let exec_task = spawn_activity_fibo(db_connection.clone());
         // Create an execution.
-        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
+        let execution_id = ExecutionId::generate();
         let created_at = now();
         db_connection
             .create(
@@ -425,7 +425,7 @@ pub(crate) mod tests {
         let now = now();
         let mut execution_ids = Vec::with_capacity(executions);
         for _ in 0..executions {
-            let execution_id: ExecutionIdStr = ExecutionId::generate().into();
+            let execution_id = ExecutionId::generate();
             let req = AppendRequest {
                 created_at: now,
                 event: ExecutionEventInner::Created {
@@ -645,7 +645,7 @@ pub(crate) mod tests {
 
         // Create an execution.
         let stopwatch = Instant::now();
-        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
+        let execution_id = ExecutionId::generate();
         warn!("Testing {execution_id}");
         let created_at = now();
         db_connection

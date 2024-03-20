@@ -6,6 +6,8 @@ use crate::FinishedExecutionResult;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::prefixed_ulid::JoinSetId;
+use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::Params;
 use concepts::SupportedFunctionResult;
@@ -15,10 +17,7 @@ use std::time::Duration;
 use tracing_unwrap::OptionExt;
 
 pub type Version = usize;
-
 pub type ExecutorName = Arc<String>;
-
-pub type ExecutionIdStr = Arc<String>;
 
 #[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
 #[display(fmt = "{event}")]
@@ -37,7 +36,7 @@ pub enum ExecutionEventInner {
         ffqn: FunctionFqn,
         #[arbitrary(default)]
         params: Params,
-        parent: Option<ExecutionIdStr>,
+        parent: Option<ExecutionId>,
         scheduled_at: Option<DateTime<Utc>>,
         retry_exp_backoff: Duration,
         max_retries: u32,
@@ -114,22 +113,22 @@ pub enum HistoryEvent {
     },
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     JoinSet {
-        join_set_id: ExecutionIdStr,
+        join_set_id: JoinSetId,
     },
     // JoinSet entry that will be unblocked by DelayFinishedAsyncResponse.
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     #[display(fmt = "DelayedUntilAsyncRequest({join_set_id})")]
     DelayedUntilAsyncRequest {
-        join_set_id: ExecutionIdStr,
-        delay_id: ExecutionIdStr,
+        join_set_id: JoinSetId,
+        delay_id: ExecutionId,
         expires_at: DateTime<Utc>,
     },
     // JoinSet entry that will be unblocked by ChildExecutionRequested.
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     #[display(fmt = "ChildExecutionAsyncRequest({join_set_id})")]
     ChildExecutionAsyncRequest {
-        join_set_id: ExecutionIdStr,
-        child_execution_id: ExecutionIdStr,
+        join_set_id: JoinSetId,
+        child_execution_id: ExecutionId,
         ffqn: FunctionFqn,
         #[arbitrary(default)]
         params: Params,
@@ -137,18 +136,18 @@ pub enum HistoryEvent {
     // Execution continues without blocking as the next pending response is in the journal.
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     JoinNextFetched {
-        join_set_id: ExecutionIdStr,
+        join_set_id: JoinSetId,
     },
     // Moves the execution to `PotentiallyPending::PendingNow` if it is currently blocked on `JoinNextBlocking`.
     #[display(fmt = "AsyncResponse({join_set_id})")]
     AsyncResponse {
-        join_set_id: ExecutionIdStr,
+        join_set_id: JoinSetId,
         response: AsyncResponse,
     },
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     // Execution is `PotentiallyPending::BlockedByJoinSet` until the next response of the JoinSet arrives.
     JoinNextBlocking {
-        join_set_id: ExecutionIdStr,
+        join_set_id: JoinSetId,
     },
 }
 
@@ -162,11 +161,11 @@ impl HistoryEvent {
 pub enum AsyncResponse {
     // Created by a scheduler sometime after DelayedUntilAsyncRequest.
     DelayFinishedAsyncResponse {
-        delay_id: ExecutionIdStr,
+        delay_id: ExecutionId,
     },
     // Created by a scheduler sometime after ChildExecutionRequested.
     ChildExecutionAsyncResponse {
-        child_execution_id: ExecutionIdStr,
+        child_execution_id: ExecutionId,
         #[arbitrary(value = Ok(SupportedFunctionResult::None))]
         result: FinishedExecutionResult,
     },
@@ -199,12 +198,12 @@ pub enum DbError {
 }
 
 pub type AppendResponse = Version;
-pub type PendingExecution = (ExecutionIdStr, Version, Params, Option<DateTime<Utc>>);
+pub type PendingExecution = (ExecutionId, Version, Params, Option<DateTime<Utc>>);
 pub type LockResponse = (Vec<HistoryEvent>, Version);
 
 #[derive(Debug, Clone)]
 pub struct LockedExecution {
-    pub execution_id: ExecutionIdStr,
+    pub execution_id: ExecutionId,
     pub version: Version,
     pub ffqn: FunctionFqn,
     pub params: Params,
@@ -239,10 +238,10 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
     async fn create(
         &self,
         created_at: DateTime<Utc>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         ffqn: FunctionFqn,
         params: Params,
-        parent: Option<ExecutionIdStr>,
+        parent: Option<ExecutionId>,
         scheduled_at: Option<DateTime<Utc>>,
         retry_exp_backoff: Duration,
         max_retries: u32,
@@ -263,7 +262,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         version: Version,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
@@ -272,7 +271,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
     async fn append(
         &self,
         created_at: DateTime<Utc>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         version: Version,
         event: ExecutionEventInner,
     ) -> Result<AppendResponse, DbError>;
@@ -280,15 +279,15 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
     async fn append_batch(
         &self,
         batch: Vec<AppendRequest>,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbError>;
 
-    async fn get(&self, execution_id: ExecutionIdStr) -> Result<ExecutionHistory, DbError>; // FIXME &ExecutionIdStr ?
+    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError>; // FIXME &ExecutionId ?
 
     async fn obtain_finished_result(
         &self,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
     ) -> Result<FinishedExecutionResult, DbError> {
         let ExecutionHistory {
             mut execution_events,
@@ -304,7 +303,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
 
     async fn wait_for_pending_state(
         &self,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         expected_pending_state: PendingState,
     ) -> Result<ExecutionHistory, DbError> {
         loop {
@@ -323,7 +322,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
 }
 
 pub mod journal {
-    use super::{ExecutionEvent, ExecutionEventInner, ExecutionIdStr, ExecutorName, HistoryEvent};
+    use super::{ExecutionEvent, ExecutionEventInner, ExecutionId, ExecutorName, HistoryEvent};
     use crate::storage::{ExecutionHistory, SpecificError, Version};
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
@@ -333,18 +332,18 @@ pub mod journal {
 
     #[derive(Debug)]
     pub(crate) struct ExecutionJournal {
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         pub(crate) pending_state: PendingState,
         execution_events: VecDeque<ExecutionEvent>,
     }
 
     impl ExecutionJournal {
         pub(crate) fn new(
-            execution_id: ExecutionIdStr,
+            execution_id: ExecutionId,
             ffqn: FunctionFqn,
             params: Params,
             scheduled_at: Option<DateTime<Utc>>,
-            parent: Option<ExecutionIdStr>,
+            parent: Option<ExecutionId>,
             created_at: DateTime<Utc>,
             retry_exp_backoff: Duration,
             max_retries: u32,
@@ -399,7 +398,7 @@ pub mod journal {
             self.execution_events.len()
         }
 
-        pub(crate) fn execution_id(&self) -> &ExecutionIdStr {
+        pub(crate) fn execution_id(&self) -> &ExecutionId {
             &self.execution_id
         }
 

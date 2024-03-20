@@ -7,7 +7,7 @@ use concepts::{Params, SupportedFunctionResult};
 use std::borrow::Cow;
 use std::time::Duration;
 use storage::journal::PendingState;
-use storage::{ExecutionEvent, ExecutionIdStr, Version};
+use storage::{ExecutionEvent, Version};
 
 pub mod executor;
 pub mod storage;
@@ -144,6 +144,6 @@ pub enum FinishedExecutionError {
     #[error("continuing as {execution_id}")]
     ContinueAsNew {
         // TODO: Move to the OK part of the result
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
     },
 }

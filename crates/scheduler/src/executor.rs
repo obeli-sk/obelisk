@@ -1,7 +1,7 @@
 use crate::{
     storage::{
-        AppendRequest, DbConnection, DbConnectionError, DbError, ExecutionEventInner,
-        ExecutionIdStr, ExecutorName, HistoryEvent, Version,
+        AppendRequest, DbConnection, DbConnectionError, DbError, ExecutionEventInner, ExecutorName,
+        HistoryEvent, Version,
     },
     worker::{FatalError, Worker, WorkerError, WorkerResult},
     FinishedExecutionError,
@@ -192,48 +192,37 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
         let mut executions = Vec::new();
         for (locked_execution, permit) in locked_executions {
             let execution_id = locked_execution.execution_id.clone();
-            match <ExecutionIdStr as TryInto<ExecutionId>>::try_into(execution_id) {
-                Ok(execution_id) => {
-                    let join_handle = {
-                        let execution_id = execution_id.clone();
-                        let worker = self.worker.clone();
-                        let db_connection = self.db_connection.clone();
-                        let span =
-                            info_span!("worker", %execution_id, ffqn = %locked_execution.ffqn,);
-                        // TODO: wait for termination of all spawned tasks in `close`.
-                        tokio::spawn(
-                            async move {
-                                let res = Self::run_worker(
-                                    worker,
-                                    db_connection,
-                                    execution_id,
-                                    locked_execution.version,
-                                    locked_execution.ffqn,
-                                    locked_execution.params,
-                                    locked_execution.event_history,
-                                    execution_deadline,
-                                )
-                                .await;
-                                if let Err(err) = res {
-                                    info!("Execution failed: {err:?}");
-                                }
-                                drop(permit);
-                            }
-                            .instrument(span),
+            let join_handle = {
+                let execution_id = execution_id.clone();
+                let worker = self.worker.clone();
+                let db_connection = self.db_connection.clone();
+                let span = info_span!("worker", %execution_id, ffqn = %locked_execution.ffqn,);
+                // TODO: wait for termination of all spawned tasks in `close`.
+                tokio::spawn(
+                    async move {
+                        let res = Self::run_worker(
+                            worker,
+                            db_connection,
+                            execution_id,
+                            locked_execution.version,
+                            locked_execution.ffqn,
+                            locked_execution.params,
+                            locked_execution.event_history,
+                            execution_deadline,
                         )
-                    };
-                    executions.push(ExecutionProgress {
-                        execution_id,
-                        abort_handle: join_handle.abort_handle(),
-                    });
-                }
-                Err(err) => {
-                    warn!(
-                        "Execution id `{}` cannot be parsed - {err:?}",
-                        locked_execution.execution_id
-                    );
-                }
-            }
+                        .await;
+                        if let Err(err) = res {
+                            info!("Execution failed: {err:?}");
+                        }
+                        drop(permit);
+                    }
+                    .instrument(span),
+                )
+            };
+            executions.push(ExecutionProgress {
+                execution_id,
+                abort_handle: join_handle.abort_handle(),
+            });
         }
         Ok(executions)
     }
@@ -261,7 +250,6 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
             )
             .await;
         trace!(?worker_result, version, "Finished");
-        let execution_id: ExecutionIdStr = execution_id.into();
         match Self::worker_result_to_execution_event(
             &db_connection,
             execution_id.clone(),
@@ -281,7 +269,7 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
     /// Map the WorkerError to an intermittent or a permanent failure.
     async fn worker_result_to_execution_event(
         db_connection: &DB,
-        execution_id: ExecutionIdStr,
+        execution_id: ExecutionId,
         worker_result: WorkerResult,
     ) -> Result<(Vec<AppendRequest>, Version), DbError> {
         Ok(match worker_result {
@@ -324,7 +312,7 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                 match err {
                     WorkerError::Interrupt(request) => {
                         let created_at = now();
-                        let join_set_id: ExecutionIdStr = request.new_join_set_id.clone().into();
+                        let join_set_id = request.new_join_set_id.clone();
                         let join = AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
@@ -477,7 +465,7 @@ mod tests {
     use crate::{
         storage::{
             inmemory_dao::{tests::TickBasedDbConnection, DbTask},
-            DbConnection, ExecutionEvent, ExecutionEventInner, ExecutionIdStr, HistoryEvent,
+            DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
         },
         worker::WorkerResult,
         ExecutionHistory,
@@ -691,7 +679,7 @@ mod tests {
         mut tick: T,
     ) -> ExecutionHistory {
         // Create an execution
-        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
+        let execution_id = ExecutionId::generate();
         let created_at = now();
         db_connection
             .create(

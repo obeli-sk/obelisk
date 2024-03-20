@@ -400,7 +400,7 @@ mod tests {
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, FunctionFqnStr, Params};
     use scheduler::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
-        storage::{inmemory_dao::DbTask, journal::PendingState, DbConnection, ExecutionIdStr},
+        storage::{inmemory_dao::DbTask, journal::PendingState, DbConnection},
     };
     use std::{borrow::Cow, time::Duration};
     use tracing_unwrap::{OptionExt, ResultExt};
@@ -445,7 +445,7 @@ mod tests {
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
         let workflow_exec_task = spawn_workflow_fibo(db_connection.clone());
         // Create an execution.
-        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
+        let execution_id = ExecutionId::generate();
         let created_at = now();
         db_connection
             .create(

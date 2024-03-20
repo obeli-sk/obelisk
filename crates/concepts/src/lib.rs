@@ -429,5 +429,13 @@ pub mod prefixed_ulid {
             )))
         }
     }
+    impl<'a> Arbitrary<'a> for JoinSetId {
+        fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+            Ok(Self::new(ulid::Ulid::from_parts(
+                u.arbitrary()?,
+                u.arbitrary()?,
+            )))
+        }
+    }
 }
 pub use prefixed_ulid::ExecutionId;
