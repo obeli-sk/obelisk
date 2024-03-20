@@ -10,7 +10,6 @@ use chrono::{DateTime, Utc};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params};
 use std::{
     borrow::Cow,
-    marker::PhantomData,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -30,13 +29,12 @@ pub struct ExecConfig {
     pub batch_size: u32,
 }
 
-pub struct ExecTask<ID: ExecutionId, DB: DbConnection, W: Worker<ID>> {
+pub struct ExecTask<DB: DbConnection, W: Worker> {
     db_connection: DB,
     worker: W,
     config: ExecConfig,
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_name: ExecutorName,
-    _phantom_data: PhantomData<fn(ID) -> ID>,
 }
 
 #[derive(Debug)]
@@ -45,8 +43,8 @@ struct ExecTickRequest {
 }
 
 #[allow(dead_code)] // allowed for testing
-struct ExecutionProgress<ID: ExecutionId> {
-    execution_id: ID,
+struct ExecutionProgress {
+    execution_id: ExecutionId,
     abort_handle: AbortHandle,
 }
 
@@ -76,10 +74,7 @@ impl Drop for ExecutorTaskHandle {
     }
 }
 
-impl<ID: ExecutionId, DB: DbConnection, W: Worker<ID>> ExecTask<ID, DB, W>
-where
-    <ID as TryFrom<Arc<std::string::String>>>::Error: std::fmt::Debug,
-{
+impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
     pub fn spawn_new(
         db_connection: DB,
         worker: W,
@@ -103,7 +98,6 @@ where
                     config,
                     task_limiter,
                     executor_name: Arc::new(executor_id.to_string()),
-                    _phantom_data: PhantomData,
                 };
                 let mut old_err = None;
                 loop {
@@ -125,7 +119,7 @@ where
     }
 
     fn log_err_if_new(
-        res: Result<Vec<ExecutionProgress<ID>>, DbConnectionError>,
+        res: Result<Vec<ExecutionProgress>, DbConnectionError>,
         old_err: &mut Option<DbConnectionError>,
     ) {
         match (res, &old_err) {
@@ -167,7 +161,7 @@ where
     async fn tick(
         &mut self,
         request: ExecTickRequest,
-    ) -> Result<Vec<ExecutionProgress<ID>>, DbConnectionError> {
+    ) -> Result<Vec<ExecutionProgress>, DbConnectionError> {
         let locked_executions = {
             let mut permits = self.acquire_task_permits();
             if permits.is_empty() {
@@ -198,7 +192,7 @@ where
         let mut executions = Vec::new();
         for (locked_execution, permit) in locked_executions {
             let execution_id = locked_execution.execution_id.clone();
-            match <ExecutionIdStr as TryInto<ID>>::try_into(execution_id) {
+            match <ExecutionIdStr as TryInto<ExecutionId>>::try_into(execution_id) {
                 Ok(execution_id) => {
                     let join_handle = {
                         let execution_id = execution_id.clone();
@@ -248,7 +242,7 @@ where
     async fn run_worker(
         worker: W,
         db_connection: DB,
-        execution_id: ID,
+        execution_id: ExecutionId,
         version: Version,
         ffqn: FunctionFqn,
         params: Params,
@@ -267,7 +261,7 @@ where
             )
             .await;
         trace!(?worker_result, version, "Finished");
-        let execution_id = execution_id.into();
+        let execution_id: ExecutionIdStr = execution_id.into();
         match Self::worker_result_to_execution_event(
             &db_connection,
             execution_id.clone(),
@@ -491,7 +485,7 @@ mod tests {
     use anyhow::anyhow;
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::{prefixed_ulid::WorkflowId, FunctionFqnStr, Params, SupportedFunctionResult};
+    use concepts::{FunctionFqnStr, Params, SupportedFunctionResult};
     use indexmap::IndexMap;
     use std::{borrow::Cow, future::Future, sync::Arc};
     use tracing_unwrap::{OptionExt, ResultExt};
@@ -521,10 +515,10 @@ mod tests {
     }
 
     #[async_trait]
-    impl<DB: DbConnection> Worker<WorkflowId> for SimpleWorker<DB> {
+    impl<DB: DbConnection> Worker for SimpleWorker<DB> {
         async fn run(
             &self,
-            _execution_id: WorkflowId,
+            _execution_id: ExecutionId,
             ffqn: FunctionFqn,
             _params: Params,
             events: Vec<HistoryEvent>,
@@ -558,7 +552,6 @@ mod tests {
             config,
             task_limiter: None,
             executor_name: Arc::new("SimpleWorker".to_string()),
-            _phantom_data: Default::default(),
         };
         let mut execution_progress_vec = executor
             .tick(ExecTickRequest { executed_at: now() })
@@ -698,7 +691,7 @@ mod tests {
         mut tick: T,
     ) -> ExecutionHistory {
         // Create an execution
-        let execution_id: ExecutionIdStr = WorkflowId::generate().into();
+        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
         let created_at = now();
         db_connection
             .create(

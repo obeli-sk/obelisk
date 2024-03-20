@@ -306,26 +306,7 @@ impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
     }
 }
 
-pub trait ExecutionId:
-    Clone
-    + Hash
-    + Display
-    + Debug
-    + Eq
-    + PartialEq
-    + Send
-    + Sync
-    + Ord
-    + 'static
-    + TryFrom<Arc<String>>
-    + Into<Arc<String>>
-{
-    #[must_use]
-    fn generate() -> Self;
-}
-
 pub mod prefixed_ulid {
-    use crate::ExecutionId;
     use arbitrary::Arbitrary;
     use std::{
         fmt::{Debug, Display},
@@ -356,8 +337,8 @@ pub mod prefixed_ulid {
         }
     }
 
-    impl<T> ExecutionId for PrefixedUlid<T> {
-        fn generate() -> Self {
+    impl<T> PrefixedUlid<T> {
+        pub fn generate() -> Self {
             Self::new(ulid::Ulid::new())
         }
     }
@@ -429,20 +410,18 @@ pub mod prefixed_ulid {
     }
 
     pub mod prefix {
-        pub struct Act;
         pub struct Exe;
-        pub struct Wfw;
+        pub struct Exr;
         pub struct Conf;
         pub struct JoinSet;
     }
 
-    pub type ActivityId = PrefixedUlid<prefix::Act>;
-    pub type ExecutorId = PrefixedUlid<prefix::Exe>;
-    pub type WorkflowId = PrefixedUlid<prefix::Wfw>;
+    pub type ExecutorId = PrefixedUlid<prefix::Exr>;
     pub type ConfigId = PrefixedUlid<prefix::Conf>;
     pub type JoinSetId = PrefixedUlid<prefix::JoinSet>;
+    pub type ExecutionId = PrefixedUlid<prefix::Exe>;
 
-    impl<'a> Arbitrary<'a> for WorkflowId {
+    impl<'a> Arbitrary<'a> for ExecutionId {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
             Ok(Self::new(ulid::Ulid::from_parts(
                 u.arbitrary()?,
@@ -451,3 +430,4 @@ pub mod prefixed_ulid {
         }
     }
 }
+pub use prefixed_ulid::ExecutionId;

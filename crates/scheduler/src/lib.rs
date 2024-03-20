@@ -17,10 +17,7 @@ pub mod worker {
 
     use self::storage::{HistoryEvent, Version};
     use super::*;
-    use concepts::{
-        prefixed_ulid::{ActivityId, JoinSetId},
-        FunctionFqn, ParamsParsingError, ResultParsingError,
-    };
+    use concepts::{prefixed_ulid::JoinSetId, FunctionFqn, ParamsParsingError, ResultParsingError};
 
     pub type WorkerResult = Result<(SupportedFunctionResult, Version), (WorkerError, Version)>;
 
@@ -42,7 +39,7 @@ pub mod worker {
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct ChildExecutionRequest {
         pub new_join_set_id: JoinSetId,
-        pub child_execution_id: ActivityId, // TODO: unify with WorkflowId as ExecutionId
+        pub child_execution_id: ExecutionId,
         pub ffqn: FunctionFqn,
         pub params: Params,
     }
@@ -60,10 +57,10 @@ pub mod worker {
     }
 
     #[async_trait]
-    pub trait Worker<ID: ExecutionId>: Clone + valuable::Valuable + Send + Sync + 'static {
+    pub trait Worker: Clone + valuable::Valuable + Send + Sync + 'static {
         async fn run(
             &self,
-            execution_id: ID,
+            execution_id: ExecutionId,
             ffqn: FunctionFqn,
             params: Params,
             event_history: Vec<HistoryEvent>,

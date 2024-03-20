@@ -1,7 +1,7 @@
 use crate::EngineConfig;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{ActivityId, ConfigId, JoinSetId, WorkflowId};
+use concepts::prefixed_ulid::{ConfigId, JoinSetId};
 use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
 use derivative::Derivative;
@@ -76,7 +76,7 @@ wasmtime::component::bindgen!({
 });
 
 struct WorkflowCtx {
-    execution_id: WorkflowId,
+    execution_id: ExecutionId,
 }
 impl WorkflowCtx {
     fn replay_or_interrupt(
@@ -162,7 +162,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                     trace!("Adding imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(&component, function_name, {
                         let ffqn = ffqn.clone();
-                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                        move |store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                               params: &[Val],
                               results: &mut [Val]| {
                             let execution_id = store_ctx.data().execution_id.clone();
@@ -170,7 +170,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                             Box::new(async move {
                                 let request = ChildExecutionRequest {
                                     new_join_set_id: JoinSetId::generate(),
-                                    child_execution_id: ActivityId::generate(),
+                                    child_execution_id: ExecutionId::generate(),
                                     ffqn: ffqn,
                                     params: Params::Vals(Arc::new(Vec::from(params))),
                                 };
@@ -215,10 +215,10 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
 }
 
 #[async_trait]
-impl<DB: DbConnection> Worker<WorkflowId> for WorkflowWorker<DB> {
+impl<DB: DbConnection> Worker for WorkflowWorker<DB> {
     async fn run(
         &self,
-        execution_id: WorkflowId,
+        execution_id: ExecutionId,
         ffqn: FunctionFqn,
         params: Params,
         events: Vec<HistoryEvent>,
@@ -231,7 +231,8 @@ impl<DB: DbConnection> Worker<WorkflowId> for WorkflowWorker<DB> {
             .map(|supported_result| (supported_result, version))
             .map_err(|err| match err {
                 WorkerError::IntermittentError { err, reason } => {
-                    match err.source()
+                    match err
+                        .source()
                         .and_then(|source| source.downcast_ref::<HostFunctionError>())
                     {
                         Some(HostFunctionError::NonDeterminismDetected(reason)) => (
@@ -255,7 +256,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
     #[tracing::instrument(skip_all)]
     pub(crate) async fn run(
         &self,
-        execution_id: WorkflowId,
+        execution_id: ExecutionId,
         ffqn: FunctionFqn,
         params: Params,
         execution_deadline: DateTime<Utc>,
@@ -444,7 +445,7 @@ mod tests {
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
         let workflow_exec_task = spawn_workflow_fibo(db_connection.clone());
         // Create an execution.
-        let execution_id: ExecutionIdStr = WorkflowId::generate().into();
+        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
         let created_at = now();
         db_connection
             .create(

@@ -871,7 +871,7 @@ pub(crate) mod tests {
         FinishedExecutionResult,
     };
     use assert_matches::assert_matches;
-    use concepts::{prefixed_ulid::WorkflowId, ExecutionId, FunctionFqnStr};
+    use concepts::{ExecutionId, FunctionFqnStr};
     use std::time::{Duration, Instant};
     use test_utils::env_or_default;
     use tokio::time::sleep;
@@ -1030,7 +1030,7 @@ pub(crate) mod tests {
     }
 
     async fn lifecycle(db_connection: impl DbConnection) {
-        let execution_id: ExecutionIdStr = WorkflowId::generate().into();
+        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
         let exec1 = Arc::new("exec1".to_string());
         let exec2 = Arc::new("exec2".to_string());
         let lock_expiry = Duration::from_millis(500);
@@ -1235,7 +1235,7 @@ pub(crate) mod tests {
     }
 
     async fn lock_expired_means_timeout(db_connection: impl DbConnection) {
-        let execution_id: ExecutionIdStr = WorkflowId::generate().into();
+        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
         let exec1 = Arc::new("exec1".to_string());
         // Create
         let retry_exp_backoff = Duration::from_millis(100);
@@ -1357,7 +1357,7 @@ pub(crate) mod tests {
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
         };
-        let execution_id: ExecutionIdStr = WorkflowId::generate().into();
+        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
         let mut version;
         // Create
         {
@@ -1428,7 +1428,7 @@ pub(crate) mod tests {
             db_connection
                 .append_batch(
                     vec![append_req.clone()],
-                    WorkflowId::generate().into(),
+                    ExecutionId::generate().into(),
                     Version::default(),
                 )
                 .await
@@ -1484,7 +1484,7 @@ pub(crate) mod tests {
             db_task: db_task.clone(),
         };
 
-        let execution_id: ExecutionIdStr = WorkflowId::generate().into();
+        let execution_id: ExecutionIdStr = ExecutionId::generate().into();
         let created_at = now();
         let batch = vec![
             AppendRequest {
