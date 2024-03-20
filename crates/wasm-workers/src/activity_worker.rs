@@ -198,7 +198,6 @@ impl ActivityWorker {
                 } else {
                     let err = err.into();
                     WorkerError::IntermittentError {
-                        // FIXME: this might be a fatal error, e.g. params mismatch
                         reason: Cow::Owned(format!("wasm function call error: `{err}`")),
                         err,
                     }

@@ -134,16 +134,12 @@ pub type FinishedExecutionResult = Result<SupportedFunctionResult, FinishedExecu
 pub enum FinishedExecutionError {
     #[error("permanent timeout")]
     PermanentTimeout,
-    // TODO PermanentFailure when error retries are implemented
     #[error("non-determinism detected, reason: `{0}`")]
     NonDeterminismDetected(Cow<'static, str>),
     #[error("uncategorized error: `{0}`")]
-    PermanentFailure(Cow<'static, str>), // intermittent failure that is not retried
+    PermanentFailure(Cow<'static, str>), // intermittent failure that is not retried (anymore)
     #[error("cancelled, reason: `{0}`")]
     Cancelled(Cow<'static, str>),
     #[error("continuing as {execution_id}")]
-    ContinueAsNew {
-        // TODO: Move to the OK part of the result
-        execution_id: ExecutionId,
-    },
+    ContinueAsNew { execution_id: ExecutionId },
 }

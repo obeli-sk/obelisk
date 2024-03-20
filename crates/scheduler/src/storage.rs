@@ -283,7 +283,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         version: Version,
     ) -> Result<AppendBatchResponse, DbError>;
 
-    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError>; // FIXME &ExecutionId ?
+    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError>;
 
     async fn obtain_finished_result(
         &self,
@@ -374,22 +374,12 @@ pub mod journal {
             self.execution_events.len()
         }
 
-        pub(crate) fn created_at(&self) -> DateTime<Utc> {
-            self.execution_events
-                .iter()
-                .rev()
-                .next()
-                .unwrap_or_log()
-                .created_at
-        }
-
         pub(crate) fn ffqn(&self) -> &FunctionFqn {
-            // TODO: extract to a struct field
-            match self.execution_events.get(0) {
-                Some(ExecutionEvent {
+            match self.execution_events.get(0).unwrap() {
+                ExecutionEvent {
                     event: ExecutionEventInner::Created { ffqn, .. },
                     ..
-                }) => ffqn,
+                } => ffqn,
                 _ => panic!("first event must be `Created`"),
             }
         }

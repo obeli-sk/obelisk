@@ -189,11 +189,6 @@ pub fn group_by_ifc_to_fn_names<'a>(
     ifcs_to_fn_names
 }
 
-// pub fn is_limit_reached(reason: &str) -> bool {
-//     // FIXME: use let trap = err.downcast::<Trap>().unwrap();
-//     reason.starts_with("maximum concurrent ")
-// }
-
 #[cfg(test)]
 mod tests {
     use tracing_unwrap::ResultExt;
