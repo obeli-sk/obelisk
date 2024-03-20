@@ -17,7 +17,6 @@ async-channel.workspace = true
 async-trait.workspace = true
 cfg-if.workspace = true
 chrono = { workspace = true, features = ["arbitrary"] }
-derivative.workspace = true
 derive_more.workspace = true
 indexmap.workspace = true
 thiserror.workspace = true

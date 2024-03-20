@@ -2663,7 +2663,6 @@ dependencies = [
  "cfg-if",
  "chrono",
  "concepts",
- "derivative",
  "derive_more",
  "futures-util",
  "indexmap",

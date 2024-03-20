@@ -1,10 +1,9 @@
-use crate::EngineConfig;
+use crate::{EngineConfig, MaybeRecycledInstances, RecycleInstancesSetting};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
 use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
-use derivative::Derivative;
 use scheduler::worker::FatalError;
 use scheduler::{
     storage::{HistoryEvent, Version},
@@ -16,8 +15,8 @@ use tracing::{debug, info, trace};
 use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
 use utils::wasm_tools;
+use wasmtime::UpdateDeadline;
 use wasmtime::{component::Val, Engine};
-use wasmtime::{Store, UpdateDeadline};
 
 pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
     let mut wasmtime_config = wasmtime::Config::new();
@@ -29,19 +28,13 @@ pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
     Arc::new(Engine::new(&wasmtime_config).unwrap_or_log())
 }
 
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Debug)]
 pub struct ActivityConfig {
     pub config_id: ConfigId,
     pub wasm_path: Cow<'static, str>,
     pub epoch_millis: u64,
-    #[derivative(Debug = "ignore")]
-    pub recycled_instances: MaybeRecycledInstances,
+    pub recycled_instances: RecycleInstancesSetting,
 }
-
-type MaybeRecycledInstances = Option<
-    Arc<std::sync::Mutex<Vec<(wasmtime::component::Instance, Store<utils::wasi_http::Ctx>)>>>,
->;
 
 #[derive(Clone)]
 pub struct ActivityWorker {
@@ -50,6 +43,7 @@ pub struct ActivityWorker {
     ffqns_to_results_len: HashMap<FunctionFqn, usize>,
     linker: wasmtime::component::Linker<utils::wasi_http::Ctx>,
     component: wasmtime::component::Component,
+    recycled_instances: MaybeRecycledInstances<utils::wasi_http::Ctx>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -98,13 +92,14 @@ impl ActivityWorker {
             wasmtime::component::Component::from_binary(&engine, &wasm).map_err(|err| {
                 ActivityError::InstantiationError(config.wasm_path.clone(), err.into())
             })?;
-
+        let recycled_instances = config.recycled_instances.instantiate();
         Ok(Self {
             config,
             engine,
             ffqns_to_results_len,
             linker,
             component,
+            recycled_instances,
         })
     }
 }
@@ -143,7 +138,6 @@ impl ActivityWorker {
         trace!("Params: {params:?}, results_len:{results_len}",);
 
         let instance_and_store = self
-            .config
             .recycled_instances
             .as_ref()
             .and_then(|i| i.lock().unwrap_or_log().pop());
@@ -219,7 +213,7 @@ impl ActivityWorker {
                 }
             })?;
 
-            if let Some(recycled_instances) = &self.config.recycled_instances {
+            if let Some(recycled_instances) = &self.recycled_instances {
                 recycled_instances
                     .lock()
                     .unwrap_or_log()
@@ -297,7 +291,7 @@ pub(crate) mod tests {
                 ),
                 epoch_millis: 10,
                 config_id: ConfigId::generate(),
-                recycled_instances: None,
+                recycled_instances: RecycleInstancesSetting::Disable,
             },
             activity_engine(EngineConfig::default()),
         )
@@ -368,7 +362,11 @@ pub(crate) mod tests {
         test_utils::set_up();
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
-        let recycled_instances = env_or_default("RECYCLE", RECYCLE).then(Default::default);
+        let recycled_instances = if env_or_default("RECYCLE", RECYCLE) {
+            RecycleInstancesSetting::Enable
+        } else {
+            RecycleInstancesSetting::Disable
+        };
         let permits = env_or_default("PERMITS", PERMITS);
         let batch_size = env_or_default("BATCH_SIZE", BATCH_SIZE);
         let lock_expiry =
@@ -511,7 +509,11 @@ pub(crate) mod tests {
         test_utils::set_up();
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
-        let recycled_instances = env_or_default("RECYCLE", RECYCLE).then(Default::default);
+        let recycled_instances = if env_or_default("RECYCLE", RECYCLE) {
+            RecycleInstancesSetting::Enable
+        } else {
+            RecycleInstancesSetting::Disable
+        };
         let lock_expiry =
             Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
         let tasks = env_or_default("TASKS", TASKS);
@@ -612,9 +614,9 @@ pub(crate) mod tests {
             });
         }
         let recycled_instances = if recycle {
-            Some(Default::default())
+            RecycleInstancesSetting::Enable
         } else {
-            None
+            RecycleInstancesSetting::Disable
         };
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
@@ -669,12 +671,6 @@ pub(crate) mod tests {
                 .unwrap_or_log(),
             expected
         );
-        if recycle {
-            assert_eq!(
-                Some(if expected.is_ok() { 1 } else { 0 }),
-                recycled_instances.as_ref().map(|i| i.lock().unwrap().len())
-            );
-        }
         let stopwatch = stopwatch.elapsed();
         warn!("Finished in {stopwatch:?}");
         assert!(stopwatch < LOCK_EXPIRY * 2);

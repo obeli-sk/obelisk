@@ -1,10 +1,9 @@
-use crate::EngineConfig;
+use crate::{EngineConfig, MaybeRecycledInstances, RecycleInstancesSetting};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ConfigId, JoinSetId};
 use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
-use derivative::Derivative;
 use scheduler::storage::DbConnection;
 use scheduler::worker::{ChildExecutionRequest, FatalError};
 use scheduler::{
@@ -31,18 +30,13 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
     Arc::new(Engine::new(&wasmtime_config).unwrap_or_log())
 }
 
-#[derive(Derivative, Clone)]
-#[derivative(Debug)]
+#[derive(Debug, Clone)]
 pub struct WorkflowConfig {
     pub config_id: ConfigId,
     pub wasm_path: Cow<'static, str>,
     pub epoch_millis: u64,
-    #[derivative(Debug = "ignore")]
-    pub recycled_instances: MaybeRecycledInstances, // TODO: change type to an enum enabled/disabled
+    pub recycled_instances: RecycleInstancesSetting,
 }
-
-type MaybeRecycledInstances =
-    Option<Arc<std::sync::Mutex<Vec<(wasmtime::component::Instance, Store<WorkflowCtx>)>>>>;
 
 #[derive(Clone)]
 struct WorkflowWorker<DB: DbConnection> {
@@ -52,6 +46,7 @@ struct WorkflowWorker<DB: DbConnection> {
     exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
     linker: wasmtime::component::Linker<WorkflowCtx>,
     component: wasmtime::component::Component,
+    recycled_instances: MaybeRecycledInstances<WorkflowCtx>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -203,6 +198,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                 trace!("Skipping interface {ifc_fqn}");
             }
         }
+        let recycled_instances = config.recycled_instances.instantiate();
         Ok(Self {
             db_connection,
             config,
@@ -210,6 +206,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
             exported_ffqns_to_results_len,
             linker,
             component,
+            recycled_instances,
         })
     }
 }
@@ -268,7 +265,6 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
         trace!("Params: {params:?}, results_len:{results_len}",);
 
         let instance_and_store = self
-            .config
             .recycled_instances
             .as_ref()
             .and_then(|i| i.lock().unwrap_or_log().pop());
@@ -345,7 +341,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                 }
             })?;
 
-            if let Some(recycled_instances) = &self.config.recycled_instances {
+            if let Some(recycled_instances) = &self.recycled_instances {
                 recycled_instances
                     .lock()
                     .unwrap_or_log()
@@ -418,7 +414,7 @@ mod tests {
                 ),
                 epoch_millis: 10,
                 config_id: ConfigId::generate(),
-                recycled_instances: None,
+                recycled_instances: RecycleInstancesSetting::Disable,
             },
             activity_engine(EngineConfig::default()),
             db_connection.clone(),
