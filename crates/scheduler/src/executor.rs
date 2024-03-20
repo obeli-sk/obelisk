@@ -18,7 +18,7 @@ use std::{
     time::Duration,
 };
 use tokio::task::AbortHandle;
-use tracing::{debug, enabled, info, info_span, instrument, trace, warn, Instrument, Level};
+use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::now;
 
 #[derive(Debug, Clone)]
@@ -275,7 +275,11 @@ where
         )
         .await
         {
-            Ok((append_batch, version)) => db_connection.append_batch(append_batch, version).await,
+            Ok((append_batch, version)) => {
+                db_connection
+                    .append_batch(append_batch, execution_id, version)
+                    .await
+            }
             Err(err) => Err(err),
         }
     }
@@ -310,7 +314,6 @@ where
                 (
                     vec![AppendRequest {
                         created_at: now(),
-                        execution_id,
                         event,
                     }],
                     new_version,
@@ -330,7 +333,6 @@ where
                         let join_set_id: ExecutionIdStr = request.new_join_set_id.clone().into();
                         let join = AppendRequest {
                             created_at,
-                            execution_id: execution_id.clone(),
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinSet {
                                     join_set_id: join_set_id.clone(),
@@ -339,7 +341,6 @@ where
                         };
                         let child_exec = AppendRequest {
                             created_at,
-                            execution_id: execution_id.clone(),
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::ChildExecutionAsyncRequest {
                                     join_set_id: join_set_id.clone(),
@@ -351,7 +352,6 @@ where
                         };
                         let block = AppendRequest {
                             created_at,
-                            execution_id,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinNextBlocking { join_set_id },
                             },
@@ -367,7 +367,6 @@ where
                             (
                                 vec![AppendRequest {
                                     created_at: now(),
-                                    execution_id,
                                     event,
                                 }],
                                 new_version,
@@ -380,7 +379,6 @@ where
                             (
                                 vec![AppendRequest {
                                     created_at: now(),
-                                    execution_id,
                                     event,
                                 }],
                                 new_version,
@@ -397,7 +395,6 @@ where
                             (
                                 vec![AppendRequest {
                                     created_at: now(),
-                                    execution_id,
                                     event,
                                 }],
                                 new_version,
@@ -410,7 +407,6 @@ where
                             (
                                 vec![AppendRequest {
                                     created_at: now(),
-                                    execution_id,
                                     event,
                                 }],
                                 new_version,
@@ -425,7 +421,6 @@ where
                         (
                             vec![AppendRequest {
                                 created_at: now(),
-                                execution_id,
                                 event,
                             }],
                             new_version,
@@ -441,7 +436,6 @@ where
                         (
                             vec![AppendRequest {
                                 created_at: now(),
-                                execution_id,
                                 event,
                             }],
                             new_version,
@@ -457,7 +451,6 @@ where
                         (
                             vec![AppendRequest {
                                 created_at: now(),
-                                execution_id,
                                 event,
                             }],
                             new_version,
@@ -473,7 +466,6 @@ where
                         (
                             vec![AppendRequest {
                                 created_at: now(),
-                                execution_id,
                                 event,
                             }],
                             new_version,

@@ -430,7 +430,6 @@ pub(crate) mod tests {
             let execution_id: ExecutionIdStr = ActivityId::generate().into();
             let req = AppendRequest {
                 created_at: now,
-                execution_id: execution_id.clone(),
                 event: ExecutionEventInner::Created {
                     ffqn: fibo_ffqn.clone(),
                     params: params.clone(),
@@ -441,7 +440,7 @@ pub(crate) mod tests {
                 },
             };
             db_connection
-                .append_batch(vec![req], Version::default())
+                .append_batch(vec![req], execution_id.clone(), Version::default())
                 .await
                 .unwrap();
             execution_ids.push(execution_id);

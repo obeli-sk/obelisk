@@ -142,12 +142,14 @@ impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all)]
     async fn append_batch(
         &self,
-        append: Vec<AppendRequest>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionIdStr,
         version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::General(GeneralRequest::AppendBatch {
-            append,
+            batch,
+            execution_id,
             version,
             resp_sender,
         });
@@ -242,29 +244,30 @@ mod index {
                 let ids = self.locked.get_mut(&schedule).unwrap();
                 ids.remove(&execution_id);
             }
-            let journal = journals.get(&execution_id).unwrap_or_log();
-            // Add it again if needed
-            match journal.pending_state {
-                PendingState::PendingNow => {
-                    self.pending.insert(execution_id);
+            if let Some(journal) = journals.get(&execution_id) {
+                // Add it again if needed
+                match journal.pending_state {
+                    PendingState::PendingNow => {
+                        self.pending.insert(execution_id);
+                    }
+                    PendingState::PendingAt(expires_at) => {
+                        self.pending_scheduled
+                            .entry(expires_at)
+                            .or_default()
+                            .insert(execution_id.clone());
+                        self.pending_scheduled_rev.insert(execution_id, expires_at);
+                    }
+                    PendingState::Locked {
+                        lock_expires_at, ..
+                    } => {
+                        self.locked
+                            .entry(lock_expires_at)
+                            .or_default()
+                            .insert(execution_id.clone());
+                        self.locked_rev.insert(execution_id, lock_expires_at);
+                    }
+                    PendingState::BlockedByJoinSet | PendingState::Finished => {}
                 }
-                PendingState::PendingAt(expires_at) => {
-                    self.pending_scheduled
-                        .entry(expires_at)
-                        .or_default()
-                        .insert(execution_id.clone());
-                    self.pending_scheduled_rev.insert(execution_id, expires_at);
-                }
-                PendingState::Locked {
-                    lock_expires_at, ..
-                } => {
-                    self.locked
-                        .entry(lock_expires_at)
-                        .or_default()
-                        .insert(execution_id.clone());
-                    self.locked_rev.insert(execution_id, lock_expires_at);
-                }
-                PendingState::BlockedByJoinSet | PendingState::Finished => {}
             }
         }
     }
@@ -341,7 +344,8 @@ enum GeneralRequest {
     },
     #[display(fmt = "AppendBatch")]
     AppendBatch {
-        append: Vec<AppendRequest>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionIdStr,
         version: Version,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
@@ -551,10 +555,14 @@ impl DbTask {
                 self.cleanup_expired_locks(now, resp_sender)
             }
             GeneralRequest::AppendBatch {
-                append,
+                batch: append,
+                execution_id,
                 version,
                 resp_sender,
-            } => self.append_batch(append, version, resp_sender),
+            } => DbTickResponse::AppendBatchResult {
+                payload: self.append_batch(append, execution_id, version),
+                resp_sender,
+            },
         }
     }
 
@@ -737,8 +745,7 @@ impl DbTask {
         if version != journal.version() {
             return Err(SpecificError::VersionMismatch);
         }
-        journal.append(created_at, event)?;
-        let version = journal.version();
+        let version = journal.append(created_at, event)?;
         self.index.update(execution_id, &self.journals);
         Ok(version)
     }
@@ -787,35 +794,72 @@ impl DbTask {
 
     fn append_batch(
         &mut self,
-        append: Vec<AppendRequest>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionIdStr,
         mut version: Version,
-        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
-    ) -> DbTickResponse {
-        if append.is_empty() {
-            return DbTickResponse::AppendBatchResult {
-                payload: Err(SpecificError::ValidationFailed(Cow::Borrowed(
-                    "empty batch request",
-                ))),
-                resp_sender,
+    ) -> Result<AppendBatchResponse, SpecificError> {
+        if batch.is_empty() {
+            return Err(SpecificError::ValidationFailed(Cow::Borrowed(
+                "empty batch request",
+            )));
+        }
+        let mut begin_idx = 0;
+        if let Some((
+            ExecutionEventInner::Created {
+                ffqn,
+                params,
+                parent,
+                scheduled_at,
+                retry_exp_backoff,
+                max_retries,
+            },
+            created_at,
+        )) = batch.get(0).map(|req| (&req.event, req.created_at))
+        {
+            if version == 0 {
+                version = self.create(
+                    created_at,
+                    execution_id.clone(),
+                    ffqn.clone(),
+                    params.clone(),
+                    scheduled_at.clone(),
+                    parent.clone(),
+                    retry_exp_backoff.clone(),
+                    *max_retries,
+                )?;
+                begin_idx = 1;
+            } else {
+                info!("Wrong version");
+                return Err(SpecificError::VersionMismatch);
             };
         }
-        for req in append {
-            let append_res = self.append(req.created_at, req.execution_id, version, req.event);
-            if let Ok(new_version) = append_res {
-                version = new_version;
-            } else {
-                // FIXME: Rollback on error!
-                return DbTickResponse::AppendBatchResult {
-                    payload: append_res,
-                    resp_sender,
-                };
+        let Some(journal) = self.journals.get_mut(&execution_id) else {
+            return Err(SpecificError::NotFound);
+        };
+        if begin_idx == 0 && version != journal.version() {
+            return Err(SpecificError::VersionMismatch);
+        }
+        let before_len = journal.len();
+        for req in batch.into_iter().skip(begin_idx) {
+            match journal.append(req.created_at, req.event) {
+                Ok(new_version) => {
+                    version = new_version;
+                }
+                Err(err) => {
+                    if begin_idx == 0 {
+                        // Rollback update
+                        journal.truncate(before_len);
+                    } else {
+                        // Rollback create
+                        self.journals.remove(&execution_id).unwrap();
+                    }
+                    self.index.update(execution_id, &self.journals);
+                    return Err(err);
+                }
             }
         }
-
-        DbTickResponse::AppendBatchResult {
-            payload: Ok(version),
-            resp_sender,
-        }
+        self.index.update(execution_id, &self.journals);
+        Ok(version)
     }
 }
 
@@ -922,11 +966,13 @@ pub(crate) mod tests {
 
         async fn append_batch(
             &self,
-            append: Vec<AppendRequest>,
+            batch: Vec<AppendRequest>,
+            execution_id: ExecutionIdStr,
             version: Version,
         ) -> Result<AppendBatchResponse, DbError> {
             let request = DbRequest::General(GeneralRequest::AppendBatch {
-                append,
+                batch,
+                execution_id,
                 version,
                 resp_sender: oneshot::channel().0,
             });
@@ -1362,28 +1408,29 @@ pub(crate) mod tests {
         let stopwatch = Instant::now();
         let created_at = now();
         let ffqn = SOME_FFQN.to_owned();
-        let append = {
-            (0..executions).map(|_| AppendRequest {
-                created_at,
-                execution_id: WorkflowId::generate().into(),
-                event: ExecutionEventInner::Created {
-                    ffqn: ffqn.clone(),
-                    params: Params::default(),
-                    parent: None,
-                    scheduled_at: None,
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
-                },
-            })
+        let append_req = AppendRequest {
+            created_at,
+            event: ExecutionEventInner::Created {
+                ffqn: ffqn.clone(),
+                params: Params::default(),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            },
         };
         warn!(
             "Created {executions} append entries in {:?}",
             stopwatch.elapsed()
         );
         let stopwatch = Instant::now();
-        for req in append {
+        for _ in 0..executions {
             db_connection
-                .append_batch(vec![req], Version::default())
+                .append_batch(
+                    vec![append_req.clone()],
+                    WorkflowId::generate().into(),
+                    Version::default(),
+                )
                 .await
                 .unwrap();
         }
@@ -1426,5 +1473,82 @@ pub(crate) mod tests {
         warn!("Finished in {} ms", stopwatch.elapsed().as_millis());
         drop(db_connection);
         db_task.close().await;
+    }
+
+    #[tokio::test]
+    async fn append_batch_should_rollback_creation() {
+        set_up();
+        let db_task = DbTask::new();
+        let db_task = Arc::new(std::sync::Mutex::new(db_task));
+        let db_connection = TickBasedDbConnection {
+            db_task: db_task.clone(),
+        };
+
+        let execution_id: ExecutionIdStr = WorkflowId::generate().into();
+        let created_at = now();
+        let batch = vec![
+            AppendRequest {
+                created_at,
+                event: ExecutionEventInner::Created {
+                    ffqn: SOME_FFQN.to_owned(),
+                    params: Params::default(),
+                    parent: None,
+                    scheduled_at: None,
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                },
+            },
+            AppendRequest {
+                created_at,
+                event: ExecutionEventInner::Finished {
+                    result: Err(FinishedExecutionError::PermanentTimeout),
+                },
+            },
+            AppendRequest {
+                created_at,
+                event: ExecutionEventInner::Finished {
+                    result: Err(FinishedExecutionError::PermanentTimeout),
+                },
+            },
+        ];
+        // invalid creation
+        let err = db_connection
+            .append_batch(batch.clone(), execution_id.clone(), Version::default())
+            .await
+            .unwrap_err();
+        assert_matches!(
+            err,
+            DbError::Specific(SpecificError::ValidationFailed(reason))
+            if reason == "already finished"
+        );
+        let err = db_connection.get(execution_id.clone()).await.unwrap_err();
+        assert_eq!(DbError::Specific(SpecificError::NotFound), err);
+        // Split into [created], [finished,finished]
+        let (first, rest) = batch.split_first().unwrap();
+        let version = db_connection
+            .append_batch(
+                vec![first.clone()],
+                execution_id.clone(),
+                Version::default(),
+            )
+            .await
+            .unwrap();
+        // this should be rolled back
+        let err = db_connection
+            .append_batch(
+                rest.into_iter().cloned().collect(),
+                execution_id.clone(),
+                version,
+            )
+            .await
+            .unwrap_err();
+        assert_matches!(
+            err,
+            DbError::Specific(SpecificError::ValidationFailed(reason))
+            if reason == "already finished"
+        );
+        let created = db_connection.get(execution_id.clone()).await.unwrap();
+        assert_eq!(version, created.version);
+        assert_eq!(PendingState::PendingNow, created.pending_state);
     }
 }

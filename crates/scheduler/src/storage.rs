@@ -220,7 +220,6 @@ pub type AppendBatchResponse = AppendResponse;
 #[derive(Debug, Clone)]
 pub struct AppendRequest {
     pub created_at: DateTime<Utc>,
-    pub execution_id: ExecutionIdStr,
     pub event: ExecutionEventInner,
 }
 
@@ -280,7 +279,8 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
 
     async fn append_batch(
         &self,
-        append: Vec<AppendRequest>,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionIdStr,
         version: Version,
     ) -> Result<AppendBatchResponse, DbError>;
 
@@ -407,7 +407,7 @@ pub mod journal {
             &mut self,
             created_at: DateTime<Utc>,
             event: ExecutionEventInner,
-        ) -> Result<(), SpecificError> {
+        ) -> Result<Version, SpecificError> {
             if self.pending_state == PendingState::Finished {
                 return Err(SpecificError::ValidationFailed(Cow::Borrowed(
                     "already finished",
@@ -470,8 +470,12 @@ pub mod journal {
             self.execution_events
                 .push_back(ExecutionEvent { event, created_at });
             // update the state
-            self.pending_state = self
-                .execution_events
+            self.pending_state = self.calculate_pending_state();
+            Ok(self.version())
+        }
+
+        fn calculate_pending_state(&self) -> PendingState {
+            self.execution_events
                 .iter()
                 .enumerate()
                 .rev()
@@ -537,12 +541,12 @@ pub mod journal {
                             .skip(idx + 1)
                             .find(|event| {
                                 matches!(event, ExecutionEvent {
-                                event:
-                                    ExecutionEventInner::HistoryEvent{event:
-                                        HistoryEvent::AsyncResponse { join_set_id, .. },
-                                    .. },
-                            .. }
-                            if expected_join_set_id == join_set_id)
+                            event:
+                                ExecutionEventInner::HistoryEvent{event:
+                                    HistoryEvent::AsyncResponse { join_set_id, .. },
+                                .. },
+                        .. }
+                        if expected_join_set_id == join_set_id)
                             })
                             .is_some()
                         {
@@ -553,8 +557,7 @@ pub mod journal {
                     }
                     _ => None,
                 })
-                .expect_or_log("journal must begin with Created event");
-            Ok(())
+                .expect_or_log("journal must begin with Created event")
         }
 
         pub(crate) fn event_history(&self) -> Vec<HistoryEvent> {
@@ -605,6 +608,11 @@ pub mod journal {
                 self.max_retries(),
                 self.retry_exp_backoff(),
             )
+        }
+
+        pub(crate) fn truncate(&mut self, len: usize) {
+            self.execution_events.truncate(len);
+            self.pending_state = self.calculate_pending_state();
         }
     }
 
