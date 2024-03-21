@@ -23,7 +23,7 @@ use wasmtime::{Store, UpdateDeadline};
 
 pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
     let mut wasmtime_config = wasmtime::Config::new();
-    wasmtime_config.wasm_backtrace(false); // FIXME: Still too slow
+    wasmtime_config.wasm_backtrace(true);
     wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Disable);
     wasmtime_config.wasm_component_model(true);
     wasmtime_config.async_support(true);
@@ -415,10 +415,7 @@ mod valuable {
 #[cfg(all(test))]
 mod tests {
     use super::*;
-    use crate::{
-        activity_worker::{activity_engine, tests::spawn_activity_fibo},
-        EngineConfig,
-    };
+    use crate::{activity_worker::tests::spawn_activity_fibo, EngineConfig};
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, FunctionFqnStr, Params};
     use scheduler::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
@@ -441,7 +438,7 @@ mod tests {
                 epoch_millis: 10,
                 config_id: ConfigId::generate(),
             },
-            activity_engine(EngineConfig::default()),
+            workflow_engine(EngineConfig::default()),
             db_connection.clone(),
         )
         .unwrap_or_log();
