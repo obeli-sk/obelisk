@@ -191,24 +191,27 @@ pub fn group_by_ifc_to_fn_names<'a>(
 
 #[cfg(test)]
 mod tests {
+    use tracing::debug;
     use tracing_unwrap::ResultExt;
 
     #[test]
     fn test_exported_interfaces() {
+        test_utils::set_up();
         let wasm_path = test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW;
         let wasm = std::fs::read(wasm_path).unwrap_or_log();
         let (resolve, world_id) = super::decode(&wasm).unwrap_or_log();
         let exported_interfaces = super::exported_ifc_fns(&resolve, &world_id).unwrap_or_log();
-        println!(" {exported_interfaces:#?}",);
+        debug!(" {exported_interfaces:#?}",);
     }
 
     #[test]
     fn test_imported_functions() {
+        test_utils::set_up();
         let wasm_path = test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW;
         let wasm = std::fs::read(wasm_path).unwrap_or_log();
         let (resolve, world_id) = super::decode(&wasm).unwrap_or_log();
         let exported_interfaces = super::imported_ifc_fns(&resolve, &world_id).unwrap_or_log();
-        println!(" {exported_interfaces:#?}");
+        debug!(" {exported_interfaces:#?}");
         assert_eq!(exported_interfaces.len(), 2);
     }
 }

@@ -16,7 +16,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing_unwrap::OptionExt;
 
-pub type Version = usize;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Version(usize);
+impl Version {
+    #[cfg(test)]
+    pub(crate) fn new(arg: usize) -> Self {
+        Self(arg)
+    }
+}
 pub type ExecutorName = Arc<String>;
 
 #[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
@@ -36,7 +43,7 @@ pub enum ExecutionEventInner {
         ffqn: FunctionFqn,
         #[arbitrary(default)]
         params: Params,
-        parent: Option<ExecutionId>,
+        parent: Option<(ExecutionId, JoinSetId)>,
         scheduled_at: Option<DateTime<Utc>>,
         retry_exp_backoff: Duration,
         max_retries: u32,
@@ -99,6 +106,15 @@ impl ExecutionEventInner {
             Self::IntermittentFailure { .. } | Self::IntermittentTimeout { .. }
         )
     }
+
+    fn appendable_without_version(&self) -> bool {
+        matches!(
+            self,
+            Self::HistoryEvent {
+                event: HistoryEvent::AsyncResponse { .. }
+            } | Self::Created { .. }
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
@@ -129,9 +145,6 @@ pub enum HistoryEvent {
     ChildExecutionAsyncRequest {
         join_set_id: JoinSetId,
         child_execution_id: ExecutionId,
-        ffqn: FunctionFqn,
-        #[arbitrary(default)]
-        params: Params,
     },
     // Execution continues without blocking as the next pending response is in the journal.
     // Must be created by the executor in `PotentiallyPending::Locked` state.
@@ -139,7 +152,7 @@ pub enum HistoryEvent {
         join_set_id: JoinSetId,
     },
     // Moves the execution to `PotentiallyPending::PendingNow` if it is currently blocked on `JoinNextBlocking`.
-    #[display(fmt = "AsyncResponse({join_set_id})")]
+    #[display(fmt = "AsyncResponse({join_set_id}, {response})")]
     AsyncResponse {
         join_set_id: JoinSetId,
         response: AsyncResponse,
@@ -157,13 +170,14 @@ impl HistoryEvent {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, arbitrary::Arbitrary)]
+#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
 pub enum AsyncResponse {
     // Created by a scheduler sometime after DelayedUntilAsyncRequest.
     DelayFinishedAsyncResponse {
         delay_id: ExecutionId,
     },
-    // Created by a scheduler sometime after ChildExecutionRequested.
+    // Created by an executor after ChildExecutionRequested.
+    #[display(fmt = "ChildExecutionAsyncResponse({child_execution_id})")]
     ChildExecutionAsyncResponse {
         child_execution_id: ExecutionId,
         #[arbitrary(value = Ok(SupportedFunctionResult::None))]
@@ -216,7 +230,8 @@ pub type LockPendingResponse = Vec<LockedExecution>;
 pub type CleanupExpiredLocks = usize; // number of expired locks
 pub type AppendBatchResponse = AppendResponse;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, derive_more::Display)]
+#[display(fmt = "{event}")]
 pub struct AppendRequest {
     pub created_at: DateTime<Utc>,
     pub event: ExecutionEventInner,
@@ -241,7 +256,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         execution_id: ExecutionId,
         ffqn: FunctionFqn,
         params: Params,
-        parent: Option<ExecutionId>,
+        parent: Option<(ExecutionId, JoinSetId)>,
         scheduled_at: Option<DateTime<Utc>>,
         retry_exp_backoff: Duration,
         max_retries: u32,
@@ -254,7 +269,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
             retry_exp_backoff,
             max_retries,
         };
-        self.append(created_at, execution_id, Version::default(), event)
+        self.append(execution_id, None, AppendRequest { event, created_at })
             .await
     }
 
@@ -270,17 +285,16 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
 
     async fn append(
         &self,
-        created_at: DateTime<Utc>,
         execution_id: ExecutionId,
-        version: Version,
-        event: ExecutionEventInner,
+        version: Option<Version>,
+        req: AppendRequest,
     ) -> Result<AppendResponse, DbError>;
 
     async fn append_batch(
         &self,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        version: Version,
+        version: Option<Version>,
     ) -> Result<AppendBatchResponse, DbError>;
 
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError>;
@@ -326,7 +340,7 @@ pub mod journal {
     use crate::storage::{ExecutionHistory, SpecificError, Version};
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
-    use concepts::{FunctionFqn, Params};
+    use concepts::{prefixed_ulid::JoinSetId, FunctionFqn, Params};
     use std::{borrow::Cow, collections::VecDeque, time::Duration};
     use tracing_unwrap::OptionExt;
 
@@ -343,7 +357,7 @@ pub mod journal {
             ffqn: FunctionFqn,
             params: Params,
             scheduled_at: Option<DateTime<Utc>>,
-            parent: Option<ExecutionId>,
+            parent: Option<(ExecutionId, JoinSetId)>,
             created_at: DateTime<Utc>,
             retry_exp_backoff: Duration,
             max_retries: u32,
@@ -385,7 +399,7 @@ pub mod journal {
         }
 
         pub(crate) fn version(&self) -> Version {
-            self.execution_events.len()
+            Version(self.execution_events.len())
         }
 
         pub(crate) fn execution_id(&self) -> &ExecutionId {

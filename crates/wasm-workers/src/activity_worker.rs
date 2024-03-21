@@ -1,4 +1,4 @@
-use crate::{EngineConfig, MaybeRecycledInstances, RecycleInstancesSetting};
+use crate::EngineConfig;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
@@ -15,8 +15,27 @@ use tracing::{debug, info, trace};
 use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
 use utils::wasm_tools;
-use wasmtime::UpdateDeadline;
 use wasmtime::{component::Val, Engine};
+use wasmtime::{Store, UpdateDeadline};
+
+type StoreCtx = utils::wasi_http::Ctx;
+
+#[derive(Clone, Debug)]
+pub enum RecycleInstancesSetting {
+    Enable,
+    Disable,
+}
+type MaybeRecycledInstances =
+    Option<Arc<std::sync::Mutex<Vec<(wasmtime::component::Instance, Store<StoreCtx>)>>>>;
+
+impl RecycleInstancesSetting {
+    pub(crate) fn instantiate(&self) -> MaybeRecycledInstances {
+        match self {
+            Self::Enable => Some(Default::default()),
+            Self::Disable => None,
+        }
+    }
+}
 
 pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
     let mut wasmtime_config = wasmtime::Config::new();
@@ -41,9 +60,9 @@ pub struct ActivityWorker {
     config: ActivityConfig,
     engine: Arc<Engine>,
     ffqns_to_results_len: HashMap<FunctionFqn, usize>,
-    linker: wasmtime::component::Linker<utils::wasi_http::Ctx>,
+    linker: wasmtime::component::Linker<StoreCtx>,
     component: wasmtime::component::Component,
-    recycled_instances: MaybeRecycledInstances<utils::wasi_http::Ctx>,
+    recycled_instances: MaybeRecycledInstances,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -226,7 +245,7 @@ impl ActivityWorker {
         let sleep_until = stopwatch + deadline_duration;
         tokio::select! {
             res = call_function =>{
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, res = ?res.as_ref().map(|_|()).map_err(|_|()), "Finished");
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished");
                 res
             },
             _   = tokio::time::sleep_until(sleep_until) => {
@@ -435,7 +454,7 @@ pub(crate) mod tests {
                 },
             };
             db_connection
-                .append_batch(vec![req], execution_id.clone(), Version::default())
+                .append_batch(vec![req], execution_id.clone(), None)
                 .await
                 .unwrap();
             execution_ids.push(execution_id);

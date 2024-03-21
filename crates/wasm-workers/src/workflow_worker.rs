@@ -1,10 +1,10 @@
-use crate::{EngineConfig, MaybeRecycledInstances, RecycleInstancesSetting};
+use crate::EngineConfig;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ConfigId, JoinSetId};
 use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
-use scheduler::storage::DbConnection;
+use scheduler::storage::{AsyncResponse, DbConnection};
 use scheduler::worker::{ChildExecutionRequest, FatalError};
 use scheduler::{
     storage::{HistoryEvent, Version},
@@ -16,12 +16,14 @@ use tracing::{debug, info, trace};
 use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
 use utils::wasm_tools;
-use wasmtime::component::Linker;
+use val_json::wast_val::val;
+use wasmtime::component::{Linker, Type};
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
 pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
     let mut wasmtime_config = wasmtime::Config::new();
+    wasmtime_config.wasm_backtrace(false); // FIXME: Still too slow
     wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Disable);
     wasmtime_config.wasm_component_model(true);
     wasmtime_config.async_support(true);
@@ -35,7 +37,6 @@ pub struct WorkflowConfig {
     pub config_id: ConfigId,
     pub wasm_path: Cow<'static, str>,
     pub epoch_millis: u64,
-    pub recycled_instances: RecycleInstancesSetting,
 }
 
 #[derive(Clone)]
@@ -46,7 +47,6 @@ struct WorkflowWorker<DB: DbConnection> {
     exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
     linker: wasmtime::component::Linker<WorkflowCtx>,
     component: wasmtime::component::Component,
-    recycled_instances: MaybeRecycledInstances<WorkflowCtx>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -72,12 +72,53 @@ wasmtime::component::bindgen!({
 
 struct WorkflowCtx {
     execution_id: ExecutionId,
+    events: Vec<HistoryEvent>,
+    events_idx: usize,
 }
 impl WorkflowCtx {
     fn replay_or_interrupt(
-        &self,
+        &mut self,
         request: ChildExecutionRequest,
     ) -> Result<SupportedFunctionResult, HostFunctionError> {
+        trace!(
+            "Querying history for {request:?}, index: {}, history: {:?}",
+            self.events_idx,
+            self.events
+        );
+
+        while let Some(found) = self.events.get(self.events_idx) {
+            // TODO: check whether it is matching
+            match found {
+                HistoryEvent::JoinSet { .. } => {
+                    debug!("Skipping JoinSet");
+                    self.events_idx += 1;
+                }
+                HistoryEvent::ChildExecutionAsyncRequest { .. } => {
+                    debug!("Skipping ChildExecutionAsyncRequest");
+                    self.events_idx += 1;
+                }
+                HistoryEvent::JoinNextBlocking { .. } => {
+                    debug!("Skipping JoinNextBlocking");
+                    self.events_idx += 1;
+                }
+                HistoryEvent::AsyncResponse {
+                    response:
+                        AsyncResponse::ChildExecutionAsyncResponse {
+                            child_execution_id,
+                            result,
+                        },
+                    ..
+                } => {
+                    debug!("Found response in history: {found:?}");
+                    self.events_idx += 1;
+                    // TODO: Map FinishedExecutionError somehow
+                    return Ok(result.clone().unwrap());
+                }
+                _ => {
+                    panic!("{found:?}")
+                }
+            }
+        }
         Err(HostFunctionError::Interrupt(request))
     }
 }
@@ -157,28 +198,25 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                     trace!("Adding imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(&component, function_name, {
                         let ffqn = ffqn.clone();
-                        move |store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx>,
                               params: &[Val],
                               results: &mut [Val]| {
-                            let execution_id = store_ctx.data().execution_id.clone();
                             let ffqn = ffqn.clone();
                             Box::new(async move {
                                 let request = ChildExecutionRequest {
-                                    new_join_set_id: JoinSetId::generate(),
-                                    child_execution_id: ExecutionId::generate(),
-                                    ffqn: ffqn,
+                                    new_join_set_id: JoinSetId::generate(), // FIXME: needs seed
+                                    child_execution_id: ExecutionId::generate(), // FIXME: needs seed
+                                    ffqn,
                                     params: Params::Vals(Arc::new(Vec::from(params))),
                                 };
-                                trace!("Child request {request:?}");
-                                let res = store_ctx.data().replay_or_interrupt(request);
-                                trace!("Response: {res:?}");
+                                let res = store_ctx.data_mut().replay_or_interrupt(request);
                                 let res = res?;
                                 assert_eq!(results.len(), res.len(), "unexpected results length");
                                 for (idx, item) in res.value().into_iter().enumerate() {
-                                    // results[idx] = item.val(); // needed `ty`
+                                    // FIXME needed `ty`
+                                    results[idx] = val(item, &Type::U64).unwrap();
                                 }
-                                todo!()
-                                // Ok(())
+                                Ok(())
                             })
                         }
                     });
@@ -198,7 +236,6 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                 trace!("Skipping interface {ifc_fqn}");
             }
         }
-        let recycled_instances = config.recycled_instances.instantiate();
         Ok(Self {
             db_connection,
             config,
@@ -206,7 +243,6 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
             exported_ffqns_to_results_len,
             linker,
             component,
-            recycled_instances,
         })
     }
 }
@@ -222,8 +258,7 @@ impl<DB: DbConnection> Worker for WorkflowWorker<DB> {
         version: Version,
         execution_deadline: DateTime<Utc>,
     ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
-        assert!(events.is_empty());
-        self.run(execution_id, ffqn, params, execution_deadline)
+        self.run(execution_id, ffqn, params, events, execution_deadline)
             .await
             .map(|supported_result| (supported_result, version))
             .map_err(|err| match err {
@@ -256,6 +291,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
         execution_id: ExecutionId,
         ffqn: FunctionFqn,
         params: Params,
+        events: Vec<HistoryEvent>,
         execution_deadline: DateTime<Utc>,
     ) -> Result<SupportedFunctionResult, WorkerError> {
         let results_len = *self
@@ -263,26 +299,22 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
             .get(&ffqn)
             .ok_or(WorkerError::FatalError(FatalError::NotFound))?;
         trace!("Params: {params:?}, results_len:{results_len}",);
-
-        let instance_and_store = self
-            .recycled_instances
-            .as_ref()
-            .and_then(|i| i.lock().unwrap_or_log().pop());
-        let (instance, mut store) = match instance_and_store {
-            Some((instance, store)) => (instance, store),
-            None => {
-                let ctx = WorkflowCtx { execution_id };
-                let mut store = Store::new(&self.engine, ctx);
-                let instance = self
-                    .linker
-                    .instantiate_async(&mut store, &self.component)
-                    .await
-                    .map_err(|err| WorkerError::IntermittentError {
-                        reason: Cow::Borrowed("cannot instantiate"),
-                        err: err.into(),
-                    })?;
-                (instance, store)
-            }
+        let (instance, mut store) = {
+            let ctx = WorkflowCtx {
+                execution_id,
+                events,
+                events_idx: 0,
+            };
+            let mut store = Store::new(&self.engine, ctx);
+            let instance = self
+                .linker
+                .instantiate_async(&mut store, &self.component)
+                .await
+                .map_err(|err| WorkerError::IntermittentError {
+                    reason: Cow::Borrowed("cannot instantiate"),
+                    err: err.into(),
+                })?;
+            (instance, store)
         };
         let epoch_millis = self.config.epoch_millis;
         store.epoch_deadline_callback(move |_store_ctx| {
@@ -339,14 +371,6 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                     err: err.into(),
                 }
             })?;
-
-            if let Some(recycled_instances) = &self.recycled_instances {
-                recycled_instances
-                    .lock()
-                    .unwrap_or_log()
-                    .push((instance, store));
-            }
-
             Ok(result)
         };
         let deadline_duration = (execution_deadline - now()).to_std().unwrap_or_default();
@@ -354,7 +378,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
         let sleep_until = stopwatch + deadline_duration;
         tokio::select! {
             res = call_function =>{
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, res = ?res.as_ref().map(|_|()).map_err(|_|()), "Finished");
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished");
                 res
             },
             _   = tokio::time::sleep_until(sleep_until) => {
@@ -391,7 +415,10 @@ mod valuable {
 #[cfg(all(test))]
 mod tests {
     use super::*;
-    use crate::{activity_worker::activity_engine, EngineConfig};
+    use crate::{
+        activity_worker::{activity_engine, tests::spawn_activity_fibo},
+        EngineConfig,
+    };
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, FunctionFqnStr, Params};
     use scheduler::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
@@ -413,7 +440,6 @@ mod tests {
                 ),
                 epoch_millis: 10,
                 config_id: ConfigId::generate(),
-                recycled_instances: RecycleInstancesSetting::Disable,
             },
             activity_engine(EngineConfig::default()),
             db_connection.clone(),
@@ -433,7 +459,7 @@ mod tests {
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity() {
         const INPUT_N: u8 = 10;
-        const INPUT_ITERATIONS: u32 = 10;
+        const INPUT_ITERATIONS: u32 = 1;
 
         test_utils::set_up();
         let mut db_task = DbTask::spawn_new(1);
@@ -457,12 +483,20 @@ mod tests {
             .unwrap_or_log();
         // Should end as BlockedByJoinSet
         db_connection
-            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet)
+            .wait_for_pending_state(execution_id.clone(), PendingState::BlockedByJoinSet)
             .await
             .unwrap();
-        drop(db_connection);
 
+        // Execution should call the activity and finish
+        let activity_exec_task = spawn_activity_fibo(db_connection.clone());
+        db_connection
+            .wait_for_pending_state(execution_id, PendingState::Finished)
+            .await
+            .unwrap();
+
+        drop(db_connection);
         workflow_exec_task.close().await;
+        activity_exec_task.close().await;
         db_task.close().await;
     }
 }

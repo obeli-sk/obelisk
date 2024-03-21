@@ -2432,6 +2432,7 @@ dependencies = [
  "madsim",
  "madsim-tokio",
  "test-programs-fibo-workflow-builder",
+ "test-utils",
  "thiserror",
  "tracing",
  "tracing-unwrap",

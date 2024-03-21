@@ -2,6 +2,7 @@ use crate::storage::ExecutionEventInner;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::prefixed_ulid::JoinSetId;
 use concepts::ExecutionId;
 use concepts::{Params, SupportedFunctionResult};
 use std::borrow::Cow;
@@ -105,6 +106,13 @@ impl ExecutionHistory {
             event: ExecutionEventInner::Created { params, .. },
             ..
         }) => params.clone())
+    }
+
+    pub fn parent(&self) -> Option<(ExecutionId, JoinSetId)> {
+        assert_matches!(self.execution_events.get(0), Some(ExecutionEvent {
+            event: ExecutionEventInner::Created { parent, .. },
+            ..
+        }) => parent.clone())
     }
 
     pub fn last_event(&self) -> &ExecutionEvent {

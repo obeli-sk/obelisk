@@ -15,6 +15,7 @@ use crate::storage::{
 use crate::FinishedExecutionError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::prefixed_ulid::JoinSetId;
 use concepts::{ExecutionId, FunctionFqn, Params};
 use derivative::Derivative;
 use hashbrown::{HashMap, HashSet};
@@ -114,17 +115,15 @@ impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all, %execution_id)]
     async fn append(
         &self,
-        created_at: DateTime<Utc>,
         execution_id: ExecutionId,
-        version: Version,
-        event: ExecutionEventInner,
+        version: Option<Version>,
+        req: AppendRequest,
     ) -> Result<AppendResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Append {
-            created_at,
             execution_id,
             version,
-            event,
+            req,
             resp_sender,
         });
         self.client_to_store_req_sender
@@ -142,7 +141,7 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        version: Version,
+        version: Option<Version>,
     ) -> Result<AppendBatchResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::General(GeneralRequest::AppendBatch {
@@ -303,12 +302,11 @@ enum ExecutionSpecificRequest {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<LockResponse, SpecificError>>,
     },
-    #[display(fmt = "Insert({event})")]
+    #[display(fmt = "Insert({req})")]
     Append {
-        created_at: DateTime<Utc>,
         execution_id: ExecutionId,
-        version: Version,
-        event: ExecutionEventInner,
+        version: Option<Version>,
+        req: AppendRequest,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<AppendResponse, SpecificError>>,
     },
@@ -344,7 +342,7 @@ enum GeneralRequest {
     AppendBatch {
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        version: Version,
+        version: Option<Version>,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
     },
@@ -615,14 +613,13 @@ impl DbTask {
     fn handle_specific(&mut self, request: ExecutionSpecificRequest) -> DbTickResponse {
         match request {
             ExecutionSpecificRequest::Append {
-                created_at,
                 execution_id,
                 version,
-                event,
+                req,
                 resp_sender,
             } => DbTickResponse::AppendResult {
                 resp_sender,
-                payload: self.append(created_at, execution_id, version, event),
+                payload: self.append(req.created_at, execution_id, version, req.event),
             },
             ExecutionSpecificRequest::Lock {
                 created_at,
@@ -658,7 +655,7 @@ impl DbTask {
         ffqn: FunctionFqn,
         params: Params,
         scheduled_at: Option<DateTime<Utc>>,
-        parent: Option<ExecutionId>,
+        parent: Option<(ExecutionId, JoinSetId)>,
         retry_exp_backoff: Duration,
         max_retries: u32,
     ) -> Result<AppendResponse, SpecificError> {
@@ -697,7 +694,7 @@ impl DbTask {
             executor_name,
             lock_expires_at,
         };
-        self.append(created_at, execution_id.clone(), version, event)
+        self.append(created_at, execution_id.clone(), Some(version), event)
             .map(|_| {
                 let journal = self.journals.get(&execution_id).unwrap_or_log();
                 (journal.event_history(), journal.version())
@@ -708,7 +705,7 @@ impl DbTask {
         &mut self,
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
-        version: Version,
+        version: Option<Version>,
         event: ExecutionEventInner,
     ) -> Result<AppendResponse, SpecificError> {
         if let ExecutionEventInner::Created {
@@ -720,8 +717,8 @@ impl DbTask {
             max_retries,
         } = event
         {
-            return if version == 0 {
-                self.create(
+            if version.is_none() {
+                return self.create(
                     created_at,
                     execution_id,
                     ffqn,
@@ -730,7 +727,7 @@ impl DbTask {
                     parent,
                     retry_exp_backoff,
                     max_retries,
-                )
+                );
             } else {
                 info!("Wrong version");
                 return Err(SpecificError::VersionMismatch);
@@ -740,7 +737,11 @@ impl DbTask {
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             return Err(SpecificError::NotFound);
         };
-        if version != journal.version() {
+        if let Some(version) = version {
+            if version != journal.version() {
+                return Err(SpecificError::VersionMismatch);
+            }
+        } else if !event.appendable_without_version() {
             return Err(SpecificError::VersionMismatch);
         }
         let version = journal.append(created_at, event)?;
@@ -778,7 +779,7 @@ impl DbTask {
             self.append(
                 now,
                 journal.execution_id().clone(),
-                journal.version(),
+                Some(journal.version()),
                 event,
             )
             .expect_or_log("must be lockable within the same transaction");
@@ -794,7 +795,7 @@ impl DbTask {
         &mut self,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        mut version: Version,
+        mut version: Option<Version>,
     ) -> Result<AppendBatchResponse, SpecificError> {
         if batch.is_empty() {
             return Err(SpecificError::ValidationFailed(Cow::Borrowed(
@@ -814,8 +815,8 @@ impl DbTask {
             created_at,
         )) = batch.get(0).map(|req| (&req.event, req.created_at))
         {
-            if version == 0 {
-                version = self.create(
+            if version.is_none() {
+                version = Some(self.create(
                     created_at,
                     execution_id.clone(),
                     ffqn.clone(),
@@ -824,40 +825,67 @@ impl DbTask {
                     parent.clone(),
                     retry_exp_backoff.clone(),
                     *max_retries,
-                )?;
+                )?);
                 begin_idx = 1;
             } else {
-                info!("Wrong version");
+                warn!("Version should not be passed to `Created` event");
                 return Err(SpecificError::VersionMismatch);
             };
         }
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             return Err(SpecificError::NotFound);
         };
-        if begin_idx == 0 && version != journal.version() {
-            return Err(SpecificError::VersionMismatch);
-        }
-        let before_len = journal.len();
+        let truncate_len_or_delete = if begin_idx == 1 {
+            None
+        } else {
+            Some(journal.len())
+        };
         for req in batch.into_iter().skip(begin_idx) {
-            match journal.append(req.created_at, req.event) {
-                Ok(new_version) => {
-                    version = new_version;
+            match version {
+                None => {
+                    if !req.event.appendable_without_version() {
+                        self.rollback(truncate_len_or_delete, execution_id);
+                        return Err(SpecificError::VersionMismatch);
+                    }
+                }
+                Some(version) => {
+                    if version != journal.version() {
+                        self.rollback(truncate_len_or_delete, execution_id);
+                        return Err(SpecificError::VersionMismatch);
+                    }
+                }
+            }
+            match journal
+                .append(req.created_at, req.event)
+                .map(|ok| (ok, version))
+            {
+                Ok((new_version, Some(_))) => {
+                    version = Some(new_version);
+                }
+                Ok((_, None)) => {
+                    // Do not allow appending events that require version
                 }
                 Err(err) => {
-                    if begin_idx == 0 {
-                        // Rollback update
-                        journal.truncate(before_len);
-                    } else {
-                        // Rollback create
-                        self.journals.remove(&execution_id).unwrap();
-                    }
-                    self.index.update(execution_id, &self.journals);
+                    self.rollback(truncate_len_or_delete, execution_id);
                     return Err(err);
                 }
             }
         }
+        let version = journal.version();
         self.index.update(execution_id, &self.journals);
         Ok(version)
+    }
+
+    fn rollback(&mut self, truncate_len_or_delete: Option<usize>, execution_id: ExecutionId) {
+        if let Some(truncate_len) = truncate_len_or_delete {
+            self.journals
+                .get_mut(&execution_id)
+                .unwrap()
+                .truncate(truncate_len);
+        } else {
+            self.journals.remove(&execution_id).unwrap();
+        }
+        self.index.update(execution_id, &self.journals);
     }
 }
 
@@ -945,16 +973,14 @@ pub(crate) mod tests {
 
         async fn append(
             &self,
-            created_at: DateTime<Utc>,
             execution_id: ExecutionId,
-            version: Version,
-            event: ExecutionEventInner,
+            version: Option<Version>,
+            req: AppendRequest,
         ) -> Result<AppendResponse, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Append {
-                created_at,
                 execution_id,
                 version,
-                event,
+                req,
                 resp_sender: oneshot::channel().0,
             });
             let response = self.db_task.lock().unwrap_or_log().tick(request);
@@ -966,7 +992,7 @@ pub(crate) mod tests {
             &self,
             batch: Vec<AppendRequest>,
             execution_id: ExecutionId,
-            version: Version,
+            version: Option<Version>,
         ) -> Result<AppendBatchResponse, DbError> {
             let request = DbRequest::General(GeneralRequest::AppendBatch {
                 batch,
@@ -1065,22 +1091,23 @@ pub(crate) mod tests {
         // LockPending
         sleep(Duration::from_secs(1)).await;
         {
-            info!("LockPending: {}", now());
+            let created_at = now();
+            info!("LockPending: {created_at}");
             let mut locked_executions = db_connection
                 .lock_pending(
                     1,
-                    now(),
+                    created_at,
                     vec![SOME_FFQN.to_owned()],
-                    now(),
+                    created_at,
                     exec1.clone(),
-                    now() + lock_expiry,
+                    created_at + lock_expiry,
                 )
                 .await
                 .unwrap_or_log();
             assert_eq!(1, locked_executions.len());
             let locked_execution = locked_executions.pop().unwrap();
             assert_eq!(execution_id, locked_execution.execution_id);
-            assert_eq!(2, locked_execution.version);
+            assert_eq!(Version::new(2), locked_execution.version);
             assert_eq!(0, locked_execution.params.len());
             assert_eq!(SOME_FFQN.to_owned(), locked_execution.ffqn);
             version = locked_execution.version;
@@ -1088,27 +1115,32 @@ pub(crate) mod tests {
         // intermittent timeout
         sleep(Duration::from_millis(499)).await;
         {
-            info!("Intermittent timeout: {}", now());
-            let event = ExecutionEventInner::IntermittentTimeout {
-                expires_at: now() + lock_expiry,
+            let created_at = now();
+            info!("Intermittent timeout: {created_at}");
+            let req = AppendRequest {
+                created_at,
+                event: ExecutionEventInner::IntermittentTimeout {
+                    expires_at: now() + lock_expiry,
+                },
             };
 
             version = db_connection
-                .append(now(), execution_id.clone(), version, event)
+                .append(execution_id.clone(), Some(version), req)
                 .await
                 .unwrap_or_log();
         }
         // Attempt to lock while in a timeout
         sleep(lock_expiry - Duration::from_millis(100)).await;
         {
-            info!("Attempt to lock using exec2: {}", now());
+            let created_at = now();
+            info!("Attempt to lock using exec2: {created_at}");
             assert!(db_connection
                 .lock(
-                    now(),
+                    created_at,
                     execution_id.clone(),
                     version,
                     exec2.clone(),
-                    now() + lock_expiry,
+                    created_at + lock_expiry,
                 )
                 .await
                 .is_err());
@@ -1117,14 +1149,15 @@ pub(crate) mod tests {
         // Lock using exec1
         sleep(Duration::from_millis(100)).await;
         {
-            info!("Extend lock using exec1: {}", now());
+            let created_at = now();
+            info!("Extend lock using exec1: {created_at}");
             let (event_history, current_version) = db_connection
                 .lock(
-                    now(),
+                    created_at,
                     execution_id.clone(),
                     version,
                     exec1.clone(),
-                    now() + Duration::from_secs(1),
+                    created_at + Duration::from_secs(1),
                 )
                 .await
                 .unwrap_or_log();
@@ -1134,14 +1167,15 @@ pub(crate) mod tests {
         sleep(Duration::from_millis(700)).await;
         // Attempt to lock using exec2 while in a lock
         {
-            info!("Attempt to lock using exec2: {}", now());
+            let created_at = now();
+            info!("Attempt to lock using exec2: {created_at}");
             assert!(db_connection
                 .lock(
-                    now(),
+                    created_at,
                     execution_id.clone(),
                     version,
                     exec2.clone(),
-                    now() + lock_expiry,
+                    created_at + lock_expiry,
                 )
                 .await
                 .is_err());
@@ -1149,14 +1183,15 @@ pub(crate) mod tests {
         }
         // Extend the lock using exec1
         {
-            info!("Extend lock using exec1: {}", now());
+            let created_at = now();
+            info!("Extend lock using exec1: {created_at}");
             let (event_history, current_version) = db_connection
                 .lock(
-                    now(),
+                    created_at,
                     execution_id.clone(),
                     version,
                     exec1.clone(),
-                    now() + lock_expiry,
+                    created_at + lock_expiry,
                 )
                 .await
                 .unwrap_or_log();
@@ -1166,27 +1201,31 @@ pub(crate) mod tests {
         // Yield
         sleep(Duration::from_millis(200)).await;
         {
-            info!("Yield: {}", now());
-
-            let event = ExecutionEventInner::HistoryEvent {
-                event: HistoryEvent::Yield,
+            let created_at = now();
+            info!("Yield: {created_at}");
+            let req = AppendRequest {
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::Yield,
+                },
+                created_at,
             };
             version = db_connection
-                .append(now(), execution_id.clone(), version, event)
+                .append(execution_id.clone(), Some(version), req)
                 .await
                 .unwrap_or_log();
         }
         // Lock again
         sleep(Duration::from_millis(200)).await;
         {
-            info!("Lock again: {}", now());
+            let created_at = now();
+            info!("Lock again: {created_at}");
             let (event_history, current_version) = db_connection
                 .lock(
-                    now(),
+                    created_at,
                     execution_id.clone(),
                     version,
                     exec1.clone(),
-                    now() + lock_expiry,
+                    created_at + lock_expiry,
                 )
                 .await
                 .unwrap_or_log();
@@ -1197,13 +1236,17 @@ pub(crate) mod tests {
         // Finish
         sleep(Duration::from_millis(300)).await;
         {
-            info!("Finish: {}", now());
-            let event = ExecutionEventInner::Finished {
-                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
+            let created_at = now();
+            info!("Finish: {created_at}");
+            let req = AppendRequest {
+                event: ExecutionEventInner::Finished {
+                    result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
+                },
+                created_at,
             };
 
             db_connection
-                .append(now(), execution_id.clone(), version, event)
+                .append(execution_id.clone(), Some(version), req)
                 .await
                 .unwrap_or_log();
         }
@@ -1270,7 +1313,7 @@ pub(crate) mod tests {
             let locked_execution = locked_executions.pop().unwrap();
             assert_eq!(execution_id, locked_execution.execution_id);
             assert_eq!(SOME_FFQN.to_owned(), locked_execution.ffqn);
-            assert_eq!(2, locked_execution.version);
+            assert_eq!(Version::new(2), locked_execution.version);
         }
         // Calling `cleanup_expired_locks` after lock expiry should result in intermittent timeout.
         sleep(lock_duration).await;
@@ -1316,7 +1359,7 @@ pub(crate) mod tests {
             let locked_execution = locked_executions.pop().unwrap();
             assert_eq!(execution_id, locked_execution.execution_id);
             assert_eq!(SOME_FFQN.to_owned(), locked_execution.ffqn);
-            assert_eq!(4, locked_execution.version);
+            assert_eq!(Version::new(4), locked_execution.version);
         }
         // Calling `cleanup_expired_locks` after lock expiry should result in permanent timeout.
         sleep(lock_duration).await;
@@ -1375,9 +1418,12 @@ pub(crate) mod tests {
         }
         let events = unstructured.int_in_range(5..=10).unwrap_or_log();
         for _ in 0..events {
-            let event: ExecutionEventInner = unstructured.arbitrary().unwrap_or_log();
+            let req = AppendRequest {
+                event: unstructured.arbitrary().unwrap_or_log(),
+                created_at: now(),
+            };
             match db_connection
-                .append(now(), execution_id.clone(), version, event)
+                .append(execution_id.clone(), Some(version), req)
                 .await
             {
                 Ok(new_version) => version = new_version,
@@ -1424,11 +1470,7 @@ pub(crate) mod tests {
         let stopwatch = Instant::now();
         for _ in 0..executions {
             db_connection
-                .append_batch(
-                    vec![append_req.clone()],
-                    ExecutionId::generate(),
-                    Version::default(),
-                )
+                .append_batch(vec![append_req.clone()], ExecutionId::generate(), None)
                 .await
                 .unwrap();
         }
@@ -1511,7 +1553,7 @@ pub(crate) mod tests {
         ];
         // invalid creation
         let err = db_connection
-            .append_batch(batch.clone(), execution_id.clone(), Version::default())
+            .append_batch(batch.clone(), execution_id.clone(), None)
             .await
             .unwrap_err();
         assert_matches!(
@@ -1524,11 +1566,7 @@ pub(crate) mod tests {
         // Split into [created], [finished,finished]
         let (first, rest) = batch.split_first().unwrap();
         let version = db_connection
-            .append_batch(
-                vec![first.clone()],
-                execution_id.clone(),
-                Version::default(),
-            )
+            .append_batch(vec![first.clone()], execution_id.clone(), None)
             .await
             .unwrap();
         // this should be rolled back
@@ -1536,7 +1574,7 @@ pub(crate) mod tests {
             .append_batch(
                 rest.into_iter().cloned().collect(),
                 execution_id.clone(),
-                version,
+                Some(version),
             )
             .await
             .unwrap_err();

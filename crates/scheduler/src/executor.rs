@@ -1,10 +1,10 @@
 use crate::{
     storage::{
-        AppendRequest, DbConnection, DbConnectionError, DbError, ExecutionEventInner, ExecutorName,
-        HistoryEvent, Version,
+        AppendRequest, AsyncResponse, DbConnection, DbConnectionError, DbError,
+        ExecutionEventInner, ExecutorName, HistoryEvent, Version,
     },
     worker::{FatalError, Worker, WorkerError, WorkerResult},
-    FinishedExecutionError,
+    ExecutionHistory, FinishedExecutionError,
 };
 use chrono::{DateTime, Utc};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params};
@@ -237,8 +237,8 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
         params: Params,
         event_history: Vec<HistoryEvent>,
         execution_deadline: DateTime<Utc>,
-    ) -> Result<Version, DbError> {
-        trace!(?params, version, "Starting");
+    ) -> Result<(), DbError> {
+        trace!("Starting");
         let worker_result = worker
             .run(
                 execution_id.clone(),
@@ -249,67 +249,106 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                 execution_deadline,
             )
             .await;
-        trace!(?worker_result, version, "Finished");
+        trace!(?worker_result, "Finished");
+        let execution_history = db_connection.get(execution_id.clone()).await?;
         match Self::worker_result_to_execution_event(
-            &db_connection,
             execution_id.clone(),
             worker_result,
-        )
-        .await
-        {
-            Ok((append_batch, version)) => {
+            execution_history,
+        ) {
+            Ok(append) => {
                 db_connection
-                    .append_batch(append_batch, execution_id, version)
-                    .await
+                    .append_batch(
+                        append.primary_events,
+                        append.execution_id,
+                        Some(append.version),
+                    )
+                    .await?;
+                if let Some((secondary_id, secondary_append_request)) = append.secondary {
+                    db_connection
+                        .append(secondary_id, None, secondary_append_request)
+                        .await?;
+                }
+                Ok(())
             }
             Err(err) => Err(err),
         }
     }
 
     /// Map the WorkerError to an intermittent or a permanent failure.
-    async fn worker_result_to_execution_event(
-        db_connection: &DB,
+    fn worker_result_to_execution_event(
         execution_id: ExecutionId,
         worker_result: WorkerResult,
-    ) -> Result<(Vec<AppendRequest>, Version), DbError> {
+        execution_history: ExecutionHistory,
+    ) -> Result<Append, DbError> {
         Ok(match worker_result {
             Ok((result, new_version)) => {
+                let created_at = now();
+                let finished_res;
                 let event = if let Some(exec_err) = result.fallible_err() {
                     info!("Execution finished with an error result");
-                    let execution_history = db_connection.get(execution_id.clone()).await?;
                     let reason =
                         Cow::Owned(format!("Execution returned error result: `{exec_err:?}`"));
                     if let Some(duration) = execution_history.can_be_retried_after() {
                         let expires_at = now() + duration;
                         debug!("Retrying failed execution after {duration:?} at {expires_at}");
+                        finished_res = None;
                         ExecutionEventInner::IntermittentFailure { expires_at, reason }
                     } else {
                         info!("Permanently failed");
+                        finished_res = Some(Err(FinishedExecutionError::PermanentFailure(
+                            reason.clone(),
+                        )));
                         ExecutionEventInner::Finished {
                             result: Err(FinishedExecutionError::PermanentFailure(reason)),
                         }
                     }
                 } else {
                     info!("Execution finished successfully");
+                    finished_res = Some(Ok(result.clone()));
                     ExecutionEventInner::Finished { result: Ok(result) }
                 };
-                (
-                    vec![AppendRequest {
-                        created_at: now(),
-                        event,
-                    }],
-                    new_version,
-                )
+                let finished_event = AppendRequest { created_at, event };
+                let secondary = if let (Some(finished_res), Some((parent_id, join_set_id))) =
+                    (finished_res, execution_history.parent())
+                {
+                    Some((
+                        parent_id,
+                        AppendRequest {
+                            created_at,
+                            event: ExecutionEventInner::HistoryEvent {
+                                event: HistoryEvent::AsyncResponse {
+                                    join_set_id,
+                                    response: AsyncResponse::ChildExecutionAsyncResponse {
+                                        child_execution_id: execution_id.clone(),
+                                        result: finished_res,
+                                    },
+                                },
+                            },
+                        },
+                    ))
+                } else {
+                    None
+                };
+                Append {
+                    primary_events: vec![finished_event],
+                    execution_id,
+                    version: new_version,
+                    secondary,
+                }
             }
             Err((err, new_version)) => {
-                debug!("Execution failed: {err:?}");
-                let execution_history = db_connection.get(execution_id.clone()).await?;
+                if matches!(err, WorkerError::Interrupt(_)) {
+                    // logged later
+                } else {
+                    debug!("Execution failed: {err:?}");
+                }
                 if execution_history.version != new_version {
                     return Err(DbError::Specific(
                         crate::storage::SpecificError::VersionMismatch,
                     ));
                 }
-                match err {
+                let event = match err {
                     WorkerError::Interrupt(request) => {
                         let created_at = now();
                         let join_set_id = request.new_join_set_id.clone();
@@ -321,50 +360,53 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                                 },
                             },
                         };
-                        let child_exec = AppendRequest {
+                        let child_exec_async_req = AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::ChildExecutionAsyncRequest {
                                     join_set_id: join_set_id.clone(),
                                     child_execution_id: request.child_execution_id.into(),
-                                    ffqn: request.ffqn,
-                                    params: request.params,
                                 },
                             },
                         };
                         let block = AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinNextBlocking { join_set_id },
+                                event: HistoryEvent::JoinNextBlocking {
+                                    join_set_id: join_set_id.clone(),
+                                },
                             },
                         };
-                        (vec![join, child_exec, block], new_version)
+                        let child_execution_id = ExecutionId::generate();
+                        info!(%child_execution_id, "Interrupted, scheduling child execution");
+                        let child_exec = AppendRequest {
+                            created_at,
+                            event: ExecutionEventInner::Created {
+                                ffqn: request.ffqn,
+                                params: request.params,
+                                parent: Some((execution_id.clone(), join_set_id)),
+                                scheduled_at: None,
+                                retry_exp_backoff: execution_history.retry_exp_backoff(),
+                                max_retries: execution_history.max_retries(),
+                            },
+                        };
+                        return Ok(Append {
+                            primary_events: vec![join, child_exec_async_req, block],
+                            execution_id,
+                            version: new_version,
+                            secondary: Some((child_execution_id, child_exec)),
+                        });
                     }
                     WorkerError::IntermittentError { reason, err: _ } => {
                         if let Some(duration) = execution_history.can_be_retried_after() {
                             let expires_at = now() + duration;
                             debug!("Retrying failed execution after {duration:?} at {expires_at}");
-                            let event =
-                                ExecutionEventInner::IntermittentFailure { expires_at, reason };
-                            (
-                                vec![AppendRequest {
-                                    created_at: now(),
-                                    event,
-                                }],
-                                new_version,
-                            )
+                            ExecutionEventInner::IntermittentFailure { expires_at, reason }
                         } else {
                             info!("Permanently failed");
-                            let event = ExecutionEventInner::Finished {
+                            ExecutionEventInner::Finished {
                                 result: Err(FinishedExecutionError::PermanentFailure(reason)),
-                            };
-                            (
-                                vec![AppendRequest {
-                                    created_at: now(),
-                                    event,
-                                }],
-                                new_version,
-                            )
+                            }
                         }
                     }
                     WorkerError::IntermittentTimeout => {
@@ -373,90 +415,64 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                             debug!(
                                 "Retrying timed out execution after {duration:?} at {expires_at}"
                             );
-                            let event = ExecutionEventInner::IntermittentTimeout { expires_at };
-                            (
-                                vec![AppendRequest {
-                                    created_at: now(),
-                                    event,
-                                }],
-                                new_version,
-                            )
+                            ExecutionEventInner::IntermittentTimeout { expires_at }
                         } else {
                             info!("Permanently timed out");
-                            let event = ExecutionEventInner::Finished {
+                            ExecutionEventInner::Finished {
                                 result: Err(FinishedExecutionError::PermanentTimeout),
-                            };
-                            (
-                                vec![AppendRequest {
-                                    created_at: now(),
-                                    event,
-                                }],
-                                new_version,
-                            )
+                            }
                         }
                     }
                     WorkerError::FatalError(FatalError::NonDeterminismDetected(reason)) => {
                         info!("Non-determinism detected");
-                        let event = ExecutionEventInner::Finished {
+                        ExecutionEventInner::Finished {
                             result: Err(FinishedExecutionError::NonDeterminismDetected(reason)),
-                        };
-                        (
-                            vec![AppendRequest {
-                                created_at: now(),
-                                event,
-                            }],
-                            new_version,
-                        )
+                        }
                     }
                     WorkerError::FatalError(FatalError::NotFound) => {
                         info!("Not found");
-                        let event = ExecutionEventInner::Finished {
+                        ExecutionEventInner::Finished {
                             result: Err(FinishedExecutionError::PermanentFailure(Cow::Borrowed(
                                 "not found",
                             ))),
-                        };
-                        (
-                            vec![AppendRequest {
-                                created_at: now(),
-                                event,
-                            }],
-                            new_version,
-                        )
+                        }
                     }
                     WorkerError::FatalError(FatalError::ParamsParsingError(err)) => {
                         info!("Error parsing parameters");
-                        let event = ExecutionEventInner::Finished {
+                        ExecutionEventInner::Finished {
                             result: Err(FinishedExecutionError::PermanentFailure(Cow::Owned(
                                 format!("error parsing parameters: {err:?}"),
                             ))),
-                        };
-                        (
-                            vec![AppendRequest {
-                                created_at: now(),
-                                event,
-                            }],
-                            new_version,
-                        )
+                        }
                     }
                     WorkerError::FatalError(FatalError::ResultParsingError(err)) => {
                         info!("Error parsing result");
-                        let event = ExecutionEventInner::Finished {
+                        ExecutionEventInner::Finished {
                             result: Err(FinishedExecutionError::PermanentFailure(Cow::Owned(
                                 format!("error parsing result: {err:?}"),
                             ))),
-                        };
-                        (
-                            vec![AppendRequest {
-                                created_at: now(),
-                                event,
-                            }],
-                            new_version,
-                        )
+                        }
                     }
+                };
+                Append {
+                    primary_events: vec![AppendRequest {
+                        created_at: now(),
+                        event,
+                    }],
+                    execution_id,
+                    version: new_version,
+                    secondary: None,
                 }
             }
         })
     }
+}
+
+struct Append {
+    primary_events: Vec<AppendRequest>,
+    execution_id: ExecutionId,
+    version: Version,
+    secondary: Option<(ExecutionId, AppendRequest)>,
 }
 
 #[cfg(test)]
@@ -568,8 +584,10 @@ mod tests {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
         };
         let worker_results_rev = {
-            let finished_result: WorkerResult = Ok((SupportedFunctionResult::None, 2));
-            let mut worker_results_rev = IndexMap::from([(2, (vec![], finished_result))]);
+            let finished_result: WorkerResult =
+                Ok((SupportedFunctionResult::None, Version::new(2)));
+            let mut worker_results_rev =
+                IndexMap::from([(Version::new(2), (vec![], finished_result))]);
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
@@ -599,8 +617,10 @@ mod tests {
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
         let worker_results_rev = {
-            let finished_result: WorkerResult = Ok((SupportedFunctionResult::None, 2));
-            let mut worker_results_rev = IndexMap::from([(2, (vec![], finished_result))]);
+            let finished_result: WorkerResult =
+                Ok((SupportedFunctionResult::None, Version::new(2)));
+            let mut worker_results_rev =
+                IndexMap::from([(Version::new(2), (vec![], finished_result))]);
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
@@ -631,8 +651,10 @@ mod tests {
 
         let mut db_task = DbTask::spawn_new(1);
         let worker_results_rev = {
-            let finished_result: WorkerResult = Ok((SupportedFunctionResult::None, 2));
-            let mut worker_results_rev = IndexMap::from([(2, (vec![], finished_result))]);
+            let finished_result: WorkerResult =
+                Ok((SupportedFunctionResult::None, Version::new(2)));
+            let mut worker_results_rev =
+                IndexMap::from([(Version::new(2), (vec![], finished_result))]);
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
@@ -741,7 +763,7 @@ mod tests {
         let worker_results_rev = {
             let mut worker_results_rev = IndexMap::new();
             worker_results_rev.insert(
-                2,
+                Version::new(2),
                 (
                     vec![],
                     Err((
@@ -749,11 +771,14 @@ mod tests {
                             reason: Cow::Borrowed("fail"),
                             err: anyhow!("").into(),
                         },
-                        2,
+                        Version::new(2),
                     )),
                 ),
             );
-            worker_results_rev.insert(4, (vec![], Ok((SupportedFunctionResult::None, 4))));
+            worker_results_rev.insert(
+                Version::new(4),
+                (vec![], Ok((SupportedFunctionResult::None, Version::new(4)))),
+            );
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
@@ -820,7 +845,7 @@ mod tests {
         let worker_results_rev = {
             let mut worker_results_rev = IndexMap::new();
             worker_results_rev.insert(
-                2,
+                Version::new(2),
                 (
                     vec![],
                     Ok((
@@ -828,12 +853,12 @@ mod tests {
                             val_json::wast_val::WastVal::Result(Err(None)),
                             Err(()),
                         ),
-                        2,
+                        Version::new(2),
                     )),
                 ),
             );
             worker_results_rev.insert(
-                4,
+                Version::new(4),
                 (
                     vec![],
                     Ok((
@@ -841,7 +866,7 @@ mod tests {
                             val_json::wast_val::WastVal::Result(Ok(None)),
                             Ok(()),
                         ),
-                        4,
+                        Version::new(4),
                     )),
                 ),
             );
