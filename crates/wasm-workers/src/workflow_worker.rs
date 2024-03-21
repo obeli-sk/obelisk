@@ -458,7 +458,7 @@ mod tests {
         const INPUT_N: u8 = 10;
         const INPUT_ITERATIONS: u32 = 1;
 
-        test_utils::set_up();
+        let _guard = test_utils::set_up();
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
         let workflow_exec_task = spawn_workflow_fibo(db_connection.clone());
