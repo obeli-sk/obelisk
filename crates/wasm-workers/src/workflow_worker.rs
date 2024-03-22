@@ -448,18 +448,18 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(10),
-            tick_sleep: Duration::from_millis(100),
+            tick_sleep: Duration::ZERO,
         };
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config.clone(), None)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn fibo_workflow_should_schedule_fibo_activity() {
         const INPUT_N: u8 = 10;
         const INPUT_ITERATIONS: u32 = 1;
 
         let _guard = test_utils::set_up();
-        let mut db_task = DbTask::spawn_new(1);
+        let mut db_task = DbTask::spawn_new(10);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
         let workflow_exec_task = spawn_workflow_fibo(db_connection.clone());
         // Create an execution.

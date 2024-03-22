@@ -9,7 +9,7 @@ pub fn set_up() -> Option<FlushGuard> {
     INIT.call_once(|| {
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
-        let enable_chrome_layer = std::env::var("CHRMOE_TRACE")
+        let enable_chrome_layer = std::env::var("CHROME_TRACE")
             .ok()
             .and_then(|val| val.parse::<bool>().ok())
             .unwrap_or_default();
