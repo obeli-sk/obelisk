@@ -83,6 +83,7 @@ arbitrary = { version = "1.3.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-channel = "2.1.1"
 async-trait = "0.1"
+bitflags = "2.4.2"
 cargo_metadata = "0.18"
 cfg-if = "1.0.0"
 chrono = "0.4.34"
@@ -129,9 +130,7 @@ wasmtime-wasi = "17.0"
 wasmtime-wasi-http = "17.0"
 wast = "201.0.0"
 wiremock = "0.6"
-wit-bindgen = { version = "0.17.0", default-features = false, features = [
-    "realloc",
-] }
+wit-bindgen-rt = "0.20.0"
 wit-component = "0.20"
 wit-parser = "0.13"
 
@@ -141,14 +140,19 @@ getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7ae
 [workspace.lints]
 # lower the priority to allow overriding later
 clippy.all = { level = "deny", priority = -1 }
+# lower the priority to allow overriding later
 clippy.dbg_macro = "deny"
+# lower the priority to allow overriding later
 clippy.pedantic = { level = "deny", priority = -1 }
-rust.unknown_lints = "deny"
-
-clippy.explicit_deref_methods = "allow"     # Lots of false positives.
-clippy.missing_errors_doc = "allow"         # Allow missing docs for now
-clippy.missing_panics_doc = "allow"         # Allow missing docs for now
+# lower the priority to allow overriding later
+clippy.explicit_deref_methods = "allow" # Lots of false positives.
+# lower the priority to allow overriding later
+clippy.missing_errors_doc = "allow" # Allow missing docs for now
+# lower the priority to allow overriding later
+clippy.missing_panics_doc = "allow" # Allow missing docs for now
+# lower the priority to allow overriding later
 clippy.trivially_copy_pass_by_ref = "allow" # Lots of false positives.
+rust.unknown_lints = "deny"
 
 # [lints]
 # workspace = true

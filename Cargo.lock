@@ -1965,7 +1965,8 @@ checksum = "e1fc403891a21bcfb7c37834ba66a547a8f402146eba7265b5a6d88059c9ff2f"
 name = "test-programs-fibo-activity"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "bitflags 2.4.2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -1979,7 +1980,8 @@ dependencies = [
 name = "test-programs-fibo-workflow"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "bitflags 2.4.2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -1994,7 +1996,8 @@ name = "test-programs-http-get-activity"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "wit-bindgen",
+ "bitflags 2.4.2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -2008,7 +2011,8 @@ dependencies = [
 name = "test-programs-http-get-workflow"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "bitflags 2.4.2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -2022,7 +2026,8 @@ dependencies = [
 name = "test-programs-noop-activity"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "bitflags 2.4.2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -2036,7 +2041,8 @@ dependencies = [
 name = "test-programs-noop-workflow"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "bitflags 2.4.2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -2050,7 +2056,8 @@ dependencies = [
 name = "test-programs-patch-activity-broken"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "bitflags 2.4.2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -2064,7 +2071,8 @@ dependencies = [
 name = "test-programs-patch-activity-fixed"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "bitflags 2.4.2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -2078,7 +2086,8 @@ dependencies = [
 name = "test-programs-patch-workflow"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "bitflags 2.4.2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -2092,7 +2101,8 @@ dependencies = [
 name = "test-programs-sleep-activity"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "bitflags 2.4.2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -2106,7 +2116,8 @@ dependencies = [
 name = "test-programs-sleep-workflow"
 version = "0.1.0"
 dependencies = [
- "wit-bindgen",
+ "bitflags 2.4.2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -3395,13 +3406,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "wit-bindgen"
-version = "0.17.0"
+name = "wit-bindgen-rt"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6237168d93497b26dacdab157b08ad2787d74cdce10f89735f791b2a225eba4d"
-dependencies = [
- "bitflags 2.4.2",
-]
+checksum = "781989c70b3300b1be7ffbc7095e3b56c4f208f0c109cb5d1d943b297918dd8a"
 
 [[package]]
 name = "wit-component"

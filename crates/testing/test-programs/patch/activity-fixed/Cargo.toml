@@ -6,8 +6,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-wit-bindgen.workspace = true
-
+bitflags.workspace = true
+wit-bindgen-rt.workspace = true
 
 [lib]
 crate-type = ["cdylib"]

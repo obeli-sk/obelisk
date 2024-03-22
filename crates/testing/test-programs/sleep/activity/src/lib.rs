@@ -4,6 +4,8 @@ use std::time::Duration;
 
 mod bindings;
 
+bindings::export!(Component with_types_in bindings);
+
 struct Component;
 
 impl crate::bindings::exports::testing::sleep::sleep::Guest for Component {

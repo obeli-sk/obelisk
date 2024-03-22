@@ -7,6 +7,8 @@ mod bindings;
 use crate::bindings::wasi::http::types::Method;
 use crate::bindings::wasi::http::types::Scheme;
 
+bindings::export!(Component with_types_in bindings);
+
 struct Component;
 
 impl crate::bindings::exports::testing::http::http_get::Guest for Component {

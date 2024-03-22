@@ -2,6 +2,7 @@
 
 mod bindings;
 
+bindings::export!(Component with_types_in bindings);
 struct Component;
 
 pub fn black_box<T>(dummy: T) -> T {

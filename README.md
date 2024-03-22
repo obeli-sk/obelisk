@@ -3,29 +3,17 @@
 nix develop # or direnv allow
 ```
 
-## Benchmarks
+## Building
 ```sh
-cargo bench -p benches
+cargo build --workspace --no-default-features
 ```
 
 ## Tests
 ```sh
-cargo nextest run --workspace --tests
-```
-
-### Integration tests
-```sh
-RUST_LOG=info,runtime=debug RUST_BACKTRACE=1 cargo test -p tests --tests -- --nocapture
+RUSTFLAGS="--cfg tokio_unstable --cfg tracing_unstable" cargo test --workspace
 ```
 
 ### Simulation testing
-Enable Madsim by setting the `RUSTFLAGS` envvar or by editing `.cargo/config.toml`:
-```toml
-rustflags = ["--cfg", "tokio_unstable", "--cfg", "madsim"]
+```sh
+RUSTFLAGS="--cfg madsim --cfg tokio_unstable --cfg tracing_unstable" cargo test --workspace
 ```
-
-
-### Generative testing
-Madsim is used also for property based testing.
-Enable test reruns using `MADSIM_TEST_NUM=10000` and thread based parallelism
-using `MADSIM_TEST_JOBS=8`. All generative tests start with `generative_` prefix.
