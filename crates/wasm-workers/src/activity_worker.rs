@@ -10,7 +10,7 @@ use scheduler::{
     worker::{Worker, WorkerError},
 };
 use std::collections::HashMap;
-use std::{borrow::Cow, error::Error, fmt::Debug, sync::Arc};
+use std::{borrow::Cow, fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
 use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
@@ -94,7 +94,7 @@ impl ActivityWorker {
         debug!(?ffqns_to_results_len, "Decoded functions");
         let mut linker = wasmtime::component::Linker::new(&engine);
         // Link
-        wasmtime_wasi::preview2::command::add_to_linker(&mut linker).map_err(|err| {
+        wasmtime_wasi::command::add_to_linker(&mut linker).map_err(|err| {
             WasmFileError::LinkingError {
                 file: config.wasm_path.clone(),
                 reason: Cow::Borrowed("cannot add wasi command"),

@@ -6421,7 +6421,7 @@ pub mod wasi {
             static __FORCE_SECTION_REF: fn() =
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
-            /// `pollable` epresents a single I/O event which may be ready, or not.
+            /// `pollable` represents a single I/O event which may be ready, or not.
 
             #[derive(Debug)]
             #[repr(transparent)]
@@ -6523,8 +6523,9 @@ pub mod wasi {
             /// The result `list<u32>` contains one or more indices of handles in the
             /// argument list that is ready for I/O.
             ///
-            /// If the list contains more elements than can be indexed with a `u32`
-            /// value, this function traps.
+            /// This function traps if either:
+            /// - the list is empty, or:
+            /// - the list contains more elements than can be indexed with a `u32` value.
             ///
             /// A timeout can be implemented by adding a pollable from the
             /// wasi-clocks API to the list.
@@ -6839,6 +6840,11 @@ pub mod wasi {
             impl InputStream {
                 #[allow(unused_unsafe, clippy::all)]
                 /// Perform a non-blocking read from the stream.
+                ///
+                /// When the source of a `read` is binary data, the bytes from the source
+                /// are returned verbatim. When the source of a `read` is known to the
+                /// implementation to be text, bytes containing the UTF-8 encoding of the
+                /// text are returned.
                 ///
                 /// This function returns a list of bytes containing the read data,
                 /// when successful. The returned list will contain up to `len` bytes;
@@ -7193,6 +7199,12 @@ pub mod wasi {
                 #[allow(unused_unsafe, clippy::all)]
                 /// Perform a write. This function never blocks.
                 ///
+                /// When the destination of a `write` is binary data, the bytes from
+                /// `contents` are written verbatim. When the destination of a `write` is
+                /// known to the implementation to be text, the bytes of `contents` are
+                /// transcoded from UTF-8 into the encoding of the destination and then
+                /// written.
+                ///
                 /// Precondition: check-write gave permit of Ok(n) and contents has a
                 /// length of less than or equal to n. Otherwise, this function will trap.
                 ///
@@ -7265,7 +7277,7 @@ pub mod wasi {
                 /// let pollable = this.subscribe();
                 /// while !contents.is_empty() {
                 /// // Wait for the stream to become writable
-                /// poll-one(pollable);
+                /// pollable.block();
                 /// let Ok(n) = this.check-write(); // eliding error handling
                 /// let len = min(n, contents.len());
                 /// let (chunk, rest) = contents.split_at(len);
@@ -7274,7 +7286,7 @@ pub mod wasi {
                 /// }
                 /// this.flush();
                 /// // Wait for completion of `flush`
-                /// poll-one(pollable);
+                /// pollable.block();
                 /// // Check for any errors that arose during `flush`
                 /// let _ = this.check-write();         // eliding error handling
                 /// ```
@@ -7484,7 +7496,7 @@ pub mod wasi {
                 #[allow(unused_unsafe, clippy::all)]
                 /// Write zeroes to a stream.
                 ///
-                /// this should be used precisely like `write` with the exact same
+                /// This should be used precisely like `write` with the exact same
                 /// preconditions (must use check-write first), but instead of
                 /// passing a list of bytes, you simply pass the number of zero-bytes
                 /// that should be written.
@@ -7553,7 +7565,7 @@ pub mod wasi {
                 /// let pollable = this.subscribe();
                 /// while num_zeroes != 0 {
                 /// // Wait for the stream to become writable
-                /// poll-one(pollable);
+                /// pollable.block();
                 /// let Ok(n) = this.check-write(); // eliding error handling
                 /// let len = min(n, num_zeroes);
                 /// this.write-zeroes(len);         // eliding error handling
@@ -7561,7 +7573,7 @@ pub mod wasi {
                 /// }
                 /// this.flush();
                 /// // Wait for completion of `flush`
-                /// poll-one(pollable);
+                /// pollable.block();
                 /// // Check for any errors that arose during `flush`
                 /// let _ = this.check-write();         // eliding error handling
                 /// ```
