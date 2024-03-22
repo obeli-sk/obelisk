@@ -27,6 +27,7 @@ pub struct ExecConfig {
     pub lock_expiry_leeway: Duration,
     pub tick_sleep: Duration,
     pub batch_size: u32,
+    //TODO : pub cleanup_expired_locks: bool,
 }
 
 pub struct ExecTask<DB: DbConnection, W: Worker> {
@@ -281,16 +282,16 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
         worker_result: WorkerResult,
         execution_history: ExecutionHistory,
     ) -> Result<Append, DbError> {
+        let created_at = now();
         Ok(match worker_result {
             Ok((result, new_version)) => {
-                let created_at = now();
                 let finished_res;
                 let event = if let Some(exec_err) = result.fallible_err() {
                     info!("Execution finished with an error result");
                     let reason =
                         Cow::Owned(format!("Execution returned error result: `{exec_err:?}`"));
                     if let Some(duration) = execution_history.can_be_retried_after() {
-                        let expires_at = now() + duration;
+                        let expires_at = created_at + duration;
                         debug!("Retrying failed execution after {duration:?} at {expires_at}");
                         finished_res = None;
                         ExecutionEventInner::IntermittentFailure { expires_at, reason }
@@ -350,7 +351,6 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                 }
                 let event = match err {
                     WorkerError::Interrupt(request) => {
-                        let created_at = now();
                         let join_set_id = request.new_join_set_id.clone();
                         let join = AppendRequest {
                             created_at,
@@ -399,7 +399,7 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                     }
                     WorkerError::IntermittentError { reason, err: _ } => {
                         if let Some(duration) = execution_history.can_be_retried_after() {
-                            let expires_at = now() + duration;
+                            let expires_at = created_at + duration;
                             debug!("Retrying failed execution after {duration:?} at {expires_at}");
                             ExecutionEventInner::IntermittentFailure { expires_at, reason }
                         } else {
@@ -409,9 +409,15 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                             }
                         }
                     }
+                    WorkerError::LimitReached(reason) => {
+                        warn!("Limit reached: {reason}, yielding");
+                        ExecutionEventInner::HistoryEvent {
+                            event: HistoryEvent::Yield,
+                        }
+                    }
                     WorkerError::IntermittentTimeout => {
                         if let Some(duration) = execution_history.can_be_retried_after() {
-                            let expires_at = now() + duration;
+                            let expires_at = created_at + duration;
                             debug!(
                                 "Retrying timed out execution after {duration:?} at {expires_at}"
                             );
@@ -455,10 +461,7 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                     }
                 };
                 Append {
-                    primary_events: vec![AppendRequest {
-                        created_at: now(),
-                        event,
-                    }],
+                    primary_events: vec![AppendRequest { created_at, event }],
                     execution_id,
                     version: new_version,
                     secondary: None,

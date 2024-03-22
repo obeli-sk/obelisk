@@ -29,6 +29,8 @@ pub mod worker {
             reason: Cow<'static, str>,
             err: Box<dyn Error + Send>,
         },
+        #[error("Limit reached: {0}")]
+        LimitReached(String),
         #[error("intermittent timeout")]
         IntermittentTimeout,
         #[error(transparent)]

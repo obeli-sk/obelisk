@@ -1,4 +1,4 @@
-use crate::EngineConfig;
+use crate::{EngineConfig, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ConfigId, JoinSetId};
@@ -49,20 +49,6 @@ struct WorkflowWorker<DB: DbConnection> {
     component: wasmtime::component::Component,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum WorkflowError {
-    #[error("cannot open `{0}` - {1}")]
-    CannotOpen(Cow<'static, str>, std::io::Error),
-    #[error("cannot decode `{0}` - {1}")]
-    DecodeError(Cow<'static, str>, wasm_tools::DecodeError),
-    #[error("cannot decode metadata `{0}` - {1}")]
-    FunctionMetadataError(Cow<'static, str>, wasm_tools::FunctionMetadataError),
-    #[error("cannot instantiate `{0}` - cannot add function `{1}` to linker - {2}")]
-    PlumbingImportedFunctionError(Cow<'static, str>, FunctionFqn, Box<dyn Error>),
-    #[error("cannot instantiate `{0}` - {1}")]
-    InstantiationError(Cow<'static, str>, Box<dyn Error>),
-}
-
 // Generate `host_activities::Host` trait
 wasmtime::component::bindgen!({
     path: "../../wit/workflow-engine/",
@@ -79,7 +65,7 @@ impl WorkflowCtx {
     fn replay_or_interrupt(
         &mut self,
         request: ChildExecutionRequest,
-    ) -> Result<SupportedFunctionResult, HostFunctionError> {
+    ) -> Result<SupportedFunctionResult, FunctionError> {
         trace!(
             "Querying history for {request:?}, index: {}, history: {:?}",
             self.events_idx,
@@ -119,7 +105,7 @@ impl WorkflowCtx {
                 }
             }
         }
-        Err(HostFunctionError::Interrupt(request))
+        Err(FunctionError::Interrupt(request))
     }
 }
 #[async_trait::async_trait]
@@ -138,7 +124,7 @@ impl WorkflowCtx {
 }
 
 #[derive(thiserror::Error, Debug)]
-enum HostFunctionError {
+enum FunctionError {
     #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(Cow<'static, str>),
     #[error("interrupt: {}", .0.child_execution_id)]
@@ -151,27 +137,27 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
         config: WorkflowConfig,
         engine: Arc<Engine>,
         db_connection: DB,
-    ) -> Result<Self, WorkflowError> {
+    ) -> Result<Self, WasmFileError> {
         info!("Reading");
         let wasm = std::fs::read(config.wasm_path.as_ref())
-            .map_err(|err| WorkflowError::CannotOpen(config.wasm_path.clone(), err))?;
+            .map_err(|err| WasmFileError::CannotOpen(config.wasm_path.clone(), err))?;
         let (resolve, world_id) = wasm_tools::decode(&wasm)
-            .map_err(|err| WorkflowError::DecodeError(config.wasm_path.clone(), err))?;
+            .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?;
         let exported_ffqns_to_results_len = {
             let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
-                .map_err(|err| WorkflowError::DecodeError(config.wasm_path.clone(), err))?;
+                .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?;
             trace!("Exported functions: {exported_interfaces:?}");
             wasm_tools::functions_and_result_lengths(exported_interfaces).map_err(|err| {
-                WorkflowError::FunctionMetadataError(config.wasm_path.clone(), err)
+                WasmFileError::FunctionMetadataError(config.wasm_path.clone(), err)
             })?
         };
         debug!(?exported_ffqns_to_results_len, "Exported functions");
         let imported_interfaces = {
             let imp_fns_to_metadata = wasm_tools::functions_to_metadata(
                 wasm_tools::imported_ifc_fns(&resolve, &world_id)
-                    .map_err(|err| WorkflowError::DecodeError(config.wasm_path.clone(), err))?,
+                    .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?,
             )
-            .map_err(|err| WorkflowError::FunctionMetadataError(config.wasm_path.clone(), err))?;
+            .map_err(|err| WasmFileError::FunctionMetadataError(config.wasm_path.clone(), err))?;
             let imp_ifcs_to_fn_names =
                 wasm_tools::group_by_ifc_to_fn_names(imp_fns_to_metadata.keys());
             // TODO: remove host functions: imp_ifcs_to_fn_names.remove(HOST_ACTIVITY_IFC_STRING.deref().deref());
@@ -182,10 +168,8 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
         let mut linker = wasmtime::component::Linker::new(&engine);
 
         // Compile the wasm component
-        let component =
-            wasmtime::component::Component::from_binary(&engine, &wasm).map_err(|err| {
-                WorkflowError::InstantiationError(config.wasm_path.clone(), err.into())
-            })?;
+        let component = wasmtime::component::Component::from_binary(&engine, &wasm)
+            .map_err(|err| WasmFileError::CompilationError(config.wasm_path.clone(), err.into()))?;
         // Mock imported functions
         for (ifc_fqn, functions) in &imported_interfaces {
             trace!("Adding imported interface {ifc_fqn} to the linker");
@@ -195,7 +179,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                         ifc_fqn: ifc_fqn.clone(),
                         function_name: function_name.clone(),
                     };
-                    trace!("Adding imported function {ffqn} to the linker");
+                    trace!("Adding mock for imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(&component, function_name, {
                         let ffqn = ffqn.clone();
                         move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx>,
@@ -222,13 +206,13 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                     });
                     if let Err(err) = res {
                         if err.to_string() == format!("import `{function_name}` not found") {
-                            debug!("Skipping plumbing of {ffqn}");
+                            debug!("Skipping mocking of {ffqn}");
                         } else {
-                            return Err(WorkflowError::PlumbingImportedFunctionError(
-                                config.wasm_path.clone(),
-                                ffqn,
-                                err.into(),
-                            ));
+                            return Err(WasmFileError::LinkingError {
+                                file: config.wasm_path.clone(),
+                                reason: Cow::Owned(format!("cannot add mock for imported function {ffqn}")),
+                                err: err.into(),
+                            });
                         }
                     }
                 }
@@ -265,15 +249,15 @@ impl<DB: DbConnection> Worker for WorkflowWorker<DB> {
                 WorkerError::IntermittentError { err, reason } => {
                     match err
                         .source()
-                        .and_then(|source| source.downcast_ref::<HostFunctionError>())
+                        .and_then(|source| source.downcast_ref::<FunctionError>())
                     {
-                        Some(HostFunctionError::NonDeterminismDetected(reason)) => (
+                        Some(FunctionError::NonDeterminismDetected(reason)) => (
                             WorkerError::FatalError(FatalError::NonDeterminismDetected(
                                 reason.clone(),
                             )),
                             version,
                         ),
-                        Some(HostFunctionError::Interrupt(request)) => {
+                        Some(FunctionError::Interrupt(request)) => {
                             (WorkerError::Interrupt(request.clone()), version)
                         }
                         None => (WorkerError::IntermittentError { err, reason }, version),

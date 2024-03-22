@@ -1,4 +1,4 @@
-use crate::EngineConfig;
+use crate::{EngineConfig, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
@@ -20,11 +20,21 @@ use wasmtime::{Store, UpdateDeadline};
 
 type StoreCtx = utils::wasi_http::Ctx;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum RecycleInstancesSetting {
     Enable,
     Disable,
 }
+impl From<bool> for RecycleInstancesSetting {
+    fn from(value: bool) -> Self {
+        if value {
+            Self::Enable
+        } else {
+            Self::Disable
+        }
+    }
+}
+
 type MaybeRecycledInstances =
     Option<Arc<std::sync::Mutex<Vec<(wasmtime::component::Instance, Store<StoreCtx>)>>>>;
 
@@ -65,52 +75,48 @@ pub struct ActivityWorker {
     recycled_instances: MaybeRecycledInstances,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum ActivityError {
-    #[error("cannot open `{0}` - {1}")]
-    CannotOpen(Cow<'static, str>, std::io::Error),
-    #[error("cannot decode `{0}` - {1}")]
-    DecodeError(Cow<'static, str>, wasm_tools::DecodeError),
-    #[error("cannot decode metadata `{0}` - {1}")]
-    FunctionMetadataError(Cow<'static, str>, wasm_tools::FunctionMetadataError),
-    #[error("cannot instantiate `{0}` - {1}")]
-    InstantiationError(Cow<'static, str>, Box<dyn Error>),
-}
-
 impl ActivityWorker {
     #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
         config: ActivityConfig,
         engine: Arc<Engine>,
-    ) -> Result<Self, ActivityError> {
+    ) -> Result<Self, WasmFileError> {
         info!("Reading");
         let wasm = std::fs::read(config.wasm_path.as_ref())
-            .map_err(|err| ActivityError::CannotOpen(config.wasm_path.clone(), err))?;
+            .map_err(|err| WasmFileError::CannotOpen(config.wasm_path.clone(), err))?;
         let (resolve, world_id) = wasm_tools::decode(&wasm)
-            .map_err(|err| ActivityError::DecodeError(config.wasm_path.clone(), err))?;
+            .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?;
         let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
-            .map_err(|err| ActivityError::DecodeError(config.wasm_path.clone(), err))?;
+            .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?;
         let ffqns_to_results_len = wasm_tools::functions_and_result_lengths(exported_interfaces)
-            .map_err(|err| ActivityError::FunctionMetadataError(config.wasm_path.clone(), err))?;
+            .map_err(|err| WasmFileError::FunctionMetadataError(config.wasm_path.clone(), err))?;
 
         debug!(?ffqns_to_results_len, "Decoded functions");
         let mut linker = wasmtime::component::Linker::new(&engine);
-
+        // Link
         wasmtime_wasi::preview2::command::add_to_linker(&mut linker).map_err(|err| {
-            ActivityError::InstantiationError(config.wasm_path.clone(), err.into())
+            WasmFileError::LinkingError {
+                file: config.wasm_path.clone(),
+                reason: Cow::Borrowed("cannot add wasi command"),
+                err: err.into(),
+            }
         })?;
         wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(&mut linker, |t| t)
-            .map_err(|err| {
-                ActivityError::InstantiationError(config.wasm_path.clone(), err.into())
+            .map_err(|err| WasmFileError::LinkingError {
+                file: config.wasm_path.clone(),
+                reason: Cow::Borrowed("cannot add http outgoing_handler"),
+                err: err.into(),
             })?;
         wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t).map_err(
-            |err| ActivityError::InstantiationError(config.wasm_path.clone(), err.into()),
+            |err| WasmFileError::LinkingError {
+                file: config.wasm_path.clone(),
+                reason: Cow::Borrowed("cannot add http types"),
+                err: err.into(),
+            },
         )?;
-        // Compile the wasm component
-        let component =
-            wasmtime::component::Component::from_binary(&engine, &wasm).map_err(|err| {
-                ActivityError::InstantiationError(config.wasm_path.clone(), err.into())
-            })?;
+        // Compile
+        let component = wasmtime::component::Component::from_binary(&engine, &wasm)
+            .map_err(|err| WasmFileError::CompilationError(config.wasm_path.clone(), err.into()))?;
         let recycled_instances = config.recycled_instances.instantiate();
         Ok(Self {
             config,
@@ -168,9 +174,16 @@ impl ActivityWorker {
                     .linker
                     .instantiate_async(&mut store, &self.component)
                     .await
-                    .map_err(|err| WorkerError::IntermittentError {
-                        reason: Cow::Borrowed("cannot instantiate"),
-                        err: err.into(),
+                    .map_err(|err| {
+                        let reason = err.to_string();
+                        if reason.starts_with("maximum concurrent") {
+                            WorkerError::LimitReached(reason)
+                        } else {
+                            WorkerError::IntermittentError {
+                                reason: Cow::Borrowed("cannot instantiate"),
+                                err: err.into(),
+                            }
+                        }
                     })?;
                 (instance, store)
             }
@@ -293,6 +306,7 @@ pub(crate) mod tests {
         borrow::Cow,
         time::{Duration, Instant},
     };
+    use test_utils::env_or_default;
     use tracing::warn;
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
@@ -363,7 +377,6 @@ pub(crate) mod tests {
     async fn perf_fibo_parallel() {
         use scheduler::storage::{AppendRequest, ExecutionEventInner};
         use std::sync::Arc;
-        use test_utils::env_or_default;
 
         const FIBO_INPUT: u8 = 10;
         const EXECUTIONS: usize = 20_000; // release: 70_000
@@ -380,11 +393,7 @@ pub(crate) mod tests {
         test_utils::set_up();
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
-        let recycled_instances = if env_or_default("RECYCLE", RECYCLE) {
-            RecycleInstancesSetting::Enable
-        } else {
-            RecycleInstancesSetting::Disable
-        };
+        let recycled_instances = env_or_default("RECYCLE", RECYCLE).into();
         let permits = env_or_default("PERMITS", PERMITS);
         let batch_size = env_or_default("BATCH_SIZE", BATCH_SIZE);
         let lock_expiry =
@@ -515,8 +524,6 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_direct() {
-        use test_utils::env_or_default;
-
         const FIBO_INPUT: u8 = 10;
         const EXECUTIONS: u32 = 400_000; // release: 800_000
         const RECYCLE: bool = true;
@@ -527,11 +534,7 @@ pub(crate) mod tests {
         test_utils::set_up();
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
-        let recycled_instances = if env_or_default("RECYCLE", RECYCLE) {
-            RecycleInstancesSetting::Enable
-        } else {
-            RecycleInstancesSetting::Disable
-        };
+        let recycled_instances = env_or_default("RECYCLE", RECYCLE).into();
         let lock_expiry =
             Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
         let tasks = env_or_default("TASKS", TASKS);
@@ -631,11 +634,7 @@ pub(crate) mod tests {
                 }
             });
         }
-        let recycled_instances = if recycle {
-            RecycleInstancesSetting::Enable
-        } else {
-            RecycleInstancesSetting::Disable
-        };
+        let recycled_instances: RecycleInstancesSetting = env_or_default("RECYCLE", recycle).into();
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
                 wasm_path: Cow::Borrowed(
@@ -696,5 +695,68 @@ pub(crate) mod tests {
         drop(db_connection);
         exec_task.close().await;
         db_task.close().await;
+    }
+
+    #[cfg(all(test, not(madsim)))] // not happenning on a single thread
+    #[tokio::test]
+    async fn flaky_limit_reached() {
+        const FIBO_INPUT: u8 = 10;
+        const RECYCLE: bool = true;
+        const LOCK_EXPIRY_MILLIS: u64 = 1100;
+        const TASKS: u32 = 10;
+        const MAX_INSTANCES: u32 = 1;
+
+        test_utils::set_up();
+        let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
+        let recycled_instances = env_or_default("RECYCLE", RECYCLE).into();
+        let lock_expiry =
+            Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
+        let tasks = env_or_default("TASKS", TASKS);
+        let max_instances = env_or_default("MAX_INSTANCES", MAX_INSTANCES);
+
+        let mut pool = wasmtime::PoolingAllocationConfig::default();
+        pool.total_component_instances(max_instances);
+        pool.total_stacks(max_instances);
+        pool.total_core_instances(max_instances);
+        pool.total_memories(max_instances);
+        pool.total_tables(max_instances);
+
+        let fibo_worker = ActivityWorker::new_with_config(
+            ActivityConfig {
+                config_id: ConfigId::generate(),
+                wasm_path: Cow::Borrowed(
+                    test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+                ),
+                epoch_millis: 10,
+                recycled_instances,
+            },
+            activity_engine(EngineConfig {
+                allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
+            }),
+        )
+        .unwrap_or_log();
+        let execution_deadline = now() + lock_expiry;
+        // create executions
+        let join_handles = (0..tasks)
+            .map(|_| {
+                let fibo_worker = fibo_worker.clone();
+                tokio::spawn(async move {
+                    fibo_worker
+                        .run(
+                            FIBO_ACTIVITY_FFQN.to_owned(),
+                            Params::from([Val::U8(fibo_input)]),
+                            execution_deadline,
+                        )
+                        .await
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut limit_reached = 0;
+        for jh in join_handles {
+            if matches!(jh.await.unwrap(), Err(WorkerError::LimitReached(_))) {
+                limit_reached += 1;
+            }
+        }
+        assert!(limit_reached > 0, "Limit was not reached");
     }
 }

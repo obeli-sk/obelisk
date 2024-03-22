@@ -300,6 +300,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError>;
 
     async fn obtain_finished_result(
+        // FIXME timeout
         &self,
         execution_id: ExecutionId,
     ) -> Result<FinishedExecutionResult, DbError> {
@@ -316,6 +317,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
     }
 
     async fn wait_for_pending_state(
+        // FIXME timeout
         &self,
         execution_id: ExecutionId,
         expected_pending_state: PendingState,
