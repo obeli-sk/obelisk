@@ -459,4 +459,27 @@ mod tests {
             ulid
         }));
     }
+
+    #[test]
+    fn madsim_getrandom_should_be_deterministic() {
+        let rnd_fn = || async {
+            let mut dst = [0];
+            getrandom::getrandom(&mut dst).unwrap();
+            println!("{dst:?}");
+            dst
+        };
+        let builder = madsim::runtime::Builder::from_env();
+        let seed = builder.seed;
+        for _ in 0..10 {
+            madsim::runtime::Builder {
+                seed,
+                count: 1,
+                jobs: 1,
+                config: madsim::Config::default(),
+                time_limit: None,
+                check: false,
+            }
+            .run(rnd_fn);
+        }
+    }
 }
