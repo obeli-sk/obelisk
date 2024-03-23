@@ -131,7 +131,7 @@ wasmtime-wasi = "19.0"
 wasmtime-wasi-http = "19.0"
 wast = "201.0.0"
 wiremock = "0.6"
-wit-bindgen-rt = "0.20.0"
+wit-bindgen-rt = "0.22.0"
 wit-component = "0.201.0"
 wit-parser = "0.201.0"
 

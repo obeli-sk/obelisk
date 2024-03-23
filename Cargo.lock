@@ -3301,9 +3301,9 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-rt"
-version = "0.20.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "781989c70b3300b1be7ffbc7095e3b56c4f208f0c109cb5d1d943b297918dd8a"
+checksum = "fcb8738270f32a2d6739973cbbb7c1b6dd8959ce515578a6e19165853272ee64"
 
 [[package]]
 name = "wit-component"
