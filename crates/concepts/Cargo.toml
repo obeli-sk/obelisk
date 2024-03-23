@@ -18,5 +18,9 @@ tracing-unwrap.workspace = true
 ulid.workspace = true
 wasmtime.workspace = true
 
+[dev-dependencies]
+insta.workspace = true
+madsim.workspace = true
+
 [lints]
 workspace = true

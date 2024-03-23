@@ -439,3 +439,24 @@ pub mod prefixed_ulid {
     }
 }
 pub use prefixed_ulid::ExecutionId;
+
+#[cfg(all(test, madsim))]
+mod tests {
+    #[test]
+    fn ulid_generation_should_be_deterministic() {
+        let seed: u64 = 0;
+        let builder = madsim::runtime::Builder {
+            seed,
+            count: 1,
+            jobs: 1,
+            config: madsim::Config::default(),
+            time_limit: None,
+            check: false,
+        };
+        insta::assert_snapshot!(builder.run(|| async {
+            let ulid = ulid::Ulid::new();
+            println!("ulid1 {ulid}");
+            ulid
+        }));
+    }
+}

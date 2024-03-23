@@ -26,6 +26,7 @@
               cargo-component
               cargo-expand
               cargo-nextest
+              cargo-insta
               nixpkgs-fmt
               pkg-config
               rustToolchain

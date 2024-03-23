@@ -11,7 +11,7 @@ use scheduler::{
     worker::{Worker, WorkerError},
 };
 use std::collections::HashMap;
-use std::{borrow::Cow, error::Error, fmt::Debug, sync::Arc};
+use std::{borrow::Cow, fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
 use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
@@ -210,7 +210,9 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                         } else {
                             return Err(WasmFileError::LinkingError {
                                 file: config.wasm_path.clone(),
-                                reason: Cow::Owned(format!("cannot add mock for imported function {ffqn}")),
+                                reason: Cow::Owned(format!(
+                                    "cannot add mock for imported function {ffqn}"
+                                )),
                                 err: err.into(),
                             });
                         }
