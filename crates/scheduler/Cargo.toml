@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 concepts.workspace = true
+db.workspace = true
 utils.workspace = true
 val-json.workspace = true
 
@@ -18,7 +19,6 @@ cfg-if.workspace = true
 chrono = { workspace = true, features = ["arbitrary"] }
 derivative.workspace = true
 derive_more.workspace = true
-hashbrown.workspace = true
 indexmap.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
@@ -28,9 +28,11 @@ ulid.workspace = true
 valuable.workspace = true
 
 [dev-dependencies]
+db = { workspace = true, features = ["test"] }
+test-utils.workspace = true
+
 anyhow.workspace = true
 madsim.workspace = true
-test-utils.workspace = true
 
 [lints]
 workspace = true

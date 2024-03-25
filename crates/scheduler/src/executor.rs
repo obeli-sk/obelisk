@@ -1,13 +1,13 @@
-use crate::{
-    storage::{
-        AppendRequest, AsyncResponse, DbConnection, DbConnectionError, DbError,
-        ExecutionEventInner, ExecutorName, HistoryEvent, Version,
-    },
-    worker::{FatalError, Worker, WorkerError, WorkerResult},
-    ExecutionHistory, FinishedExecutionError,
-};
+use crate::worker::{FatalError, Worker, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params};
+use db::{
+    storage::{
+        AppendRequest, AsyncResponse, DbConnection, DbConnectionError, DbError,
+        ExecutionEventInner, ExecutorName, HistoryEvent, SpecificError, Version,
+    },
+    ExecutionHistory, FinishedExecutionError,
+};
 use std::{
     borrow::Cow,
     sync::{
@@ -344,10 +344,8 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                 } else {
                     debug!("Execution failed: {err:?}");
                 }
-                if execution_history.version != new_version {
-                    return Err(DbError::Specific(
-                        crate::storage::SpecificError::VersionMismatch,
-                    ));
+                if execution_history.version() != new_version {
+                    return Err(DbError::Specific(SpecificError::VersionMismatch));
                 }
                 let event = match err {
                     WorkerError::Interrupt(request) => {
@@ -481,18 +479,15 @@ struct Append {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        storage::{
-            inmemory_dao::{tests::TickBasedDbConnection, DbTask},
-            DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
-        },
-        worker::WorkerResult,
-        ExecutionHistory,
-    };
+    use crate::worker::WorkerResult;
     use anyhow::anyhow;
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::{FunctionFqnStr, Params, SupportedFunctionResult};
+    use db::storage::{
+        inmemory_dao::{tick::TickBasedDbConnection, DbTask},
+        DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
+    };
     use indexmap::IndexMap;
     use std::{borrow::Cow, future::Future, sync::Arc};
     use tracing_unwrap::{OptionExt, ResultExt};
@@ -597,7 +592,7 @@ mod tests {
         let execution_history =
             execute(db_connection, exec_config, worker_results_rev, 0, tick_fn).await;
         assert_matches!(
-            execution_history.execution_events.get(2).unwrap(),
+            execution_history.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -631,7 +626,7 @@ mod tests {
             execute(db_connection, exec_config, worker_results_rev, 0, tick_fn).await;
         db_task.close().await;
         assert_matches!(
-            execution_history.execution_events.get(2).unwrap(),
+            execution_history.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -682,7 +677,7 @@ mod tests {
         exec_task.close().await;
         db_task.close().await;
         assert_matches!(
-            execution_history.execution_events.get(2).unwrap(),
+            execution_history.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -729,7 +724,7 @@ mod tests {
         let execution_history = db_connection.get(execution_id).await.unwrap_or_log();
         // check that DB contains Created and Locked events.
         assert_matches!(
-            execution_history.execution_events.get(0).unwrap(),
+            execution_history.get(0).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Created { .. },
                 created_at: actually_created_at,
@@ -737,14 +732,14 @@ mod tests {
             if created_at == *actually_created_at
         );
         let last_created_at = assert_matches!(
-            execution_history.execution_events.get(1).unwrap(),
+            execution_history.get(1).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: updated_at
             } if created_at <= *updated_at
              => *updated_at
         );
-        assert_matches!(execution_history.execution_events.get(2).unwrap(), ExecutionEvent {
+        assert_matches!(execution_history.get(2).unwrap(), ExecutionEvent {
             event: _,
             created_at: executed_at,
         } if *executed_at >= last_created_at);
@@ -806,7 +801,7 @@ mod tests {
         exec_task.close().await;
         db_task.close().await;
         assert_matches!(
-            &execution_history.execution_events.get(2).unwrap(),
+            &execution_history.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::IntermittentFailure {
                     reason,
@@ -816,14 +811,14 @@ mod tests {
             } if *reason == Cow::Borrowed("fail")
         );
         assert_matches!(
-            execution_history.execution_events.get(3).unwrap(),
+            execution_history.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: _
             }
         );
         assert_matches!(
-            execution_history.execution_events.get(4).unwrap(),
+            execution_history.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -897,7 +892,7 @@ mod tests {
         exec_task.close().await;
         db_task.close().await;
         let reason = assert_matches!(
-            &execution_history.execution_events.get(2).unwrap(),
+            &execution_history.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::IntermittentFailure {
                     reason,
@@ -908,14 +903,14 @@ mod tests {
         );
         assert_eq!("Execution returned error result: `None`", reason);
         assert_matches!(
-            execution_history.execution_events.get(3).unwrap(),
+            execution_history.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: _
             }
         );
         assert_matches!(
-            execution_history.execution_events.get(4).unwrap(),
+            execution_history.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::Fallible(

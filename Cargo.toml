@@ -22,6 +22,7 @@
 resolver = "2"
 members = [
     "crates/concepts",
+    "crates/db",
     "crates/scheduler",
     "crates/testing/cargo-component-builder",
     "crates/testing/test-programs/fibo/activity",
@@ -61,6 +62,7 @@ rust-version = "1.73.0"
 [workspace.dependencies]
 cargo-component-builder.path = "crates/testing/cargo-component-builder"
 concepts.path = "crates/concepts"
+db.path = "crates/db"
 scheduler.path = "crates/scheduler/"
 test-programs-fibo-activity-builder.path = "crates/testing/test-programs/fibo/activity/builder"
 test-programs-fibo-workflow-builder.path = "crates/testing/test-programs/fibo/workflow/builder"
@@ -158,3 +160,8 @@ rust.unknown_lints = "deny"
 
 # [lints]
 # workspace = true
+
+[profile.release]
+debug-assertions = true
+overflow-checks = true
+lto = true

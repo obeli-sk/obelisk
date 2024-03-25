@@ -19,8 +19,8 @@ use tracing_unwrap::OptionExt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Version(usize);
 impl Version {
-    #[cfg(test)]
-    pub(crate) fn new(arg: usize) -> Self {
+    #[cfg(any(test, feature = "test"))]
+    pub fn new(arg: usize) -> Self {
         Self(arg)
     }
 }

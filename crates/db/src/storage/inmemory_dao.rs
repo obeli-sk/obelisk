@@ -471,7 +471,10 @@ impl DbTask {
         let abort_handle = tokio::spawn(
             async move {
                 info!("Spawned inmemory db task");
-                let mut task = Self::new();
+                let mut task = Self {
+                    journals: Default::default(),
+                    index: JournalsIndex::default(),
+                };
                 while let Some(request) = client_to_store_receiver.recv().await {
                     let resp = task.tick(request).send_response();
                     if resp.is_err() {
@@ -488,7 +491,8 @@ impl DbTask {
         }
     }
 
-    pub(crate) fn new() -> Self {
+    #[cfg(any(test, feature = "test"))]
+    pub fn new() -> Self {
         Self {
             journals: Default::default(),
             index: JournalsIndex::default(),
@@ -889,25 +893,15 @@ impl DbTask {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
-    use super::*;
-    use crate::{
-        storage::{ExecutionEvent, HistoryEvent},
-        FinishedExecutionResult,
-    };
+#[cfg(any(test, feature = "test"))]
+pub mod tick {
     use assert_matches::assert_matches;
-    use concepts::{ExecutionId, FunctionFqnStr};
-    use std::time::{Duration, Instant};
-    use test_utils::env_or_default;
-    use tokio::time::sleep;
-    use tracing::info;
-    use tracing_unwrap::ResultExt;
-    use utils::time::now;
+
+    use super::*;
 
     #[derive(Clone)]
-    pub(crate) struct TickBasedDbConnection {
-        pub(crate) db_task: Arc<std::sync::Mutex<DbTask>>,
+    pub struct TickBasedDbConnection {
+        pub db_task: Arc<std::sync::Mutex<DbTask>>,
     }
 
     #[async_trait]
@@ -1016,6 +1010,25 @@ pub(crate) mod tests {
                 .map_err(|err| DbError::Specific(err))
         }
     }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use self::tick::TickBasedDbConnection;
+
+    use super::*;
+    use crate::{
+        storage::{ExecutionEvent, HistoryEvent},
+        FinishedExecutionResult,
+    };
+    use assert_matches::assert_matches;
+    use concepts::{ExecutionId, FunctionFqnStr};
+    use std::time::{Duration, Instant};
+    use test_utils::env_or_default;
+    use tokio::time::sleep;
+    use tracing::info;
+    use tracing_unwrap::ResultExt;
+    use utils::time::now;
 
     fn set_up() {
         test_utils::set_up();

@@ -4,12 +4,10 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ConfigId, JoinSetId};
 use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
-use scheduler::storage::{AsyncResponse, DbConnection};
+use db::storage::{AsyncResponse, DbConnection};
+use db::storage::{HistoryEvent, Version};
 use scheduler::worker::{ChildExecutionRequest, FatalError};
-use scheduler::{
-    storage::{HistoryEvent, Version},
-    worker::{Worker, WorkerError},
-};
+use scheduler::worker::{Worker, WorkerError};
 use std::collections::HashMap;
 use std::{borrow::Cow, fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
@@ -403,10 +401,8 @@ mod tests {
     use super::*;
     use crate::{activity_worker::tests::spawn_activity_fibo, EngineConfig};
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, FunctionFqnStr, Params};
-    use scheduler::{
-        executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
-        storage::{inmemory_dao::DbTask, journal::PendingState, DbConnection},
-    };
+    use db::storage::{inmemory_dao::DbTask, journal::PendingState, DbConnection};
+    use scheduler::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::{borrow::Cow, time::Duration};
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;

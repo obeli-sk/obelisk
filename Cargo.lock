@@ -602,6 +602,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "db"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "assert_matches",
+ "async-trait",
+ "chrono",
+ "concepts",
+ "derivative",
+ "derive_more",
+ "hashbrown 0.14.3",
+ "madsim",
+ "madsim-tokio",
+ "test-utils",
+ "thiserror",
+ "tracing",
+ "tracing-unwrap",
+ "utils",
+]
+
+[[package]]
 name = "debugid"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1781,9 +1802,9 @@ dependencies = [
  "cfg-if",
  "chrono",
  "concepts",
+ "db",
  "derivative",
  "derive_more",
- "hashbrown 0.14.3",
  "indexmap",
  "madsim",
  "madsim-tokio",
@@ -2664,6 +2685,7 @@ dependencies = [
  "cfg-if",
  "chrono",
  "concepts",
+ "db",
  "derive_more",
  "futures-util",
  "indexmap",

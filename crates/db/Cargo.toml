@@ -1,5 +1,5 @@
 [package]
-name = "wasm-workers"
+name = "db"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -7,40 +7,27 @@ rust-version.workspace = true
 
 [dependencies]
 concepts.workspace = true
-db.workspace = true
-scheduler.workspace = true
-utils.workspace = true
-val-json.workspace = true
 
 arbitrary.workspace = true
 assert_matches.workspace = true
-async-channel.workspace = true
 async-trait.workspace = true
-cfg-if.workspace = true
 chrono = { workspace = true, features = ["arbitrary"] }
+derivative.workspace = true
 derive_more.workspace = true
-indexmap.workspace = true
+hashbrown.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
 tracing-unwrap.workspace = true
 tracing.workspace = true
-ulid.workspace = true
-valuable.workspace = true
-wasmtime-wasi-http.workspace = true
-wasmtime-wasi.workspace = true
-wasmtime.workspace = true
 
 [dev-dependencies]
-async-trait.workspace = true
-futures-util.workspace = true
 madsim.workspace = true
-rstest.workspace = true
-scheduler.workspace = true
-test-programs-fibo-activity-builder.workspace = true
-test-programs-fibo-workflow-builder.workspace = true
-test-programs-sleep-activity-builder.workspace = true
 test-utils.workspace = true
 utils.workspace = true
+
+
+[features]
+test = []
 
 [lints]
 workspace = true

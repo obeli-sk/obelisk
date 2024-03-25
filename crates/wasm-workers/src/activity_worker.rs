@@ -4,11 +4,9 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
 use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
+use db::storage::{HistoryEvent, Version};
 use scheduler::worker::FatalError;
-use scheduler::{
-    storage::{HistoryEvent, Version},
-    worker::{Worker, WorkerError},
-};
+use scheduler::worker::{Worker, WorkerError};
 use std::collections::HashMap;
 use std::{borrow::Cow, fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
@@ -298,10 +296,8 @@ pub(crate) mod tests {
     use crate::EngineConfig;
     use assert_matches::assert_matches;
     use concepts::{ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult};
-    use scheduler::{
-        executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
-        storage::{inmemory_dao::DbTask, DbConnection},
-    };
+    use db::storage::{inmemory_dao::DbTask, DbConnection};
+    use scheduler::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::{
         borrow::Cow,
         time::{Duration, Instant},
@@ -375,7 +371,7 @@ pub(crate) mod tests {
     #[cfg(all(test, not(madsim)))] // https://github.com/madsim-rs/madsim/issues/198
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_parallel() {
-        use scheduler::storage::{AppendRequest, ExecutionEventInner};
+        use db::storage::{AppendRequest, ExecutionEventInner};
         use std::sync::Arc;
 
         const FIBO_INPUT: u8 = 10;
@@ -606,14 +602,14 @@ pub(crate) mod tests {
 
     #[cfg(all(test, not(madsim)))] // would need wasmtime to use madsim
     #[rstest::rstest]
-    #[case(10, 100, Err(scheduler::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
+    #[case(10, 100, Err(db::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
     #[case(10, 10, Ok(SupportedFunctionResult::None))] // 0.1s -> Ok
-    #[case(1500, 1, Err(scheduler::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
+    #[case(1500, 1, Err(db::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
     #[tokio::test]
     async fn sleep_should_produce_intermittent_timeout(
         #[case] sleep_millis: u64,
         #[case] sleep_iterations: u32,
-        #[case] expected: scheduler::FinishedExecutionResult,
+        #[case] expected: db::FinishedExecutionResult,
         #[values(false, true)] recycle: bool,
     ) {
         const SLEEP_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:sleep/sleep", "sleep-loop"); // func(millis: u64, iterations: u32);
