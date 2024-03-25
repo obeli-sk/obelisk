@@ -431,6 +431,8 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::ZERO,
+            cleanup_expired_locks: false,
+            clock_fn: || now(),
         };
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config.clone(), None)
     }

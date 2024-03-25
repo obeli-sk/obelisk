@@ -21,19 +21,20 @@ use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::now;
 
 #[derive(Debug, Clone)]
-pub struct ExecConfig {
+pub struct ExecConfig<C: Fn() -> DateTime<Utc>> {
     pub ffqns: Vec<FunctionFqn>,
     pub lock_expiry: Duration,
     pub lock_expiry_leeway: Duration,
     pub tick_sleep: Duration,
     pub batch_size: u32,
-    //TODO : pub cleanup_expired_locks: bool,
+    pub cleanup_expired_locks: bool,
+    pub clock_fn: C,
 }
 
-pub struct ExecTask<DB: DbConnection, W: Worker> {
+pub struct ExecTask<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Clone> {
     db_connection: DB,
     worker: W,
-    config: ExecConfig,
+    config: ExecConfig<C>,
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_name: ExecutorName,
 }
@@ -75,11 +76,13 @@ impl Drop for ExecutorTaskHandle {
     }
 }
 
-impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
+impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static>
+    ExecTask<DB, W, C>
+{
     pub fn spawn_new(
         db_connection: DB,
         worker: W,
-        config: ExecConfig,
+        config: ExecConfig<C>,
         task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> ExecutorTaskHandle {
         let executor_id = ExecutorId::generate();
@@ -93,7 +96,7 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
         let abort_handle = tokio::spawn(
             async move {
                 info!("Spawned executor");
-                let mut task = Self {
+                let task = Self {
                     db_connection,
                     worker,
                     config,
@@ -160,7 +163,7 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
 
     #[instrument(skip_all)]
     async fn tick(
-        &mut self,
+        &self,
         request: ExecTickRequest,
     ) -> Result<Vec<ExecutionProgress>, DbConnectionError> {
         let locked_executions = {
@@ -197,6 +200,7 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                 let execution_id = execution_id.clone();
                 let worker = self.worker.clone();
                 let db_connection = self.db_connection.clone();
+                let clock_fn = self.config.clock_fn.clone();
                 let span = info_span!("worker", %execution_id, ffqn = %locked_execution.ffqn,);
                 // TODO: wait for termination of all spawned tasks in `close`.
                 tokio::spawn(
@@ -210,6 +214,7 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                             locked_execution.params,
                             locked_execution.event_history,
                             execution_deadline,
+                            clock_fn,
                         )
                         .await;
                         if let Err(err) = res {
@@ -225,6 +230,15 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
                 abort_handle: join_handle.abort_handle(),
             });
         }
+        if self.config.cleanup_expired_locks {
+            if let Err(err) = self
+                .db_connection
+                .cleanup_expired_locks(request.executed_at)
+                .await
+            {
+                warn!("Failed to clean up expired locks: {err:?}");
+            }
+        }
         Ok(executions)
     }
 
@@ -238,8 +252,10 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
         params: Params,
         event_history: Vec<HistoryEvent>,
         execution_deadline: DateTime<Utc>,
+        clock_fn: C,
     ) -> Result<(), DbError> {
-        trace!("Starting");
+        trace!(%version, ?params, ?event_history, "Starting");
+        // TODO: move timeout here
         let worker_result = worker
             .run(
                 execution_id.clone(),
@@ -256,6 +272,7 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
             execution_id.clone(),
             worker_result,
             execution_history,
+            clock_fn(),
         ) {
             Ok(append) => {
                 db_connection
@@ -281,8 +298,8 @@ impl<DB: DbConnection, W: Worker> ExecTask<DB, W> {
         execution_id: ExecutionId,
         worker_result: WorkerResult,
         execution_history: ExecutionHistory,
+        created_at: DateTime<Utc>,
     ) -> Result<Append, DbError> {
-        let created_at = now();
         Ok(match worker_result {
             Ok((result, new_version)) => {
                 let finished_res;
@@ -489,7 +506,7 @@ mod tests {
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
     };
     use indexmap::IndexMap;
-    use std::{borrow::Cow, future::Future, sync::Arc};
+    use std::{borrow::Cow, fmt::Debug, future::Future, sync::Arc};
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
 
@@ -501,14 +518,12 @@ mod tests {
     type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent>, WorkerResult)>>>;
 
-    #[derive(Clone, derive_more::Display)]
-    #[display(fmt = "SimpleWorker")]
-    struct SimpleWorker<DB: DbConnection> {
-        db_connection: DB,
+    #[derive(Clone, Debug)]
+    struct SimpleWorker {
         worker_results_rev: SimpleWorkerResultMap,
     }
 
-    impl<DB: DbConnection> valuable::Valuable for SimpleWorker<DB> {
+    impl valuable::Valuable for SimpleWorker {
         fn as_value(&self) -> valuable::Value<'_> {
             "SimpleWorker".as_value()
         }
@@ -517,13 +532,13 @@ mod tests {
     }
 
     #[async_trait]
-    impl<DB: DbConnection> Worker for SimpleWorker<DB> {
+    impl Worker for SimpleWorker {
         async fn run(
             &self,
             _execution_id: ExecutionId,
             ffqn: FunctionFqn,
             _params: Params,
-            events: Vec<HistoryEvent>,
+            eh: Vec<HistoryEvent>,
             version: Version,
             _execution_deadline: DateTime<Utc>,
         ) -> WorkerResult {
@@ -534,29 +549,33 @@ mod tests {
                 .unwrap_or_log()
                 .pop()
                 .unwrap_or_log();
+            trace!(%expected_version, %version, ?expected_eh, ?eh, "Running SimpleWorker");
             assert_eq!(expected_version, version);
-            assert_eq!(expected_eh, events);
+            assert_eq!(expected_eh, eh);
             worker_result
         }
     }
 
-    async fn tick_fn<DB: DbConnection>(
+    async fn tick_fn<
+        DB: DbConnection,
+        W: Worker + Debug,
+        C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static,
+    >(
         db_connection: DB,
-        config: ExecConfig,
-        worker_results_rev: SimpleWorkerResultMap,
+        config: ExecConfig<C>,
+        worker: W,
+        executed_at: DateTime<Utc>,
     ) {
-        let mut executor = ExecTask {
+        trace!("Ticking with {worker:?}");
+        let executor = ExecTask {
             db_connection: db_connection.clone(),
-            worker: SimpleWorker {
-                db_connection: db_connection.clone(),
-                worker_results_rev,
-            },
+            worker,
             config,
             task_limiter: None,
             executor_name: Arc::new("SimpleWorker".to_string()),
         };
         let mut execution_progress_vec = executor
-            .tick(ExecTickRequest { executed_at: now() })
+            .tick(ExecTickRequest { executed_at })
             .await
             .unwrap_or_log();
         loop {
@@ -569,14 +588,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stochastic_execute_tick_based() {
+    async fn execute_tick_based() {
         set_up();
+        let created_at = now();
+        let clock_fn = move || created_at;
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
-            tick_sleep: Duration::from_millis(100),
+            tick_sleep: Duration::ZERO,
+            cleanup_expired_locks: false,
+            clock_fn: clock_fn.clone(),
         };
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
@@ -589,28 +612,39 @@ mod tests {
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
-        let execution_history =
-            execute(db_connection, exec_config, worker_results_rev, 0, tick_fn).await;
+        let execution_history = create_and_tick(
+            created_at,
+            db_connection,
+            exec_config,
+            SimpleWorker { worker_results_rev },
+            0,
+            created_at,
+            tick_fn,
+        )
+        .await;
         assert_matches!(
             execution_history.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
                 },
-                created_at: _,
-            }
+                created_at: finished_at,
+            } if created_at == *finished_at
         );
     }
 
     #[tokio::test]
     async fn stochastic_execute_executor_tick_based_db_task_based() {
         set_up();
+        let clock_fn = || now();
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::from_millis(100),
+            cleanup_expired_locks: false,
+            clock_fn: clock_fn.clone(),
         };
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
@@ -622,8 +656,17 @@ mod tests {
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
-        let execution_history =
-            execute(db_connection, exec_config, worker_results_rev, 0, tick_fn).await;
+        let created_at = now();
+        let execution_history = create_and_tick(
+            created_at,
+            db_connection,
+            exec_config,
+            SimpleWorker { worker_results_rev },
+            0,
+            now(),
+            tick_fn,
+        )
+        .await;
         db_task.close().await;
         assert_matches!(
             execution_history.get(2).unwrap(),
@@ -644,7 +687,9 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
-            tick_sleep: Duration::from_millis(100),
+            tick_sleep: Duration::ZERO,
+            cleanup_expired_locks: false,
+            clock_fn: || now(),
         };
 
         let mut db_task = DbTask::spawn_new(1);
@@ -657,21 +702,23 @@ mod tests {
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
         let worker = SimpleWorker {
-            db_connection: db_task.as_db_connection().unwrap_or_log(),
             worker_results_rev: worker_results_rev.clone(),
         };
         let exec_task = ExecTask::spawn_new(
             db_task.as_db_connection().unwrap_or_log(),
-            worker,
+            worker.clone(),
             exec_config.clone(),
             None,
         );
-        let execution_history = execute(
+        let created_at = now();
+        let execution_history = create_and_tick(
+            created_at,
             db_task.as_db_connection().unwrap_or_log(),
             exec_config,
-            worker_results_rev,
+            worker,
             0,
-            |_, _, _| tokio::time::sleep(Duration::from_secs(1)),
+            now(),
+            |_, _, _, _| tokio::time::sleep(Duration::from_secs(1)),
         )
         .await;
         exec_task.close().await;
@@ -687,20 +734,23 @@ mod tests {
         );
     }
 
-    async fn execute<
+    async fn create_and_tick<
         DB: DbConnection,
-        T: FnMut(DB, ExecConfig, SimpleWorkerResultMap) -> F,
+        W: Worker,
+        C: Fn() -> DateTime<Utc> + Send + Clone + 'static,
+        T: FnMut(DB, ExecConfig<C>, W, DateTime<Utc>) -> F,
         F: Future<Output = ()>,
     >(
+        created_at: DateTime<Utc>,
         db_connection: DB,
-        exec_config: ExecConfig,
-        worker_results_rev: SimpleWorkerResultMap,
+        exec_config: ExecConfig<C>,
+        worker: W,
         max_retries: u32,
+        executed_at: DateTime<Utc>,
         mut tick: T,
     ) -> ExecutionHistory {
         // Create an execution
         let execution_id = ExecutionId::generate();
-        let created_at = now();
         db_connection
             .create(
                 created_at,
@@ -718,10 +768,12 @@ mod tests {
         tick(
             db_connection.clone(),
             exec_config.clone(),
-            worker_results_rev.clone(),
+            worker,
+            executed_at,
         )
         .await;
         let execution_history = db_connection.get(execution_id).await.unwrap_or_log();
+        debug!("Execution history after tick: {execution_history:?}");
         // check that DB contains Created and Locked events.
         assert_matches!(
             execution_history.get(0).unwrap(),
@@ -731,36 +783,40 @@ mod tests {
             }
             if created_at == *actually_created_at
         );
-        let last_created_at = assert_matches!(
+        let locked_at = assert_matches!(
             execution_history.get(1).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
-                created_at: updated_at
-            } if created_at <= *updated_at
-             => *updated_at
+                created_at: locked_at
+            } if created_at <= *locked_at
+             => *locked_at
         );
         assert_matches!(execution_history.get(2).unwrap(), ExecutionEvent {
             event: _,
             created_at: executed_at,
-        } if *executed_at >= last_created_at);
+        } if *executed_at >= locked_at);
         execution_history
     }
 
     #[tokio::test]
-    async fn stochastic_retry_on_worker_error() {
+    async fn worker_error_should_trigger_an_execution_retry() {
         set_up();
+        let created_at = now();
+        let clock_fn = move || created_at;
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
-            tick_sleep: Duration::from_millis(100),
+            tick_sleep: Duration::ZERO,
+            cleanup_expired_locks: false,
+            clock_fn: clock_fn,
         };
-
-        let mut db_task = DbTask::spawn_new(1);
-        let worker_results_rev = {
-            let mut worker_results_rev = IndexMap::new();
-            worker_results_rev.insert(
+        let db_connection = TickBasedDbConnection {
+            db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
+        };
+        let worker = SimpleWorker {
+            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(2),
                 (
                     vec![],
@@ -772,50 +828,48 @@ mod tests {
                         Version::new(2),
                     )),
                 ),
-            );
-            worker_results_rev.insert(
-                Version::new(4),
-                (vec![], Ok((SupportedFunctionResult::None, Version::new(4)))),
-            );
-            worker_results_rev.reverse();
-            Arc::new(std::sync::Mutex::new(worker_results_rev))
+            )]))),
         };
-        let worker = SimpleWorker {
-            db_connection: db_task.as_db_connection().unwrap_or_log(),
-            worker_results_rev: worker_results_rev.clone(),
-        };
-        let exec_task = ExecTask::spawn_new(
-            db_task.as_db_connection().unwrap_or_log(),
-            worker,
+        let execution_history = create_and_tick(
+            created_at,
+            db_connection.clone(),
             exec_config.clone(),
-            None,
-        );
-        let execution_history = execute(
-            db_task.as_db_connection().unwrap_or_log(),
-            exec_config,
-            worker_results_rev,
+            worker,
             1,
-            |_, _, _| tokio::time::sleep(Duration::from_secs(1)),
+            created_at,
+            tick_fn,
         )
         .await;
-        exec_task.close().await;
-        db_task.close().await;
+        assert_eq!(3, execution_history.len());
         assert_matches!(
             &execution_history.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::IntermittentFailure {
                     reason,
-                    expires_at: _
+                    expires_at: _ // TODO: check
                 },
-                created_at: _,
-            } if *reason == Cow::Borrowed("fail")
+                created_at: at,
+            } if *reason == Cow::Borrowed("fail") && *at == created_at
         );
+        // tick again to finish the execution
+        let worker = SimpleWorker {
+            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
+                Version::new(4),
+                (vec![], Ok((SupportedFunctionResult::None, Version::new(4)))),
+            )]))),
+        };
+        tick_fn(db_connection.clone(), exec_config, worker, created_at).await;
+        let execution_history = db_connection
+            .get(execution_history.execution_id())
+            .await
+            .unwrap_or_log();
+        debug!("Execution history after second tick: {execution_history:?}");
         assert_matches!(
             execution_history.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
-                created_at: _
-            }
+                created_at: at
+            } if *at == created_at
         );
         assert_matches!(
             execution_history.get(4).unwrap(),
@@ -823,26 +877,30 @@ mod tests {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
                 },
-                created_at: _,
-            }
+                created_at: finished_at,
+            } if *finished_at == created_at
         );
     }
 
     #[tokio::test]
-    async fn stochastic_retry_on_execution_returning_err() {
+    async fn execution_returning_err_should_be_retried() {
         set_up();
+        let created_at = now();
+        let clock_fn = move || created_at;
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
-            tick_sleep: Duration::from_millis(100),
+            tick_sleep: Duration::ZERO,
+            cleanup_expired_locks: false,
+            clock_fn,
         };
-
-        let mut db_task = DbTask::spawn_new(1);
-        let worker_results_rev = {
-            let mut worker_results_rev = IndexMap::new();
-            worker_results_rev.insert(
+        let db_connection = TickBasedDbConnection {
+            db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
+        };
+        let worker = SimpleWorker {
+            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(2),
                 (
                     vec![],
@@ -854,8 +912,34 @@ mod tests {
                         Version::new(2),
                     )),
                 ),
-            );
-            worker_results_rev.insert(
+            )]))),
+        };
+        let execution_history = create_and_tick(
+            created_at,
+            db_connection.clone(),
+            exec_config.clone(),
+            worker,
+            1,
+            created_at,
+            tick_fn,
+        )
+        .await;
+        assert_eq!(3, execution_history.len());
+        let reason = assert_matches!(
+            &execution_history.get(2).unwrap(),
+            ExecutionEvent {
+                event: ExecutionEventInner::IntermittentFailure {
+                    reason,
+                    expires_at: _
+                },
+                created_at: at,
+            } if *at == created_at
+             => reason.to_string()
+        );
+        assert_eq!("Execution returned error result: `None`", reason);
+        // tick again to finish the execution
+        let worker = SimpleWorker {
+            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(4),
                 (
                     vec![],
@@ -867,47 +951,22 @@ mod tests {
                         Version::new(4),
                     )),
                 ),
-            );
-            worker_results_rev.reverse();
-            Arc::new(std::sync::Mutex::new(worker_results_rev))
+            )]))),
         };
-        let worker = SimpleWorker {
-            db_connection: db_task.as_db_connection().unwrap_or_log(),
-            worker_results_rev: worker_results_rev.clone(),
-        };
-        let exec_task = ExecTask::spawn_new(
-            db_task.as_db_connection().unwrap_or_log(),
-            worker,
-            exec_config.clone(),
-            None,
-        );
-        let execution_history = execute(
-            db_task.as_db_connection().unwrap_or_log(),
-            exec_config,
-            worker_results_rev,
-            1,
-            |_, _, _| tokio::time::sleep(Duration::from_secs(1)),
-        )
-        .await;
-        exec_task.close().await;
-        db_task.close().await;
-        let reason = assert_matches!(
-            &execution_history.get(2).unwrap(),
-            ExecutionEvent {
-                event: ExecutionEventInner::IntermittentFailure {
-                    reason,
-                    expires_at: _
-                },
-                created_at: _,
-            } => reason.to_string()
-        );
-        assert_eq!("Execution returned error result: `None`", reason);
+        tick_fn(db_connection.clone(), exec_config, worker, created_at).await;
+        let execution_history = db_connection
+            .get(execution_history.execution_id())
+            .await
+            .unwrap_or_log();
+        debug!("Execution history after second tick: {execution_history:?}");
+
+        assert_eq!(5, execution_history.len());
         assert_matches!(
             execution_history.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
-                created_at: _
-            }
+                created_at: locked_at
+            }  if *locked_at == created_at
         );
         assert_matches!(
             execution_history.get(4).unwrap(),
@@ -918,8 +977,8 @@ mod tests {
                         Ok(())
                     )),
                 },
-                created_at: _,
-            }
+                created_at: finished_at,
+            } if *finished_at == created_at
         );
     }
 }

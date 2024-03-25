@@ -249,7 +249,7 @@ pub enum ParamsParsingError {
     #[error("error parsing {idx}-th parameter: `{err:?}`")]
     ParameterError {
         idx: usize,
-        err: Box<dyn Error + Send>,
+        err: Box<dyn Error + Send + Sync>,
     },
 }
 

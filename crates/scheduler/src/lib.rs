@@ -21,7 +21,7 @@ pub mod worker {
         #[error("intermittent error: `{reason}`, {err:?}")]
         IntermittentError {
             reason: Cow<'static, str>,
-            err: Box<dyn Error + Send>,
+            err: Box<dyn Error + Send + Sync>,
         },
         #[error("Limit reached: {0}")]
         LimitReached(String),

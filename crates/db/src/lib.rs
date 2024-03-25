@@ -10,6 +10,7 @@ pub mod storage;
 
 #[derive(Debug)]
 pub struct ExecutionHistory {
+    execution_id: ExecutionId,
     execution_events: Vec<ExecutionEvent>,
     version: Version,
     pending_state: PendingState,
@@ -64,6 +65,14 @@ impl ExecutionHistory {
 
     pub fn get(&self, idx: usize) -> Option<&ExecutionEvent> {
         self.execution_events.get(idx)
+    }
+
+    pub fn len(&self) -> usize {
+        self.execution_events.len()
+    }
+
+    pub fn execution_id(&self) -> ExecutionId {
+        self.execution_id.clone()
     }
 }
 

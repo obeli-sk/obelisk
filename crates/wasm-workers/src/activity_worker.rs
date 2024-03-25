@@ -331,6 +331,8 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::ZERO,
+            cleanup_expired_locks: false,
+            clock_fn: || now(),
         };
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config.clone(), None)
     }
@@ -443,12 +445,12 @@ pub(crate) mod tests {
         let fibo_ffqn = FIBO_ACTIVITY_FFQN.to_owned();
         let params = Params::from([Val::U8(fibo_input)]);
 
-        let now = now();
+        let created_at = now();
         let mut execution_ids = Vec::with_capacity(executions);
         for _ in 0..executions {
             let execution_id = ExecutionId::generate();
             let req = AppendRequest {
-                created_at: now,
+                created_at,
                 event: ExecutionEventInner::Created {
                     ffqn: fibo_ffqn.clone(),
                     params: params.clone(),
@@ -485,6 +487,8 @@ pub(crate) mod tests {
                     lock_expiry,
                     lock_expiry_leeway: Duration::from_millis(10),
                     tick_sleep,
+                    cleanup_expired_locks: false,
+                    clock_fn: || now(),
                 };
                 ExecTask::spawn_new(
                     db_task.as_db_connection().unwrap_or_log(),
@@ -650,6 +654,8 @@ pub(crate) mod tests {
             lock_expiry: LOCK_EXPIRY,
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::from_millis(10),
+            cleanup_expired_locks: false,
+            clock_fn: || now(),
         };
         let exec_task = ExecTask::spawn_new(
             db_task.as_db_connection().unwrap_or_log(),

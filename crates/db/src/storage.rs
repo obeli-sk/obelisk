@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing_unwrap::OptionExt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
 pub struct Version(usize);
 impl Version {
     #[cfg(any(test, feature = "test"))]
@@ -601,6 +601,7 @@ pub mod journal {
 
         pub fn as_execution_history(&self) -> ExecutionHistory {
             ExecutionHistory {
+                execution_id: self.execution_id.clone(),
                 execution_events: self.execution_events.iter().cloned().collect(),
                 version: self.version(),
                 pending_state: self.pending_state.clone(),
