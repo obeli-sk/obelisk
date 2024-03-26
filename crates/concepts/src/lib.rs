@@ -414,22 +414,16 @@ pub mod prefixed_ulid {
         pub struct Exr;
         pub struct Conf;
         pub struct JoinSet;
+        pub struct Run;
     }
 
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
     pub type ConfigId = PrefixedUlid<prefix::Conf>;
     pub type JoinSetId = PrefixedUlid<prefix::JoinSet>;
     pub type ExecutionId = PrefixedUlid<prefix::Exe>;
+    pub type RunId = PrefixedUlid<prefix::Run>;
 
-    impl<'a> Arbitrary<'a> for ExecutionId {
-        fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-            Ok(Self::new(ulid::Ulid::from_parts(
-                u.arbitrary()?,
-                u.arbitrary()?,
-            )))
-        }
-    }
-    impl<'a> Arbitrary<'a> for JoinSetId {
+    impl<'a, T> Arbitrary<'a> for PrefixedUlid<T> {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
             Ok(Self::new(ulid::Ulid::from_parts(
                 u.arbitrary()?,

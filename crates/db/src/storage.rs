@@ -7,6 +7,7 @@ use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::JoinSetId;
+use concepts::prefixed_ulid::RunId;
 use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::Params;
@@ -54,6 +55,7 @@ pub enum ExecutionEventInner {
     #[display(fmt = "Locked(`{lock_expires_at}`, `{executor_name}`)")]
     Locked {
         executor_name: ExecutorName,
+        run_id: RunId,
         lock_expires_at: DateTime<Utc>,
     },
     // Created by the executor holding last lock.
@@ -69,7 +71,7 @@ pub enum ExecutionEventInner {
     // Processed by a scheduler.
     // After expiry interpreted as pending.
     #[display(fmt = "IntermittentTimeout(`{expires_at}`)")]
-    IntermittentTimeout { expires_at: DateTime<Utc> }, // TODO: Add executor name
+    IntermittentTimeout { expires_at: DateTime<Utc> },
     // Created by the executor holding last lock.
     // Processed by a scheduler if a parent execution needs to be notified,
     // also when
@@ -218,6 +220,7 @@ pub type LockResponse = (Vec<HistoryEvent>, Version);
 #[derive(Debug, Clone)]
 pub struct LockedExecution {
     pub execution_id: ExecutionId,
+    pub run_id: RunId,
     pub version: Version,
     pub ffqn: FunctionFqn,
     pub params: Params,
@@ -278,6 +281,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         &self,
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
+        run_id: RunId,
         version: Version,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
@@ -339,7 +343,10 @@ pub mod journal {
     use crate::storage::{ExecutionHistory, SpecificError, Version};
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
-    use concepts::{prefixed_ulid::JoinSetId, FunctionFqn, Params};
+    use concepts::{
+        prefixed_ulid::{JoinSetId, RunId},
+        FunctionFqn, Params,
+    };
     use std::{borrow::Cow, collections::VecDeque, time::Duration};
     use tracing_unwrap::OptionExt;
 
@@ -419,6 +426,7 @@ pub mod journal {
             if let ExecutionEventInner::Locked {
                 executor_name,
                 lock_expires_at,
+                run_id,
             } = &event
             {
                 if *lock_expires_at <= created_at {
@@ -438,10 +446,11 @@ pub mod journal {
                         }
                     }
                     PendingState::Locked {
-                        executor_name: locked_by,
+                        executor_name: currently_locked_by,
                         lock_expires_at,
+                        run_id: current_run_id,
                     } => {
-                        if executor_name == locked_by {
+                        if executor_name == currently_locked_by && run_id == current_run_id {
                             // we allow extending the lock
                         } else if *lock_expires_at <= created_at {
                             // we allow locking after the old lock expired
@@ -504,10 +513,12 @@ pub mod journal {
                         ExecutionEventInner::Locked {
                             executor_name,
                             lock_expires_at,
+                            run_id,
                         },
                     ) => Some(PendingState::Locked {
                         executor_name: executor_name.clone(),
                         lock_expires_at: *lock_expires_at,
+                        run_id: run_id.clone(),
                     }),
 
                     (_, ExecutionEventInner::IntermittentFailure { expires_at, .. }) => {
@@ -625,6 +636,7 @@ pub mod journal {
         #[display(fmt = "Locked(`{lock_expires_at}`,`{executor_name}`)")]
         Locked {
             executor_name: ExecutorName,
+            run_id: RunId,
             lock_expires_at: DateTime<Utc>,
         },
         #[display(fmt = "PendingAt(`{_0}`)")]

@@ -202,7 +202,9 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                 let worker = self.worker.clone();
                 let db_connection = self.db_connection.clone();
                 let clock_fn = self.config.clock_fn.clone();
-                let span = info_span!("worker", %execution_id, ffqn = %locked_execution.ffqn,);
+                let run_id = locked_execution.run_id;
+                let span =
+                    info_span!("worker", %execution_id, %run_id, ffqn = %locked_execution.ffqn,);
                 // TODO: wait for termination of all spawned tasks in `close`.
                 tokio::spawn(
                     async move {

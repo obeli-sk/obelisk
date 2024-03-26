@@ -15,7 +15,7 @@ use crate::storage::{
 use crate::FinishedExecutionError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::JoinSetId;
+use concepts::prefixed_ulid::{JoinSetId, RunId};
 use concepts::{ExecutionId, FunctionFqn, Params};
 use derivative::Derivative;
 use hashbrown::{HashMap, HashSet};
@@ -89,6 +89,7 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
+        run_id: RunId,
         version: Version,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
@@ -97,6 +98,7 @@ impl DbConnection for InMemoryDbConnection {
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
             created_at,
             execution_id,
+            run_id,
             version,
             executor_name,
             lock_expires_at,
@@ -296,6 +298,7 @@ enum ExecutionSpecificRequest {
     Lock {
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
+        run_id: RunId,
         version: Version,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
@@ -590,6 +593,7 @@ impl DbTask {
                 scheduled_at: scheduled_at,
                 retry_exp_backoff: journal.retry_exp_backoff(),
                 max_retries: journal.max_retries(),
+                run_id: RunId::generate(),
             };
             payload.push(item);
         }
@@ -599,6 +603,7 @@ impl DbTask {
                 .lock(
                     created_at,
                     row.execution_id.clone(),
+                    row.run_id.clone(),
                     row.version,
                     executor_name.clone(),
                     lock_expires_at,
@@ -628,6 +633,7 @@ impl DbTask {
             ExecutionSpecificRequest::Lock {
                 created_at,
                 execution_id,
+                run_id,
                 version,
                 executor_name,
                 lock_expires_at,
@@ -637,6 +643,7 @@ impl DbTask {
                 payload: self.lock(
                     created_at,
                     execution_id,
+                    run_id,
                     version,
                     executor_name,
                     lock_expires_at,
@@ -690,6 +697,7 @@ impl DbTask {
         &mut self,
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
+        run_id: RunId,
         version: Version,
         executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
@@ -697,6 +705,7 @@ impl DbTask {
         let event = ExecutionEventInner::Locked {
             executor_name,
             lock_expires_at,
+            run_id,
         };
         self.append(created_at, execution_id.clone(), Some(version), event)
             .map(|_| {
@@ -948,6 +957,7 @@ pub mod tick {
             &self,
             created_at: DateTime<Utc>,
             execution_id: ExecutionId,
+            run_id: RunId,
             version: Version,
             executor_name: ExecutorName,
             lock_expires_at: DateTime<Utc>,
@@ -955,6 +965,7 @@ pub mod tick {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
                 created_at,
                 execution_id,
+                run_id,
                 version,
                 executor_name,
                 lock_expires_at,
@@ -1044,18 +1055,16 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn stochastic_lifecycle_tick_based() {
+    async fn lifecycle_tick_based() {
         set_up();
-        let db_task = DbTask::new();
-        let db_task = Arc::new(std::sync::Mutex::new(db_task));
         let db_connection = TickBasedDbConnection {
-            db_task: db_task.clone(),
+            db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
         };
         lifecycle(db_connection).await;
     }
 
     #[tokio::test]
-    async fn stochastic_lifecycle_task_based() {
+    async fn lifecycle_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
         let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap_or_log();
@@ -1071,6 +1080,7 @@ pub mod tests {
         let exec1 = Arc::new("exec1".to_string());
         let exec2 = Arc::new("exec2".to_string());
         let lock_expiry = Duration::from_millis(500);
+
         assert!(db_connection
             .lock_pending(
                 1,
@@ -1087,9 +1097,10 @@ pub mod tests {
         let mut version;
         // Create
         {
+            let created_at = now();
             db_connection
                 .create(
-                    now(),
+                    created_at,
                     execution_id.clone(),
                     SOME_FFQN.to_owned(),
                     Params::default(),
@@ -1102,10 +1113,9 @@ pub mod tests {
                 .unwrap_or_log();
         }
         // LockPending
-        sleep(Duration::from_secs(1)).await;
-        {
+        let run_id = {
             let created_at = now();
-            info!("LockPending: {created_at}");
+            info!(now = %created_at, "LockPending");
             let mut locked_executions = db_connection
                 .lock_pending(
                     1,
@@ -1124,16 +1134,16 @@ pub mod tests {
             assert_eq!(0, locked_execution.params.len());
             assert_eq!(SOME_FFQN.to_owned(), locked_execution.ffqn);
             version = locked_execution.version;
-        }
-        // intermittent timeout
+            locked_execution.run_id
+        };
         sleep(Duration::from_millis(499)).await;
         {
             let created_at = now();
-            info!("Intermittent timeout: {created_at}");
+            info!(now = %created_at, "Intermittent timeout");
             let req = AppendRequest {
                 created_at,
                 event: ExecutionEventInner::IntermittentTimeout {
-                    expires_at: now() + lock_expiry,
+                    expires_at: created_at + lock_expiry,
                 },
             };
 
@@ -1142,15 +1152,15 @@ pub mod tests {
                 .await
                 .unwrap_or_log();
         }
-        // Attempt to lock while in a timeout
         sleep(lock_expiry - Duration::from_millis(100)).await;
         {
             let created_at = now();
-            info!("Attempt to lock using exec2: {created_at}");
+            info!(now = %created_at, "Attempt to lock using exec2");
             assert!(db_connection
                 .lock(
                     created_at,
                     execution_id.clone(),
+                    RunId::generate(),
                     version,
                     exec2.clone(),
                     created_at + lock_expiry,
@@ -1159,15 +1169,15 @@ pub mod tests {
                 .is_err());
             // Version is not changed
         }
-        // Lock using exec1
         sleep(Duration::from_millis(100)).await;
         {
             let created_at = now();
-            info!("Extend lock using exec1: {created_at}");
+            info!(now = %created_at, "Extend lock using exec1");
             let (event_history, current_version) = db_connection
                 .lock(
                     created_at,
                     execution_id.clone(),
+                    run_id.clone(),
                     version,
                     exec1.clone(),
                     created_at + Duration::from_secs(1),
@@ -1178,14 +1188,14 @@ pub mod tests {
             version = current_version;
         }
         sleep(Duration::from_millis(700)).await;
-        // Attempt to lock using exec2 while in a lock
         {
             let created_at = now();
-            info!("Attempt to lock using exec2: {created_at}");
+            info!(now = %created_at, "Attempt to lock using exec2  while in a lock");
             assert!(db_connection
                 .lock(
                     created_at,
                     execution_id.clone(),
+                    RunId::generate(),
                     version,
                     exec2.clone(),
                     created_at + lock_expiry,
@@ -1194,14 +1204,15 @@ pub mod tests {
                 .is_err());
             // Version is not changed
         }
-        // Extend the lock using exec1
+
         {
             let created_at = now();
-            info!("Extend lock using exec1: {created_at}");
+            info!(now = %created_at, "Extend lock using exec1");
             let (event_history, current_version) = db_connection
                 .lock(
                     created_at,
                     execution_id.clone(),
+                    run_id,
                     version,
                     exec1.clone(),
                     created_at + lock_expiry,
@@ -1211,11 +1222,25 @@ pub mod tests {
             assert!(event_history.is_empty());
             version = current_version;
         }
-        // Yield
         sleep(Duration::from_millis(200)).await;
         {
             let created_at = now();
-            info!("Yield: {created_at}");
+            info!(now = %created_at, "Extend lock using exec1 and wrong run id should fail");
+            assert!(db_connection
+                .lock(
+                    created_at,
+                    execution_id.clone(),
+                    RunId::generate(),
+                    version,
+                    exec1.clone(),
+                    created_at + lock_expiry,
+                )
+                .await
+                .is_err());
+        }
+        {
+            let created_at = now();
+            info!(now = %created_at, "Yield");
             let req = AppendRequest {
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::Yield,
@@ -1227,15 +1252,15 @@ pub mod tests {
                 .await
                 .unwrap_or_log();
         }
-        // Lock again
         sleep(Duration::from_millis(200)).await;
         {
             let created_at = now();
-            info!("Lock again: {created_at}");
+            info!(now = %created_at, "Lock again");
             let (event_history, current_version) = db_connection
                 .lock(
                     created_at,
                     execution_id.clone(),
+                    RunId::generate(),
                     version,
                     exec1.clone(),
                     created_at + lock_expiry,
@@ -1246,11 +1271,10 @@ pub mod tests {
             assert_eq!(vec![HistoryEvent::Yield], event_history);
             version = current_version;
         }
-        // Finish
         sleep(Duration::from_millis(300)).await;
         {
             let created_at = now();
-            info!("Finish: {created_at}");
+            debug!(now = %created_at, "Finish execution");
             let req = AppendRequest {
                 event: ExecutionEventInner::Finished {
                     result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
