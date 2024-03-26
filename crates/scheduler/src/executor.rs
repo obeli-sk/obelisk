@@ -29,7 +29,7 @@ pub struct ExecConfig<C: Fn() -> DateTime<Utc>> {
     pub tick_sleep: Duration,
     pub batch_size: u32,
     pub cleanup_expired_locks: bool,
-    pub clock_fn: C,
+    pub clock_fn: C, // Used for obtaining current time when the execution finishes.
 }
 
 pub struct ExecTask<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Clone> {

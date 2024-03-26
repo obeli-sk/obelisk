@@ -334,7 +334,7 @@ pub(crate) mod tests {
             cleanup_expired_locks: false,
             clock_fn: || now(),
         };
-        ExecTask::spawn_new(db_connection, fibo_worker, exec_config.clone(), None)
+        ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
     }
 
     #[tokio::test]
@@ -604,101 +604,6 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(test, not(madsim)))] // would need wasmtime to use madsim
-    #[rstest::rstest]
-    #[case(10, 100, Err(db::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
-    #[case(10, 10, Ok(SupportedFunctionResult::None))] // 0.1s -> Ok
-    #[case(1500, 1, Err(db::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
-    #[tokio::test]
-    async fn sleep_should_produce_intermittent_timeout(
-        #[case] sleep_millis: u64,
-        #[case] sleep_iterations: u32,
-        #[case] expected: db::FinishedExecutionResult,
-        #[values(false, true)] recycle: bool,
-    ) {
-        const SLEEP_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:sleep/sleep", "sleep-loop"); // func(millis: u64, iterations: u32);
-        const EPOCH_MILLIS: u64 = 10;
-        const LOCK_EXPIRY: Duration = Duration::from_millis(500);
-        test_utils::set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
-
-        let engine = activity_engine(EngineConfig::default());
-
-        {
-            let engine = engine.clone();
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(Duration::from_millis(EPOCH_MILLIS)).await;
-                    engine.increment_epoch();
-                }
-            });
-        }
-        let recycled_instances: RecycleInstancesSetting = env_or_default("RECYCLE", recycle).into();
-        let fibo_worker = ActivityWorker::new_with_config(
-            ActivityConfig {
-                wasm_path: Cow::Borrowed(
-                    test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                ),
-                epoch_millis: EPOCH_MILLIS,
-                config_id: ConfigId::generate(),
-                recycled_instances: recycled_instances.clone(),
-            },
-            engine,
-        )
-        .unwrap_or_log();
-
-        let exec_config = ExecConfig {
-            ffqns: vec![SLEEP_FFQN.to_owned()],
-            batch_size: 1,
-            lock_expiry: LOCK_EXPIRY,
-            lock_expiry_leeway: Duration::from_millis(10),
-            tick_sleep: Duration::from_millis(10),
-            cleanup_expired_locks: false,
-            clock_fn: || now(),
-        };
-        let exec_task = ExecTask::spawn_new(
-            db_task.as_db_connection().unwrap_or_log(),
-            fibo_worker,
-            exec_config.clone(),
-            None,
-        );
-
-        // Create an execution.
-        let stopwatch = Instant::now();
-        let execution_id = ExecutionId::generate();
-        warn!("Testing {execution_id}");
-        let created_at = now();
-        db_connection
-            .create(
-                created_at,
-                execution_id.clone(),
-                SLEEP_FFQN.to_owned(),
-                Params::from([Val::U64(sleep_millis), Val::U32(sleep_iterations)]),
-                None,
-                None,
-                Duration::ZERO,
-                0,
-            )
-            .await
-            .unwrap_or_log();
-        // Check the result.
-        assert_matches!(
-            db_connection
-                .obtain_finished_result(execution_id)
-                .await
-                .unwrap_or_log(),
-            expected
-        );
-        let stopwatch = stopwatch.elapsed();
-        warn!("Finished in {stopwatch:?}");
-        assert!(stopwatch < LOCK_EXPIRY * 2);
-
-        drop(db_connection);
-        exec_task.close().await;
-        db_task.close().await;
-    }
-
     #[cfg(all(test, not(madsim)))] // not happenning on a single thread
     #[tokio::test]
     async fn flaky_limit_reached() {
@@ -760,5 +665,179 @@ pub(crate) mod tests {
             }
         }
         assert!(limit_reached > 0, "Limit was not reached");
+    }
+
+    #[cfg(all(test, not(madsim)))] // Requires madsim support in wasmtime
+    mod wasmtime_nosim {
+        use super::*;
+
+        #[rstest::rstest]
+        #[case(10, 100, Err(db::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
+        #[case(10, 10, Ok(SupportedFunctionResult::None))] // 0.1s -> Ok
+        #[case(1500, 1, Err(db::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
+        #[tokio::test]
+        async fn sleep_should_produce_intermittent_timeout(
+            #[case] sleep_millis: u64,
+            #[case] sleep_iterations: u32,
+            #[case] expected: db::FinishedExecutionResult,
+            #[values(false, true)] recycle: bool,
+        ) {
+            const SLEEP_FFQN: FunctionFqnStr =
+                FunctionFqnStr::new("testing:sleep/sleep", "sleep-loop"); // func(millis: u64, iterations: u32);
+            const EPOCH_MILLIS: u64 = 10;
+            const LOCK_EXPIRY: Duration = Duration::from_millis(500);
+            test_utils::set_up();
+            let mut db_task = DbTask::spawn_new(1);
+            let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+
+            let engine = activity_engine(EngineConfig::default());
+
+            {
+                let engine = engine.clone();
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(EPOCH_MILLIS)).await;
+                        engine.increment_epoch();
+                    }
+                });
+            }
+            let recycled_instances: RecycleInstancesSetting =
+                env_or_default("RECYCLE", recycle).into();
+            let fibo_worker = ActivityWorker::new_with_config(
+                ActivityConfig {
+                    wasm_path: Cow::Borrowed(
+                        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                    ),
+                    epoch_millis: EPOCH_MILLIS,
+                    config_id: ConfigId::generate(),
+                    recycled_instances: recycled_instances.clone(),
+                },
+                engine,
+            )
+            .unwrap_or_log();
+
+            let exec_config = ExecConfig {
+                ffqns: vec![SLEEP_FFQN.to_owned()],
+                batch_size: 1,
+                lock_expiry: LOCK_EXPIRY,
+                lock_expiry_leeway: Duration::from_millis(10),
+                tick_sleep: Duration::from_millis(10),
+                cleanup_expired_locks: false,
+                clock_fn: || now(),
+            };
+            let exec_task = ExecTask::spawn_new(
+                db_task.as_db_connection().unwrap_or_log(),
+                fibo_worker,
+                exec_config.clone(),
+                None,
+            );
+
+            // Create an execution.
+            let stopwatch = Instant::now();
+            let execution_id = ExecutionId::generate();
+            warn!("Testing {execution_id}");
+            let created_at = now();
+            db_connection
+                .create(
+                    created_at,
+                    execution_id.clone(),
+                    SLEEP_FFQN.to_owned(),
+                    Params::from([Val::U64(sleep_millis), Val::U32(sleep_iterations)]),
+                    None,
+                    None,
+                    Duration::ZERO,
+                    0,
+                )
+                .await
+                .unwrap_or_log();
+            // Check the result.
+            assert_matches!(
+                db_connection
+                    .obtain_finished_result(execution_id)
+                    .await
+                    .unwrap_or_log(),
+                expected
+            );
+            let stopwatch = stopwatch.elapsed();
+            warn!("Finished in {stopwatch:?}");
+            assert!(stopwatch < LOCK_EXPIRY * 2);
+
+            drop(db_connection);
+            exec_task.close().await;
+            db_task.close().await;
+        }
+
+        pub const SLEEP_ACTIVITY_FFQN: FunctionFqnStr =
+            FunctionFqnStr::new("testing:sleep/sleep", "sleep"); // sleep: func(millis: u64);
+        pub(crate) fn spawn_activity_sleep<DB: DbConnection>(
+            db_connection: DB,
+            lock_expiry: Duration,
+            lock_expiry_leeway: Duration,
+        ) -> ExecutorTaskHandle {
+            let worker = ActivityWorker::new_with_config(
+                ActivityConfig {
+                    wasm_path: Cow::Borrowed(
+                        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                    ),
+                    epoch_millis: 10,
+                    config_id: ConfigId::generate(),
+                    recycled_instances: RecycleInstancesSetting::Disable,
+                },
+                activity_engine(EngineConfig::default()),
+            )
+            .unwrap_or_log();
+
+            let exec_config = ExecConfig {
+                ffqns: vec![SLEEP_ACTIVITY_FFQN.to_owned()],
+                batch_size: 1,
+                lock_expiry,
+                lock_expiry_leeway,
+                tick_sleep: Duration::ZERO,
+                cleanup_expired_locks: false,
+                clock_fn: || now(),
+            };
+            ExecTask::spawn_new(db_connection, worker, exec_config, None)
+        }
+
+        #[tokio::test]
+        async fn permanent_timeout_on_sleep() {
+            const SLEEP_MILLIS: u64 = 100;
+            test_utils::set_up();
+            let mut db_task = DbTask::spawn_new(1);
+            let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+            let exec_task = spawn_activity_sleep(
+                db_connection.clone(),
+                Duration::from_millis(SLEEP_MILLIS / 2),
+                Duration::ZERO,
+            );
+            // Create an execution.
+            let execution_id = ExecutionId::generate();
+            let created_at = now();
+            db_connection
+                .create(
+                    created_at,
+                    execution_id.clone(),
+                    SLEEP_ACTIVITY_FFQN.to_owned(),
+                    Params::from([Val::U64(SLEEP_MILLIS)]),
+                    None,
+                    None,
+                    Duration::ZERO,
+                    0,
+                )
+                .await
+                .unwrap_or_log();
+            // Check the result.
+            assert_eq!(
+                db::FinishedExecutionError::PermanentTimeout,
+                db_connection
+                    .obtain_finished_result(execution_id)
+                    .await
+                    .unwrap_or_log()
+                    .unwrap_err()
+            );
+            drop(db_connection);
+            exec_task.close().await;
+            db_task.close().await;
+        }
     }
 }
