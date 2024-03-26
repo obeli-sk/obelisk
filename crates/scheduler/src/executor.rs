@@ -432,7 +432,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                             event: HistoryEvent::Yield,
                         }
                     }
-                    WorkerError::IntermittentTimeout => {
+                    WorkerError::IntermittentTimeout { .. } => {
                         if let Some(duration) = execution_history.can_be_retried_after() {
                             let expires_at = created_at + duration;
                             debug!(

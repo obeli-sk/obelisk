@@ -26,7 +26,7 @@ pub mod worker {
         #[error("Limit reached: {0}")]
         LimitReached(String),
         #[error("intermittent timeout")]
-        IntermittentTimeout,
+        IntermittentTimeout { epoch_based: bool },
         #[error(transparent)]
         FatalError(#[from] FatalError),
         #[error("interrupt")]

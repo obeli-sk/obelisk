@@ -139,7 +139,7 @@ impl Worker for ActivityWorker {
         execution_deadline: DateTime<Utc>,
     ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
         assert!(events.is_empty());
-        self.run(ffqn, params, execution_deadline)
+        self.run(ffqn, params, execution_deadline, execution_deadline)
             .await
             .map(|supported_result| (supported_result, version))
             .map_err(|err| (err, version))
@@ -152,7 +152,8 @@ impl ActivityWorker {
         &self,
         ffqn: FunctionFqn,
         params: Params,
-        execution_deadline: DateTime<Utc>,
+        epoch_based_execution_deadline: DateTime<Utc>,
+        select_based_execution_deadline: DateTime<Utc>,
     ) -> Result<SupportedFunctionResult, WorkerError> {
         let results_len = *self
             .ffqns_to_results_len
@@ -188,10 +189,10 @@ impl ActivityWorker {
         };
         let epoch_millis = self.config.epoch_millis;
         store.epoch_deadline_callback(move |_store_ctx| {
-            let delta = execution_deadline - now();
+            let delta = epoch_based_execution_deadline - now();
             match delta.to_std() {
                 Err(_) => {
-                    trace!(%execution_deadline, %delta, "Sending OutOfFuel");
+                    trace!(%epoch_based_execution_deadline, %delta, "Epoch based timeout, sending OutOfFuel");
                     Err(wasmtime::Trap::OutOfFuel.into())
                 }
                 Ok(duration) => {
@@ -224,7 +225,7 @@ impl ActivityWorker {
             .await
             .map_err(|err| {
                 if matches!(err.downcast_ref(), Some(wasmtime::Trap::OutOfFuel)) {
-                    WorkerError::IntermittentTimeout
+                    WorkerError::IntermittentTimeout { epoch_based: true }
                 } else {
                     let err = err.into();
                     WorkerError::IntermittentError {
@@ -251,17 +252,19 @@ impl ActivityWorker {
 
             Ok(result)
         };
-        let deadline_duration = (execution_deadline - now()).to_std().unwrap_or_default();
+        let deadline_duration = (select_based_execution_deadline - now())
+            .to_std()
+            .unwrap_or_default();
         let stopwatch = now_tokio_instant();
         let sleep_until = stopwatch + deadline_duration;
         tokio::select! {
             res = call_function =>{
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished");
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %select_based_execution_deadline, "Finished");
                 res
             },
             _   = tokio::time::sleep_until(sleep_until) => {
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %now(), "Timed out");
-                Err(WorkerError::IntermittentTimeout) // Epoch interruption only applies to actively executing wasm.
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %select_based_execution_deadline, "Sending select based timeout");
+                Err(WorkerError::IntermittentTimeout { epoch_based: false }) // Epoch interruption only applies to actively executing wasm.
             }
         }
     }
@@ -578,6 +581,7 @@ pub(crate) mod tests {
                                     FIBO_ACTIVITY_FFQN.to_owned(),
                                     Params::from([Val::U8(fibo_input)]),
                                     execution_deadline,
+                                    execution_deadline,
                                 )
                                 .await,
                         );
@@ -652,6 +656,7 @@ pub(crate) mod tests {
                             FIBO_ACTIVITY_FFQN.to_owned(),
                             Params::from([Val::U8(fibo_input)]),
                             execution_deadline,
+                            execution_deadline,
                         )
                         .await
                 })
@@ -669,6 +674,8 @@ pub(crate) mod tests {
     #[cfg(all(test, not(madsim)))] // Requires madsim support in wasmtime
     mod wasmtime_nosim {
         use super::*;
+        pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqnStr =
+            FunctionFqnStr::new("testing:sleep/sleep", "sleep-loop"); // sleep-loop: func(millis: u64, iterations: u32);
 
         #[rstest::rstest]
         #[case(10, 100, Err(db::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
@@ -681,8 +688,6 @@ pub(crate) mod tests {
             #[case] expected: db::FinishedExecutionResult,
             #[values(false, true)] recycle: bool,
         ) {
-            const SLEEP_FFQN: FunctionFqnStr =
-                FunctionFqnStr::new("testing:sleep/sleep", "sleep-loop"); // func(millis: u64, iterations: u32);
             const EPOCH_MILLIS: u64 = 10;
             const LOCK_EXPIRY: Duration = Duration::from_millis(500);
             test_utils::set_up();
@@ -690,19 +695,20 @@ pub(crate) mod tests {
             let db_connection = db_task.as_db_connection().expect_or_log("must be open");
 
             let engine = activity_engine(EngineConfig::default());
-
+            // Spawn task to increment the epoch
             {
                 let engine = engine.clone();
                 tokio::spawn(async move {
                     loop {
                         tokio::time::sleep(Duration::from_millis(EPOCH_MILLIS)).await;
+                        trace!("increment_epoch");
                         engine.increment_epoch();
                     }
                 });
             }
             let recycled_instances: RecycleInstancesSetting =
                 env_or_default("RECYCLE", recycle).into();
-            let fibo_worker = ActivityWorker::new_with_config(
+            let worker = ActivityWorker::new_with_config(
                 ActivityConfig {
                     wasm_path: Cow::Borrowed(
                         test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
@@ -716,7 +722,7 @@ pub(crate) mod tests {
             .unwrap_or_log();
 
             let exec_config = ExecConfig {
-                ffqns: vec![SLEEP_FFQN.to_owned()],
+                ffqns: vec![SLEEP_LOOP_ACTIVITY_FFQN.to_owned()],
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 lock_expiry_leeway: Duration::from_millis(10),
@@ -726,8 +732,8 @@ pub(crate) mod tests {
             };
             let exec_task = ExecTask::spawn_new(
                 db_task.as_db_connection().unwrap_or_log(),
-                fibo_worker,
-                exec_config.clone(),
+                worker,
+                exec_config,
                 None,
             );
 
@@ -740,7 +746,7 @@ pub(crate) mod tests {
                 .create(
                     created_at,
                     execution_id.clone(),
-                    SLEEP_FFQN.to_owned(),
+                    SLEEP_LOOP_ACTIVITY_FFQN.to_owned(),
                     Params::from([Val::U64(sleep_millis), Val::U32(sleep_iterations)]),
                     None,
                     None,
@@ -766,77 +772,56 @@ pub(crate) mod tests {
             db_task.close().await;
         }
 
-        pub const SLEEP_ACTIVITY_FFQN: FunctionFqnStr =
-            FunctionFqnStr::new("testing:sleep/sleep", "sleep"); // sleep: func(millis: u64);
-        pub(crate) fn spawn_activity_sleep<DB: DbConnection>(
-            db_connection: DB,
-            lock_expiry: Duration,
-            lock_expiry_leeway: Duration,
-        ) -> ExecutorTaskHandle {
+        #[rstest::rstest]
+        #[case(1, 2000, true)] // many small sleeps give a chance to epoch timeout
+        #[case(2000, 1, false)] // one long sleep cannot be detected by the epoch mechanism
+        #[tokio::test]
+        async fn epoch_or_sleep_based_timeout(
+            #[case] sleep_millis: u64,
+            #[case] sleep_iterations: u32,
+            #[case] expected_epoch_based: bool,
+        ) {
+            const EPOCH_MILLIS: u64 = 10;
+            const EPOCH_BAED_TIMEOUT: Duration = Duration::from_millis(100);
+            const SELECT_BASED_TIMEOUT: Duration = Duration::from_millis(200);
+            test_utils::set_up();
+
+            let engine = activity_engine(EngineConfig::default());
+            // Spawn task to increment the epoch
+            {
+                let engine = engine.clone();
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(EPOCH_MILLIS)).await;
+                        trace!("increment_epoch");
+                        engine.increment_epoch();
+                    }
+                });
+            }
             let worker = ActivityWorker::new_with_config(
                 ActivityConfig {
                     wasm_path: Cow::Borrowed(
                         test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                     ),
-                    epoch_millis: 10,
+                    epoch_millis: EPOCH_MILLIS,
                     config_id: ConfigId::generate(),
                     recycled_instances: RecycleInstancesSetting::Disable,
                 },
-                activity_engine(EngineConfig::default()),
+                engine,
             )
             .unwrap_or_log();
 
-            let exec_config = ExecConfig {
-                ffqns: vec![SLEEP_ACTIVITY_FFQN.to_owned()],
-                batch_size: 1,
-                lock_expiry,
-                lock_expiry_leeway,
-                tick_sleep: Duration::ZERO,
-                cleanup_expired_locks: false,
-                clock_fn: || now(),
-            };
-            ExecTask::spawn_new(db_connection, worker, exec_config, None)
-        }
-
-        #[tokio::test]
-        async fn permanent_timeout_on_sleep() {
-            const SLEEP_MILLIS: u64 = 100;
-            test_utils::set_up();
-            let mut db_task = DbTask::spawn_new(1);
-            let db_connection = db_task.as_db_connection().expect_or_log("must be open");
-            let exec_task = spawn_activity_sleep(
-                db_connection.clone(),
-                Duration::from_millis(SLEEP_MILLIS / 2),
-                Duration::ZERO,
-            );
-            // Create an execution.
-            let execution_id = ExecutionId::generate();
-            let created_at = now();
-            db_connection
-                .create(
-                    created_at,
-                    execution_id.clone(),
-                    SLEEP_ACTIVITY_FFQN.to_owned(),
-                    Params::from([Val::U64(SLEEP_MILLIS)]),
-                    None,
-                    None,
-                    Duration::ZERO,
-                    0,
+            let executed_at = now();
+            let err = worker
+                .run(
+                    SLEEP_LOOP_ACTIVITY_FFQN.to_owned(),
+                    Params::from([Val::U64(sleep_millis), Val::U32(sleep_iterations)]),
+                    executed_at + EPOCH_BAED_TIMEOUT,
+                    executed_at + SELECT_BASED_TIMEOUT,
                 )
                 .await
-                .unwrap_or_log();
-            // Check the result.
-            assert_eq!(
-                db::FinishedExecutionError::PermanentTimeout,
-                db_connection
-                    .obtain_finished_result(execution_id)
-                    .await
-                    .unwrap_or_log()
-                    .unwrap_err()
-            );
-            drop(db_connection);
-            exec_task.close().await;
-            db_task.close().await;
+                .unwrap_err();
+            assert_matches!(err, WorkerError::IntermittentTimeout { epoch_based } if epoch_based == expected_epoch_based);
         }
     }
 }

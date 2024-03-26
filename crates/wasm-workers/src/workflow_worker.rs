@@ -338,7 +338,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
             .await
             .map_err(|err| {
                 if matches!(err.downcast_ref(), Some(wasmtime::Trap::OutOfFuel)) {
-                    WorkerError::IntermittentTimeout
+                    WorkerError::IntermittentTimeout { epoch_based: true }
                 } else {
                     let err = err.into();
                     WorkerError::IntermittentError {
@@ -367,7 +367,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
             },
             _   = tokio::time::sleep_until(sleep_until) => {
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %now(), "Timed out");
-                Err(WorkerError::IntermittentTimeout) // Epoch interruption only applies to actively executing wasm.
+                Err(WorkerError::IntermittentTimeout { epoch_based: false }) // Epoch interruption only applies to actively executing wasm.
             }
         }
     }
