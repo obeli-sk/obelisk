@@ -8,6 +8,7 @@ use db::{
     },
     ExecutionHistory, FinishedExecutionError,
 };
+use derivative::Derivative;
 use std::{
     borrow::Cow,
     sync::{
@@ -45,9 +46,12 @@ struct ExecTickRequest {
 }
 
 #[allow(dead_code)] // allowed for testing
+#[derive(Derivative, Default)]
+#[derivative(Debug)]
 struct ExecutionProgress {
-    execution_id: ExecutionId,
-    abort_handle: AbortHandle,
+    #[derivative(Debug = "ignore")]
+    executions: Vec<(ExecutionId, AbortHandle)>,
+    expired_locks: Option<usize>,
 }
 
 pub struct ExecutorTaskHandle {
@@ -123,7 +127,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
     }
 
     fn log_err_if_new(
-        res: Result<Vec<ExecutionProgress>, DbConnectionError>,
+        res: Result<ExecutionProgress, DbConnectionError>,
         old_err: &mut Option<DbConnectionError>,
     ) {
         match (res, &old_err) {
@@ -162,14 +166,11 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
     }
 
     #[instrument(skip_all)]
-    async fn tick(
-        &self,
-        request: ExecTickRequest,
-    ) -> Result<Vec<ExecutionProgress>, DbConnectionError> {
+    async fn tick(&self, request: ExecTickRequest) -> Result<ExecutionProgress, DbConnectionError> {
         let locked_executions = {
             let mut permits = self.acquire_task_permits();
             if permits.is_empty() {
-                return Ok(vec![]);
+                return Ok(ExecutionProgress::default());
             }
             let lock_expires_at = request.executed_at + self.config.lock_expiry;
             let locked_executions = self
@@ -225,21 +226,21 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                     .instrument(span),
                 )
             };
-            executions.push(ExecutionProgress {
-                execution_id,
-                abort_handle: join_handle.abort_handle(),
-            });
+            executions.push((execution_id, join_handle.abort_handle()));
         }
-        if self.config.cleanup_expired_locks {
-            if let Err(err) = self
-                .db_connection
+        let expired_locks = if self.config.cleanup_expired_locks {
+            self.db_connection
                 .cleanup_expired_locks(request.executed_at)
                 .await
-            {
-                warn!("Failed to clean up expired locks: {err:?}");
-            }
-        }
-        Ok(executions)
+                .inspect_err(|err| warn!("Failed to clean up expired locks: {err:?}"))
+                .ok()
+        } else {
+            None
+        };
+        Ok(ExecutionProgress {
+            executions,
+            expired_locks,
+        })
     }
 
     #[instrument(skip_all, fields(%execution_id, %ffqn))]
@@ -255,7 +256,6 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
         clock_fn: C,
     ) -> Result<(), DbError> {
         trace!(%version, ?params, ?event_history, "Starting");
-        // TODO: move timeout here
         let worker_result = worker
             .run(
                 execution_id.clone(),
@@ -361,7 +361,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                 } else {
                     debug!("Execution failed: {err:?}");
                 }
-                if execution_history.version() != new_version {
+                if execution_history.version != new_version {
                     return Err(DbError::Specific(SpecificError::VersionMismatch));
                 }
                 let event = match err {
@@ -503,6 +503,7 @@ mod tests {
     use concepts::{FunctionFqnStr, Params, SupportedFunctionResult};
     use db::storage::{
         inmemory_dao::{tick::TickBasedDbConnection, DbTask},
+        journal::PendingState,
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
     };
     use indexmap::IndexMap;
@@ -574,13 +575,15 @@ mod tests {
             task_limiter: None,
             executor_name: Arc::new("SimpleWorker".to_string()),
         };
-        let mut execution_progress_vec = executor
+        let mut execution_progress = executor
             .tick(ExecTickRequest { executed_at })
             .await
             .unwrap_or_log();
         loop {
-            execution_progress_vec.retain(|progress| !progress.abort_handle.is_finished());
-            if execution_progress_vec.is_empty() {
+            execution_progress
+                .executions
+                .retain(|(_, abort_handle)| !abort_handle.is_finished());
+            if execution_progress.executions.is_empty() {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -623,7 +626,7 @@ mod tests {
         )
         .await;
         assert_matches!(
-            execution_history.get(2).unwrap(),
+            execution_history.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -669,7 +672,7 @@ mod tests {
         .await;
         db_task.close().await;
         assert_matches!(
-            execution_history.get(2).unwrap(),
+            execution_history.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -724,7 +727,7 @@ mod tests {
         exec_task.close().await;
         db_task.close().await;
         assert_matches!(
-            execution_history.get(2).unwrap(),
+            execution_history.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -776,7 +779,7 @@ mod tests {
         debug!("Execution history after tick: {execution_history:?}");
         // check that DB contains Created and Locked events.
         assert_matches!(
-            execution_history.get(0).unwrap(),
+            execution_history.events.get(0).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Created { .. },
                 created_at: actually_created_at,
@@ -784,14 +787,14 @@ mod tests {
             if created_at == *actually_created_at
         );
         let locked_at = assert_matches!(
-            execution_history.get(1).unwrap(),
+            execution_history.events.get(1).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: locked_at
             } if created_at <= *locked_at
              => *locked_at
         );
-        assert_matches!(execution_history.get(2).unwrap(), ExecutionEvent {
+        assert_matches!(execution_history.events.get(2).unwrap(), ExecutionEvent {
             event: _,
             created_at: executed_at,
         } if *executed_at >= locked_at);
@@ -840,9 +843,9 @@ mod tests {
             tick_fn,
         )
         .await;
-        assert_eq!(3, execution_history.len());
+        assert_eq!(3, execution_history.events.len());
         assert_matches!(
-            &execution_history.get(2).unwrap(),
+            &execution_history.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::IntermittentFailure {
                     reason,
@@ -860,19 +863,19 @@ mod tests {
         };
         tick_fn(db_connection.clone(), exec_config, worker, created_at).await;
         let execution_history = db_connection
-            .get(execution_history.execution_id())
+            .get(execution_history.execution_id)
             .await
             .unwrap_or_log();
         debug!("Execution history after second tick: {execution_history:?}");
         assert_matches!(
-            execution_history.get(3).unwrap(),
+            execution_history.events.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: at
             } if *at == created_at
         );
         assert_matches!(
-            execution_history.get(4).unwrap(),
+            execution_history.events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -924,9 +927,9 @@ mod tests {
             tick_fn,
         )
         .await;
-        assert_eq!(3, execution_history.len());
+        assert_eq!(3, execution_history.events.len());
         let reason = assert_matches!(
-            &execution_history.get(2).unwrap(),
+            &execution_history.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::IntermittentFailure {
                     reason,
@@ -955,21 +958,21 @@ mod tests {
         };
         tick_fn(db_connection.clone(), exec_config, worker, created_at).await;
         let execution_history = db_connection
-            .get(execution_history.execution_id())
+            .get(execution_history.execution_id)
             .await
             .unwrap_or_log();
         debug!("Execution history after second tick: {execution_history:?}");
 
-        assert_eq!(5, execution_history.len());
+        assert_eq!(5, execution_history.events.len());
         assert_matches!(
-            execution_history.get(3).unwrap(),
+            execution_history.events.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: locked_at
             }  if *locked_at == created_at
         );
         assert_matches!(
-            execution_history.get(4).unwrap(),
+            execution_history.events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::Fallible(
@@ -980,5 +983,160 @@ mod tests {
                 created_at: finished_at,
             } if *finished_at == created_at
         );
+    }
+
+    #[derive(Clone, Debug)]
+    struct SleepyWorker {
+        duration: Duration,
+        result: SupportedFunctionResult,
+    }
+
+    impl valuable::Valuable for SleepyWorker {
+        fn as_value(&self) -> valuable::Value<'_> {
+            "SleepyWorker".as_value()
+        }
+
+        fn visit(&self, _visit: &mut dyn valuable::Visit) {}
+    }
+
+    #[async_trait]
+    impl Worker for SleepyWorker {
+        async fn run(
+            &self,
+            _execution_id: ExecutionId,
+            _ffqn: FunctionFqn,
+            _params: Params,
+            _events: Vec<HistoryEvent>,
+            version: Version,
+            _execution_deadline: DateTime<Utc>,
+        ) -> WorkerResult {
+            tokio::time::sleep(self.duration).await;
+            Ok((self.result.clone(), version))
+        }
+    }
+
+    #[tokio::test]
+    async fn hanging_lock_should_be_cleaned_and_execution_retried() {
+        set_up();
+        let created_at = now();
+        let clock_fn = move || created_at;
+        let exec_config = ExecConfig {
+            ffqns: vec![SOME_FFQN.to_owned()],
+            batch_size: 1,
+            lock_expiry: Duration::from_millis(100),
+            lock_expiry_leeway: Duration::from_millis(10),
+            tick_sleep: Duration::ZERO,
+            cleanup_expired_locks: true,
+            clock_fn,
+        };
+        let db_connection = TickBasedDbConnection {
+            db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
+        };
+        let worker = SleepyWorker {
+            duration: exec_config.lock_expiry + exec_config.lock_expiry_leeway * 2,
+            result: SupportedFunctionResult::None,
+        };
+        // Create an execution
+        let execution_id = ExecutionId::generate();
+        let timeout_duration = Duration::from_millis(300);
+        db_connection
+            .create(
+                created_at,
+                execution_id.clone(),
+                SOME_FFQN.to_owned(),
+                Params::default(),
+                None,
+                None,
+                timeout_duration,
+                1,
+            )
+            .await
+            .unwrap_or_log();
+
+        let executor = ExecTask {
+            db_connection: db_connection.clone(),
+            worker,
+            config: exec_config.clone(),
+            task_limiter: None,
+            executor_name: Arc::new("SimpleWorker".to_string()),
+        };
+        let mut first_execution_progress = executor
+            .tick(ExecTickRequest {
+                executed_at: created_at,
+            })
+            .await
+            .unwrap_or_log();
+        assert_eq!(1, first_execution_progress.executions.len());
+        // Started hanging, wait for lock expiry.
+        tokio::time::sleep(exec_config.lock_expiry + exec_config.lock_expiry_leeway).await;
+        // cleanup should be called
+        let now_after_first_lock_expiry = now();
+        {
+            debug!(now = %now_after_first_lock_expiry, "Expecting an expired lock");
+            let cleanup_progress = executor
+                .tick(ExecTickRequest {
+                    executed_at: now_after_first_lock_expiry,
+                })
+                .await
+                .unwrap_or_log();
+            assert!(cleanup_progress.executions.is_empty());
+            assert_eq!(Some(1), cleanup_progress.expired_locks);
+        }
+        assert!(!first_execution_progress
+            .executions
+            .pop()
+            .unwrap()
+            .1
+            .is_finished());
+
+        let execution_history = db_connection
+            .get(execution_id.clone())
+            .await
+            .unwrap_or_log();
+        let expected_first_timeout_expiry = now_after_first_lock_expiry + timeout_duration;
+        assert_matches!(
+            &execution_history.events.get(2).unwrap(),
+            ExecutionEvent {
+                event: ExecutionEventInner::IntermittentTimeout { expires_at },
+                created_at: at,
+            } if *at == now_after_first_lock_expiry && *expires_at == expected_first_timeout_expiry
+        );
+        assert_eq!(
+            PendingState::PendingAt(expected_first_timeout_expiry),
+            execution_history.pending_state
+        );
+        tokio::time::sleep(timeout_duration).await;
+        let now_after_first_timeout = now();
+        debug!(now = %now_after_first_timeout, "Second execution should hang again and result in a permanent timeout");
+
+        let mut second_execution_progress = executor
+            .tick(ExecTickRequest {
+                executed_at: now_after_first_timeout,
+            })
+            .await
+            .unwrap_or_log();
+        assert_eq!(1, second_execution_progress.executions.len());
+
+        // Started hanging, wait for lock expiry.
+        tokio::time::sleep(exec_config.lock_expiry + exec_config.lock_expiry_leeway).await;
+        // cleanup should be called
+        let now_after_second_lock_expiry = now();
+        debug!(now = %now_after_second_lock_expiry, "Expecting the second lock to be expired");
+        {
+            let cleanup_progress = executor
+                .tick(ExecTickRequest {
+                    executed_at: now_after_second_lock_expiry,
+                })
+                .await
+                .unwrap_or_log();
+            assert!(cleanup_progress.executions.is_empty());
+            assert_eq!(Some(1), cleanup_progress.expired_locks);
+        }
+        assert!(!second_execution_progress
+            .executions
+            .pop()
+            .unwrap()
+            .1
+            .is_finished());
     }
 }

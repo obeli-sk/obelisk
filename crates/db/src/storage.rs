@@ -304,14 +304,11 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         &self,
         execution_id: ExecutionId,
     ) -> Result<FinishedExecutionResult, DbError> {
-        let ExecutionHistory {
-            mut execution_events,
-            ..
-        } = self
+        let ExecutionHistory { mut events, .. } = self
             .wait_for_pending_state(execution_id, PendingState::Finished)
             .await?;
         Ok(
-            assert_matches!(execution_events.pop().expect_or_log("must not be empty"),
+            assert_matches!(events.pop().expect_or_log("must not be empty"),
             ExecutionEvent { event: ExecutionEventInner::Finished { result, .. } ,..} => result),
         )
     }
@@ -602,7 +599,7 @@ pub mod journal {
         pub fn as_execution_history(&self) -> ExecutionHistory {
             ExecutionHistory {
                 execution_id: self.execution_id.clone(),
-                execution_events: self.execution_events.iter().cloned().collect(),
+                events: self.execution_events.iter().cloned().collect(),
                 version: self.version(),
                 pending_state: self.pending_state.clone(),
             }

@@ -10,69 +10,51 @@ pub mod storage;
 
 #[derive(Debug)]
 pub struct ExecutionHistory {
-    execution_id: ExecutionId,
-    execution_events: Vec<ExecutionEvent>,
-    version: Version,
-    pending_state: PendingState,
+    pub execution_id: ExecutionId,
+    pub events: Vec<ExecutionEvent>,
+    pub version: Version,
+    pub pending_state: PendingState,
 }
 
 impl ExecutionHistory {
     pub fn can_be_retried_after(&self) -> Option<Duration> {
         can_be_retried_after(
-            self.execution_events.iter(),
+            self.events.iter(),
             self.max_retries(),
             self.retry_exp_backoff(),
         )
     }
 
     pub fn retry_exp_backoff(&self) -> Duration {
-        assert_matches!(self.execution_events.get(0), Some(ExecutionEvent {
+        assert_matches!(self.events.get(0), Some(ExecutionEvent {
             event: ExecutionEventInner::Created { retry_exp_backoff, .. },
             ..
         }) => *retry_exp_backoff)
     }
 
     pub fn max_retries(&self) -> u32 {
-        assert_matches!(self.execution_events.get(0), Some(ExecutionEvent {
+        assert_matches!(self.events.get(0), Some(ExecutionEvent {
             event: ExecutionEventInner::Created { max_retries, .. },
             ..
         }) => *max_retries)
     }
 
     pub fn params(&self) -> Params {
-        assert_matches!(self.execution_events.get(0), Some(ExecutionEvent {
+        assert_matches!(self.events.get(0), Some(ExecutionEvent {
             event: ExecutionEventInner::Created { params, .. },
             ..
         }) => params.clone())
     }
 
     pub fn parent(&self) -> Option<(ExecutionId, JoinSetId)> {
-        assert_matches!(self.execution_events.get(0), Some(ExecutionEvent {
+        assert_matches!(self.events.get(0), Some(ExecutionEvent {
             event: ExecutionEventInner::Created { parent, .. },
             ..
         }) => parent.clone())
     }
 
     pub fn last_event(&self) -> &ExecutionEvent {
-        self.execution_events
-            .last()
-            .expect("must contain at least one event")
-    }
-
-    pub fn version(&self) -> Version {
-        self.version
-    }
-
-    pub fn get(&self, idx: usize) -> Option<&ExecutionEvent> {
-        self.execution_events.get(idx)
-    }
-
-    pub fn len(&self) -> usize {
-        self.execution_events.len()
-    }
-
-    pub fn execution_id(&self) -> ExecutionId {
-        self.execution_id.clone()
+        self.events.last().expect("must contain at least one event")
     }
 }
 
