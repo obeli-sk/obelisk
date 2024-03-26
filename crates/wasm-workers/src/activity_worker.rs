@@ -604,9 +604,8 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(all(test, not(madsim)))] // not happenning on a single thread
     #[tokio::test]
-    async fn flaky_limit_reached() {
+    async fn limit_reached() {
         const FIBO_INPUT: u8 = 10;
         const RECYCLE: bool = true;
         const LOCK_EXPIRY_MILLIS: u64 = 1100;
