@@ -382,7 +382,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::ChildExecutionAsyncRequest {
                                     join_set_id: join_set_id.clone(),
-                                    child_execution_id: request.child_execution_id.into(),
+                                    child_execution_id: request.child_execution_id.clone(),
                                 },
                             },
                         };
@@ -394,7 +394,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                                 },
                             },
                         };
-                        let child_execution_id = ExecutionId::generate();
+                        let child_execution_id = request.child_execution_id;
                         info!(%child_execution_id, "Interrupted, scheduling child execution");
                         let child_exec = AppendRequest {
                             created_at,

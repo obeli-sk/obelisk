@@ -2691,6 +2691,7 @@ dependencies = [
  "indexmap",
  "madsim",
  "madsim-tokio",
+ "rand",
  "rstest",
  "scheduler",
  "test-programs-fibo-activity-builder",

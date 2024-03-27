@@ -20,6 +20,7 @@ cfg-if.workspace = true
 chrono = { workspace = true, features = ["arbitrary"] }
 derive_more.workspace = true
 indexmap.workspace = true
+rand.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
 tracing-unwrap.workspace = true

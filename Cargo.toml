@@ -102,6 +102,7 @@ insta = "1.36.1"
 indexmap = "2.1"
 lazy_static = "1.4"
 madsim = "0.2.25"
+rand = "0.8.5"
 rstest = "0.18.2"
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"

@@ -6,6 +6,8 @@ use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
 use db::storage::{AsyncResponse, DbConnection};
 use db::storage::{HistoryEvent, Version};
+use rand::rngs::StdRng;
+use rand::{RngCore, SeedableRng};
 use scheduler::worker::{ChildExecutionRequest, FatalError};
 use scheduler::worker::{Worker, WorkerError};
 use std::collections::HashMap;
@@ -58,6 +60,7 @@ struct WorkflowCtx {
     execution_id: ExecutionId,
     events: Vec<HistoryEvent>,
     events_idx: usize,
+    rng: StdRng,
 }
 impl WorkflowCtx {
     fn replay_or_interrupt(
@@ -71,7 +74,6 @@ impl WorkflowCtx {
         );
 
         while let Some(found) = self.events.get(self.events_idx) {
-            // TODO: check whether it is matching
             match found {
                 HistoryEvent::JoinSet { .. } => {
                     debug!("Skipping JoinSet");
@@ -92,7 +94,7 @@ impl WorkflowCtx {
                             result,
                         },
                     ..
-                } => {
+                } if *child_execution_id == request.child_execution_id => {
                     debug!("Found response in history: {found:?}");
                     self.events_idx += 1;
                     // TODO: Map FinishedExecutionError somehow
@@ -116,7 +118,7 @@ impl my_org::workflow_engine::host_activities::Host for WorkflowCtx {
     }
 }
 impl WorkflowCtx {
-    pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), wasmtime::Error> {
+    fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), wasmtime::Error> {
         my_org::workflow_engine::host_activities::add_to_linker(linker, |state: &mut Self| state)
     }
 }
@@ -185,9 +187,16 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
                             Box::new(async move {
+                                let ctx = store_ctx.data_mut();
                                 let request = ChildExecutionRequest {
-                                    new_join_set_id: JoinSetId::generate(), // FIXME: needs seed
-                                    child_execution_id: ExecutionId::generate(), // FIXME: needs seed
+                                    new_join_set_id: JoinSetId::from_parts(
+                                        ctx.execution_id.timestamp(),
+                                        next_u128(&mut ctx.rng),
+                                    ),
+                                    child_execution_id: ExecutionId::from_parts(
+                                        ctx.execution_id.timestamp(),
+                                        next_u128(&mut ctx.rng),
+                                    ),
                                     ffqn,
                                     params: Params::Vals(Arc::new(Vec::from(params))),
                                 };
@@ -229,6 +238,12 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
             component,
         })
     }
+}
+
+fn next_u128(rng: &mut StdRng) -> u128 {
+    let mut bytes = [0; 16];
+    rng.fill_bytes(&mut bytes);
+    u128::from_be_bytes(bytes)
 }
 
 #[async_trait]
@@ -284,10 +299,12 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
             .ok_or(WorkerError::FatalError(FatalError::NotFound))?;
         trace!("Params: {params:?}, results_len:{results_len}",);
         let (instance, mut store) = {
+            let seed = execution_id.random() as u64;
             let ctx = WorkflowCtx {
                 execution_id,
                 events,
                 events_idx: 0,
+                rng: StdRng::seed_from_u64(seed),
             };
             let mut store = Store::new(&self.engine, ctx);
             let instance = self
@@ -367,7 +384,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
             },
             _   = tokio::time::sleep_until(sleep_until) => {
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %now(), "Timed out");
-                Err(WorkerError::IntermittentTimeout { epoch_based: false }) // Epoch interruption only applies to actively executing wasm.
+                Err(WorkerError::IntermittentTimeout { epoch_based: false })
             }
         }
     }
@@ -447,7 +464,7 @@ mod tests {
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
         let workflow_exec_task = spawn_workflow_fibo(db_connection.clone());
         // Create an execution.
-        let execution_id = ExecutionId::generate();
+        let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = now();
         db_connection
             .create(

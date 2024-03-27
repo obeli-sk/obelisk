@@ -314,20 +314,22 @@ pub mod prefixed_ulid {
         marker::PhantomData,
         sync::Arc,
     };
+    use ulid::Ulid;
 
     #[derive(derive_more::Display)]
-    #[display(fmt = "{arc}")]
+    #[display(fmt = "{prefix}_{ulid}")]
     pub struct PrefixedUlid<T: 'static> {
-        arc: Arc<String>,
+        prefix: &'static str,
+        ulid: Ulid,
         phantom_data: PhantomData<fn(T) -> T>,
     }
 
     impl<T> PrefixedUlid<T> {
-        fn new(id: ulid::Ulid) -> Self {
+        fn new(ulid: Ulid) -> Self {
             let prefix = Self::prefix();
-            let arc = Arc::new(format!("{prefix}_{id}"));
             Self {
-                arc,
+                prefix,
+                ulid,
                 phantom_data: PhantomData,
             }
         }
@@ -339,28 +341,58 @@ pub mod prefixed_ulid {
 
     impl<T> PrefixedUlid<T> {
         pub fn generate() -> Self {
-            Self::new(ulid::Ulid::new())
+            Self::new(Ulid::new())
+        }
+
+        pub fn from_parts(timestamp_ms: u64, random: u128) -> Self {
+            Self::new(Ulid::from_parts(timestamp_ms, random))
+        }
+
+        pub fn timestamp(&self) -> u64 {
+            self.ulid.timestamp_ms()
+        }
+
+        pub fn random(&self) -> u128 {
+            self.ulid.random() as u128
         }
     }
 
     mod impls {
+        use std::str::FromStr;
+
         use super::*;
 
         impl<T> Into<Arc<String>> for PrefixedUlid<T> {
             fn into(self) -> Arc<String> {
-                self.arc
+                Arc::new(format!(
+                    "{prefix}_{ulid}",
+                    prefix = self.prefix,
+                    ulid = self.ulid,
+                ))
             }
         }
 
-        impl<T> TryFrom<Arc<String>> for PrefixedUlid<T> {
-            type Error = &'static str;
+        impl<T> FromStr for PrefixedUlid<T> {
+            type Err = &'static str;
 
-            fn try_from(arc: Arc<String>) -> Result<Self, Self::Error> {
-                if !arc.starts_with(Self::prefix()) {
+            fn from_str(input: &str) -> Result<Self, Self::Err> {
+                let prefix = Self::prefix();
+                let mut input_chars = input.chars();
+                let mut prefix_chars = prefix.chars();
+                while let Some(exp) = prefix_chars.next() {
+                    if input_chars.next() != Some(exp) {
+                        return Err("wrong prefix");
+                    }
+                }
+                if input_chars.next() != Some('_') {
                     return Err("wrong prefix");
                 }
+                let Ok(ulid) = Ulid::from_string(input_chars.as_str()) else {
+                    return Err("wrong suffix");
+                };
                 Ok(Self {
-                    arc,
+                    prefix,
+                    ulid,
                     phantom_data: PhantomData,
                 })
             }
@@ -375,7 +407,8 @@ pub mod prefixed_ulid {
         impl<T> Clone for PrefixedUlid<T> {
             fn clone(&self) -> Self {
                 Self {
-                    arc: self.arc.clone(),
+                    prefix: self.prefix,
+                    ulid: self.ulid,
                     phantom_data: self.phantom_data.clone(),
                 }
             }
@@ -383,14 +416,15 @@ pub mod prefixed_ulid {
 
         impl<T> Hash for PrefixedUlid<T> {
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                self.arc.hash(state);
+                self.prefix.hash(state);
+                self.ulid.hash(state);
                 self.phantom_data.hash(state);
             }
         }
 
         impl<T> PartialEq for PrefixedUlid<T> {
             fn eq(&self, other: &Self) -> bool {
-                self.arc == other.arc
+                self.ulid == other.ulid
             }
         }
 
@@ -398,13 +432,13 @@ pub mod prefixed_ulid {
 
         impl<T> PartialOrd for PrefixedUlid<T> {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                self.arc.partial_cmp(&other.arc)
+                self.ulid.partial_cmp(&other.ulid)
             }
         }
 
         impl<T> Ord for PrefixedUlid<T> {
             fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                self.arc.cmp(&other.arc)
+                self.ulid.cmp(&other.ulid)
             }
         }
     }
@@ -434,8 +468,11 @@ pub mod prefixed_ulid {
 }
 pub use prefixed_ulid::ExecutionId;
 
-#[cfg(all(test, madsim))]
+#[cfg(test)]
 mod tests {
+    use crate::ExecutionId;
+
+    #[cfg(madsim)]
     #[test]
     fn ulid_generation_should_be_deterministic() {
         let seed: u64 = 0;
@@ -454,6 +491,8 @@ mod tests {
         }));
     }
 
+    // FIXME https://github.com/madsim-rs/madsim/issues/201
+    #[cfg(madsim)]
     #[test]
     fn madsim_getrandom_should_be_deterministic() {
         let rnd_fn = || async {
@@ -475,5 +514,13 @@ mod tests {
             }
             .run(rnd_fn);
         }
+    }
+
+    #[test]
+    fn ulid_parsing() {
+        let generated = ExecutionId::generate();
+        let str = generated.to_string();
+        let parsed = str.parse().unwrap();
+        assert_eq!(generated, parsed);
     }
 }
