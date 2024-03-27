@@ -303,7 +303,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
 
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError>;
 
-    async fn obtain_finished_result(
+    async fn wait_for_finished_result(
         // FIXME timeout
         &self,
         execution_id: ExecutionId,

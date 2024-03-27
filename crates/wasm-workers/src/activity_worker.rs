@@ -340,10 +340,11 @@ pub(crate) mod tests {
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
     }
 
+    pub const FIBO_10_INPUT: u8 = 10;
+    pub const FIBO_10_OUTPUT: u64 = 55;
+
     #[tokio::test]
     async fn fibo_once() {
-        const FIBO_INPUT: u8 = 10;
-        const EXPECTED: u64 = 89;
         test_utils::set_up();
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
@@ -356,7 +357,7 @@ pub(crate) mod tests {
                 created_at,
                 execution_id.clone(),
                 FIBO_ACTIVITY_FFQN.to_owned(),
-                Params::from([Val::U8(FIBO_INPUT)]),
+                Params::from([Val::U8(FIBO_10_INPUT)]),
                 None,
                 None,
                 Duration::ZERO,
@@ -365,9 +366,9 @@ pub(crate) mod tests {
             .await
             .unwrap_or_log();
         // Check the result.
-        let fibo = assert_matches!(db_connection.obtain_finished_result(execution_id).await.unwrap_or_log(),
+        let fibo = assert_matches!(db_connection.wait_for_finished_result(execution_id).await.unwrap_or_log(),
             Ok(SupportedFunctionResult::Infallible(WastVal::U64(val))) => val);
-        assert_eq!(EXPECTED, fibo);
+        assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
         exec_task.close().await;
         db_task.close().await;
@@ -392,7 +393,7 @@ pub(crate) mod tests {
         const DB_RPC_CAPACITY: usize = 1;
 
         test_utils::set_up();
-        let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
+        let fibo_input = env_or_default("FIBO_INPUT", FIBO_10_INPUT);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
         let recycled_instances = env_or_default("RECYCLE", RECYCLE).into();
         let permits = env_or_default("PERMITS", PERMITS);
@@ -502,7 +503,7 @@ pub(crate) mod tests {
             // Check that the computation succeded.
             assert_matches!(
                 db_connection
-                    .obtain_finished_result(execution_id)
+                    .wait_for_finished_result(execution_id)
                     .await
                     .unwrap_or_log(),
                 Ok(SupportedFunctionResult::Infallible(WastVal::U64(_)))
@@ -748,7 +749,7 @@ pub(crate) mod tests {
             // Check the result.
             assert_matches!(
                 db_connection
-                    .obtain_finished_result(execution_id)
+                    .wait_for_finished_result(execution_id)
                     .await
                     .unwrap_or_log(),
                 expected

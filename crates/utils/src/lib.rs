@@ -49,11 +49,21 @@ pub fn tracing_panic_hook(panic_info: &std::panic::PanicInfo) {
             panic.location = location,
             "A panic occurred: {backtrace}"
         );
+        if let Some(payload) = payload {
+            eprintln!("A panic occurred: {payload}\n{backtrace}");
+        } else {
+            eprintln!("A panic occurred\n{backtrace}");
+        }
     } else {
         tracing::error!(
             panic.payload = payload,
             panic.location = location,
             "A panic occurred",
         );
+        if let Some(payload) = payload {
+            eprintln!("A panic occurred: {payload}");
+        } else {
+            eprintln!("A panic occurred");
+        }
     }
 }

@@ -415,13 +415,18 @@ mod valuable {
 #[cfg(all(test))]
 mod tests {
     use super::*;
-    use crate::{activity_worker::tests::spawn_activity_fibo, EngineConfig};
+    use crate::{
+        activity_worker::tests::{spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT},
+        EngineConfig,
+    };
+    use assert_matches::assert_matches;
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, FunctionFqnStr, Params};
     use db::storage::{inmemory_dao::DbTask, journal::PendingState, DbConnection};
     use scheduler::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::{borrow::Cow, time::Duration};
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
+    use val_json::wast_val::WastVal;
     use wasmtime::component::Val;
 
     pub const FIBO_WORKFLOW_FFQN: FunctionFqnStr =
@@ -447,15 +452,14 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::ZERO,
-            cleanup_expired_locks: false,
+            cleanup_expired_locks: true,
             clock_fn: || now(),
         };
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config.clone(), None)
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity() {
-        const INPUT_N: u8 = 10;
         const INPUT_ITERATIONS: u32 = 1;
 
         let _guard = test_utils::set_up();
@@ -470,7 +474,7 @@ mod tests {
                 created_at,
                 execution_id.clone(),
                 FIBO_WORKFLOW_FFQN.to_owned(),
-                Params::from([Val::U8(INPUT_N), Val::U32(INPUT_ITERATIONS)]),
+                Params::from([Val::U8(FIBO_10_INPUT), Val::U32(INPUT_ITERATIONS)]),
                 None,
                 None,
                 Duration::ZERO,
@@ -486,10 +490,17 @@ mod tests {
 
         // Execution should call the activity and finish
         let activity_exec_task = spawn_activity_fibo(db_connection.clone());
-        db_connection
-            .wait_for_pending_state(execution_id, PendingState::Finished)
+
+        let res = db_connection
+            .wait_for_finished_result(execution_id)
             .await
+            .unwrap()
             .unwrap();
+        let res = assert_matches!(res, SupportedFunctionResult::Infallible(val) => val);
+        assert_eq!(
+            FIBO_10_OUTPUT,
+            assert_matches!(res, WastVal::U64(actual) => actual),
+        );
 
         drop(db_connection);
         workflow_exec_task.close().await;
