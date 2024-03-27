@@ -3,6 +3,7 @@ use std::{borrow::Cow, error::Error};
 use utils::wasm_tools;
 
 pub mod activity_worker;
+pub mod epoch_ticker;
 pub mod workflow_worker;
 
 pub struct EngineConfig {

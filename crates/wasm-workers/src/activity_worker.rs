@@ -296,7 +296,7 @@ mod valuable {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::EngineConfig;
+    use crate::{epoch_ticker::EpochTicker, EngineConfig};
     use assert_matches::assert_matches;
     use concepts::{ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult};
     use db::storage::{inmemory_dao::DbTask, DbConnection};
@@ -416,15 +416,8 @@ pub(crate) mod tests {
             allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
         });
         // Start epoch ticking
-        {
-            let engine = engine.clone();
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(Duration::from_millis(EPOCH_MILLIS)).await;
-                    engine.increment_epoch();
-                }
-            });
-        }
+        let _epoch_ticker =
+            EpochTicker::spawn_new(vec![engine.weak()], Duration::from_millis(EPOCH_MILLIS));
 
         // Spawn db
         let mut db_task = DbTask::spawn_new(db_rpc_capacity);
@@ -533,7 +526,7 @@ pub(crate) mod tests {
         const LOCK_EXPIRY_MILLIS: u64 = 1100;
         const TASKS: u32 = 10_000;
         const MAX_INSTANCES: u32 = 10_000;
-
+        const EPOCH_MILLIS: u64 = 10;
         test_utils::set_up();
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
@@ -550,18 +543,19 @@ pub(crate) mod tests {
         pool.total_memories(max_instances);
         pool.total_tables(max_instances);
 
+        let engine = activity_engine(EngineConfig {
+            allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
+        });
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
                 config_id: ConfigId::generate(),
                 wasm_path: Cow::Borrowed(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
-                epoch_millis: 10,
+                epoch_millis: EPOCH_MILLIS,
                 recycled_instances,
             },
-            activity_engine(EngineConfig {
-                allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
-            }),
+            engine,
         )
         .unwrap_or_log();
 
@@ -695,17 +689,9 @@ pub(crate) mod tests {
             let db_connection = db_task.as_db_connection().expect_or_log("must be open");
 
             let engine = activity_engine(EngineConfig::default());
-            // Spawn task to increment the epoch
-            {
-                let engine = engine.clone();
-                tokio::spawn(async move {
-                    loop {
-                        tokio::time::sleep(Duration::from_millis(EPOCH_MILLIS)).await;
-                        trace!("increment_epoch");
-                        engine.increment_epoch();
-                    }
-                });
-            }
+            let _epoch_ticker =
+                EpochTicker::spawn_new(vec![engine.weak()], Duration::from_millis(EPOCH_MILLIS));
+
             let recycled_instances: RecycleInstancesSetting =
                 env_or_default("RECYCLE", recycle).into();
             let worker = ActivityWorker::new_with_config(
@@ -787,17 +773,9 @@ pub(crate) mod tests {
             test_utils::set_up();
 
             let engine = activity_engine(EngineConfig::default());
-            // Spawn task to increment the epoch
-            {
-                let engine = engine.clone();
-                tokio::spawn(async move {
-                    loop {
-                        tokio::time::sleep(Duration::from_millis(EPOCH_MILLIS)).await;
-                        trace!("increment_epoch");
-                        engine.increment_epoch();
-                    }
-                });
-            }
+            let _epoch_ticker =
+                EpochTicker::spawn_new(vec![engine.weak()], Duration::from_millis(EPOCH_MILLIS));
+
             let worker = ActivityWorker::new_with_config(
                 ActivityConfig {
                     wasm_path: Cow::Borrowed(
