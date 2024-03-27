@@ -9,6 +9,7 @@ static INIT: std::sync::Once = std::sync::Once::new();
 
 pub fn set_up() -> Option<FlushGuard> {
     INIT.call_once(|| {
+        std::panic::set_hook(Box::new(|panic_info| utils::tracing_panic_hook(panic_info)));
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
         let enable_chrome_layer = std::env::var("CHROME_TRACE")

@@ -296,7 +296,7 @@ mod valuable {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{epoch_ticker::EpochTicker, EngineConfig};
+    use crate::EngineConfig;
     use assert_matches::assert_matches;
     use concepts::{ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult};
     use db::storage::{inmemory_dao::DbTask, DbConnection};
@@ -416,8 +416,10 @@ pub(crate) mod tests {
             allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
         });
         // Start epoch ticking
-        let _epoch_ticker =
-            EpochTicker::spawn_new(vec![engine.weak()], Duration::from_millis(EPOCH_MILLIS));
+        let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
+            vec![engine.weak()],
+            Duration::from_millis(EPOCH_MILLIS),
+        );
 
         // Spawn db
         let mut db_task = DbTask::spawn_new(db_rpc_capacity);
@@ -689,8 +691,10 @@ pub(crate) mod tests {
             let db_connection = db_task.as_db_connection().expect_or_log("must be open");
 
             let engine = activity_engine(EngineConfig::default());
-            let _epoch_ticker =
-                EpochTicker::spawn_new(vec![engine.weak()], Duration::from_millis(EPOCH_MILLIS));
+            let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
+                vec![engine.weak()],
+                Duration::from_millis(EPOCH_MILLIS),
+            );
 
             let recycled_instances: RecycleInstancesSetting =
                 env_or_default("RECYCLE", recycle).into();
@@ -773,8 +777,10 @@ pub(crate) mod tests {
             test_utils::set_up();
 
             let engine = activity_engine(EngineConfig::default());
-            let _epoch_ticker =
-                EpochTicker::spawn_new(vec![engine.weak()], Duration::from_millis(EPOCH_MILLIS));
+            let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
+                vec![engine.weak()],
+                Duration::from_millis(EPOCH_MILLIS),
+            );
 
             let worker = ActivityWorker::new_with_config(
                 ActivityConfig {

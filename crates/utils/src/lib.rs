@@ -33,7 +33,6 @@ pub mod time {
 // FIXME: replace tracing-unwrap with this hook
 pub fn tracing_panic_hook(panic_info: &std::panic::PanicInfo) {
     let payload = panic_info.payload();
-
     #[allow(clippy::manual_map)]
     let payload = if let Some(s) = payload.downcast_ref::<&str>() {
         Some(&**s)
@@ -42,9 +41,7 @@ pub fn tracing_panic_hook(panic_info: &std::panic::PanicInfo) {
     } else {
         None
     };
-
     let location = panic_info.location().map(|l| l.to_string());
-
     let backtrace = std::backtrace::Backtrace::capture();
     if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
         tracing::error!(

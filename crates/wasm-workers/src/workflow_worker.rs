@@ -204,8 +204,7 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                                 let res = res?;
                                 assert_eq!(results.len(), res.len(), "unexpected results length");
                                 for (idx, item) in res.value().into_iter().enumerate() {
-                                    // FIXME needed `ty`
-                                    results[idx] = val(item, &Type::U64).unwrap();
+                                    results[idx] = val(item, &results[idx].ty()).unwrap();
                                 }
                                 Ok(())
                             })

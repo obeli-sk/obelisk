@@ -15,6 +15,8 @@
     * Cleans up old hanging executions with expired locks. Executions that have the budget will be retried.
 
 # Planned features
+* Host function: generate a random value
+* Allow starting multiple child executions
 * Persistence using sqlite
 * Persistence using postgresql
 * Concurrent non blocking child executions
