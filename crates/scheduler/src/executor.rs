@@ -568,7 +568,7 @@ mod tests {
         config: ExecConfig<C>,
         worker: W,
         executed_at: DateTime<Utc>,
-    ) {
+    ) -> ExecutionProgress {
         trace!("Ticking with {worker:?}");
         let executor = ExecTask {
             db_connection: db_connection.clone(),
@@ -586,7 +586,7 @@ mod tests {
                 .executions
                 .retain(|(_, abort_handle)| !abort_handle.is_finished());
             if execution_progress.executions.is_empty() {
-                return;
+                return execution_progress;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -624,6 +624,7 @@ mod tests {
             SimpleWorker { worker_results_rev },
             0,
             created_at,
+            Duration::ZERO,
             tick_fn,
         )
         .await;
@@ -669,6 +670,7 @@ mod tests {
             SimpleWorker { worker_results_rev },
             0,
             now(),
+            Duration::ZERO,
             tick_fn,
         )
         .await;
@@ -723,7 +725,11 @@ mod tests {
             worker,
             0,
             now(),
-            |_, _, _, _| tokio::time::sleep(Duration::from_secs(1)),
+            Duration::ZERO,
+            |_, _, _, _| async {
+                tokio::time::sleep(Duration::from_secs(1)).await; // non deterministic
+                ExecutionProgress::default()
+            },
         )
         .await;
         exec_task.close().await;
@@ -744,7 +750,7 @@ mod tests {
         W: Worker,
         C: Fn() -> DateTime<Utc> + Send + Clone + 'static,
         T: FnMut(DB, ExecConfig<C>, W, DateTime<Utc>) -> F,
-        F: Future<Output = ()>,
+        F: Future<Output = ExecutionProgress>,
     >(
         created_at: DateTime<Utc>,
         db_connection: DB,
@@ -752,6 +758,7 @@ mod tests {
         worker: W,
         max_retries: u32,
         executed_at: DateTime<Utc>,
+        retry_exp_backoff: Duration,
         mut tick: T,
     ) -> ExecutionHistory {
         // Create an execution
@@ -764,7 +771,7 @@ mod tests {
                 Params::default(),
                 None,
                 None,
-                Duration::ZERO,
+                retry_exp_backoff,
                 max_retries,
             )
             .await
@@ -806,8 +813,11 @@ mod tests {
     #[tokio::test]
     async fn worker_error_should_trigger_an_execution_retry() {
         set_up();
-        let created_at = now();
-        let clock_fn = move || created_at;
+        let current_time = Arc::new(std::sync::Mutex::new(now()));
+        let clock_fn = {
+            let current_time = current_time.clone();
+            move || current_time.lock().unwrap().clone()
+        };
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
@@ -815,7 +825,7 @@ mod tests {
             lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
             cleanup_expired_locks: false,
-            clock_fn: clock_fn,
+            clock_fn: clock_fn.clone(),
         };
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
@@ -835,13 +845,16 @@ mod tests {
                 ),
             )]))),
         };
+        let retry_exp_backoff = Duration::from_millis(100);
+        debug!(now = %clock_fn(), "Creating an execution that should fail");
         let execution_history = create_and_tick(
-            created_at,
+            clock_fn(),
             db_connection.clone(),
             exec_config.clone(),
             worker,
             1,
-            created_at,
+            clock_fn(),
+            retry_exp_backoff,
             tick_fn,
         )
         .await;
@@ -851,30 +864,41 @@ mod tests {
             ExecutionEvent {
                 event: ExecutionEventInner::IntermittentFailure {
                     reason,
-                    expires_at: _ // TODO: check
+                    expires_at,
                 },
                 created_at: at,
-            } if *reason == Cow::Borrowed("fail") && *at == created_at
+            } if *reason == Cow::Borrowed("fail") && *at == clock_fn() && *expires_at == clock_fn() + retry_exp_backoff
         );
-        // tick again to finish the execution
         let worker = SimpleWorker {
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(4),
                 (vec![], Ok((SupportedFunctionResult::None, Version::new(4)))),
             )]))),
         };
-        tick_fn(db_connection.clone(), exec_config, worker, created_at).await;
+        // noop until `retry_exp_backoff` expires
+        assert!(tick_fn(
+            db_connection.clone(),
+            exec_config.clone(),
+            worker.clone(),
+            clock_fn(),
+        )
+        .await
+        .executions
+        .is_empty());
+        // tick again to finish the execution
+        *current_time.lock().unwrap() = clock_fn() + retry_exp_backoff;
+        tick_fn(db_connection.clone(), exec_config, worker, clock_fn()).await;
         let execution_history = db_connection
             .get(execution_history.execution_id)
             .await
             .unwrap_or_log();
-        debug!("Execution history after second tick: {execution_history:?}");
+        debug!(now = %clock_fn(), "Execution history after second tick: {execution_history:?}");
         assert_matches!(
             execution_history.events.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: at
-            } if *at == created_at
+            } if *at == clock_fn()
         );
         assert_matches!(
             execution_history.events.get(4).unwrap(),
@@ -883,7 +907,7 @@ mod tests {
                     result: Ok(SupportedFunctionResult::None),
                 },
                 created_at: finished_at,
-            } if *finished_at == created_at
+            } if *finished_at == clock_fn()
         );
     }
 
@@ -926,6 +950,7 @@ mod tests {
             worker,
             1,
             created_at,
+            Duration::ZERO,
             tick_fn,
         )
         .await;
@@ -1020,8 +1045,11 @@ mod tests {
     #[tokio::test]
     async fn hanging_lock_should_be_cleaned_and_execution_retried() {
         set_up();
-        let created_at = now();
-        let clock_fn = move || created_at;
+        let current_time = Arc::new(std::sync::Mutex::new(now()));
+        let clock_fn = {
+            let current_time = current_time.clone();
+            move || current_time.lock().unwrap().clone()
+        };
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
@@ -1029,13 +1057,13 @@ mod tests {
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::ZERO,
             cleanup_expired_locks: true,
-            clock_fn,
+            clock_fn: clock_fn.clone(),
         };
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
         };
         let worker = SleepyWorker {
-            duration: exec_config.lock_expiry + exec_config.lock_expiry_leeway * 2,
+            duration: exec_config.lock_expiry + exec_config.lock_expiry_leeway * 2, // sleep more than allowed by the lock expiry
             result: SupportedFunctionResult::None,
         };
         // Create an execution
@@ -1043,7 +1071,7 @@ mod tests {
         let timeout_duration = Duration::from_millis(300);
         db_connection
             .create(
-                created_at,
+                clock_fn(),
                 execution_id.clone(),
                 SOME_FFQN.to_owned(),
                 Params::default(),
@@ -1064,15 +1092,16 @@ mod tests {
         };
         let mut first_execution_progress = executor
             .tick(ExecTickRequest {
-                executed_at: created_at,
+                executed_at: clock_fn(),
             })
             .await
             .unwrap_or_log();
         assert_eq!(1, first_execution_progress.executions.len());
         // Started hanging, wait for lock expiry.
-        tokio::time::sleep(exec_config.lock_expiry + exec_config.lock_expiry_leeway).await;
+        *current_time.lock().unwrap() =
+            clock_fn() + exec_config.lock_expiry + exec_config.lock_expiry_leeway;
         // cleanup should be called
-        let now_after_first_lock_expiry = now();
+        let now_after_first_lock_expiry = clock_fn();
         {
             debug!(now = %now_after_first_lock_expiry, "Expecting an expired lock");
             let cleanup_progress = executor
@@ -1107,8 +1136,8 @@ mod tests {
             PendingState::PendingAt(expected_first_timeout_expiry),
             execution_history.pending_state
         );
-        tokio::time::sleep(timeout_duration).await;
-        let now_after_first_timeout = now();
+        *current_time.lock().unwrap() = clock_fn() + timeout_duration;
+        let now_after_first_timeout = clock_fn();
         debug!(now = %now_after_first_timeout, "Second execution should hang again and result in a permanent timeout");
 
         let mut second_execution_progress = executor
@@ -1120,9 +1149,10 @@ mod tests {
         assert_eq!(1, second_execution_progress.executions.len());
 
         // Started hanging, wait for lock expiry.
-        tokio::time::sleep(exec_config.lock_expiry + exec_config.lock_expiry_leeway).await;
+        *current_time.lock().unwrap() =
+            clock_fn() + exec_config.lock_expiry + exec_config.lock_expiry_leeway;
         // cleanup should be called
-        let now_after_second_lock_expiry = now();
+        let now_after_second_lock_expiry = clock_fn();
         debug!(now = %now_after_second_lock_expiry, "Expecting the second lock to be expired");
         {
             let cleanup_progress = executor
