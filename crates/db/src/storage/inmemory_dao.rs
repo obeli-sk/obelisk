@@ -1035,8 +1035,7 @@ pub mod tests {
     use assert_matches::assert_matches;
     use concepts::{ExecutionId, FunctionFqnStr};
     use std::time::{Duration, Instant};
-    use test_utils::env_or_default;
-    use tokio::time::sleep;
+    use test_utils::{env_or_default, sim_clock::SimClock};
     use tracing::info;
     use tracing_unwrap::ResultExt;
     use utils::time::now;
@@ -1076,6 +1075,7 @@ pub mod tests {
     }
 
     async fn lifecycle(db_connection: impl DbConnection) {
+        let sim_clock = SimClock::new(now());
         let execution_id = ExecutionId::generate();
         let exec1 = Arc::new("exec1".to_string());
         let exec2 = Arc::new("exec2".to_string());
@@ -1084,11 +1084,11 @@ pub mod tests {
         assert!(db_connection
             .lock_pending(
                 1,
-                now(),
+                sim_clock.now(),
                 vec![SOME_FFQN.to_owned()],
-                now(),
+                sim_clock.now(),
                 exec1.clone(),
-                now() + lock_expiry,
+                sim_clock.now() + lock_expiry,
             )
             .await
             .unwrap_or_log()
@@ -1097,7 +1097,7 @@ pub mod tests {
         let mut version;
         // Create
         {
-            let created_at = now();
+            let created_at = sim_clock.now();
             db_connection
                 .create(
                     created_at,
@@ -1114,7 +1114,7 @@ pub mod tests {
         }
         // LockPending
         let run_id = {
-            let created_at = now();
+            let created_at = sim_clock.now();
             info!(now = %created_at, "LockPending");
             let mut locked_executions = db_connection
                 .lock_pending(
@@ -1136,9 +1136,9 @@ pub mod tests {
             version = locked_execution.version;
             locked_execution.run_id
         };
-        sleep(Duration::from_millis(499)).await;
+        sim_clock.sleep(Duration::from_millis(499));
         {
-            let created_at = now();
+            let created_at = sim_clock.now();
             info!(now = %created_at, "Intermittent timeout");
             let req = AppendRequest {
                 created_at,
@@ -1152,9 +1152,9 @@ pub mod tests {
                 .await
                 .unwrap_or_log();
         }
-        sleep(lock_expiry - Duration::from_millis(100)).await;
+        sim_clock.sleep(lock_expiry - Duration::from_millis(100));
         {
-            let created_at = now();
+            let created_at = sim_clock.now();
             info!(now = %created_at, "Attempt to lock using exec2");
             assert!(db_connection
                 .lock(
@@ -1169,9 +1169,9 @@ pub mod tests {
                 .is_err());
             // Version is not changed
         }
-        sleep(Duration::from_millis(100)).await;
+        sim_clock.sleep(Duration::from_millis(100));
         {
-            let created_at = now();
+            let created_at = sim_clock.now();
             info!(now = %created_at, "Extend lock using exec1");
             let (event_history, current_version) = db_connection
                 .lock(
@@ -1187,9 +1187,9 @@ pub mod tests {
             assert!(event_history.is_empty());
             version = current_version;
         }
-        sleep(Duration::from_millis(700)).await;
+        sim_clock.sleep(Duration::from_millis(700));
         {
-            let created_at = now();
+            let created_at = sim_clock.now();
             info!(now = %created_at, "Attempt to lock using exec2  while in a lock");
             assert!(db_connection
                 .lock(
@@ -1206,7 +1206,7 @@ pub mod tests {
         }
 
         {
-            let created_at = now();
+            let created_at = sim_clock.now();
             info!(now = %created_at, "Extend lock using exec1");
             let (event_history, current_version) = db_connection
                 .lock(
@@ -1222,9 +1222,9 @@ pub mod tests {
             assert!(event_history.is_empty());
             version = current_version;
         }
-        sleep(Duration::from_millis(200)).await;
+        sim_clock.sleep(Duration::from_millis(200));
         {
-            let created_at = now();
+            let created_at = sim_clock.now();
             info!(now = %created_at, "Extend lock using exec1 and wrong run id should fail");
             assert!(db_connection
                 .lock(
@@ -1239,7 +1239,7 @@ pub mod tests {
                 .is_err());
         }
         {
-            let created_at = now();
+            let created_at = sim_clock.now();
             info!(now = %created_at, "Yield");
             let req = AppendRequest {
                 event: ExecutionEventInner::HistoryEvent {
@@ -1252,9 +1252,9 @@ pub mod tests {
                 .await
                 .unwrap_or_log();
         }
-        sleep(Duration::from_millis(200)).await;
+        sim_clock.sleep(Duration::from_millis(200));
         {
-            let created_at = now();
+            let created_at = sim_clock.now();
             info!(now = %created_at, "Lock again");
             let (event_history, current_version) = db_connection
                 .lock(
@@ -1271,9 +1271,9 @@ pub mod tests {
             assert_eq!(vec![HistoryEvent::Yield], event_history);
             version = current_version;
         }
-        sleep(Duration::from_millis(300)).await;
+        sim_clock.sleep(Duration::from_millis(300));
         {
-            let created_at = now();
+            let created_at = sim_clock.now();
             debug!(now = %created_at, "Finish execution");
             let req = AppendRequest {
                 event: ExecutionEventInner::Finished {
@@ -1290,7 +1290,7 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn stochastic_lock_expired_means_permanent_timeout_tick_based() {
+    async fn lock_expired_means_permanent_timeout_tick_based() {
         set_up();
         let db_task = DbTask::new();
         let db_task = Arc::new(std::sync::Mutex::new(db_task));
@@ -1301,7 +1301,7 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn stochastic_lock_expired_means_permanent_timeout_task_based() {
+    async fn lock_expired_means_permanent_timeout_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
         let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap_or_log();
@@ -1313,6 +1313,7 @@ pub mod tests {
     }
 
     async fn lock_expired_means_timeout(db_connection: impl DbConnection) {
+        let sim_clock = SimClock::new(now());
         let execution_id = ExecutionId::generate();
         let exec1 = Arc::new("exec1".to_string());
         // Create
@@ -1320,7 +1321,7 @@ pub mod tests {
         {
             db_connection
                 .create(
-                    now(),
+                    sim_clock.now(),
                     execution_id.clone(),
                     SOME_FFQN.to_owned(),
                     Params::default(),
@@ -1338,11 +1339,11 @@ pub mod tests {
             let mut locked_executions = db_connection
                 .lock_pending(
                     1,
-                    now(),
+                    sim_clock.now(),
                     vec![SOME_FFQN.to_owned()],
-                    now(),
+                    sim_clock.now(),
                     exec1.clone(),
-                    now() + lock_duration,
+                    sim_clock.now() + lock_duration,
                 )
                 .await
                 .unwrap_or_log();
@@ -1353,9 +1354,9 @@ pub mod tests {
             assert_eq!(Version::new(2), locked_execution.version);
         }
         // Calling `cleanup_expired_locks` after lock expiry should result in intermittent timeout.
-        sleep(lock_duration).await;
+        sim_clock.sleep(lock_duration);
         {
-            let cleanup_at = now();
+            let cleanup_at = sim_clock.now();
             let expired = db_connection
                 .cleanup_expired_locks(cleanup_at)
                 .await
@@ -1379,16 +1380,16 @@ pub mod tests {
             );
         }
         // Lock again
-        sleep(retry_exp_backoff).await;
+        sim_clock.sleep(retry_exp_backoff);
         {
             let mut locked_executions = db_connection
                 .lock_pending(
                     1,
-                    now(),
+                    sim_clock.now(),
                     vec![SOME_FFQN.to_owned()],
-                    now(),
+                    sim_clock.now(),
                     exec1.clone(),
-                    now() + lock_duration,
+                    sim_clock.now() + lock_duration,
                 )
                 .await
                 .unwrap_or_log();
@@ -1399,8 +1400,11 @@ pub mod tests {
             assert_eq!(Version::new(4), locked_execution.version);
         }
         // Calling `cleanup_expired_locks` after lock expiry should result in permanent timeout.
-        sleep(lock_duration).await;
-        let expired = db_connection.cleanup_expired_locks(now()).await.unwrap();
+        sim_clock.sleep(lock_duration);
+        let expired = db_connection
+            .cleanup_expired_locks(sim_clock.now())
+            .await
+            .unwrap();
         assert_eq!(1, expired);
         let execution_history = db_connection.get(execution_id).await.unwrap();
         assert_eq!(PendingState::Finished, execution_history.pending_state);

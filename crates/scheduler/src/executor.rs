@@ -19,7 +19,6 @@ use std::{
 };
 use tokio::task::AbortHandle;
 use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
-use utils::time::now;
 
 #[derive(Debug, Clone)]
 pub struct ExecConfig<C: Fn() -> DateTime<Utc>> {
@@ -100,6 +99,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
         let abort_handle = tokio::spawn(
             async move {
                 info!("Spawned executor");
+                let clock_fn = config.clock_fn.clone();
                 let task = Self {
                     db_connection,
                     worker,
@@ -109,7 +109,11 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                 };
                 let mut old_err = None;
                 loop {
-                    let res = task.tick(ExecTickRequest { executed_at: now() }).await;
+                    let res = task
+                        .tick(ExecTickRequest {
+                            executed_at: clock_fn(),
+                        })
+                        .await;
                     Self::log_err_if_new(res, &mut old_err);
                     if is_closing_inner.load(Ordering::Relaxed) {
                         return;
@@ -510,6 +514,7 @@ mod tests {
     };
     use indexmap::IndexMap;
     use std::{borrow::Cow, fmt::Debug, future::Future, sync::Arc};
+    use test_utils::sim_clock::SimClock;
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
 
@@ -640,9 +645,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stochastic_execute_executor_tick_based_db_task_based() {
+    async fn execute_executor_tick_based_db_task_based() {
         set_up();
-        let clock_fn = || now();
+        let created_at = now();
+        let clock_fn = move || created_at;
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
@@ -650,7 +656,7 @@ mod tests {
             lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::from_millis(100),
             cleanup_expired_locks: false,
-            clock_fn: clock_fn.clone(),
+            clock_fn,
         };
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect_or_log("must be open");
@@ -662,14 +668,13 @@ mod tests {
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
-        let created_at = now();
         let execution_history = create_and_tick(
             created_at,
             db_connection,
             exec_config,
             SimpleWorker { worker_results_rev },
             0,
-            now(),
+            created_at,
             Duration::ZERO,
             tick_fn,
         )
@@ -689,6 +694,8 @@ mod tests {
     #[tokio::test]
     async fn stochastic_execute_task_based() {
         set_up();
+        let created_at = now();
+        let clock_fn = move || created_at;
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
@@ -696,7 +703,7 @@ mod tests {
             lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
             cleanup_expired_locks: false,
-            clock_fn: || now(),
+            clock_fn,
         };
 
         let mut db_task = DbTask::spawn_new(1);
@@ -717,17 +724,17 @@ mod tests {
             exec_config.clone(),
             None,
         );
-        let created_at = now();
+
         let execution_history = create_and_tick(
             created_at,
             db_task.as_db_connection().unwrap_or_log(),
             exec_config,
             worker,
             0,
-            now(),
+            created_at,
             Duration::ZERO,
             |_, _, _, _| async {
-                tokio::time::sleep(Duration::from_secs(1)).await; // non deterministic
+                tokio::time::sleep(Duration::from_secs(1)).await; // non deterministic if not run in madsim
                 ExecutionProgress::default()
             },
         )
@@ -813,11 +820,7 @@ mod tests {
     #[tokio::test]
     async fn worker_error_should_trigger_an_execution_retry() {
         set_up();
-        let current_time = Arc::new(std::sync::Mutex::new(now()));
-        let clock_fn = {
-            let current_time = current_time.clone();
-            move || current_time.lock().unwrap().clone()
-        };
+        let sim_clock = SimClock::new(now());
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
@@ -825,7 +828,7 @@ mod tests {
             lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
             cleanup_expired_locks: false,
-            clock_fn: clock_fn.clone(),
+            clock_fn: sim_clock.clock_fn(),
         };
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
@@ -846,14 +849,14 @@ mod tests {
             )]))),
         };
         let retry_exp_backoff = Duration::from_millis(100);
-        debug!(now = %clock_fn(), "Creating an execution that should fail");
+        debug!(now = %sim_clock.now(), "Creating an execution that should fail");
         let execution_history = create_and_tick(
-            clock_fn(),
+            sim_clock.now(),
             db_connection.clone(),
             exec_config.clone(),
             worker,
             1,
-            clock_fn(),
+            sim_clock.now(),
             retry_exp_backoff,
             tick_fn,
         )
@@ -867,7 +870,7 @@ mod tests {
                     expires_at,
                 },
                 created_at: at,
-            } if *reason == Cow::Borrowed("fail") && *at == clock_fn() && *expires_at == clock_fn() + retry_exp_backoff
+            } if *reason == Cow::Borrowed("fail") && *at == sim_clock.now() && *expires_at == sim_clock.now() + retry_exp_backoff
         );
         let worker = SimpleWorker {
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
@@ -880,25 +883,25 @@ mod tests {
             db_connection.clone(),
             exec_config.clone(),
             worker.clone(),
-            clock_fn(),
+            sim_clock.now(),
         )
         .await
         .executions
         .is_empty());
         // tick again to finish the execution
-        *current_time.lock().unwrap() = clock_fn() + retry_exp_backoff;
-        tick_fn(db_connection.clone(), exec_config, worker, clock_fn()).await;
+        sim_clock.sleep(retry_exp_backoff);
+        tick_fn(db_connection.clone(), exec_config, worker, sim_clock.now()).await;
         let execution_history = db_connection
             .get(execution_history.execution_id)
             .await
             .unwrap_or_log();
-        debug!(now = %clock_fn(), "Execution history after second tick: {execution_history:?}");
+        debug!(now = %sim_clock.now(), "Execution history after second tick: {execution_history:?}");
         assert_matches!(
             execution_history.events.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: at
-            } if *at == clock_fn()
+            } if *at == sim_clock.now()
         );
         assert_matches!(
             execution_history.events.get(4).unwrap(),
@@ -907,7 +910,7 @@ mod tests {
                     result: Ok(SupportedFunctionResult::None),
                 },
                 created_at: finished_at,
-            } if *finished_at == clock_fn()
+            } if *finished_at == sim_clock.now()
         );
     }
 
@@ -1045,11 +1048,7 @@ mod tests {
     #[tokio::test]
     async fn hanging_lock_should_be_cleaned_and_execution_retried() {
         set_up();
-        let current_time = Arc::new(std::sync::Mutex::new(now()));
-        let clock_fn = {
-            let current_time = current_time.clone();
-            move || current_time.lock().unwrap().clone()
-        };
+        let sim_clock = SimClock::new(now());
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
@@ -1057,7 +1056,7 @@ mod tests {
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::ZERO,
             cleanup_expired_locks: true,
-            clock_fn: clock_fn.clone(),
+            clock_fn: sim_clock.clock_fn(),
         };
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
@@ -1071,7 +1070,7 @@ mod tests {
         let timeout_duration = Duration::from_millis(300);
         db_connection
             .create(
-                clock_fn(),
+                sim_clock.now(),
                 execution_id.clone(),
                 SOME_FFQN.to_owned(),
                 Params::default(),
@@ -1092,16 +1091,15 @@ mod tests {
         };
         let mut first_execution_progress = executor
             .tick(ExecTickRequest {
-                executed_at: clock_fn(),
+                executed_at: sim_clock.now(),
             })
             .await
             .unwrap_or_log();
         assert_eq!(1, first_execution_progress.executions.len());
         // Started hanging, wait for lock expiry.
-        *current_time.lock().unwrap() =
-            clock_fn() + exec_config.lock_expiry + exec_config.lock_expiry_leeway;
+        sim_clock.sleep(exec_config.lock_expiry + exec_config.lock_expiry_leeway);
         // cleanup should be called
-        let now_after_first_lock_expiry = clock_fn();
+        let now_after_first_lock_expiry = sim_clock.now();
         {
             debug!(now = %now_after_first_lock_expiry, "Expecting an expired lock");
             let cleanup_progress = executor
@@ -1136,8 +1134,8 @@ mod tests {
             PendingState::PendingAt(expected_first_timeout_expiry),
             execution_history.pending_state
         );
-        *current_time.lock().unwrap() = clock_fn() + timeout_duration;
-        let now_after_first_timeout = clock_fn();
+        sim_clock.sleep(timeout_duration);
+        let now_after_first_timeout = sim_clock.now();
         debug!(now = %now_after_first_timeout, "Second execution should hang again and result in a permanent timeout");
 
         let mut second_execution_progress = executor
@@ -1149,10 +1147,9 @@ mod tests {
         assert_eq!(1, second_execution_progress.executions.len());
 
         // Started hanging, wait for lock expiry.
-        *current_time.lock().unwrap() =
-            clock_fn() + exec_config.lock_expiry + exec_config.lock_expiry_leeway;
+        sim_clock.sleep(exec_config.lock_expiry + exec_config.lock_expiry_leeway);
         // cleanup should be called
-        let now_after_second_lock_expiry = clock_fn();
+        let now_after_second_lock_expiry = sim_clock.now();
         debug!(now = %now_after_second_lock_expiry, "Expecting the second lock to be expired");
         {
             let cleanup_progress = executor
