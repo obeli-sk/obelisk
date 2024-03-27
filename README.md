@@ -15,9 +15,11 @@
     * Cleans up old hanging executions with expired locks. Executions that have the budget will be retried.
 
 # Planned features
+* Persistence using sqlite
+* Persistence using postgresql
+* Concurrent non blocking child executions
 * Cancellation
 * Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
-* Concurrent non blocking child executions
 
 ## Setting up environment
 ```sh
@@ -34,7 +36,7 @@ cargo build --workspace --no-default-features
 RUSTFLAGS="--cfg tokio_unstable --cfg tracing_unstable" cargo test --workspace
 ```
 
-### Simulation testing
+### Deterministic tests using madsim simulator
 ```sh
 RUSTFLAGS="--cfg madsim --cfg tokio_unstable --cfg tracing_unstable" cargo test --workspace
 ```
