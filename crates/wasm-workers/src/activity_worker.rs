@@ -298,7 +298,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::EngineConfig;
     use assert_matches::assert_matches;
-    use concepts::{ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult};
+    use concepts::{ExecutionId, Params, SupportedFunctionResult};
     use db::storage::{inmemory_dao::DbTask, DbConnection};
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::{
@@ -313,7 +313,8 @@ pub(crate) mod tests {
     use wasmtime::component::Val;
 
     pub const EPOCH_MILLIS: u64 = 10;
-    pub const FIBO_ACTIVITY_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:fibo/fibo", "fibo"); // func(n: u8) -> u64;
+    pub const FIBO_ACTIVITY_FFQN: FunctionFqn =
+        FunctionFqn::new_static("testing:fibo/fibo", "fibo"); // func(n: u8) -> u64;
     pub const FIBO_10_INPUT: u8 = 10;
     pub const FIBO_10_OUTPUT: u64 = 55;
 
@@ -342,7 +343,6 @@ pub(crate) mod tests {
         };
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
     }
-
 
     #[tokio::test]
     async fn fibo_once() {

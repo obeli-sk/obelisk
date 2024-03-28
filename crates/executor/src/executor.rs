@@ -553,7 +553,7 @@ mod tests {
     use anyhow::anyhow;
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::{FunctionFqnStr, Params, SupportedFunctionResult};
+    use concepts::{Params, SupportedFunctionResult};
     use db::storage::{
         inmemory_dao::{tick::TickBasedDbConnection, DbTask},
         journal::PendingState,
@@ -569,7 +569,7 @@ mod tests {
         test_utils::set_up();
     }
 
-    const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
+    const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
     type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent>, WorkerResult)>>>;
 

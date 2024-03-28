@@ -1,5 +1,5 @@
 use concepts::{FnName, FunctionFqn, FunctionMetadata, IfcFqnName};
-use std::{collections::HashMap, error::Error};
+use std::{collections::HashMap, error::Error, sync::Arc};
 use tracing_unwrap::OptionExt;
 use val_json::{TypeWrapper, UnsupportedTypeError};
 use wit_component::DecodedWasm;
@@ -111,7 +111,10 @@ pub fn functions_and_result_lengths(
             format!("{package_name}/{ifc_name}")
         };
         for (function_name, function) in fns {
-            let ffqn = FunctionFqn::new(ifc_fqn.clone(), function_name.clone());
+            let ffqn = FunctionFqn::new_owned(
+                Arc::from(ifc_fqn.clone()),
+                Arc::from(function_name.clone()),
+            );
             match &function.results {
                 wit_parser::Results::Anon(_) => Ok(()),
                 wit_parser::Results::Named(named) if named.is_empty() => Ok(()),
@@ -148,7 +151,10 @@ pub fn functions_to_metadata(
             format!("{package_name}/{ifc_name}")
         };
         for (function_name, function) in fns {
-            let fqn = FunctionFqn::new(ifc_fqn.clone(), function_name.clone());
+            let fqn = FunctionFqn::new_owned(
+                Arc::from(ifc_fqn.clone()),
+                Arc::from(function_name.clone()),
+            );
             let params = function
                 .params
                 .iter()

@@ -1,33 +1,45 @@
 use std::{
-    borrow::Borrow,
-    error::Error,
-    fmt::{Debug, Display},
-    hash::Hash,
-    marker::PhantomData,
-    ops::Deref,
-    sync::Arc,
+    borrow::Borrow, error::Error, fmt::{Debug, Display}, hash::Hash, marker::PhantomData, ops::Deref, sync::Arc
 };
 use val_json::{wast_val::WastVal, TypeWrapper, ValWrapper};
 
-#[derive(Hash, Clone, PartialEq, Eq)]
+#[derive(Hash, Clone, PartialEq, Eq, derive_more::Display)]
+
+pub enum StrVariant {
+    Static(&'static str),
+    Arc(Arc<str>),
+}
+
+impl Deref for StrVariant {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Arc(v) => v,
+            Self::Static(v) => v,
+        }
+    }
+}
+
+#[derive(Hash, Clone, PartialEq, Eq, derive_more::Display)]
+#[display(fmt = "{value}")]
 pub struct Name<T> {
-    value: Arc<String>,
+    value: StrVariant,
     phantom_data: PhantomData<fn(T) -> T>,
 }
 
 impl<T> Name<T> {
     #[must_use]
-    pub fn new(value: String) -> Self {
+    pub fn new_owned(value: Arc<str>) -> Self {
         Self {
-            value: Arc::new(value),
+            value: StrVariant::Arc(value),
             phantom_data: PhantomData,
         }
     }
-}
-
-impl<T> Display for Name<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.value)
+    pub const fn new_static(value: &'static str) -> Self {
+        Self {
+            value: StrVariant::Static(value),
+            phantom_data: PhantomData,
+        }
     }
 }
 
@@ -41,7 +53,7 @@ impl<T> Deref for Name<T> {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
-        self.value.deref().deref()
+        self.value.deref()
     }
 }
 
@@ -68,11 +80,16 @@ pub struct FunctionFqn {
 }
 
 impl FunctionFqn {
-    #[must_use]
-    pub fn new(ifc_fqn: String, function_name: String) -> FunctionFqn {
+    pub fn new_owned(ifc_fqn: Arc<str>, function_name: Arc<str>) -> FunctionFqn {
         FunctionFqn {
-            ifc_fqn: Name::new(ifc_fqn),
-            function_name: Name::new(function_name),
+            ifc_fqn: Name::new_owned(ifc_fqn),
+            function_name: Name::new_owned(function_name),
+        }
+    }
+    pub const fn new_static(ifc_fqn: &'static str, function_name: &'static str) -> FunctionFqn {
+        FunctionFqn {
+            ifc_fqn: Name::new_static(ifc_fqn),
+            function_name: Name::new_static(function_name),
         }
     }
 }
@@ -94,56 +111,12 @@ impl Debug for FunctionFqn {
     }
 }
 
-impl std::cmp::PartialEq<FunctionFqnStr<'_>> for FunctionFqn {
-    fn eq(&self, other: &FunctionFqnStr<'_>) -> bool {
-        *self.ifc_fqn == *other.ifc_fqn && *self.function_name == *other.function_name
-    }
-}
-
 impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(FunctionFqn::new(
-            u.arbitrary::<String>()?,
-            u.arbitrary::<String>()?,
+        Ok(FunctionFqn::new_owned(
+            Arc::from(u.arbitrary::<String>()?),
+            Arc::from(u.arbitrary::<String>()?),
         ))
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct FunctionFqnStr<'a> {
-    pub ifc_fqn: &'a str,
-    pub function_name: &'a str,
-}
-
-impl FunctionFqnStr<'_> {
-    #[must_use]
-    pub const fn new<'a>(ifc_fqn: &'a str, function_name: &'a str) -> FunctionFqnStr<'a> {
-        FunctionFqnStr {
-            ifc_fqn,
-            function_name,
-        }
-    }
-
-    #[must_use]
-    pub fn to_owned(&self) -> FunctionFqn {
-        FunctionFqn::new(self.ifc_fqn.to_owned(), self.function_name.to_owned())
-    }
-}
-
-impl Display for FunctionFqnStr<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{ifc_fqn}.{{{function_name}}}",
-            ifc_fqn = self.ifc_fqn,
-            function_name = self.function_name
-        )
-    }
-}
-
-impl std::cmp::PartialEq<FunctionFqn> for FunctionFqnStr<'_> {
-    fn eq(&self, other: &FunctionFqn) -> bool {
-        *self.ifc_fqn == *other.ifc_fqn && *self.function_name == *other.function_name
     }
 }
 

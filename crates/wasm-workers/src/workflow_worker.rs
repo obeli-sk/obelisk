@@ -450,7 +450,7 @@ mod tests {
         EngineConfig,
     };
     use assert_matches::assert_matches;
-    use concepts::{prefixed_ulid::ConfigId, ExecutionId, FunctionFqnStr, Params};
+    use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
     use db::storage::{inmemory_dao::DbTask, journal::PendingState, DbConnection};
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::{borrow::Cow, time::Duration};
@@ -460,8 +460,8 @@ mod tests {
     use val_json::wast_val::WastVal;
     use wasmtime::component::Val;
 
-    pub const FIBO_WORKFLOW_FFQN: FunctionFqnStr =
-        FunctionFqnStr::new("testing:fibo-workflow/workflow", "fiboa"); // fiboa: func(n: u8, iterations: u32) -> u64;
+    pub const FIBO_WORKFLOW_FFQN: FunctionFqn =
+        FunctionFqn::new_static("testing:fibo-workflow/workflow", "fiboa"); // fiboa: func(n: u8, iterations: u32) -> u64;
 
     pub(crate) fn spawn_workflow_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
         let fibo_worker = WorkflowWorker::new_with_config(
@@ -567,8 +567,8 @@ mod tests {
         };
         ExecTask::spawn_new(db_connection, worker, exec_config, None)
     }
-    const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqnStr = // TODO: generate
-        FunctionFqnStr::new("testing:sleep-workflow/workflow", "sleep-host-activity"); // sleep-host-activity: func(millis: u64);
+    const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqn = // TODO: generate
+        FunctionFqn::new_static("testing:sleep-workflow/workflow", "sleep-host-activity"); // sleep-host-activity: func(millis: u64);
     #[tokio::test]
     async fn sleep_should_be_persisted_after_executor_restart() {
         const SLEEP_MILLIS: u64 = 100;

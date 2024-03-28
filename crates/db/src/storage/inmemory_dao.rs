@@ -1033,7 +1033,7 @@ pub mod tests {
         FinishedExecutionResult,
     };
     use assert_matches::assert_matches;
-    use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqnStr};
+    use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
     use std::time::{Duration, Instant};
     use test_utils::{env_or_default, sim_clock::SimClock};
     use tracing::info;
@@ -1044,7 +1044,7 @@ pub mod tests {
         test_utils::set_up();
     }
 
-    const SOME_FFQN: FunctionFqnStr = FunctionFqnStr::new("pkg/ifc", "fn");
+    const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
 
     #[tokio::test]
     async fn close() {
