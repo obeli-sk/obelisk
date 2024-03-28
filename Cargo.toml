@@ -23,7 +23,7 @@ resolver = "2"
 members = [
     "crates/concepts",
     "crates/db",
-    "crates/scheduler",
+    "crates/executor",
     "crates/testing/cargo-component-builder",
     "crates/testing/test-programs/fibo/activity",
     "crates/testing/test-programs/fibo/activity/builder",
@@ -63,7 +63,7 @@ rust-version = "1.73.0"
 cargo-component-builder.path = "crates/testing/cargo-component-builder"
 concepts.path = "crates/concepts"
 db.path = "crates/db"
-scheduler.path = "crates/scheduler/"
+executor.path = "crates/executor/"
 test-programs-fibo-activity-builder.path = "crates/testing/test-programs/fibo/activity/builder"
 test-programs-fibo-workflow-builder.path = "crates/testing/test-programs/fibo/workflow/builder"
 test-programs-http-get-activity-builder.path = "crates/testing/test-programs/http/activity/builder"

@@ -782,6 +782,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "executor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arbitrary",
+ "assert_matches",
+ "async-channel",
+ "async-trait",
+ "cfg-if",
+ "chrono",
+ "concepts",
+ "db",
+ "derivative",
+ "derive_more",
+ "indexmap",
+ "madsim",
+ "madsim-tokio",
+ "test-utils",
+ "thiserror",
+ "tracing",
+ "tracing-unwrap",
+ "ulid",
+ "utils",
+ "val-json",
+ "valuable",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1791,34 +1819,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e86697c916019a8588c99b5fac3cead74ec0b4b819707a682fd4d23fa0ce1ba1"
 
 [[package]]
-name = "scheduler"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arbitrary",
- "assert_matches",
- "async-channel",
- "async-trait",
- "cfg-if",
- "chrono",
- "concepts",
- "db",
- "derivative",
- "derive_more",
- "indexmap",
- "madsim",
- "madsim-tokio",
- "test-utils",
- "thiserror",
- "tracing",
- "tracing-unwrap",
- "ulid",
- "utils",
- "val-json",
- "valuable",
-]
-
-[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2689,13 +2689,13 @@ dependencies = [
  "concepts",
  "db",
  "derive_more",
+ "executor",
  "futures-util",
  "indexmap",
  "madsim",
  "madsim-tokio",
  "rand",
  "rstest",
- "scheduler",
  "test-programs-fibo-activity-builder",
  "test-programs-fibo-workflow-builder",
  "test-programs-sleep-activity-builder",

@@ -10,7 +10,7 @@
     * Calling a single workflow / activity, blocking the execution
     * Execution is persisted at every state change, so that it can be replayed after an interrupt
 
-* Multi-master scheduler
+* Work stealing executor
     * Periodically locks a batch of currently pending executions, starts/continues their execution
     * Cleans up old hanging executions with expired locks. Executions that have the budget will be retried.
 

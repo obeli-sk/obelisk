@@ -5,8 +5,8 @@ use concepts::prefixed_ulid::ConfigId;
 use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
 use db::storage::{HistoryEvent, Version};
-use scheduler::worker::FatalError;
-use scheduler::worker::{Worker, WorkerError};
+use executor::worker::FatalError;
+use executor::worker::{Worker, WorkerError};
 use std::collections::HashMap;
 use std::{borrow::Cow, fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
@@ -300,7 +300,7 @@ pub(crate) mod tests {
     use assert_matches::assert_matches;
     use concepts::{ExecutionId, FunctionFqnStr, Params, SupportedFunctionResult};
     use db::storage::{inmemory_dao::DbTask, DbConnection};
-    use scheduler::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
+    use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::{
         borrow::Cow,
         time::{Duration, Instant},
