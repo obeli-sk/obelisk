@@ -2,13 +2,14 @@ use crate::{EngineConfig, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
-use concepts::{ExecutionId, FunctionFqn};
+use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use concepts::{Params, SupportedFunctionResult};
 use db::storage::{HistoryEvent, Version};
 use executor::worker::FatalError;
 use executor::worker::{Worker, WorkerError};
 use std::collections::HashMap;
-use std::{borrow::Cow, fmt::Debug, sync::Arc};
+use std::ops::Deref;
+use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
 use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
@@ -58,7 +59,7 @@ pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
 #[derive(Clone, Debug)]
 pub struct ActivityConfig {
     pub config_id: ConfigId,
-    pub wasm_path: Cow<'static, str>,
+    pub wasm_path: StrVariant,
     pub epoch_millis: u64,
     pub recycled_instances: RecycleInstancesSetting,
 }
@@ -80,7 +81,7 @@ impl ActivityWorker {
         engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
         info!("Reading");
-        let wasm = std::fs::read(config.wasm_path.as_ref())
+        let wasm = std::fs::read(config.wasm_path.deref())
             .map_err(|err| WasmFileError::CannotOpen(config.wasm_path.clone(), err))?;
         let (resolve, world_id) = wasm_tools::decode(&wasm)
             .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?;
@@ -95,20 +96,20 @@ impl ActivityWorker {
         wasmtime_wasi::command::add_to_linker(&mut linker).map_err(|err| {
             WasmFileError::LinkingError {
                 file: config.wasm_path.clone(),
-                reason: Cow::Borrowed("cannot add wasi command"),
+                reason: StrVariant::Static("cannot add wasi command"),
                 err: err.into(),
             }
         })?;
         wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(&mut linker, |t| t)
             .map_err(|err| WasmFileError::LinkingError {
                 file: config.wasm_path.clone(),
-                reason: Cow::Borrowed("cannot add http outgoing_handler"),
+                reason: StrVariant::Static("cannot add http outgoing_handler"),
                 err: err.into(),
             })?;
         wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t).map_err(
             |err| WasmFileError::LinkingError {
                 file: config.wasm_path.clone(),
-                reason: Cow::Borrowed("cannot add http types"),
+                reason: StrVariant::Static("cannot add http types"),
                 err: err.into(),
             },
         )?;
@@ -158,7 +159,7 @@ impl ActivityWorker {
         let results_len = *self
             .ffqns_to_results_len
             .get(&ffqn)
-            .ok_or(WorkerError::FatalError(FatalError::NotFound))?;
+            .ok_or(WorkerError::FatalError(FatalError::FfqnNotFound))?;
         trace!("Params: {params:?}, results_len:{results_len}",);
 
         let instance_and_store = self
@@ -179,7 +180,7 @@ impl ActivityWorker {
                             WorkerError::LimitReached(reason)
                         } else {
                             WorkerError::IntermittentError {
-                                reason: Cow::Borrowed("cannot instantiate"),
+                                reason: StrVariant::Static("cannot instantiate"),
                                 err: err.into(),
                             }
                         }
@@ -229,7 +230,9 @@ impl ActivityWorker {
                 } else {
                     let err = err.into();
                     WorkerError::IntermittentError {
-                        reason: Cow::Owned(format!("wasm function call error: `{err}`")),
+                        reason: StrVariant::Arc(Arc::from(format!(
+                            "wasm function call error: `{err}`"
+                        ))),
                         err,
                     }
                 }
@@ -238,7 +241,7 @@ impl ActivityWorker {
                 .map_err(|err| WorkerError::FatalError(FatalError::ResultParsingError(err)))?;
             func.post_return_async(&mut store).await.map_err(|err| {
                 WorkerError::IntermittentError {
-                    reason: Cow::Borrowed("wasm post function call error"),
+                    reason: StrVariant::Static("wasm post function call error"),
                     err: err.into(),
                 }
             })?;
@@ -301,10 +304,7 @@ pub(crate) mod tests {
     use concepts::{ExecutionId, Params, SupportedFunctionResult};
     use db::storage::{inmemory_dao::DbTask, DbConnection};
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
-    use std::{
-        borrow::Cow,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
     use test_utils::env_or_default;
     use tracing::warn;
     use tracing_unwrap::{OptionExt, ResultExt};
@@ -321,7 +321,7 @@ pub(crate) mod tests {
     pub(crate) fn spawn_activity_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
-                wasm_path: Cow::Borrowed(
+                wasm_path: StrVariant::Static(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
                 epoch_millis: 10,
@@ -381,7 +381,6 @@ pub(crate) mod tests {
         use db::storage::{AppendRequest, ExecutionEventInner};
         use std::sync::Arc;
 
-        const FIBO_INPUT: u8 = 10;
         const EXECUTIONS: usize = 20_000; // release: 70_000
         const RECYCLE: bool = true;
         const PERMITS: usize = 1_000_000;
@@ -430,7 +429,7 @@ pub(crate) mod tests {
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
                 config_id: ConfigId::generate(),
-                wasm_path: Cow::Borrowed(
+                wasm_path: StrVariant::Static(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
                 epoch_millis: EPOCH_MILLIS,
@@ -553,7 +552,7 @@ pub(crate) mod tests {
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
                 config_id: ConfigId::generate(),
-                wasm_path: Cow::Borrowed(
+                wasm_path: StrVariant::Static(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
                 epoch_millis: EPOCH_MILLIS,
@@ -632,7 +631,7 @@ pub(crate) mod tests {
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
                 config_id: ConfigId::generate(),
-                wasm_path: Cow::Borrowed(
+                wasm_path: StrVariant::Static(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
                 ),
                 epoch_millis: 10,
@@ -672,8 +671,8 @@ pub(crate) mod tests {
     #[cfg(all(test, not(madsim)))] // Requires madsim support in wasmtime
     mod wasmtime_nosim {
         use super::*;
-        pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqnStr =
-            FunctionFqnStr::new("testing:sleep/sleep", "sleep-loop"); // sleep-loop: func(millis: u64, iterations: u32);
+        pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn =
+            FunctionFqn::new_static("testing:sleep/sleep", "sleep-loop"); // sleep-loop: func(millis: u64, iterations: u32);
 
         #[rstest::rstest]
         #[case(10, 100, Err(db::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
@@ -702,7 +701,7 @@ pub(crate) mod tests {
                 env_or_default("RECYCLE", recycle).into();
             let worker = ActivityWorker::new_with_config(
                 ActivityConfig {
-                    wasm_path: Cow::Borrowed(
+                    wasm_path: StrVariant::Static(
                         test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                     ),
                     epoch_millis: EPOCH_MILLIS,
@@ -786,7 +785,7 @@ pub(crate) mod tests {
 
             let worker = ActivityWorker::new_with_config(
                 ActivityConfig {
-                    wasm_path: Cow::Borrowed(
+                    wasm_path: StrVariant::Static(
                         test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                     ),
                     epoch_millis: EPOCH_MILLIS,

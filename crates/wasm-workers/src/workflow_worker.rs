@@ -2,7 +2,7 @@ use crate::{EngineConfig, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ConfigId, JoinSetId};
-use concepts::{ExecutionId, FunctionFqn};
+use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use concepts::{Params, SupportedFunctionResult};
 use db::storage::AsyncResponse;
 use db::storage::{HistoryEvent, Version};
@@ -11,8 +11,9 @@ use executor::worker::{Worker, WorkerError};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::time::Duration;
-use std::{borrow::Cow, fmt::Debug, sync::Arc};
+use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
 use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
@@ -36,7 +37,7 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
 #[derive(Debug, Clone)]
 pub struct WorkflowConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
     pub config_id: ConfigId,
-    pub wasm_path: Cow<'static, str>,
+    pub wasm_path: StrVariant,
     pub epoch_millis: u64,
     pub clock_fn: C,
 }
@@ -137,7 +138,7 @@ impl WorkflowCtx {
 #[derive(thiserror::Error, Debug)]
 enum FunctionError {
     #[error("non deterministic execution: `{0}`")]
-    NonDeterminismDetected(Cow<'static, str>),
+    NonDeterminismDetected(StrVariant),
     #[error("interrupt: {}", .0.child_execution_id)]
     Interrupt(ChildExecutionRequest),
     #[error("sleep: `{0:?}`")]
@@ -153,7 +154,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
         engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
         info!("Reading");
-        let wasm = std::fs::read(config.wasm_path.as_ref())
+        let wasm = std::fs::read(config.wasm_path.deref())
             .map_err(|err| WasmFileError::CannotOpen(config.wasm_path.clone(), err))?;
         let (resolve, world_id) = wasm_tools::decode(&wasm)
             .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?;
@@ -231,9 +232,9 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
                         } else {
                             return Err(WasmFileError::LinkingError {
                                 file: config.wasm_path.clone(),
-                                reason: Cow::Owned(format!(
+                                reason: StrVariant::Arc(Arc::from(format!(
                                     "cannot add mock for imported function {ffqn}"
-                                )),
+                                ))),
                                 err: err.into(),
                             });
                         }
@@ -245,7 +246,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
         }
         WorkflowCtx::add_to_linker(&mut linker).map_err(|err| WasmFileError::LinkingError {
             file: config.wasm_path.clone(),
-            reason: Cow::Owned(format!("cannot add host activities")),
+            reason: StrVariant::Arc(Arc::from(format!("cannot add host activities"))),
             err: err.into(),
         })?;
         Ok(Self {
@@ -318,7 +319,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
         let results_len = *self
             .exported_ffqns_to_results_len
             .get(&ffqn)
-            .ok_or(WorkerError::FatalError(FatalError::NotFound))?;
+            .ok_or(WorkerError::FatalError(FatalError::FfqnNotFound))?;
         trace!("Params: {params:?}, results_len:{results_len}",);
         let (instance, mut store) = {
             let seed = execution_id.random() as u64;
@@ -334,7 +335,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
                 .instantiate_async(&mut store, &self.component)
                 .await
                 .map_err(|err| WorkerError::IntermittentError {
-                    reason: Cow::Borrowed("cannot instantiate"),
+                    reason: StrVariant::Static("cannot instantiate"),
                     err: err.into(),
                 })?;
             (instance, store)
@@ -381,7 +382,9 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
                 } else {
                     let err = err.into();
                     WorkerError::IntermittentError {
-                        reason: Cow::Owned(format!("wasm function call error: `{err}`")),
+                        reason: StrVariant::Arc(Arc::from(format!(
+                            "wasm function call error: `{err}`"
+                        ))),
                         err,
                     }
                 }
@@ -390,7 +393,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
                 .map_err(|err| WorkerError::FatalError(FatalError::ResultParsingError(err)))?;
             func.post_return_async(&mut store).await.map_err(|err| {
                 WorkerError::IntermittentError {
-                    reason: Cow::Borrowed("wasm post function call error"),
+                    reason: StrVariant::Static("wasm post function call error"),
                     err: err.into(),
                 }
             })?;
@@ -453,7 +456,7 @@ mod tests {
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
     use db::storage::{inmemory_dao::DbTask, journal::PendingState, DbConnection};
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
-    use std::{borrow::Cow, time::Duration};
+    use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
@@ -466,7 +469,7 @@ mod tests {
     pub(crate) fn spawn_workflow_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
         let fibo_worker = WorkflowWorker::new_with_config(
             WorkflowConfig {
-                wasm_path: Cow::Borrowed(
+                wasm_path: StrVariant::Static(
                     test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
                 ),
                 epoch_millis: EPOCH_MILLIS,
@@ -545,7 +548,7 @@ mod tests {
     ) -> ExecutorTaskHandle {
         let worker = WorkflowWorker::new_with_config(
             WorkflowConfig {
-                wasm_path: Cow::Borrowed(
+                wasm_path: StrVariant::Static(
                     test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 ),
                 epoch_millis: EPOCH_MILLIS,

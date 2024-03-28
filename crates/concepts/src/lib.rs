@@ -1,13 +1,47 @@
 use std::{
-    borrow::Borrow, error::Error, fmt::{Debug, Display}, hash::Hash, marker::PhantomData, ops::Deref, sync::Arc
+    borrow::Borrow,
+    error::Error,
+    fmt::{Debug, Display},
+    hash::Hash,
+    marker::PhantomData,
+    ops::Deref,
+    sync::Arc,
 };
 use val_json::{wast_val::WastVal, TypeWrapper, ValWrapper};
 
-#[derive(Hash, Clone, PartialEq, Eq, derive_more::Display)]
-
+#[derive(Clone, Eq, derive_more::Display)]
 pub enum StrVariant {
     Static(&'static str),
     Arc(Arc<str>),
+}
+
+impl PartialEq for StrVariant {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Static(left), Self::Static(right)) => left == right,
+            (Self::Static(left), Self::Arc(right)) => *left == right.deref(),
+            (Self::Arc(left), Self::Arc(right)) => left == right,
+            (Self::Arc(left), Self::Static(right)) => left.deref() == *right,
+        }
+    }
+}
+
+impl Hash for StrVariant {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            StrVariant::Static(val) => val.hash(state),
+            StrVariant::Arc(val) => {
+                let str: &str = val.deref();
+                str.hash(state)
+            }
+        }
+    }
+}
+
+impl Debug for StrVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, f)
+    }
 }
 
 impl Deref for StrVariant {
@@ -433,7 +467,12 @@ pub use prefixed_ulid::ExecutionId;
 
 #[cfg(test)]
 mod tests {
-    use crate::ExecutionId;
+    use std::{
+        hash::{DefaultHasher, Hash, Hasher},
+        sync::Arc,
+    };
+
+    use crate::{ExecutionId, StrVariant};
 
     #[cfg(madsim)]
     #[test]
@@ -485,5 +524,21 @@ mod tests {
         let str = generated.to_string();
         let parsed = str.parse().unwrap();
         assert_eq!(generated, parsed);
+    }
+
+    #[test]
+    fn hash_of_str_variants_should_be_equal() {
+        let input = "foo"; // TODO: use arbitrary
+        let left = StrVariant::Arc(Arc::from(input));
+        let right = StrVariant::Static(input);
+        assert_eq!(left, right);
+        let mut left_hasher = DefaultHasher::new();
+        left.hash(&mut left_hasher);
+        let mut right_hasher = DefaultHasher::new();
+        right.hash(&mut right_hasher);
+        let left_hasher = left_hasher.finish();
+        let right_hasher = right_hasher.finish();
+        println!("left: {left_hasher:x}, right: {right_hasher:x}");
+        assert_eq!(left_hasher, right_hasher);
     }
 }

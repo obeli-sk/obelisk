@@ -1,7 +1,9 @@
-use std::{borrow::Cow, time::Duration};
+use std::time::Duration;
 
 use assert_matches::assert_matches;
-use concepts::{prefixed_ulid::JoinSetId, ExecutionId, Params, SupportedFunctionResult};
+use concepts::{
+    prefixed_ulid::JoinSetId, ExecutionId, Params, StrVariant, SupportedFunctionResult,
+};
 use storage::{journal::PendingState, ExecutionEvent, Version};
 
 use crate::storage::ExecutionEventInner;
@@ -79,11 +81,11 @@ pub enum FinishedExecutionError {
     #[error("permanent timeout")]
     PermanentTimeout,
     #[error("non-determinism detected, reason: `{0}`")]
-    NonDeterminismDetected(Cow<'static, str>),
+    NonDeterminismDetected(StrVariant),
     #[error("uncategorized error: `{0}`")]
-    PermanentFailure(Cow<'static, str>), // intermittent failure that is not retried (anymore)
+    PermanentFailure(StrVariant), // intermittent failure that is not retried (anymore)
     #[error("cancelled, reason: `{0}`")]
-    Cancelled(Cow<'static, str>),
+    Cancelled(StrVariant),
     #[error("continuing as {execution_id}")]
     ContinueAsNew { execution_id: ExecutionId },
 }

@@ -13,8 +13,8 @@ use concepts::prefixed_ulid::RunId;
 use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::Params;
+use concepts::StrVariant;
 use concepts::SupportedFunctionResult;
-use std::borrow::Cow;
 use std::time::Duration;
 use tracing_unwrap::OptionExt;
 
@@ -64,8 +64,8 @@ pub enum ExecutionEventInner {
     #[display(fmt = "IntermittentFailure(`{expires_at}`)")]
     IntermittentFailure {
         expires_at: DateTime<Utc>,
-        #[arbitrary(value = Cow::Borrowed("reason"))]
-        reason: Cow<'static, str>,
+        #[arbitrary(value = StrVariant::Static("reason"))]
+        reason: StrVariant,
     },
     // Created by the executor holding last lock.
     // Processed by a scheduler.
@@ -198,7 +198,7 @@ pub enum DbConnectionError {
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
 pub enum SpecificError {
     #[error("validation failed: {0}")]
-    ValidationFailed(Cow<'static, str>),
+    ValidationFailed(StrVariant),
     #[error("version mismatch")]
     VersionMismatch,
     #[error("not found")]
@@ -345,9 +345,9 @@ pub mod journal {
     use chrono::{DateTime, Utc};
     use concepts::{
         prefixed_ulid::{ExecutorId, JoinSetId, RunId},
-        FunctionFqn, Params,
+        FunctionFqn, Params, StrVariant,
     };
-    use std::{borrow::Cow, collections::VecDeque, time::Duration};
+    use std::{collections::VecDeque, sync::Arc, time::Duration};
     use tracing_unwrap::OptionExt;
 
     #[derive(Debug)]
@@ -418,7 +418,7 @@ pub mod journal {
             event: ExecutionEventInner,
         ) -> Result<Version, SpecificError> {
             if self.pending_state == PendingState::Finished {
-                return Err(SpecificError::ValidationFailed(Cow::Borrowed(
+                return Err(SpecificError::ValidationFailed(StrVariant::Static(
                     "already finished",
                 )));
             }
@@ -430,7 +430,7 @@ pub mod journal {
             } = &event
             {
                 if *lock_expires_at <= created_at {
-                    return Err(SpecificError::ValidationFailed(Cow::Borrowed(
+                    return Err(SpecificError::ValidationFailed(StrVariant::Static(
                         "invalid expiry date",
                     )));
                 }
@@ -440,9 +440,9 @@ pub mod journal {
                         if *pending_start <= created_at {
                             // pending now, ok to lock
                         } else {
-                            return Err(SpecificError::ValidationFailed(Cow::Owned(format!(
-                                "cannot append {event} event, not yet pending"
-                            ))));
+                            return Err(SpecificError::ValidationFailed(StrVariant::Arc(
+                                Arc::from(format!("cannot append {event} event, not yet pending")),
+                            )));
                         }
                     }
                     PendingState::Locked {
@@ -455,14 +455,16 @@ pub mod journal {
                         } else if *lock_expires_at <= created_at {
                             // we allow locking after the old lock expired
                         } else {
-                            return Err(SpecificError::ValidationFailed(Cow::Owned(format!(
-                                "cannot append {event}, already in {}",
-                                self.pending_state
-                            ))));
+                            return Err(SpecificError::ValidationFailed(StrVariant::Arc(
+                                Arc::from(format!(
+                                    "cannot append {event}, already in {}",
+                                    self.pending_state
+                                )),
+                            )));
                         }
                     }
                     PendingState::BlockedByJoinSet => {
-                        return Err(SpecificError::ValidationFailed(Cow::Borrowed(
+                        return Err(SpecificError::ValidationFailed(StrVariant::Static(
                             "cannot append Locked event when in BlockedByJoinSet state",
                         )));
                     }
@@ -473,9 +475,8 @@ pub mod journal {
             }
             let locked_now = matches!(self.pending_state, PendingState::Locked { lock_expires_at,.. } if lock_expires_at > created_at);
             if locked_now && !event.appendable_only_in_lock() {
-                return Err(SpecificError::ValidationFailed(Cow::Owned(format!(
-                    "cannot append {event} event in {}",
-                    self.pending_state
+                return Err(SpecificError::ValidationFailed(StrVariant::Arc(Arc::from(
+                    format!("cannot append {event} event in {}", self.pending_state),
                 ))));
             }
             self.execution_events

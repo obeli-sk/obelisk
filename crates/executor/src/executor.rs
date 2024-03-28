@@ -2,7 +2,7 @@ use crate::worker::{FatalError, Worker, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{DelayId, ExecutorId},
-    ExecutionId, FunctionFqn, Params,
+    ExecutionId, FunctionFqn, Params, StrVariant,
 };
 use db::{
     storage::{
@@ -13,7 +13,6 @@ use db::{
 };
 use derivative::Derivative;
 use std::{
-    borrow::Cow,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -21,7 +20,7 @@ use std::{
     time::Duration,
 };
 use tokio::task::AbortHandle;
-use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 #[derive(Debug, Clone)]
 pub struct ExecConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
@@ -320,8 +319,9 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                 let finished_res;
                 let event = if let Some(exec_err) = result.fallible_err() {
                     info!("Execution finished with an error result");
-                    let reason =
-                        Cow::Owned(format!("Execution returned error result: `{exec_err:?}`"));
+                    let reason = StrVariant::Arc(Arc::from(format!(
+                        "Execution returned error result: `{exec_err:?}`"
+                    )));
                     if let Some(duration) = execution_history.can_be_retried_after() {
                         let expires_at = created_at + duration;
                         debug!("Retrying failed execution after {duration:?} at {expires_at}");
@@ -503,27 +503,27 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                             result: Err(FinishedExecutionError::NonDeterminismDetected(reason)),
                         }
                     }
-                    WorkerError::FatalError(FatalError::NotFound) => {
-                        info!("Not found");
+                    WorkerError::FatalError(FatalError::FfqnNotFound) => {
+                        error!("Function not found, possible program error");
                         ExecutionEventInner::Finished {
-                            result: Err(FinishedExecutionError::PermanentFailure(Cow::Borrowed(
-                                "not found",
-                            ))),
+                            result: Err(FinishedExecutionError::PermanentFailure(
+                                StrVariant::Static("function not found"),
+                            )),
                         }
                     }
                     WorkerError::FatalError(FatalError::ParamsParsingError(err)) => {
                         info!("Error parsing parameters");
                         ExecutionEventInner::Finished {
-                            result: Err(FinishedExecutionError::PermanentFailure(Cow::Owned(
-                                format!("error parsing parameters: {err:?}"),
+                            result: Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
+                                Arc::from(format!("error parsing parameters: {err:?}")),
                             ))),
                         }
                     }
                     WorkerError::FatalError(FatalError::ResultParsingError(err)) => {
                         info!("Error parsing result");
                         ExecutionEventInner::Finished {
-                            result: Err(FinishedExecutionError::PermanentFailure(Cow::Owned(
-                                format!("error parsing result: {err:?}"),
+                            result: Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
+                                Arc::from(format!("error parsing result: {err:?}")),
                             ))),
                         }
                     }
@@ -560,7 +560,7 @@ mod tests {
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
     };
     use indexmap::IndexMap;
-    use std::{borrow::Cow, fmt::Debug, future::Future, sync::Arc};
+    use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::sim_clock::SimClock;
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
@@ -887,7 +887,7 @@ mod tests {
                     vec![],
                     Err((
                         WorkerError::IntermittentError {
-                            reason: Cow::Borrowed("fail"),
+                            reason: StrVariant::Static("fail"),
                             err: anyhow!("").into(),
                         },
                         Version::new(2),
@@ -917,7 +917,7 @@ mod tests {
                     expires_at,
                 },
                 created_at: at,
-            } if *reason == Cow::Borrowed("fail") && *at == sim_clock.now() && *expires_at == sim_clock.now() + retry_exp_backoff
+            } if reason.deref() == "fail" && *at == sim_clock.now() && *expires_at == sim_clock.now() + retry_exp_backoff
         );
         let worker = SimpleWorker {
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(

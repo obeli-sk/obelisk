@@ -16,13 +16,10 @@ use crate::FinishedExecutionError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
-use concepts::{ExecutionId, FunctionFqn, Params};
+use concepts::{ExecutionId, FunctionFqn, Params, StrVariant};
 use derivative::Derivative;
 use hashbrown::{HashMap, HashSet};
-use std::{
-    borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
-};
+use std::collections::{BTreeMap, BTreeSet};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -671,7 +668,7 @@ impl DbTask {
         max_retries: u32,
     ) -> Result<AppendResponse, SpecificError> {
         if self.journals.contains_key(&execution_id) {
-            return Err(SpecificError::ValidationFailed(Cow::Borrowed(
+            return Err(SpecificError::ValidationFailed(StrVariant::Static(
                 "execution is already initialized",
             )));
         }
@@ -811,7 +808,7 @@ impl DbTask {
         mut version: Option<Version>,
     ) -> Result<AppendBatchResponse, SpecificError> {
         if batch.is_empty() {
-            return Err(SpecificError::ValidationFailed(Cow::Borrowed(
+            return Err(SpecificError::ValidationFailed(StrVariant::Static(
                 "empty batch request",
             )));
         }
@@ -1034,7 +1031,10 @@ pub mod tests {
     };
     use assert_matches::assert_matches;
     use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
-    use std::time::{Duration, Instant};
+    use std::{
+        ops::Deref,
+        time::{Duration, Instant},
+    };
     use test_utils::{env_or_default, sim_clock::SimClock};
     use tracing::info;
     use tracing_unwrap::ResultExt;
@@ -1600,7 +1600,7 @@ pub mod tests {
         assert_matches!(
             err,
             DbError::Specific(SpecificError::ValidationFailed(reason))
-            if reason == "already finished"
+            if reason.deref() == "already finished"
         );
         let err = db_connection.get(execution_id.clone()).await.unwrap_err();
         assert_eq!(DbError::Specific(SpecificError::NotFound), err);
@@ -1622,7 +1622,7 @@ pub mod tests {
         assert_matches!(
             err,
             DbError::Specific(SpecificError::ValidationFailed(reason))
-            if reason == "already finished"
+            if reason.deref() == "already finished"
         );
         let created = db_connection.get(execution_id.clone()).await.unwrap();
         assert_eq!(version, created.version);

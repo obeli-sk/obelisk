@@ -5,12 +5,13 @@ use concepts::{prefixed_ulid::JoinSetId, FunctionFqn, ParamsParsingError, Result
 use concepts::{Params, SupportedFunctionResult};
 use db::storage::HistoryEvent;
 use db::storage::Version;
-use std::borrow::Cow;
 use std::error::Error;
 
 pub mod executor;
 
 pub mod worker {
+
+    use concepts::StrVariant;
 
     use super::*;
 
@@ -20,7 +21,7 @@ pub mod worker {
     pub enum WorkerError {
         #[error("intermittent error: `{reason}`, {err:?}")]
         IntermittentError {
-            reason: Cow<'static, str>,
+            reason: StrVariant,
             err: Box<dyn Error + Send + Sync>,
         },
         #[error("Limit reached: {0}")]
@@ -49,9 +50,9 @@ pub mod worker {
     #[derive(Debug, thiserror::Error)]
     pub enum FatalError {
         #[error("non-determinism detected: `{0}`")]
-        NonDeterminismDetected(Cow<'static, str>),
-        #[error("not found")]
-        NotFound,
+        NonDeterminismDetected(StrVariant),
+        #[error("function not found")]
+        FfqnNotFound, // TODO: should this be a panic?
         #[error(transparent)]
         ParamsParsingError(ParamsParsingError),
         #[error(transparent)]
