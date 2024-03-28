@@ -7,7 +7,7 @@ use concepts::{
 use db::{
     storage::{
         AppendRequest, AsyncResponse, DbConnection, DbConnectionError, DbError,
-        ExecutionEventInner, ExecutorName, HistoryEvent, SpecificError, Version,
+        ExecutionEventInner, HistoryEvent, SpecificError, Version,
     },
     ExecutionHistory, FinishedExecutionError,
 };
@@ -43,7 +43,7 @@ pub struct ExecTask<
     worker: W,
     config: ExecConfig<C>,
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
-    executor_name: ExecutorName,
+    executor_id: ExecutorId,
 }
 
 #[derive(Debug)]
@@ -112,7 +112,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                     worker,
                     config,
                     task_limiter,
-                    executor_name: Arc::new(executor_id.to_string()),
+                    executor_id,
                 };
                 let mut old_err = None;
                 loop {
@@ -191,7 +191,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                     request.executed_at, // fetch expiring before now
                     self.config.ffqns.clone(),
                     request.executed_at, // created at
-                    self.executor_name.clone(),
+                    self.executor_id.clone(),
                     lock_expires_at,
                 )
                 .await?;
@@ -627,7 +627,7 @@ mod tests {
             worker,
             config,
             task_limiter: None,
-            executor_name: Arc::new("SimpleWorker".to_string()),
+            executor_id: ExecutorId::generate(),
         };
         let mut execution_progress = executor
             .tick(ExecTickRequest { executed_at })
@@ -1134,7 +1134,7 @@ mod tests {
             worker,
             config: exec_config.clone(),
             task_limiter: None,
-            executor_name: Arc::new("SimpleWorker".to_string()),
+            executor_id: ExecutorId::generate(),
         };
         let mut first_execution_progress = executor
             .tick(ExecTickRequest {

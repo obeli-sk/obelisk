@@ -5,7 +5,7 @@
 //! When inserting, the row in the journal must contain a version that must be equal
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::index::JournalsIndex;
-use super::{journal::ExecutionJournal, ExecutionEventInner, ExecutorName};
+use super::{journal::ExecutionJournal, ExecutionEventInner};
 use super::{AppendBatchResponse, AppendRequest, CleanupExpiredLocks, LockedExecution};
 use crate::storage::journal::PendingState;
 use crate::storage::{
@@ -15,7 +15,7 @@ use crate::storage::{
 use crate::FinishedExecutionError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{JoinSetId, RunId};
+use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::{ExecutionId, FunctionFqn, Params};
 use derivative::Derivative;
 use hashbrown::{HashMap, HashSet};
@@ -46,7 +46,7 @@ impl DbConnection for InMemoryDbConnection {
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         created_at: DateTime<Utc>,
-        executor_name: ExecutorName,
+        executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbConnectionError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
@@ -55,7 +55,7 @@ impl DbConnection for InMemoryDbConnection {
             pending_at_or_sooner,
             ffqns,
             created_at,
-            executor_name,
+            executor_id,
             lock_expires_at,
             resp_sender,
         });
@@ -91,7 +91,7 @@ impl DbConnection for InMemoryDbConnection {
         execution_id: ExecutionId,
         run_id: RunId,
         version: Version,
-        executor_name: ExecutorName,
+        executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
@@ -100,7 +100,7 @@ impl DbConnection for InMemoryDbConnection {
             execution_id,
             run_id,
             version,
-            executor_name,
+            executor_id,
             lock_expires_at,
             resp_sender,
         });
@@ -294,13 +294,13 @@ enum DbRequest {
 #[derivative(Debug)]
 #[derive(derive_more::Display)]
 enum ExecutionSpecificRequest {
-    #[display(fmt = "Lock(`{executor_name}`)")]
+    #[display(fmt = "Lock(`{executor_id}`)")]
     Lock {
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
         run_id: RunId,
         version: Version,
-        executor_name: ExecutorName,
+        executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<LockResponse, SpecificError>>,
@@ -324,13 +324,13 @@ enum ExecutionSpecificRequest {
 #[derive(derive_more::Display, Derivative)]
 #[derivative(Debug)]
 enum GeneralRequest {
-    #[display(fmt = "LockPending(`{executor_name}`, {ffqns:?})")]
+    #[display(fmt = "LockPending(`{executor_id}`, {ffqns:?})")]
     LockPending {
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         created_at: DateTime<Utc>,
-        executor_name: ExecutorName,
+        executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<LockPendingResponse>,
@@ -542,7 +542,7 @@ impl DbTask {
                 pending_at_or_sooner,
                 ffqns,
                 created_at,
-                executor_name,
+                executor_id,
                 lock_expires_at,
                 resp_sender,
             } => self.lock_pending(
@@ -550,7 +550,7 @@ impl DbTask {
                 pending_at_or_sooner,
                 ffqns,
                 created_at,
-                executor_name,
+                executor_id,
                 lock_expires_at,
                 resp_sender,
             ),
@@ -575,7 +575,7 @@ impl DbTask {
         expiring_before: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         created_at: DateTime<Utc>,
-        executor_name: ExecutorName,
+        executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
         resp_sender: oneshot::Sender<LockPendingResponse>,
     ) -> DbTickResponse {
@@ -605,7 +605,7 @@ impl DbTask {
                     row.execution_id.clone(),
                     row.run_id.clone(),
                     row.version,
-                    executor_name.clone(),
+                    executor_id.clone(),
                     lock_expires_at,
                 )
                 .expect_or_log("must be lockable within the same transaction");
@@ -635,7 +635,7 @@ impl DbTask {
                 execution_id,
                 run_id,
                 version,
-                executor_name,
+                executor_id,
                 lock_expires_at,
                 resp_sender,
             } => DbTickResponse::Lock {
@@ -645,7 +645,7 @@ impl DbTask {
                     execution_id,
                     run_id,
                     version,
-                    executor_name,
+                    executor_id,
                     lock_expires_at,
                 ),
             },
@@ -699,11 +699,11 @@ impl DbTask {
         execution_id: ExecutionId,
         run_id: RunId,
         version: Version,
-        executor_name: ExecutorName,
+        executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse, SpecificError> {
         let event = ExecutionEventInner::Locked {
-            executor_name,
+            executor_id: executor_id,
             lock_expires_at,
             run_id,
         };
@@ -922,7 +922,7 @@ pub mod tick {
             pending_at_or_sooner: DateTime<Utc>,
             ffqns: Vec<FunctionFqn>,
             created_at: DateTime<Utc>,
-            executor_name: ExecutorName,
+            executor_id: ExecutorId,
             lock_expires_at: DateTime<Utc>,
         ) -> Result<LockPendingResponse, DbConnectionError> {
             let request = DbRequest::General(GeneralRequest::LockPending {
@@ -930,7 +930,7 @@ pub mod tick {
                 pending_at_or_sooner,
                 ffqns,
                 created_at,
-                executor_name,
+                executor_id,
                 lock_expires_at,
                 resp_sender: oneshot::channel().0,
             });
@@ -959,7 +959,7 @@ pub mod tick {
             execution_id: ExecutionId,
             run_id: RunId,
             version: Version,
-            executor_name: ExecutorName,
+            executor_id: ExecutorId,
             lock_expires_at: DateTime<Utc>,
         ) -> Result<LockResponse, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
@@ -967,7 +967,7 @@ pub mod tick {
                 execution_id,
                 run_id,
                 version,
-                executor_name,
+                executor_id,
                 lock_expires_at,
                 resp_sender: oneshot::channel().0,
             });
@@ -1033,7 +1033,7 @@ pub mod tests {
         FinishedExecutionResult,
     };
     use assert_matches::assert_matches;
-    use concepts::{ExecutionId, FunctionFqnStr};
+    use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqnStr};
     use std::time::{Duration, Instant};
     use test_utils::{env_or_default, sim_clock::SimClock};
     use tracing::info;
@@ -1077,8 +1077,8 @@ pub mod tests {
     async fn lifecycle(db_connection: impl DbConnection) {
         let sim_clock = SimClock::new(now());
         let execution_id = ExecutionId::generate();
-        let exec1 = Arc::new("exec1".to_string());
-        let exec2 = Arc::new("exec2".to_string());
+        let exec1 = ExecutorId::generate();
+        let exec2 = ExecutorId::generate();
         let lock_expiry = Duration::from_millis(500);
 
         assert!(db_connection
@@ -1315,7 +1315,7 @@ pub mod tests {
     async fn lock_expired_means_timeout(db_connection: impl DbConnection) {
         let sim_clock = SimClock::new(now());
         let execution_id = ExecutionId::generate();
-        let exec1 = Arc::new("exec1".to_string());
+        let exec1 = ExecutorId::generate();
         // Create
         let retry_exp_backoff = Duration::from_millis(100);
         {
@@ -1521,11 +1521,11 @@ pub mod tests {
         );
 
         // spawn executors
-        let exec_name = Arc::new("exec".to_string());
+        let exec_id = ExecutorId::generate();
         let exec_tasks = (0..tasks)
             .map(|_| {
                 let db_connection = db_connection.clone();
-                let exec_name = exec_name.clone();
+                let exec_id = exec_id.clone();
                 tokio::spawn(async move {
                     let target = executions / tasks;
                     let mut locked = Vec::with_capacity(target);
@@ -1537,7 +1537,7 @@ pub mod tests {
                                 now,
                                 vec![SOME_FFQN.to_owned()],
                                 now,
-                                exec_name.clone(),
+                                exec_id.clone(),
                                 now + Duration::from_secs(1),
                             )
                             .await
