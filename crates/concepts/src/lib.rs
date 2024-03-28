@@ -312,7 +312,6 @@ pub mod prefixed_ulid {
         fmt::{Debug, Display},
         hash::Hash,
         marker::PhantomData,
-        sync::Arc,
     };
     use ulid::Ulid;
 
@@ -358,19 +357,8 @@ pub mod prefixed_ulid {
     }
 
     mod impls {
-        use std::str::FromStr;
-
         use super::*;
-
-        impl<T> Into<Arc<String>> for PrefixedUlid<T> {
-            fn into(self) -> Arc<String> {
-                Arc::new(format!(
-                    "{prefix}_{ulid}",
-                    prefix = self.prefix,
-                    ulid = self.ulid,
-                ))
-            }
-        }
+        use std::str::FromStr;
 
         impl<T> FromStr for PrefixedUlid<T> {
             type Err = &'static str;
