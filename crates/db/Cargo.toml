@@ -17,7 +17,6 @@ derive_more.workspace = true
 hashbrown.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
-tracing-unwrap.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

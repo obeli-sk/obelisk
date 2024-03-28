@@ -14,7 +14,6 @@ derive_more.workspace = true
 getrandom.workspace = true      # Only needed for the madsim patch
 serde_json.workspace = true
 thiserror.workspace = true
-tracing-unwrap.workspace = true
 ulid.workspace = true
 wasmtime.workspace = true
 

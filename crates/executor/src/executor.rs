@@ -554,7 +554,6 @@ mod tests {
     use indexmap::IndexMap;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::sim_clock::SimClock;
-    use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
 
     fn set_up() {
@@ -590,12 +589,8 @@ mod tests {
             _execution_deadline: DateTime<Utc>,
         ) -> WorkerResult {
             assert_eq!(SOME_FFQN, ffqn);
-            let (expected_version, (expected_eh, worker_result)) = self
-                .worker_results_rev
-                .lock()
-                .unwrap_or_log()
-                .pop()
-                .unwrap_or_log();
+            let (expected_version, (expected_eh, worker_result)) =
+                self.worker_results_rev.lock().unwrap().pop().unwrap();
             trace!(%expected_version, %version, ?expected_eh, ?eh, "Running SimpleWorker");
             assert_eq!(expected_version, version);
             assert_eq!(expected_eh, eh);
@@ -624,7 +619,7 @@ mod tests {
         let mut execution_progress = executor
             .tick(ExecTickRequest { executed_at })
             .await
-            .unwrap_or_log();
+            .unwrap();
         loop {
             execution_progress
                 .executions
@@ -698,7 +693,7 @@ mod tests {
             clock_fn,
         };
         let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+        let db_connection = db_task.as_db_connection().expect("must be open");
         let worker_results_rev = {
             let finished_result: WorkerResult =
                 Ok((SupportedFunctionResult::None, Version::new(2)));
@@ -758,7 +753,7 @@ mod tests {
             worker_results_rev: worker_results_rev.clone(),
         };
         let exec_task = ExecTask::spawn_new(
-            db_task.as_db_connection().unwrap_or_log(),
+            db_task.as_db_connection().unwrap(),
             worker.clone(),
             exec_config.clone(),
             None,
@@ -766,7 +761,7 @@ mod tests {
 
         let execution_history = create_and_tick(
             created_at,
-            db_task.as_db_connection().unwrap_or_log(),
+            db_task.as_db_connection().unwrap(),
             exec_config,
             worker,
             0,
@@ -821,7 +816,7 @@ mod tests {
                 max_retries,
             )
             .await
-            .unwrap_or_log();
+            .unwrap();
         // execute!
         tick(
             db_connection.clone(),
@@ -830,7 +825,7 @@ mod tests {
             executed_at,
         )
         .await;
-        let execution_history = db_connection.get(execution_id).await.unwrap_or_log();
+        let execution_history = db_connection.get(execution_id).await.unwrap();
         debug!("Execution history after tick: {execution_history:?}");
         // check that DB contains Created and Locked events.
         assert_matches!(
@@ -933,7 +928,7 @@ mod tests {
         let execution_history = db_connection
             .get(execution_history.execution_id)
             .await
-            .unwrap_or_log();
+            .unwrap();
         debug!(now = %sim_clock.now(), "Execution history after second tick: {execution_history:?}");
         assert_matches!(
             execution_history.events.get(3).unwrap(),
@@ -1029,7 +1024,7 @@ mod tests {
         let execution_history = db_connection
             .get(execution_history.execution_id)
             .await
-            .unwrap_or_log();
+            .unwrap();
         debug!("Execution history after second tick: {execution_history:?}");
 
         assert_eq!(5, execution_history.events.len());
@@ -1119,7 +1114,7 @@ mod tests {
                 1,
             )
             .await
-            .unwrap_or_log();
+            .unwrap();
 
         let executor = ExecTask {
             db_connection: db_connection.clone(),
@@ -1133,7 +1128,7 @@ mod tests {
                 executed_at: sim_clock.now(),
             })
             .await
-            .unwrap_or_log();
+            .unwrap();
         assert_eq!(1, first_execution_progress.executions.len());
         // Started hanging, wait for lock expiry.
         sim_clock.sleep(exec_config.lock_expiry + exec_config.lock_expiry_leeway);
@@ -1146,7 +1141,7 @@ mod tests {
                     executed_at: now_after_first_lock_expiry,
                 })
                 .await
-                .unwrap_or_log();
+                .unwrap();
             assert!(cleanup_progress.executions.is_empty());
             assert_eq!(Some(1), cleanup_progress.expired_locks);
         }
@@ -1157,10 +1152,7 @@ mod tests {
             .1
             .is_finished());
 
-        let execution_history = db_connection
-            .get(execution_id.clone())
-            .await
-            .unwrap_or_log();
+        let execution_history = db_connection.get(execution_id.clone()).await.unwrap();
         let expected_first_timeout_expiry = now_after_first_lock_expiry + timeout_duration;
         assert_matches!(
             &execution_history.events.get(2).unwrap(),
@@ -1182,7 +1174,7 @@ mod tests {
                 executed_at: now_after_first_timeout,
             })
             .await
-            .unwrap_or_log();
+            .unwrap();
         assert_eq!(1, second_execution_progress.executions.len());
 
         // Started hanging, wait for lock expiry.
@@ -1196,7 +1188,7 @@ mod tests {
                     executed_at: now_after_second_lock_expiry,
                 })
                 .await
-                .unwrap_or_log();
+                .unwrap();
             assert!(cleanup_progress.executions.is_empty());
             assert_eq!(Some(1), cleanup_progress.expired_locks);
         }

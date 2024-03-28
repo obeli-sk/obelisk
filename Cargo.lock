@@ -375,7 +375,6 @@ dependencies = [
  "madsim",
  "serde_json",
  "thiserror",
- "tracing-unwrap",
  "ulid",
  "val-json",
  "wasmtime",
@@ -618,7 +617,6 @@ dependencies = [
  "test-utils",
  "thiserror",
  "tracing",
- "tracing-unwrap",
  "utils",
 ]
 
@@ -802,7 +800,6 @@ dependencies = [
  "test-utils",
  "thiserror",
  "tracing",
- "tracing-unwrap",
  "ulid",
  "utils",
  "val-json",
@@ -2433,15 +2430,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-unwrap"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77934bd2f10b38daeb37d0e24fb94f7bb83e08b474a0568d6ba71876c797c02e"
-dependencies = [
- "tracing",
-]
-
-[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2528,7 +2516,6 @@ dependencies = [
  "test-utils",
  "thiserror",
  "tracing",
- "tracing-unwrap",
  "val-json",
  "wasmtime",
  "wasmtime-wasi",
@@ -2703,7 +2690,6 @@ dependencies = [
  "test-utils",
  "thiserror",
  "tracing",
- "tracing-unwrap",
  "ulid",
  "utils",
  "val-json",

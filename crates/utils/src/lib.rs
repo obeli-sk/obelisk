@@ -30,7 +30,6 @@ pub mod time {
     }
 }
 
-// FIXME: replace tracing-unwrap with this hook
 pub fn tracing_panic_hook(panic_info: &std::panic::PanicInfo) {
     let payload = panic_info.payload();
     #[allow(clippy::manual_map)]

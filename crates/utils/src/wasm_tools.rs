@@ -1,6 +1,5 @@
 use concepts::{FnName, FunctionFqn, FunctionMetadata, IfcFqnName};
 use std::{collections::HashMap, error::Error, sync::Arc};
-use tracing_unwrap::OptionExt;
 use val_json::{TypeWrapper, UnsupportedTypeError};
 use wit_component::DecodedWasm;
 use wit_parser::{Resolve, WorldId, WorldItem, WorldKey};
@@ -36,10 +35,7 @@ pub fn exported_ifc_fns<'a>(
     resolve: &'a Resolve,
     world_id: &'a WorldId,
 ) -> Result<Vec<PackageIfcFns<'a>>, DecodeError> {
-    let world = resolve
-        .worlds
-        .get(*world_id)
-        .expect_or_log("world must exist");
+    let world = resolve.worlds.get(*world_id).expect("world must exist");
     ifc_fns(resolve, world.exports.iter())
 }
 
@@ -47,10 +43,7 @@ pub fn imported_ifc_fns<'a>(
     resolve: &'a Resolve,
     world_id: &'a WorldId,
 ) -> Result<Vec<PackageIfcFns<'a>>, DecodeError> {
-    let world = resolve
-        .worlds
-        .get(*world_id)
-        .expect_or_log("world must exist");
+    let world = resolve.worlds.get(*world_id).expect("world must exist");
     ifc_fns(resolve, world.imports.iter())
 }
 
@@ -60,7 +53,7 @@ fn ifc_fns<'a>(
 ) -> Result<Vec<PackageIfcFns<'a>>, DecodeError> {
     iter.filter_map(|(_, item)| match item {
         wit_parser::WorldItem::Interface(ifc) => {
-            let ifc = resolve.interfaces.get(*ifc).unwrap_or_log();
+            let ifc = resolve.interfaces.get(*ifc).unwrap();
             let Some(package_name) = ifc
                 .package
                 .and_then(|pkg| resolve.packages.get(pkg))
@@ -198,15 +191,14 @@ pub fn group_by_ifc_to_fn_names<'a>(
 #[cfg(test)]
 mod tests {
     use tracing::debug;
-    use tracing_unwrap::ResultExt;
 
     #[test]
     fn test_exported_interfaces() {
         test_utils::set_up();
         let wasm_path = test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW;
-        let wasm = std::fs::read(wasm_path).unwrap_or_log();
-        let (resolve, world_id) = super::decode(&wasm).unwrap_or_log();
-        let exported_interfaces = super::exported_ifc_fns(&resolve, &world_id).unwrap_or_log();
+        let wasm = std::fs::read(wasm_path).unwrap();
+        let (resolve, world_id) = super::decode(&wasm).unwrap();
+        let exported_interfaces = super::exported_ifc_fns(&resolve, &world_id).unwrap();
         debug!(" {exported_interfaces:#?}",);
     }
 
@@ -214,9 +206,9 @@ mod tests {
     fn test_imported_functions() {
         test_utils::set_up();
         let wasm_path = test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW;
-        let wasm = std::fs::read(wasm_path).unwrap_or_log();
-        let (resolve, world_id) = super::decode(&wasm).unwrap_or_log();
-        let exported_interfaces = super::imported_ifc_fns(&resolve, &world_id).unwrap_or_log();
+        let wasm = std::fs::read(wasm_path).unwrap();
+        let (resolve, world_id) = super::decode(&wasm).unwrap();
+        let exported_interfaces = super::imported_ifc_fns(&resolve, &world_id).unwrap();
         debug!(" {exported_interfaces:#?}");
         assert_eq!(exported_interfaces.len(), 2);
     }

@@ -23,7 +23,6 @@ indexmap.workspace = true
 rand.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
-tracing-unwrap.workspace = true
 tracing.workspace = true
 ulid.workspace = true
 valuable.workspace = true

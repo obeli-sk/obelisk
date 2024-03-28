@@ -15,7 +15,6 @@ use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
-use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
 use utils::wasm_tools;
 use val_json::wast_val::val;
@@ -31,7 +30,7 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
     wasmtime_config.async_support(true);
     wasmtime_config.allocation_strategy(config.allocation_strategy);
     wasmtime_config.epoch_interruption(true);
-    Arc::new(Engine::new(&wasmtime_config).unwrap_or_log())
+    Arc::new(Engine::new(&wasmtime_config).unwrap())
 }
 
 #[derive(Debug, Clone)]
@@ -361,10 +360,10 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
                 let mut exports_instance = exports.root();
                 let mut exports_instance = exports_instance
                     .instance(&ffqn.ifc_fqn)
-                    .expect_or_log("interface must be found");
+                    .expect("interface must be found");
                 exports_instance
                     .func(&ffqn.function_name)
-                    .expect_or_log("function must be found")
+                    .expect("function must be found")
             };
             let param_types = func.params(&store);
             let mut results = vec![Val::Bool(false); results_len];
@@ -458,7 +457,6 @@ mod tests {
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
-    use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
     use val_json::wast_val::WastVal;
     use wasmtime::component::Val;
@@ -478,7 +476,7 @@ mod tests {
             },
             workflow_engine(EngineConfig::default()),
         )
-        .unwrap_or_log();
+        .unwrap();
 
         let exec_config = ExecConfig {
             ffqns: vec![FIBO_WORKFLOW_FFQN.to_owned()],
@@ -498,7 +496,7 @@ mod tests {
 
         let _guard = test_utils::set_up();
         let mut db_task = DbTask::spawn_new(10);
-        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+        let db_connection = db_task.as_db_connection().expect("must be open");
         let workflow_exec_task = spawn_workflow_fibo(db_connection.clone());
         // Create an execution.
         let execution_id = ExecutionId::from_parts(0, 0);
@@ -515,7 +513,7 @@ mod tests {
                 0,
             )
             .await
-            .unwrap_or_log();
+            .unwrap();
         // Should end as BlockedByJoinSet
         db_connection
             .wait_for_pending_state(execution_id.clone(), PendingState::BlockedByJoinSet)
@@ -557,7 +555,7 @@ mod tests {
             },
             workflow_engine(EngineConfig::default()),
         )
-        .unwrap_or_log();
+        .unwrap();
 
         let exec_config = ExecConfig {
             ffqns: vec![SLEEP_HOST_ACTIVITY_FFQN.to_owned()], // TODO get the list of functions from the worker
@@ -578,7 +576,7 @@ mod tests {
         let _guard = test_utils::set_up();
         let sim_clock = SimClock::new(now());
         let mut db_task = DbTask::spawn_new(10);
-        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+        let db_connection = db_task.as_db_connection().expect("must be open");
         let workflow_exec_task = spawn_workflow_sleep(db_connection.clone(), sim_clock.clock_fn());
         let execution_id = ExecutionId::generate();
         db_connection
@@ -593,7 +591,7 @@ mod tests {
                 0,
             )
             .await
-            .unwrap_or_log();
+            .unwrap();
 
         db_connection
             .wait_for_pending_state(execution_id.clone(), PendingState::BlockedByJoinSet)

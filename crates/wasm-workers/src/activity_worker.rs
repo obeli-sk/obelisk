@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
-use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
 use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
@@ -53,7 +52,7 @@ pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
     wasmtime_config.async_support(true);
     wasmtime_config.allocation_strategy(config.allocation_strategy);
     wasmtime_config.epoch_interruption(true);
-    Arc::new(Engine::new(&wasmtime_config).unwrap_or_log())
+    Arc::new(Engine::new(&wasmtime_config).unwrap())
 }
 
 #[derive(Clone, Debug)]
@@ -165,7 +164,7 @@ impl ActivityWorker {
         let instance_and_store = self
             .recycled_instances
             .as_ref()
-            .and_then(|i| i.lock().unwrap_or_log().pop());
+            .and_then(|i| i.lock().unwrap().pop());
         let (instance, mut store) = match instance_and_store {
             Some((instance, store)) => (instance, store),
             None => {
@@ -209,10 +208,10 @@ impl ActivityWorker {
                 let mut exports_instance = exports.root();
                 let mut exports_instance = exports_instance
                     .instance(&ffqn.ifc_fqn)
-                    .expect_or_log("interface must be found");
+                    .expect("interface must be found");
                 exports_instance
                     .func(&ffqn.function_name)
-                    .expect_or_log("function must be found")
+                    .expect("function must be found")
             };
             let param_types = func.params(&store);
             let mut results = vec![Val::Bool(false); results_len];
@@ -247,10 +246,7 @@ impl ActivityWorker {
             })?;
 
             if let Some(recycled_instances) = &self.recycled_instances {
-                recycled_instances
-                    .lock()
-                    .unwrap_or_log()
-                    .push((instance, store));
+                recycled_instances.lock().unwrap().push((instance, store));
             }
 
             Ok(result)
@@ -307,7 +303,6 @@ pub(crate) mod tests {
     use std::time::{Duration, Instant};
     use test_utils::env_or_default;
     use tracing::warn;
-    use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
     use val_json::wast_val::WastVal;
     use wasmtime::component::Val;
@@ -330,7 +325,7 @@ pub(crate) mod tests {
             },
             activity_engine(EngineConfig::default()),
         )
-        .unwrap_or_log();
+        .unwrap();
 
         let exec_config = ExecConfig {
             ffqns: vec![FIBO_ACTIVITY_FFQN.to_owned()],
@@ -348,7 +343,7 @@ pub(crate) mod tests {
     async fn fibo_once() {
         test_utils::set_up();
         let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+        let db_connection = db_task.as_db_connection().expect("must be open");
         let exec_task = spawn_activity_fibo(db_connection.clone());
         // Create an execution.
         let execution_id = ExecutionId::generate();
@@ -365,9 +360,9 @@ pub(crate) mod tests {
                 0,
             )
             .await
-            .unwrap_or_log();
+            .unwrap();
         // Check the result.
-        let fibo = assert_matches!(db_connection.wait_for_finished_result(execution_id).await.unwrap_or_log(),
+        let fibo = assert_matches!(db_connection.wait_for_finished_result(execution_id).await.unwrap(),
             Ok(SupportedFunctionResult::Infallible(WastVal::U64(val))) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
@@ -424,7 +419,7 @@ pub(crate) mod tests {
 
         // Spawn db
         let mut db_task = DbTask::spawn_new(db_rpc_capacity);
-        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+        let db_connection = db_task.as_db_connection().expect("must be open");
 
         let fibo_worker = ActivityWorker::new_with_config(
             ActivityConfig {
@@ -437,7 +432,7 @@ pub(crate) mod tests {
             },
             engine,
         )
-        .unwrap_or_log();
+        .unwrap();
 
         // create executions
         let stopwatch = Instant::now();
@@ -490,7 +485,7 @@ pub(crate) mod tests {
                     clock_fn: || now(),
                 };
                 ExecTask::spawn_new(
-                    db_task.as_db_connection().unwrap_or_log(),
+                    db_task.as_db_connection().unwrap(),
                     fibo_worker.clone(),
                     exec_config.clone(),
                     task_limiter.clone(),
@@ -505,7 +500,7 @@ pub(crate) mod tests {
                 db_connection
                     .wait_for_finished_result(execution_id)
                     .await
-                    .unwrap_or_log(),
+                    .unwrap(),
                 Ok(SupportedFunctionResult::Infallible(WastVal::U64(_)))
             );
             counter += 1;
@@ -560,7 +555,7 @@ pub(crate) mod tests {
             },
             engine,
         )
-        .unwrap_or_log();
+        .unwrap();
 
         let stopwatch = Instant::now();
         let execution_deadline = now() + lock_expiry;
@@ -641,7 +636,7 @@ pub(crate) mod tests {
                 allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
             }),
         )
-        .unwrap_or_log();
+        .unwrap();
         let execution_deadline = now() + lock_expiry;
         // create executions
         let join_handles = (0..tasks)
@@ -689,7 +684,7 @@ pub(crate) mod tests {
             const LOCK_EXPIRY: Duration = Duration::from_millis(500);
             test_utils::set_up();
             let mut db_task = DbTask::spawn_new(1);
-            let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+            let db_connection = db_task.as_db_connection().expect("must be open");
 
             let engine = activity_engine(EngineConfig::default());
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
@@ -710,7 +705,7 @@ pub(crate) mod tests {
                 },
                 engine,
             )
-            .unwrap_or_log();
+            .unwrap();
 
             let exec_config = ExecConfig {
                 ffqns: vec![SLEEP_LOOP_ACTIVITY_FFQN.to_owned()],
@@ -722,7 +717,7 @@ pub(crate) mod tests {
                 clock_fn: || now(),
             };
             let exec_task = ExecTask::spawn_new(
-                db_task.as_db_connection().unwrap_or_log(),
+                db_task.as_db_connection().unwrap(),
                 worker,
                 exec_config,
                 None,
@@ -745,13 +740,13 @@ pub(crate) mod tests {
                     0,
                 )
                 .await
-                .unwrap_or_log();
+                .unwrap();
             // Check the result.
             assert_matches!(
                 db_connection
                     .wait_for_finished_result(execution_id)
                     .await
-                    .unwrap_or_log(),
+                    .unwrap(),
                 expected
             );
             let stopwatch = stopwatch.elapsed();
@@ -794,7 +789,7 @@ pub(crate) mod tests {
                 },
                 engine,
             )
-            .unwrap_or_log();
+            .unwrap();
 
             let executed_at = now();
             let err = worker

@@ -16,7 +16,6 @@ use concepts::Params;
 use concepts::StrVariant;
 use concepts::SupportedFunctionResult;
 use std::time::Duration;
-use tracing_unwrap::OptionExt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
 pub struct Version(usize);
@@ -311,10 +310,8 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         let ExecutionHistory { mut events, .. } = self
             .wait_for_pending_state(execution_id, PendingState::Finished)
             .await?;
-        Ok(
-            assert_matches!(events.pop().expect_or_log("must not be empty"),
-            ExecutionEvent { event: ExecutionEventInner::Finished { result, .. } ,..} => result),
-        )
+        Ok(assert_matches!(events.pop().expect("must not be empty"),
+            ExecutionEvent { event: ExecutionEventInner::Finished { result, .. } ,..} => result))
     }
 
     async fn wait_for_pending_state(
@@ -348,7 +345,6 @@ pub mod journal {
         FunctionFqn, Params, StrVariant,
     };
     use std::{collections::VecDeque, sync::Arc, time::Duration};
-    use tracing_unwrap::OptionExt;
 
     #[derive(Debug)]
     pub(crate) struct ExecutionJournal {
@@ -571,7 +567,7 @@ pub mod journal {
                     }
                     _ => None,
                 })
-                .expect_or_log("journal must begin with Created event")
+                .expect("journal must begin with Created event")
         }
 
         pub(crate) fn event_history(&self) -> Vec<HistoryEvent> {

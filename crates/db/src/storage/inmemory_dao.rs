@@ -27,7 +27,6 @@ use tokio::{
 };
 use tracing::info_span;
 use tracing::{debug, info, instrument, trace, warn, Instrument, Level};
-use tracing_unwrap::{OptionExt, ResultExt};
 
 #[derive(Clone)]
 struct InMemoryDbConnection {
@@ -200,15 +199,14 @@ mod index {
             let mut pending = self
                 .pending
                 .iter()
-                .map(|id| (journals.get(id).unwrap_or_log(), None))
+                .map(|id| (journals.get(id).unwrap(), None))
                 .collect::<Vec<_>>();
             pending.extend(
                 self.pending_scheduled
                     .range(..=expiring_at_or_before)
                     .flat_map(|(scheduled_at, ids)| {
-                        ids.iter().map(|id| {
-                            (journals.get(id).unwrap_or_log(), Some(scheduled_at.clone()))
-                        })
+                        ids.iter()
+                            .map(|id| (journals.get(id).unwrap(), Some(scheduled_at.clone())))
                     }),
             );
             // filter by ffqn
@@ -233,7 +231,7 @@ mod index {
             // Remove the ID from the index (if exists)
             self.pending.remove(&execution_id);
             if let Some(schedule) = self.pending_scheduled_rev.remove(&execution_id) {
-                let ids = self.pending_scheduled.get_mut(&schedule).unwrap_or_log();
+                let ids = self.pending_scheduled.get_mut(&schedule).unwrap();
                 ids.remove(&execution_id);
             }
             if let Some(schedule) = self.locked_rev.remove(&execution_id) {
@@ -605,7 +603,7 @@ impl DbTask {
                     executor_id.clone(),
                     lock_expires_at,
                 )
-                .expect_or_log("must be lockable within the same transaction");
+                .expect("must be lockable within the same transaction");
             row.version = new_version;
             row.event_history.extend(new_event_history);
         }
@@ -683,9 +681,11 @@ impl DbTask {
             max_retries,
         );
         let version = journal.version();
-        self.journals
-            .insert(execution_id.clone(), journal)
-            .expect_none_or_log("journals cannot contain the new execution");
+        let old_val = self.journals.insert(execution_id.clone(), journal);
+        assert!(
+            old_val.is_none(),
+            "journals cannot contain the new execution"
+        );
         self.index.update(execution_id, &self.journals);
         Ok(version)
     }
@@ -706,7 +706,7 @@ impl DbTask {
         };
         self.append(created_at, execution_id.clone(), Some(version), event)
             .map(|_| {
-                let journal = self.journals.get(&execution_id).unwrap_or_log();
+                let journal = self.journals.get(&execution_id).unwrap();
                 (journal.event_history(), journal.version())
             })
     }
@@ -792,7 +792,7 @@ impl DbTask {
                 Some(journal.version()),
                 event,
             )
-            .expect_or_log("must be lockable within the same transaction");
+            .expect("must be lockable within the same transaction");
             self.index.update(execution_id, &self.journals);
         }
         DbTickResponse::CleanupExpiredLocks {
@@ -931,7 +931,7 @@ pub mod tick {
                 lock_expires_at,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self.db_task.lock().unwrap_or_log().tick(request);
+            let response = self.db_task.lock().unwrap().tick(request);
             Ok(assert_matches!(response, DbTickResponse::LockPending {  payload, .. } => payload))
         }
 
@@ -944,7 +944,7 @@ pub mod tick {
                 now,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self.db_task.lock().unwrap_or_log().tick(request);
+            let response = self.db_task.lock().unwrap().tick(request);
             Ok(
                 assert_matches!(response, DbTickResponse::CleanupExpiredLocks { payload, .. } => payload),
             )
@@ -968,7 +968,7 @@ pub mod tick {
                 lock_expires_at,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self.db_task.lock().unwrap_or_log().tick(request);
+            let response = self.db_task.lock().unwrap().tick(request);
             assert_matches!(response, DbTickResponse::Lock { payload, .. } => payload)
                 .map_err(|err| DbError::Specific(err))
         }
@@ -985,7 +985,7 @@ pub mod tick {
                 req,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self.db_task.lock().unwrap_or_log().tick(request);
+            let response = self.db_task.lock().unwrap().tick(request);
             assert_matches!(response, DbTickResponse::AppendResult { payload, .. } => payload)
                 .map_err(|err| DbError::Specific(err))
         }
@@ -1003,7 +1003,7 @@ pub mod tick {
                 resp_sender: oneshot::channel().0,
             });
 
-            let response = self.db_task.lock().unwrap_or_log().tick(request);
+            let response = self.db_task.lock().unwrap().tick(request);
             assert_matches!(response, DbTickResponse::AppendBatchResult { payload, .. } => payload)
                 .map_err(|err| DbError::Specific(err))
         }
@@ -1013,7 +1013,7 @@ pub mod tick {
                 execution_id,
                 resp_sender: oneshot::channel().0,
             });
-            let response = self.db_task.lock().unwrap_or_log().tick(request);
+            let response = self.db_task.lock().unwrap().tick(request);
             assert_matches!(response, DbTickResponse::Get { payload, .. } => payload)
                 .map_err(|err| DbError::Specific(err))
         }
@@ -1037,7 +1037,6 @@ pub mod tests {
     };
     use test_utils::{env_or_default, sim_clock::SimClock};
     use tracing::info;
-    use tracing_unwrap::ResultExt;
     use utils::time::now;
 
     fn set_up() {
@@ -1066,7 +1065,7 @@ pub mod tests {
     async fn lifecycle_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
-        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap_or_log();
+        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap();
         let db_connection = InMemoryDbConnection {
             client_to_store_req_sender,
         };
@@ -1091,7 +1090,7 @@ pub mod tests {
                 sim_clock.now() + lock_expiry,
             )
             .await
-            .unwrap_or_log()
+            .unwrap()
             .is_empty());
 
         let mut version;
@@ -1110,7 +1109,7 @@ pub mod tests {
                     0,
                 )
                 .await
-                .unwrap_or_log();
+                .unwrap();
         }
         // LockPending
         let run_id = {
@@ -1126,7 +1125,7 @@ pub mod tests {
                     created_at + lock_expiry,
                 )
                 .await
-                .unwrap_or_log();
+                .unwrap();
             assert_eq!(1, locked_executions.len());
             let locked_execution = locked_executions.pop().unwrap();
             assert_eq!(execution_id, locked_execution.execution_id);
@@ -1150,7 +1149,7 @@ pub mod tests {
             version = db_connection
                 .append(execution_id.clone(), Some(version), req)
                 .await
-                .unwrap_or_log();
+                .unwrap();
         }
         sim_clock.sleep(lock_expiry - Duration::from_millis(100));
         {
@@ -1183,7 +1182,7 @@ pub mod tests {
                     created_at + Duration::from_secs(1),
                 )
                 .await
-                .unwrap_or_log();
+                .unwrap();
             assert!(event_history.is_empty());
             version = current_version;
         }
@@ -1218,7 +1217,7 @@ pub mod tests {
                     created_at + lock_expiry,
                 )
                 .await
-                .unwrap_or_log();
+                .unwrap();
             assert!(event_history.is_empty());
             version = current_version;
         }
@@ -1250,7 +1249,7 @@ pub mod tests {
             version = db_connection
                 .append(execution_id.clone(), Some(version), req)
                 .await
-                .unwrap_or_log();
+                .unwrap();
         }
         sim_clock.sleep(Duration::from_millis(200));
         {
@@ -1266,7 +1265,7 @@ pub mod tests {
                     created_at + lock_expiry,
                 )
                 .await
-                .unwrap_or_log();
+                .unwrap();
             assert_eq!(1, event_history.len());
             assert_eq!(vec![HistoryEvent::Yield], event_history);
             version = current_version;
@@ -1285,7 +1284,7 @@ pub mod tests {
             db_connection
                 .append(execution_id.clone(), Some(version), req)
                 .await
-                .unwrap_or_log();
+                .unwrap();
         }
     }
 
@@ -1304,7 +1303,7 @@ pub mod tests {
     async fn lock_expired_means_permanent_timeout_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
-        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap_or_log();
+        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap();
         let db_connection = InMemoryDbConnection {
             client_to_store_req_sender,
         };
@@ -1331,7 +1330,7 @@ pub mod tests {
                     1,
                 )
                 .await
-                .unwrap_or_log();
+                .unwrap();
         }
         // Lock pending
         let lock_duration = Duration::from_millis(500);
@@ -1346,7 +1345,7 @@ pub mod tests {
                     sim_clock.now() + lock_duration,
                 )
                 .await
-                .unwrap_or_log();
+                .unwrap();
             assert_eq!(1, locked_executions.len());
             let locked_execution = locked_executions.pop().unwrap();
             assert_eq!(execution_id, locked_execution.execution_id);
@@ -1392,7 +1391,7 @@ pub mod tests {
                     sim_clock.now() + lock_duration,
                 )
                 .await
-                .unwrap_or_log();
+                .unwrap();
             assert_eq!(1, locked_executions.len());
             let locked_execution = locked_executions.pop().unwrap();
             assert_eq!(execution_id, locked_execution.execution_id);
@@ -1455,12 +1454,12 @@ pub mod tests {
                     0,
                 )
                 .await
-                .unwrap_or_log();
+                .unwrap();
         }
-        let events = unstructured.int_in_range(5..=10).unwrap_or_log();
+        let events = unstructured.int_in_range(5..=10).unwrap();
         for _ in 0..events {
             let req = AppendRequest {
-                event: unstructured.arbitrary().unwrap_or_log(),
+                event: unstructured.arbitrary().unwrap(),
                 created_at: now(),
             };
             match db_connection
@@ -1485,7 +1484,7 @@ pub mod tests {
         let tasks = env_or_default("TASKS", TASKS);
 
         let mut db_task = DbTask::spawn_new(1);
-        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap_or_log();
+        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap();
         let db_connection = InMemoryDbConnection {
             client_to_store_req_sender,
         };
