@@ -1,6 +1,9 @@
 use crate::worker::{FatalError, Worker, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
-use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params};
+use concepts::{
+    prefixed_ulid::{DelayId, ExecutorId},
+    ExecutionId, FunctionFqn, Params,
+};
 use db::{
     storage::{
         AppendRequest, AsyncResponse, DbConnection, DbConnectionError, DbError,
@@ -21,7 +24,7 @@ use tokio::task::AbortHandle;
 use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
 
 #[derive(Debug, Clone)]
-pub struct ExecConfig<C: Fn() -> DateTime<Utc>> {
+pub struct ExecConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
     pub ffqns: Vec<FunctionFqn>,
     pub lock_expiry: Duration,
     pub lock_expiry_leeway: Duration,
@@ -31,7 +34,11 @@ pub struct ExecConfig<C: Fn() -> DateTime<Utc>> {
     pub clock_fn: C, // Used for obtaining current time when the execution finishes.
 }
 
-pub struct ExecTask<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Clone> {
+pub struct ExecTask<
+    DB: DbConnection,
+    W: Worker,
+    C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static,
+> {
     db_connection: DB,
     worker: W,
     config: ExecConfig<C>,
@@ -44,11 +51,11 @@ struct ExecTickRequest {
     executed_at: DateTime<Utc>,
 }
 
-#[allow(dead_code)] // allowed for testing
 #[derive(Derivative, Default)]
 #[derivative(Debug)]
 struct ExecutionProgress {
     #[derivative(Debug = "ignore")]
+    #[allow(dead_code)] // allowed for testing
     executions: Vec<(ExecutionId, AbortHandle)>,
     expired_locks: Option<usize>,
 }
@@ -261,7 +268,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
     ) -> Result<(), DbError> {
-        trace!(%version, ?params, ?event_history, "Starting");
+        trace!(%version, ?params, ?event_history, "Worker::run starting");
         let worker_result = worker
             .run(
                 execution_id.clone(),
@@ -272,7 +279,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                 execution_deadline,
             )
             .await;
-        trace!(?worker_result, "Finished");
+        trace!(?worker_result, "Worker::run finished");
         let execution_history = db_connection.get(execution_id.clone()).await?;
         match Self::worker_result_to_execution_event(
             execution_id.clone(),
@@ -288,7 +295,9 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                         Some(append.version),
                     )
                     .await?;
-                if let Some((secondary_id, secondary_append_request)) = append.secondary {
+                if let Some((secondary_id, secondary_append_request)) =
+                    append.async_resp_to_other_execution
+                {
                     db_connection
                         .append(secondary_id, None, secondary_append_request)
                         .await?;
@@ -358,7 +367,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                     primary_events: vec![finished_event],
                     execution_id,
                     version: new_version,
-                    secondary,
+                    async_resp_to_other_execution: secondary,
                 }
             }
             Err((err, new_version)) => {
@@ -415,7 +424,45 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                             primary_events: vec![join, child_exec_async_req, block],
                             execution_id,
                             version: new_version,
-                            secondary: Some((child_execution_id, child_exec)),
+                            async_resp_to_other_execution: Some((child_execution_id, child_exec)),
+                        });
+                    }
+                    WorkerError::Sleep {
+                        expires_at,
+                        new_join_set_id,
+                    } => {
+                        debug!("Sleeping until `{expires_at}`");
+                        let join = AppendRequest {
+                            created_at,
+                            event: ExecutionEventInner::HistoryEvent {
+                                event: HistoryEvent::JoinSet {
+                                    join_set_id: new_join_set_id.clone(),
+                                },
+                            },
+                        };
+                        let delayed_until = AppendRequest {
+                            created_at,
+                            event: ExecutionEventInner::HistoryEvent {
+                                event: HistoryEvent::DelayedUntilAsyncRequest {
+                                    join_set_id: new_join_set_id.clone(),
+                                    delay_id: DelayId::generate(),
+                                    expires_at,
+                                },
+                            },
+                        };
+                        let block = AppendRequest {
+                            created_at,
+                            event: ExecutionEventInner::HistoryEvent {
+                                event: HistoryEvent::JoinNextBlocking {
+                                    join_set_id: new_join_set_id,
+                                },
+                            },
+                        };
+                        return Ok(Append {
+                            primary_events: vec![join, delayed_until, block],
+                            execution_id,
+                            version: new_version,
+                            async_resp_to_other_execution: None,
                         });
                     }
                     WorkerError::IntermittentError { reason, err: _ } => {
@@ -485,7 +532,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                     primary_events: vec![AppendRequest { created_at, event }],
                     execution_id,
                     version: new_version,
-                    secondary: None,
+                    async_resp_to_other_execution: None,
                 }
             }
         })
@@ -496,7 +543,7 @@ struct Append {
     primary_events: Vec<AppendRequest>,
     execution_id: ExecutionId,
     version: Version,
-    secondary: Option<(ExecutionId, AppendRequest)>,
+    async_resp_to_other_execution: Option<(ExecutionId, AppendRequest)>,
 }
 
 #[cfg(test)]
@@ -755,7 +802,7 @@ mod tests {
     async fn create_and_tick<
         DB: DbConnection,
         W: Worker,
-        C: Fn() -> DateTime<Utc> + Send + Clone + 'static,
+        C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static,
         T: FnMut(DB, ExecConfig<C>, W, DateTime<Utc>) -> F,
         F: Future<Output = ExecutionProgress>,
     >(

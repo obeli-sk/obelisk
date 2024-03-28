@@ -31,6 +31,11 @@ pub mod worker {
         FatalError(#[from] FatalError),
         #[error("interrupt")]
         Interrupt(ChildExecutionRequest),
+        #[error("sleep: `{expires_at}`")]
+        Sleep {
+            expires_at: DateTime<Utc>,
+            new_join_set_id: JoinSetId,
+        },
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]

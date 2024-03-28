@@ -6,6 +6,7 @@ use crate::FinishedExecutionResult;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::prefixed_ulid::DelayId;
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::prefixed_ulid::RunId;
 use concepts::ExecutionId;
@@ -25,7 +26,7 @@ impl Version {
         Self(arg)
     }
 }
-pub type ExecutorName = Arc<String>;
+pub type ExecutorName = Arc<String>; // FIXME: Arc<str>
 
 #[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
 #[display(fmt = "{event}")]
@@ -138,7 +139,7 @@ pub enum HistoryEvent {
     #[display(fmt = "DelayedUntilAsyncRequest({join_set_id})")]
     DelayedUntilAsyncRequest {
         join_set_id: JoinSetId,
-        delay_id: ExecutionId,
+        delay_id: DelayId,
         expires_at: DateTime<Utc>,
     },
     // JoinSet entry that will be unblocked by ChildExecutionRequested.
@@ -176,7 +177,7 @@ impl HistoryEvent {
 pub enum AsyncResponse {
     // Created by a scheduler sometime after DelayedUntilAsyncRequest.
     DelayFinishedAsyncResponse {
-        delay_id: ExecutionId,
+        delay_id: DelayId,
     },
     // Created by an executor after ChildExecutionRequested.
     #[display(fmt = "ChildExecutionAsyncResponse({child_execution_id})")]

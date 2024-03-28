@@ -312,7 +312,10 @@ pub(crate) mod tests {
     use val_json::wast_val::WastVal;
     use wasmtime::component::Val;
 
+    pub const EPOCH_MILLIS: u64 = 10;
     pub const FIBO_ACTIVITY_FFQN: FunctionFqnStr = FunctionFqnStr::new("testing:fibo/fibo", "fibo"); // func(n: u8) -> u64;
+    pub const FIBO_10_INPUT: u8 = 10;
+    pub const FIBO_10_OUTPUT: u64 = 55;
 
     pub(crate) fn spawn_activity_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
         let fibo_worker = ActivityWorker::new_with_config(
@@ -340,8 +343,6 @@ pub(crate) mod tests {
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
     }
 
-    pub const FIBO_10_INPUT: u8 = 10;
-    pub const FIBO_10_OUTPUT: u64 = 55;
 
     #[tokio::test]
     async fn fibo_once() {
@@ -387,7 +388,7 @@ pub(crate) mod tests {
         const BATCH_SIZE: u32 = 10_000;
         const LOCK_EXPIRY_MILLIS: u64 = 1100;
         const TICK_SLEEP_MILLIS: u64 = 0;
-        const EPOCH_MILLIS: u64 = 10;
+
         const TASKS: u32 = 1; // release: 6
         const MAX_INSTANCES: u32 = 10_000;
         const DB_RPC_CAPACITY: usize = 1;

@@ -2699,6 +2699,7 @@ dependencies = [
  "test-programs-fibo-activity-builder",
  "test-programs-fibo-workflow-builder",
  "test-programs-sleep-activity-builder",
+ "test-programs-sleep-workflow-builder",
  "test-utils",
  "thiserror",
  "tracing",

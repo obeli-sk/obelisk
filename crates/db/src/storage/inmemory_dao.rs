@@ -575,7 +575,7 @@ impl DbTask {
         expiring_before: DateTime<Utc>,
         ffqns: Vec<FunctionFqn>,
         created_at: DateTime<Utc>,
-        executor_name: Arc<String>,
+        executor_name: ExecutorName,
         lock_expires_at: DateTime<Utc>,
         resp_sender: oneshot::Sender<LockPendingResponse>,
     ) -> DbTickResponse {

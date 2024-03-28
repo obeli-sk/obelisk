@@ -4,20 +4,21 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ConfigId, JoinSetId};
 use concepts::{ExecutionId, FunctionFqn};
 use concepts::{Params, SupportedFunctionResult};
-use db::storage::{AsyncResponse, DbConnection};
+use db::storage::AsyncResponse;
 use db::storage::{HistoryEvent, Version};
 use executor::worker::{ChildExecutionRequest, FatalError};
 use executor::worker::{Worker, WorkerError};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::collections::HashMap;
+use std::time::Duration;
 use std::{borrow::Cow, fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
 use tracing_unwrap::{OptionExt, ResultExt};
 use utils::time::{now, now_tokio_instant};
 use utils::wasm_tools;
 use val_json::wast_val::val;
-use wasmtime::component::{Linker, Type};
+use wasmtime::component::Linker;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -33,16 +34,16 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkflowConfig {
+pub struct WorkflowConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
     pub config_id: ConfigId,
     pub wasm_path: Cow<'static, str>,
     pub epoch_millis: u64,
+    pub clock_fn: C,
 }
 
 #[derive(Clone)]
-struct WorkflowWorker<DB: DbConnection> {
-    db_connection: DB,
-    config: WorkflowConfig,
+struct WorkflowWorker<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
+    config: WorkflowConfig<C>,
     engine: Arc<Engine>,
     exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
     linker: wasmtime::component::Linker<WorkflowCtx>,
@@ -107,6 +108,11 @@ impl WorkflowCtx {
         }
         Err(FunctionError::Interrupt(request))
     }
+    fn next_u128(&mut self) -> u128 {
+        let mut bytes = [0; 16];
+        self.rng.fill_bytes(&mut bytes);
+        u128::from_be_bytes(bytes)
+    }
 }
 #[async_trait::async_trait]
 impl my_org::workflow_engine::host_activities::Host for WorkflowCtx {
@@ -114,7 +120,12 @@ impl my_org::workflow_engine::host_activities::Host for WorkflowCtx {
         Ok(())
     }
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
-        Ok(())
+        if millis > 0 {
+            Err(FunctionError::Sleep(Duration::from_millis(millis)))?
+        } else {
+            // TODO: Write the event do DB for determinism checks
+            Ok(())
+        }
     }
 }
 impl WorkflowCtx {
@@ -129,14 +140,17 @@ enum FunctionError {
     NonDeterminismDetected(Cow<'static, str>),
     #[error("interrupt: {}", .0.child_execution_id)]
     Interrupt(ChildExecutionRequest),
+    #[error("sleep: `{0:?}`")]
+    Sleep(Duration),
 }
 
-impl<DB: DbConnection> WorkflowWorker<DB> {
+const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
+
+impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C> {
     #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
-        config: WorkflowConfig,
+        config: WorkflowConfig<C>,
         engine: Arc<Engine>,
-        db_connection: DB,
     ) -> Result<Self, WasmFileError> {
         info!("Reading");
         let wasm = std::fs::read(config.wasm_path.as_ref())
@@ -158,9 +172,10 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                     .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?,
             )
             .map_err(|err| WasmFileError::FunctionMetadataError(config.wasm_path.clone(), err))?;
-            let imp_ifcs_to_fn_names =
+            let mut imp_ifcs_to_fn_names =
                 wasm_tools::group_by_ifc_to_fn_names(imp_fns_to_metadata.keys());
-            // TODO: remove host functions: imp_ifcs_to_fn_names.remove(HOST_ACTIVITY_IFC_STRING.deref().deref());
+            // Remove host-implemented functions
+            imp_ifcs_to_fn_names.remove(HOST_ACTIVITY_IFC_STRING);
             imp_ifcs_to_fn_names
         };
         trace!("Imported interfaces: {imported_interfaces:?}");
@@ -191,11 +206,11 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                                 let request = ChildExecutionRequest {
                                     new_join_set_id: JoinSetId::from_parts(
                                         ctx.execution_id.timestamp(),
-                                        next_u128(&mut ctx.rng),
+                                        ctx.next_u128(),
                                     ),
                                     child_execution_id: ExecutionId::from_parts(
                                         ctx.execution_id.timestamp(),
-                                        next_u128(&mut ctx.rng),
+                                        ctx.next_u128(),
                                     ),
                                     ffqn,
                                     params: Params::Vals(Arc::new(Vec::from(params))),
@@ -228,8 +243,12 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
                 trace!("Skipping interface {ifc_fqn}");
             }
         }
+        WorkflowCtx::add_to_linker(&mut linker).map_err(|err| WasmFileError::LinkingError {
+            file: config.wasm_path.clone(),
+            reason: Cow::Owned(format!("cannot add host activities")),
+            err: err.into(),
+        })?;
         Ok(Self {
-            db_connection,
             config,
             engine,
             exported_ffqns_to_results_len,
@@ -239,14 +258,8 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
     }
 }
 
-fn next_u128(rng: &mut StdRng) -> u128 {
-    let mut bytes = [0; 16];
-    rng.fill_bytes(&mut bytes);
-    u128::from_be_bytes(bytes)
-}
-
 #[async_trait]
-impl<DB: DbConnection> Worker for WorkflowWorker<DB> {
+impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> Worker for WorkflowWorker<C> {
     async fn run(
         &self,
         execution_id: ExecutionId,
@@ -274,6 +287,16 @@ impl<DB: DbConnection> Worker for WorkflowWorker<DB> {
                         Some(FunctionError::Interrupt(request)) => {
                             (WorkerError::Interrupt(request.clone()), version)
                         }
+                        Some(FunctionError::Sleep(duration)) => {
+                            let expires_at = (self.config.clock_fn)() + *duration;
+                            (
+                                WorkerError::Sleep {
+                                    expires_at,
+                                    new_join_set_id: JoinSetId::generate(),
+                                },
+                                version,
+                            )
+                        }
                         None => (WorkerError::IntermittentError { err, reason }, version),
                     }
                 }
@@ -282,7 +305,7 @@ impl<DB: DbConnection> Worker for WorkflowWorker<DB> {
     }
 }
 
-impl<DB: DbConnection> WorkflowWorker<DB> {
+impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C> {
     #[tracing::instrument(skip_all)]
     pub(crate) async fn run(
         &self,
@@ -392,12 +415,16 @@ impl<DB: DbConnection> WorkflowWorker<DB> {
 mod valuable {
     use super::*;
     static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
-    impl<DB: DbConnection> ::valuable::Structable for WorkflowWorker<DB> {
+    impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ::valuable::Structable
+        for WorkflowWorker<C>
+    {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             ::valuable::StructDef::new_static("WorkflowWorker", ::valuable::Fields::Named(FIELDS))
         }
     }
-    impl<DB: DbConnection> ::valuable::Valuable for WorkflowWorker<DB> {
+    impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ::valuable::Valuable
+        for WorkflowWorker<C>
+    {
         fn as_value(&self) -> ::valuable::Value<'_> {
             ::valuable::Value::Structable(self)
         }
@@ -414,9 +441,12 @@ mod valuable {
 
 #[cfg(all(test))]
 mod tests {
+    // TODO: test epoch and select-based timeouts
     use super::*;
     use crate::{
-        activity_worker::tests::{spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT},
+        activity_worker::tests::{
+            spawn_activity_fibo, EPOCH_MILLIS, FIBO_10_INPUT, FIBO_10_OUTPUT,
+        },
         EngineConfig,
     };
     use assert_matches::assert_matches;
@@ -424,6 +454,7 @@ mod tests {
     use db::storage::{inmemory_dao::DbTask, journal::PendingState, DbConnection};
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::{borrow::Cow, time::Duration};
+    use test_utils::sim_clock::SimClock;
     use tracing_unwrap::{OptionExt, ResultExt};
     use utils::time::now;
     use val_json::wast_val::WastVal;
@@ -438,11 +469,11 @@ mod tests {
                 wasm_path: Cow::Borrowed(
                     test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
                 ),
-                epoch_millis: 10,
+                epoch_millis: EPOCH_MILLIS,
                 config_id: ConfigId::generate(),
+                clock_fn: || now(),
             },
             workflow_engine(EngineConfig::default()),
-            db_connection.clone(),
         )
         .unwrap_or_log();
 
@@ -455,7 +486,7 @@ mod tests {
             cleanup_expired_locks: true,
             clock_fn: || now(),
         };
-        ExecTask::spawn_new(db_connection, fibo_worker, exec_config.clone(), None)
+        ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
     }
 
     #[tokio::test]
@@ -508,5 +539,69 @@ mod tests {
         db_task.close().await;
     }
 
-    // TODO: test epoch and select-based timeouts
+    pub(crate) fn spawn_workflow_sleep<DB: DbConnection>(
+        db_connection: DB,
+        clock_fn: impl Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static,
+    ) -> ExecutorTaskHandle {
+        let worker = WorkflowWorker::new_with_config(
+            WorkflowConfig {
+                wasm_path: Cow::Borrowed(
+                    test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+                ),
+                epoch_millis: EPOCH_MILLIS,
+                config_id: ConfigId::generate(),
+                clock_fn: clock_fn.clone(),
+            },
+            workflow_engine(EngineConfig::default()),
+        )
+        .unwrap_or_log();
+
+        let exec_config = ExecConfig {
+            ffqns: vec![SLEEP_HOST_ACTIVITY_FFQN.to_owned()], // TODO get the list of functions from the worker
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            lock_expiry_leeway: Duration::from_millis(10),
+            tick_sleep: Duration::ZERO,
+            cleanup_expired_locks: true,
+            clock_fn,
+        };
+        ExecTask::spawn_new(db_connection, worker, exec_config, None)
+    }
+    const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqnStr = // TODO: generate
+        FunctionFqnStr::new("testing:sleep-workflow/workflow", "sleep-host-activity"); // sleep-host-activity: func(millis: u64);
+    #[tokio::test]
+    async fn sleep_should_be_persisted_after_executor_restart() {
+        const SLEEP_MILLIS: u64 = 100;
+        let _guard = test_utils::set_up();
+        let sim_clock = SimClock::new(now());
+        let mut db_task = DbTask::spawn_new(10);
+        let db_connection = db_task.as_db_connection().expect_or_log("must be open");
+        let workflow_exec_task = spawn_workflow_sleep(db_connection.clone(), sim_clock.clock_fn());
+        let execution_id = ExecutionId::generate();
+        db_connection
+            .create(
+                sim_clock.now(),
+                execution_id.clone(),
+                SLEEP_HOST_ACTIVITY_FFQN.to_owned(),
+                Params::from([Val::U64(SLEEP_MILLIS)]),
+                None,
+                None,
+                Duration::ZERO,
+                0,
+            )
+            .await
+            .unwrap_or_log();
+
+        db_connection
+            .wait_for_pending_state(execution_id.clone(), PendingState::BlockedByJoinSet)
+            .await
+            .unwrap();
+
+        sim_clock.sleep(Duration::from_millis(SLEEP_MILLIS));
+        // TODO: the executor should insert DelayFinishedAsyncResponse
+
+        drop(db_connection);
+        workflow_exec_task.close().await;
+        db_task.close().await;
+    }
 }

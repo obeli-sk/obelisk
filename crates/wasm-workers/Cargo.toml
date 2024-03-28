@@ -35,6 +35,7 @@ wasmtime.workspace = true
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-programs-sleep-activity-builder.workspace = true
+test-programs-sleep-workflow-builder.workspace = true
 test-utils.workspace = true
 
 async-trait.workspace = true

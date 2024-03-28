@@ -449,6 +449,7 @@ pub mod prefixed_ulid {
         pub struct Conf;
         pub struct JoinSet;
         pub struct Run;
+        pub struct Delay;
     }
 
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
@@ -456,6 +457,7 @@ pub mod prefixed_ulid {
     pub type JoinSetId = PrefixedUlid<prefix::JoinSet>;
     pub type ExecutionId = PrefixedUlid<prefix::Exe>;
     pub type RunId = PrefixedUlid<prefix::Run>;
+    pub type DelayId = PrefixedUlid<prefix::Delay>;
 
     impl<'a, T> Arbitrary<'a> for PrefixedUlid<T> {
         fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
