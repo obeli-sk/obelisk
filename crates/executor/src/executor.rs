@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 use tokio::task::AbortHandle;
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
 
 #[derive(Debug, Clone)]
 pub struct ExecConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
@@ -501,14 +501,6 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                         info!("Non-determinism detected");
                         ExecutionEventInner::Finished {
                             result: Err(FinishedExecutionError::NonDeterminismDetected(reason)),
-                        }
-                    }
-                    WorkerError::FatalError(FatalError::FfqnNotFound) => {
-                        error!("Function not found, possible program error");
-                        ExecutionEventInner::Finished {
-                            result: Err(FinishedExecutionError::PermanentFailure(
-                                StrVariant::Static("function not found"),
-                            )),
                         }
                     }
                     WorkerError::FatalError(FatalError::ParamsParsingError(err)) => {

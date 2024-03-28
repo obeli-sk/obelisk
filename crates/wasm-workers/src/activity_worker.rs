@@ -159,7 +159,7 @@ impl ActivityWorker {
         let results_len = *self
             .ffqns_to_results_len
             .get(&ffqn)
-            .ok_or(WorkerError::FatalError(FatalError::FfqnNotFound))?;
+            .expect("executor must only run existing functions");
         trace!("Params: {params:?}, results_len:{results_len}",);
 
         let instance_and_store = self

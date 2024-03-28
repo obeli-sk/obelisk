@@ -51,8 +51,6 @@ pub mod worker {
     pub enum FatalError {
         #[error("non-determinism detected: `{0}`")]
         NonDeterminismDetected(StrVariant),
-        #[error("function not found")]
-        FfqnNotFound, // TODO: should this be a panic?
         #[error(transparent)]
         ParamsParsingError(ParamsParsingError),
         #[error(transparent)]

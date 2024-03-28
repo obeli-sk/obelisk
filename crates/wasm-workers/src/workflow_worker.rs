@@ -319,7 +319,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
         let results_len = *self
             .exported_ffqns_to_results_len
             .get(&ffqn)
-            .ok_or(WorkerError::FatalError(FatalError::FfqnNotFound))?;
+            .expect("executor must only run existing functions");
         trace!("Params: {params:?}, results_len:{results_len}",);
         let (instance, mut store) = {
             let seed = execution_id.random() as u64;
