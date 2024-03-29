@@ -8,7 +8,7 @@ use db::storage::Version;
 use std::error::Error;
 
 pub mod executor;
-
+pub mod expired_lock_watcher;
 pub mod worker {
 
     use concepts::StrVariant;

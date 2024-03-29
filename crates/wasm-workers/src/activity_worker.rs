@@ -333,7 +333,6 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::ZERO,
-            cleanup_expired_locks: false,
             clock_fn: || now(),
         };
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
@@ -481,7 +480,6 @@ pub(crate) mod tests {
                     lock_expiry,
                     lock_expiry_leeway: Duration::from_millis(10),
                     tick_sleep,
-                    cleanup_expired_locks: false,
                     clock_fn: || now(),
                 };
                 ExecTask::spawn_new(
@@ -713,7 +711,6 @@ pub(crate) mod tests {
                 lock_expiry: LOCK_EXPIRY,
                 lock_expiry_leeway: Duration::from_millis(10),
                 tick_sleep: Duration::from_millis(10),
-                cleanup_expired_locks: false,
                 clock_fn: || now(),
             };
             let exec_task = ExecTask::spawn_new(

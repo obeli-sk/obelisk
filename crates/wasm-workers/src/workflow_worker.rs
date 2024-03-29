@@ -463,6 +463,8 @@ mod tests {
 
     pub const FIBO_WORKFLOW_FFQN: FunctionFqn =
         FunctionFqn::new_static("testing:fibo-workflow/workflow", "fiboa"); // fiboa: func(n: u8, iterations: u32) -> u64;
+    const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqn = // TODO: generate
+        FunctionFqn::new_static("testing:sleep-workflow/workflow", "sleep-host-activity"); // sleep-host-activity: func(millis: u64);
 
     pub(crate) fn spawn_workflow_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
         let fibo_worker = WorkflowWorker::new_with_config(
@@ -484,7 +486,6 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::ZERO,
-            cleanup_expired_locks: true,
             clock_fn: || now(),
         };
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
@@ -563,13 +564,10 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::ZERO,
-            cleanup_expired_locks: true,
             clock_fn,
         };
         ExecTask::spawn_new(db_connection, worker, exec_config, None)
     }
-    const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqn = // TODO: generate
-        FunctionFqn::new_static("testing:sleep-workflow/workflow", "sleep-host-activity"); // sleep-host-activity: func(millis: u64);
     #[tokio::test]
     async fn sleep_should_be_persisted_after_executor_restart() {
         const SLEEP_MILLIS: u64 = 100;

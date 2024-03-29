@@ -409,6 +409,8 @@ pub mod prefixed_ulid {
             }
         }
 
+        impl<T> Copy for PrefixedUlid<T> {}
+
         impl<T> Hash for PrefixedUlid<T> {
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
                 self.prefix.hash(state);

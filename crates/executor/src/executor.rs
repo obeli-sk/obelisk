@@ -29,7 +29,6 @@ pub struct ExecConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> 
     pub lock_expiry_leeway: Duration,
     pub tick_sleep: Duration,
     pub batch_size: u32,
-    pub cleanup_expired_locks: bool,
     pub clock_fn: C, // Used for obtaining current time when the execution finishes.
 }
 
@@ -45,26 +44,22 @@ pub struct ExecTask<
     executor_id: ExecutorId,
 }
 
-#[derive(Debug)]
-struct ExecTickRequest {
-    executed_at: DateTime<Utc>,
-}
-
 #[derive(Derivative, Default)]
 #[derivative(Debug)]
 struct ExecutionProgress {
     #[derivative(Debug = "ignore")]
     #[allow(dead_code)] // allowed for testing
     executions: Vec<(ExecutionId, AbortHandle)>,
-    expired_locks: Option<usize>,
 }
 
 pub struct ExecutorTaskHandle {
+    executor_id: ExecutorId,
     is_closing: Arc<AtomicBool>,
     abort_handle: AbortHandle,
 }
 
 impl ExecutorTaskHandle {
+    #[instrument(skip_all, fields(executor_id = %self.executor_id))]
     pub async fn close(&self) {
         trace!("Gracefully closing");
         self.is_closing.store(true, Ordering::Relaxed);
@@ -76,6 +71,7 @@ impl ExecutorTaskHandle {
 }
 
 impl Drop for ExecutorTaskHandle {
+    #[instrument(skip_all, fields(executor_id = %self.executor_id))]
     fn drop(&mut self) {
         if self.abort_handle.is_finished() {
             return;
@@ -115,11 +111,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                 };
                 let mut old_err = None;
                 loop {
-                    let res = task
-                        .tick(ExecTickRequest {
-                            executed_at: clock_fn(),
-                        })
-                        .await;
+                    let res = task.tick(clock_fn()).await;
                     Self::log_err_if_new(res, &mut old_err);
                     if is_closing_inner.load(Ordering::Relaxed) {
                         return;
@@ -131,6 +123,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
         )
         .abort_handle();
         ExecutorTaskHandle {
+            executor_id,
             abort_handle,
             is_closing,
         }
@@ -176,20 +169,23 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
     }
 
     #[instrument(skip_all)]
-    async fn tick(&self, request: ExecTickRequest) -> Result<ExecutionProgress, DbConnectionError> {
+    async fn tick(
+        &self,
+        executed_at: DateTime<Utc>,
+    ) -> Result<ExecutionProgress, DbConnectionError> {
         let locked_executions = {
             let mut permits = self.acquire_task_permits();
             if permits.is_empty() {
                 return Ok(ExecutionProgress::default());
             }
-            let lock_expires_at = request.executed_at + self.config.lock_expiry;
+            let lock_expires_at = executed_at + self.config.lock_expiry;
             let locked_executions = self
                 .db_connection
                 .lock_pending(
-                    permits.len(),       // batch size
-                    request.executed_at, // fetch expiring before now
+                    permits.len(), // batch size
+                    executed_at,   // fetch expiring before now
                     self.config.ffqns.clone(),
-                    request.executed_at, // created at
+                    executed_at, // created at
                     self.executor_id.clone(),
                     lock_expires_at,
                 )
@@ -202,7 +198,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
             locked_executions.into_iter().zip(permits)
         };
         let execution_deadline =
-            request.executed_at + self.config.lock_expiry - self.config.lock_expiry_leeway;
+            executed_at + self.config.lock_expiry - self.config.lock_expiry_leeway;
 
         let mut executions = Vec::new();
         for (locked_execution, permit) in locked_executions {
@@ -240,19 +236,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
             };
             executions.push((execution_id, join_handle.abort_handle()));
         }
-        let expired_locks = if self.config.cleanup_expired_locks {
-            self.db_connection
-                .cleanup_expired_locks(request.executed_at)
-                .await
-                .inspect_err(|err| warn!("Failed to clean up expired locks: {err:?}"))
-                .ok()
-        } else {
-            None
-        };
-        Ok(ExecutionProgress {
-            executions,
-            expired_locks,
-        })
+        Ok(ExecutionProgress { executions })
     }
 
     #[instrument(skip_all, fields(%execution_id, %ffqn))]
@@ -541,7 +525,7 @@ struct Append {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::WorkerResult;
+    use crate::{expired_lock_watcher, worker::WorkerResult};
     use anyhow::anyhow;
     use assert_matches::assert_matches;
     use async_trait::async_trait;
@@ -616,10 +600,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
         };
-        let mut execution_progress = executor
-            .tick(ExecTickRequest { executed_at })
-            .await
-            .unwrap();
+        let mut execution_progress = executor.tick(executed_at).await.unwrap();
         loop {
             execution_progress
                 .executions
@@ -642,7 +623,6 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
-            cleanup_expired_locks: false,
             clock_fn: clock_fn.clone(),
         };
         let db_connection = TickBasedDbConnection {
@@ -689,7 +669,6 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::from_millis(100),
-            cleanup_expired_locks: false,
             clock_fn,
         };
         let mut db_task = DbTask::spawn_new(1);
@@ -736,7 +715,6 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
-            cleanup_expired_locks: false,
             clock_fn,
         };
 
@@ -861,7 +839,6 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
-            cleanup_expired_locks: false,
             clock_fn: sim_clock.clock_fn(),
         };
         let db_connection = TickBasedDbConnection {
@@ -959,7 +936,6 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
-            cleanup_expired_locks: false,
             clock_fn,
         };
         let db_connection = TickBasedDbConnection {
@@ -1089,12 +1065,15 @@ mod tests {
             lock_expiry: Duration::from_millis(100),
             lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::ZERO,
-            cleanup_expired_locks: true,
             clock_fn: sim_clock.clock_fn(),
         };
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
         };
+        let lock_watcher = expired_lock_watcher::Task {
+            db_connection: db_connection.clone(),
+        };
+
         let worker = SleepyWorker {
             duration: exec_config.lock_expiry + exec_config.lock_expiry_leeway * 2, // sleep more than allowed by the lock expiry
             result: SupportedFunctionResult::None,
@@ -1123,12 +1102,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
         };
-        let mut first_execution_progress = executor
-            .tick(ExecTickRequest {
-                executed_at: sim_clock.now(),
-            })
-            .await
-            .unwrap();
+        let mut first_execution_progress = executor.tick(sim_clock.now()).await.unwrap();
         assert_eq!(1, first_execution_progress.executions.len());
         // Started hanging, wait for lock expiry.
         sim_clock.sleep(exec_config.lock_expiry + exec_config.lock_expiry_leeway);
@@ -1136,14 +1110,16 @@ mod tests {
         let now_after_first_lock_expiry = sim_clock.now();
         {
             debug!(now = %now_after_first_lock_expiry, "Expecting an expired lock");
-            let cleanup_progress = executor
-                .tick(ExecTickRequest {
-                    executed_at: now_after_first_lock_expiry,
-                })
-                .await
-                .unwrap();
+            let cleanup_progress = executor.tick(now_after_first_lock_expiry).await.unwrap();
             assert!(cleanup_progress.executions.is_empty());
-            assert_eq!(Some(1), cleanup_progress.expired_locks);
+        }
+        {
+            let expired_locks = lock_watcher
+                .tick(now_after_first_lock_expiry)
+                .await
+                .unwrap()
+                .expired_locks;
+            assert_eq!(1, expired_locks);
         }
         assert!(!first_execution_progress
             .executions
@@ -1169,12 +1145,7 @@ mod tests {
         let now_after_first_timeout = sim_clock.now();
         debug!(now = %now_after_first_timeout, "Second execution should hang again and result in a permanent timeout");
 
-        let mut second_execution_progress = executor
-            .tick(ExecTickRequest {
-                executed_at: now_after_first_timeout,
-            })
-            .await
-            .unwrap();
+        let mut second_execution_progress = executor.tick(now_after_first_timeout).await.unwrap();
         assert_eq!(1, second_execution_progress.executions.len());
 
         // Started hanging, wait for lock expiry.
@@ -1183,14 +1154,16 @@ mod tests {
         let now_after_second_lock_expiry = sim_clock.now();
         debug!(now = %now_after_second_lock_expiry, "Expecting the second lock to be expired");
         {
-            let cleanup_progress = executor
-                .tick(ExecTickRequest {
-                    executed_at: now_after_second_lock_expiry,
-                })
-                .await
-                .unwrap();
+            let cleanup_progress = executor.tick(now_after_second_lock_expiry).await.unwrap();
             assert!(cleanup_progress.executions.is_empty());
-            assert_eq!(Some(1), cleanup_progress.expired_locks);
+        }
+        {
+            let expired_locks = lock_watcher
+                .tick(now_after_second_lock_expiry)
+                .await
+                .unwrap()
+                .expired_locks;
+            assert_eq!(1, expired_locks);
         }
         assert!(!second_execution_progress
             .executions
