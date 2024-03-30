@@ -6,13 +6,12 @@
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::index::JournalsIndex;
 use super::{journal::ExecutionJournal, ExecutionEventInner};
-use super::{AppendBatchResponse, AppendRequest, CleanupExpiredLocks, LockedExecution};
+use super::{AppendBatchResponse, AppendRequest, ExpiredTimer, LockedExecution};
 use crate::storage::journal::PendingState;
 use crate::storage::{
     AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
     LockPendingResponse, LockResponse, SpecificError, Version,
 };
-use crate::FinishedExecutionError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
@@ -65,12 +64,12 @@ impl DbConnection for InMemoryDbConnection {
     }
 
     #[instrument(skip_all)]
-    async fn cleanup_expired_locks(
+    async fn get_expired_timers(
         &self,
-        now: DateTime<Utc>,
-    ) -> Result<CleanupExpiredLocks, DbConnectionError> {
+        at: DateTime<Utc>,
+    ) -> Result<Vec<ExpiredTimer>, DbConnectionError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::General(GeneralRequest::CleanupExpiredLocks { now, resp_sender });
+        let request = DbRequest::General(GeneralRequest::GetExpiredTimers { at, resp_sender });
         self.client_to_store_req_sender
             .send(request)
             .await
@@ -142,7 +141,7 @@ impl DbConnection for InMemoryDbConnection {
         version: Option<Version>,
     ) -> Result<AppendBatchResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::General(GeneralRequest::AppendBatch {
+        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::AppendBatch {
             batch,
             execution_id,
             version,
@@ -177,6 +176,10 @@ impl DbConnection for InMemoryDbConnection {
 }
 
 mod index {
+    use concepts::prefixed_ulid::DelayId;
+
+    use crate::storage::{AsyncResponse, HistoryEvent};
+
     use super::*;
 
     #[derive(Debug)]
@@ -184,8 +187,8 @@ mod index {
         pending: BTreeSet<ExecutionId>,
         pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ExecutionId>>,
         pending_scheduled_rev: HashMap<ExecutionId, DateTime<Utc>>,
-        locked: BTreeMap<DateTime<Utc>, HashSet<ExecutionId>>,
-        locked_rev: HashMap<ExecutionId, DateTime<Utc>>,
+        locked: BTreeMap<DateTime<Utc>, HashMap<ExecutionId, Option<(JoinSetId, DelayId)>>>,
+        locked_rev: HashMap<ExecutionId, Vec<DateTime<Utc>>>,
     }
 
     impl JournalsIndex {
@@ -215,12 +218,14 @@ mod index {
             pending
         }
 
-        pub(super) fn fetch_expired(&self, now: DateTime<Utc>) -> Vec<ExecutionId> {
+        pub(super) fn fetch_expired(
+            &self,
+            at: DateTime<Utc>,
+        ) -> impl Iterator<Item = (ExecutionId, Option<(JoinSetId, DelayId)>)> + '_ {
             self.locked
-                .range(..=now)
-                .flat_map(|(_scheduled_at, ids)| ids)
-                .cloned()
-                .collect()
+                .range(..=at)
+                .flat_map(|(_scheduled_at, id_map)| id_map.iter())
+                .map(|(id, is_async_delay)| (*id, *is_async_delay))
         }
 
         pub(super) fn update(
@@ -234,9 +239,11 @@ mod index {
                 let ids = self.pending_scheduled.get_mut(&schedule).unwrap();
                 ids.remove(&execution_id);
             }
-            if let Some(schedule) = self.locked_rev.remove(&execution_id) {
-                let ids = self.locked.get_mut(&schedule).unwrap();
-                ids.remove(&execution_id);
+            if let Some(schedules) = self.locked_rev.remove(&execution_id) {
+                for schedule in schedules {
+                    let ids = self.locked.get_mut(&schedule).unwrap();
+                    ids.remove(&execution_id);
+                }
             }
             if let Some(journal) = journals.get(&execution_id) {
                 // Add it again if needed
@@ -257,12 +264,47 @@ mod index {
                         self.locked
                             .entry(lock_expires_at)
                             .or_default()
-                            .insert(execution_id.clone());
-                        self.locked_rev.insert(execution_id, lock_expires_at);
+                            .insert(execution_id, None);
+                        self.locked_rev
+                            .entry(execution_id)
+                            .or_default()
+                            .push(lock_expires_at);
                     }
                     PendingState::BlockedByJoinSet | PendingState::Finished => {}
                 }
-            }
+                // Add all open async timers
+                let delay_req_resp = journal
+                    .event_history()
+                    .filter_map(|e| match e {
+                        HistoryEvent::DelayedUntilAsyncRequest {
+                            join_set_id,
+                            delay_id,
+                            expires_at,
+                        } => Some(((join_set_id, delay_id), Some(expires_at))),
+                        HistoryEvent::AsyncResponse {
+                            join_set_id,
+                            response: AsyncResponse::DelayFinishedAsyncResponse { delay_id },
+                        } => Some(((join_set_id, delay_id), None)),
+                        _ => None,
+                    })
+                    .collect::<HashMap<_, _>>()
+                    .into_iter()
+                    // Request must predate the response, so value with Some(expires_at) is an open timer
+                    .filter_map(|((join_set_id, delay_id), expires_at)| {
+                        expires_at.map(|expires_at| (join_set_id, delay_id, expires_at))
+                    });
+                for (join_set_id, delay_id, expires_at) in delay_req_resp {
+                    self.locked
+                        .entry(expires_at)
+                        .or_default()
+                        .insert(execution_id, Some((join_set_id, delay_id)));
+                    self.locked_rev
+                        .entry(execution_id)
+                        .or_default()
+                        .push(expires_at);
+                }
+            } // else do nothing - rolling back creation
+            debug!("Journal index updated: {self:?}");
         }
     }
 
@@ -308,6 +350,14 @@ enum ExecutionSpecificRequest {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<AppendResponse, SpecificError>>,
     },
+    #[display(fmt = "AppendBatch")]
+    AppendBatch {
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        version: Option<Version>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
+    },
     #[display(fmt = "Get")]
     Get {
         execution_id: ExecutionId,
@@ -330,19 +380,11 @@ enum GeneralRequest {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<LockPendingResponse>,
     },
-    #[display(fmt = "CleanupExpiredLocks(`{now}`)")]
-    CleanupExpiredLocks {
-        now: DateTime<Utc>,
+    #[display(fmt = "GetExpiredTimers(`{at}`)")]
+    GetExpiredTimers {
+        at: DateTime<Utc>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<CleanupExpiredLocks>,
-    },
-    #[display(fmt = "AppendBatch")]
-    AppendBatch {
-        batch: Vec<AppendRequest>,
-        execution_id: ExecutionId,
-        version: Option<Version>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
+        resp_sender: oneshot::Sender<Vec<ExpiredTimer>>,
     },
 }
 
@@ -387,11 +429,12 @@ pub struct DbTask {
 }
 
 impl ExecutionSpecificRequest {
-    fn execution_id(&self) -> &ExecutionId {
+    fn execution_id(&self) -> ExecutionId {
         match self {
-            Self::Lock { execution_id, .. } => execution_id,
-            Self::Append { execution_id, .. } => execution_id,
-            Self::Get { execution_id, .. } => execution_id,
+            Self::Lock { execution_id, .. } => *execution_id,
+            Self::Append { execution_id, .. } => *execution_id,
+            Self::AppendBatch { execution_id, .. } => *execution_id,
+            Self::Get { execution_id, .. } => *execution_id,
         }
     }
 }
@@ -424,10 +467,10 @@ pub(crate) enum DbTickResponse {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<ExecutionHistory, SpecificError>>,
     },
-    CleanupExpiredLocks {
-        payload: CleanupExpiredLocks,
+    GetExpiredTimers {
+        payload: Vec<ExpiredTimer>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<CleanupExpiredLocks>,
+        resp_sender: oneshot::Sender<Vec<ExpiredTimer>>,
     },
 }
 
@@ -454,7 +497,7 @@ impl DbTickResponse {
                 payload,
                 resp_sender,
             } => resp_sender.send(payload).map_err(|_| ()),
-            Self::CleanupExpiredLocks {
+            Self::GetExpiredTimers {
                 payload,
                 resp_sender,
             } => resp_sender.send(payload).map_err(|_| ()),
@@ -515,7 +558,7 @@ impl DbTask {
             }
         } else {
             match &request {
-                DbRequest::General(..) => debug!("Received {request}"),
+                DbRequest::General(..) => {}
                 DbRequest::ExecutionSpecific(specific) => debug!(
                     execution_id = %specific.execution_id(),
                     "Received {request}"
@@ -549,16 +592,11 @@ impl DbTask {
                 lock_expires_at,
                 resp_sender,
             ),
-            GeneralRequest::CleanupExpiredLocks { now, resp_sender } => {
-                self.cleanup_expired_locks(now, resp_sender)
-            }
-            GeneralRequest::AppendBatch {
-                batch: append,
-                execution_id,
-                version,
+            GeneralRequest::GetExpiredTimers {
+                at: before,
                 resp_sender,
-            } => DbTickResponse::AppendBatchResult {
-                payload: self.append_batch(append, execution_id, version),
+            } => DbTickResponse::GetExpiredTimers {
+                payload: self.get_expired_timers(before),
                 resp_sender,
             },
         }
@@ -644,6 +682,15 @@ impl DbTask {
                     lock_expires_at,
                 ),
             },
+            ExecutionSpecificRequest::AppendBatch {
+                batch: append,
+                execution_id,
+                version,
+                resp_sender,
+            } => DbTickResponse::AppendBatchResult {
+                payload: self.append_batch(append, execution_id, version),
+                resp_sender,
+            },
             ExecutionSpecificRequest::Get {
                 execution_id,
                 resp_sender,
@@ -707,7 +754,7 @@ impl DbTask {
         self.append(created_at, execution_id.clone(), Some(version), event)
             .map(|_| {
                 let journal = self.journals.get(&execution_id).unwrap();
-                (journal.event_history(), journal.version())
+                (journal.event_history().collect(), journal.version())
             })
     }
 
@@ -766,39 +813,28 @@ impl DbTask {
         Ok(journal.as_execution_history())
     }
 
-    fn cleanup_expired_locks(
-        &mut self,
-        now: DateTime<Utc>,
-        resp_sender: oneshot::Sender<CleanupExpiredLocks>,
-    ) -> DbTickResponse {
-        let expired = self.index.fetch_expired(now);
-        let len = expired.len();
-        for execution_id in expired {
+    fn get_expired_timers(&mut self, at: DateTime<Utc>) -> Vec<ExpiredTimer> {
+        let expired = self.index.fetch_expired(at);
+        let mut vec = Vec::new();
+        for (execution_id, is_async_timer) in expired {
             let journal = self.journals.get(&execution_id).unwrap();
-
-            let event = if let Some(duration) = journal.can_be_retried_after() {
-                let expires_at = now + duration;
-                debug!("Retrying execution with expired lock after {duration:?} at {expires_at}");
-                ExecutionEventInner::IntermittentTimeout { expires_at }
-            } else {
-                info!("Marking execution with expired lock as permanently timed out");
-                ExecutionEventInner::Finished {
-                    result: Err(FinishedExecutionError::PermanentTimeout),
-                }
-            };
-            self.append(
-                now,
-                journal.execution_id().clone(),
-                Some(journal.version()),
-                event,
-            )
-            .expect("must be lockable within the same transaction");
-            self.index.update(execution_id, &self.journals);
+            vec.push(match is_async_timer {
+                Some((join_set_id, delay_id)) => ExpiredTimer::AsyncTimer {
+                    execution_id,
+                    version: journal.version(),
+                    join_set_id,
+                    delay_id,
+                },
+                None => ExpiredTimer::Lock {
+                    execution_id: journal.execution_id(),
+                    version: journal.version(),
+                    max_retries: journal.max_retries(),
+                    already_retried_count: journal.already_retried_count(),
+                    retry_exp_backoff: journal.retry_exp_backoff(),
+                },
+            });
         }
-        DbTickResponse::CleanupExpiredLocks {
-            payload: len,
-            resp_sender,
-        }
+        vec
     }
 
     fn append_batch(
@@ -936,17 +972,17 @@ pub mod tick {
         }
 
         #[instrument(skip_all)]
-        async fn cleanup_expired_locks(
+        async fn get_expired_timers(
             &self,
-            now: DateTime<Utc>,
-        ) -> Result<CleanupExpiredLocks, DbConnectionError> {
-            let request = DbRequest::General(GeneralRequest::CleanupExpiredLocks {
-                now,
+            at: DateTime<Utc>,
+        ) -> Result<Vec<ExpiredTimer>, DbConnectionError> {
+            let request = DbRequest::General(GeneralRequest::GetExpiredTimers {
+                at,
                 resp_sender: oneshot::channel().0,
             });
             let response = self.db_task.lock().unwrap().tick(request);
             Ok(
-                assert_matches!(response, DbTickResponse::CleanupExpiredLocks { payload, .. } => payload),
+                assert_matches!(response, DbTickResponse::GetExpiredTimers { payload, .. } => payload),
             )
         }
 
@@ -996,7 +1032,7 @@ pub mod tick {
             execution_id: ExecutionId,
             version: Option<Version>,
         ) -> Result<AppendBatchResponse, DbError> {
-            let request = DbRequest::General(GeneralRequest::AppendBatch {
+            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::AppendBatch {
                 batch,
                 execution_id,
                 version,
@@ -1025,10 +1061,7 @@ pub mod tests {
     use self::tick::TickBasedDbConnection;
 
     use super::*;
-    use crate::{
-        storage::{ExecutionEvent, HistoryEvent},
-        FinishedExecutionResult,
-    };
+    use crate::{storage::HistoryEvent, FinishedExecutionError, FinishedExecutionResult};
     use assert_matches::assert_matches;
     use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
     use std::{
@@ -1289,34 +1322,35 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn lock_expired_means_permanent_timeout_tick_based() {
+    async fn expired_lock_should_be_found_tick_based() {
         set_up();
         let db_task = DbTask::new();
         let db_task = Arc::new(std::sync::Mutex::new(db_task));
         let db_connection = TickBasedDbConnection {
             db_task: db_task.clone(),
         };
-        lock_expired_means_timeout(db_connection).await;
+        expired_lock_should_be_found(db_connection).await;
     }
 
     #[tokio::test]
-    async fn lock_expired_means_permanent_timeout_task_based() {
+    async fn expired_lock_should_be_found_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
         let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap();
         let db_connection = InMemoryDbConnection {
             client_to_store_req_sender,
         };
-        lock_expired_means_timeout(db_connection).await;
+        expired_lock_should_be_found(db_connection).await;
         db_task.close().await;
     }
 
-    async fn lock_expired_means_timeout(db_connection: impl DbConnection) {
+    async fn expired_lock_should_be_found(db_connection: impl DbConnection) {
+        const MAX_RETRIES: u32 = 1;
+        const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(100);
         let sim_clock = SimClock::new(now());
         let execution_id = ExecutionId::generate();
         let exec1 = ExecutorId::generate();
         // Create
-        let retry_exp_backoff = Duration::from_millis(100);
         {
             db_connection
                 .create(
@@ -1326,8 +1360,8 @@ pub mod tests {
                     Params::default(),
                     None,
                     None,
-                    retry_exp_backoff,
-                    1,
+                    RETRY_EXP_BACKOFF,
+                    MAX_RETRIES,
                 )
                 .await
                 .unwrap();
@@ -1352,71 +1386,26 @@ pub mod tests {
             assert_eq!(SOME_FFQN.to_owned(), locked_execution.ffqn);
             assert_eq!(Version::new(2), locked_execution.version);
         }
-        // Calling `cleanup_expired_locks` after lock expiry should result in intermittent timeout.
+        // Calling `get_expired_timers` after lock expiry should return the expired execution.
         sim_clock.sleep(lock_duration);
         {
-            let cleanup_at = sim_clock.now();
-            let expired = db_connection
-                .cleanup_expired_locks(cleanup_at)
-                .await
-                .unwrap();
-            assert_eq!(1, expired);
-            let execution_history = db_connection.get(execution_id.clone()).await.unwrap();
-            let timeout_expiry = cleanup_at + retry_exp_backoff;
-            assert_eq!(
-                PendingState::PendingAt(timeout_expiry),
-                execution_history.pending_state
-            );
-            let last_event = execution_history.last_event();
-            assert_matches!(
-                last_event,
-                ExecutionEvent {
-                    event: ExecutionEventInner::IntermittentTimeout {
-                        expires_at,
-                    },
-                    ..
-                } if *expires_at == timeout_expiry
-            );
+            let expired_at = sim_clock.now();
+            let expired = db_connection.get_expired_timers(expired_at).await.unwrap();
+            assert_eq!(1, expired.len());
+            let expired = &expired[0];
+            let (
+                found_execution_id,
+                version,
+                already_retried_count,
+                max_retries,
+                retry_exp_backoff,
+            ) = assert_matches!(expired, ExpiredTimer::Lock { execution_id, version, already_retried_count, max_retries, retry_exp_backoff } => (execution_id, version, already_retried_count, max_retries, retry_exp_backoff));
+            assert_eq!(execution_id, *found_execution_id);
+            assert_eq!(Version::new(2), *version);
+            assert_eq!(0, *already_retried_count);
+            assert_eq!(MAX_RETRIES, *max_retries);
+            assert_eq!(RETRY_EXP_BACKOFF, *retry_exp_backoff);
         }
-        // Lock again
-        sim_clock.sleep(retry_exp_backoff);
-        {
-            let mut locked_executions = db_connection
-                .lock_pending(
-                    1,
-                    sim_clock.now(),
-                    vec![SOME_FFQN.to_owned()],
-                    sim_clock.now(),
-                    exec1.clone(),
-                    sim_clock.now() + lock_duration,
-                )
-                .await
-                .unwrap();
-            assert_eq!(1, locked_executions.len());
-            let locked_execution = locked_executions.pop().unwrap();
-            assert_eq!(execution_id, locked_execution.execution_id);
-            assert_eq!(SOME_FFQN.to_owned(), locked_execution.ffqn);
-            assert_eq!(Version::new(4), locked_execution.version);
-        }
-        // Calling `cleanup_expired_locks` after lock expiry should result in permanent timeout.
-        sim_clock.sleep(lock_duration);
-        let expired = db_connection
-            .cleanup_expired_locks(sim_clock.now())
-            .await
-            .unwrap();
-        assert_eq!(1, expired);
-        let execution_history = db_connection.get(execution_id).await.unwrap();
-        assert_eq!(PendingState::Finished, execution_history.pending_state);
-        let last_event = execution_history.last_event();
-        assert_matches!(
-            last_event,
-            ExecutionEvent {
-                event: ExecutionEventInner::Finished {
-                    result: Err(crate::FinishedExecutionError::PermanentTimeout)
-                },
-                ..
-            }
-        );
     }
 
     #[tokio::test]

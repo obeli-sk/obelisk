@@ -355,7 +355,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                 }
             }
             Err((err, new_version)) => {
-                if matches!(err, WorkerError::Interrupt(_)) {
+                if matches!(err, WorkerError::ChildExecutionRequest(_)) {
                     // logged later
                 } else {
                     debug!("Execution failed: {err:?}");
@@ -364,7 +364,8 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                     return Err(DbError::Specific(SpecificError::VersionMismatch));
                 }
                 let event = match err {
-                    WorkerError::Interrupt(request) => {
+                    WorkerError::ChildExecutionRequest(request) => {
+                        trace!("ChildExecutionRequest {request:?}");
                         let join_set_id = request.new_join_set_id.clone();
                         let join = AppendRequest {
                             created_at,
@@ -411,16 +412,13 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                             async_resp_to_other_execution: Some((child_execution_id, child_exec)),
                         });
                     }
-                    WorkerError::Sleep {
-                        expires_at,
-                        new_join_set_id,
-                    } => {
-                        debug!("Sleeping until `{expires_at}`");
+                    WorkerError::SleepRequest(request) => {
+                        trace!("SleepRequest {request:?}");
                         let join = AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinSet {
-                                    join_set_id: new_join_set_id.clone(),
+                                    join_set_id: request.new_join_set_id.clone(),
                                 },
                             },
                         };
@@ -428,9 +426,9 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::DelayedUntilAsyncRequest {
-                                    join_set_id: new_join_set_id.clone(),
-                                    delay_id: DelayId::generate(),
-                                    expires_at,
+                                    join_set_id: request.new_join_set_id.clone(),
+                                    delay_id: request.delay_id,
+                                    expires_at: request.expires_at,
                                 },
                             },
                         };
@@ -438,7 +436,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinNextBlocking {
-                                    join_set_id: new_join_set_id,
+                                    join_set_id: request.new_join_set_id,
                                 },
                             },
                         };
@@ -525,7 +523,7 @@ struct Append {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{expired_lock_watcher, worker::WorkerResult};
+    use crate::{expired_timers_watcher, worker::WorkerResult};
     use anyhow::anyhow;
     use assert_matches::assert_matches;
     use async_trait::async_trait;
@@ -1070,7 +1068,7 @@ mod tests {
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
         };
-        let lock_watcher = expired_lock_watcher::Task {
+        let lock_watcher = expired_timers_watcher::Task {
             db_connection: db_connection.clone(),
         };
 

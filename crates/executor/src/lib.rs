@@ -8,12 +8,10 @@ use db::storage::Version;
 use std::error::Error;
 
 pub mod executor;
-pub mod expired_lock_watcher;
+pub mod expired_timers_watcher;
 pub mod worker {
-
-    use concepts::StrVariant;
-
     use super::*;
+    use concepts::{prefixed_ulid::DelayId, StrVariant};
 
     pub type WorkerResult = Result<(SupportedFunctionResult, Version), (WorkerError, Version)>;
 
@@ -30,13 +28,10 @@ pub mod worker {
         IntermittentTimeout { epoch_based: bool },
         #[error(transparent)]
         FatalError(#[from] FatalError),
-        #[error("interrupt")]
-        Interrupt(ChildExecutionRequest),
-        #[error("sleep: `{expires_at}`")]
-        Sleep {
-            expires_at: DateTime<Utc>,
-            new_join_set_id: JoinSetId,
-        },
+        #[error("child execution request")]
+        ChildExecutionRequest(ChildExecutionRequest),
+        #[error("sleep request")]
+        SleepRequest(SleepRequest),
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,6 +40,13 @@ pub mod worker {
         pub child_execution_id: ExecutionId,
         pub ffqn: FunctionFqn,
         pub params: Params,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct SleepRequest {
+        pub new_join_set_id: JoinSetId,
+        pub delay_id: DelayId,
+        pub expires_at: DateTime<Utc>,
     }
 
     #[derive(Debug, thiserror::Error)]

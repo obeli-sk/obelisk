@@ -19,12 +19,21 @@ pub struct ExecutionHistory {
 }
 
 impl ExecutionHistory {
+    fn already_retried_count(&self) -> u32 {
+        self.events
+            .iter()
+            .filter(|event| event.event.is_retry())
+            .count() as u32
+    }
+
     pub fn can_be_retried_after(&self) -> Option<Duration> {
-        can_be_retried_after(
-            self.events.iter(),
-            self.max_retries(),
-            self.retry_exp_backoff(),
-        )
+        let already_retried_count = self.already_retried_count();
+        if already_retried_count < self.max_retries() {
+            let duration = self.retry_exp_backoff() * 2_u32.saturating_pow(already_retried_count);
+            Some(duration)
+        } else {
+            None
+        }
     }
 
     pub fn retry_exp_backoff(&self) -> Duration {
@@ -57,20 +66,6 @@ impl ExecutionHistory {
 
     pub fn last_event(&self) -> &ExecutionEvent {
         self.events.last().expect("must contain at least one event")
-    }
-}
-
-fn can_be_retried_after<'a>(
-    iter: impl Iterator<Item = &'a ExecutionEvent>,
-    max_retries: u32,
-    retry_exp_backoff: Duration,
-) -> Option<Duration> {
-    let already_retried_count = iter.filter(|event| event.event.is_retry()).count() as u32;
-    if already_retried_count < max_retries {
-        let duration = retry_exp_backoff * 2_u32.saturating_pow(already_retried_count);
-        Some(duration)
-    } else {
-        None
     }
 }
 

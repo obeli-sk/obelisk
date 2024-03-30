@@ -92,7 +92,7 @@ pub enum ExecutionEventInner {
 impl ExecutionEventInner {
     fn appendable_only_in_lock(&self) -> bool {
         match self {
-            Self::Locked { .. }
+            Self::Locked { .. } // only if the lock is being extended by the same executor
             | Self::IntermittentFailure { .. }
             | Self::IntermittentTimeout { .. }
             | Self::Finished { .. } => true,
@@ -112,7 +112,10 @@ impl ExecutionEventInner {
         matches!(
             self,
             Self::HistoryEvent {
-                event: HistoryEvent::AsyncResponse { .. }
+                event: HistoryEvent::AsyncResponse {
+                    response: AsyncResponse::ChildExecutionAsyncResponse { .. },
+                    ..
+                }
             } | Self::Created { .. }
         )
     }
@@ -229,7 +232,6 @@ pub struct LockedExecution {
     pub max_retries: u32,
 }
 pub type LockPendingResponse = Vec<LockedExecution>;
-pub type CleanupExpiredLocks = usize; // number of expired locks
 pub type AppendBatchResponse = AppendResponse;
 
 #[derive(Debug, Clone, derive_more::Display)]
@@ -329,10 +331,27 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         }
     }
 
-    async fn cleanup_expired_locks(
+    async fn get_expired_timers(
         &self,
-        now: DateTime<Utc>,
-    ) -> Result<CleanupExpiredLocks, DbConnectionError>;
+        at: DateTime<Utc>,
+    ) -> Result<Vec<ExpiredTimer>, DbConnectionError>;
+}
+
+#[derive(Debug, Clone)]
+pub enum ExpiredTimer {
+    Lock {
+        execution_id: ExecutionId,
+        version: Version,
+        already_retried_count: u32,
+        max_retries: u32,
+        retry_exp_backoff: Duration,
+    },
+    AsyncTimer {
+        execution_id: ExecutionId,
+        version: Version,
+        join_set_id: JoinSetId,
+        delay_id: DelayId,
+    },
 }
 
 pub mod journal {
@@ -404,8 +423,8 @@ pub mod journal {
             Version(self.execution_events.len())
         }
 
-        pub(crate) fn execution_id(&self) -> &ExecutionId {
-            &self.execution_id
+        pub(crate) fn execution_id(&self) -> ExecutionId {
+            self.execution_id
         }
 
         pub(crate) fn append(
@@ -570,17 +589,14 @@ pub mod journal {
                 .expect("journal must begin with Created event")
         }
 
-        pub(crate) fn event_history(&self) -> Vec<HistoryEvent> {
-            self.execution_events
-                .iter()
-                .filter_map(|event| {
-                    if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {
-                        Some(eh.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+        pub(crate) fn event_history(&self) -> impl Iterator<Item = HistoryEvent> + '_ {
+            self.execution_events.iter().filter_map(|event| {
+                if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {
+                    Some(eh.clone())
+                } else {
+                    None
+                }
+            })
         }
 
         pub(crate) fn retry_exp_backoff(&self) -> Duration {
@@ -597,6 +613,13 @@ pub mod journal {
             }) => *max_retries)
         }
 
+        pub(crate) fn already_retried_count(&self) -> u32 {
+            self.execution_events
+                .iter()
+                .filter(|event| event.event.is_retry())
+                .count() as u32
+        }
+
         pub(crate) fn params(&self) -> Params {
             assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
                 event: ExecutionEventInner::Created { params, .. },
@@ -611,14 +634,6 @@ pub mod journal {
                 version: self.version(),
                 pending_state: self.pending_state.clone(),
             }
-        }
-
-        pub(crate) fn can_be_retried_after(&self) -> Option<Duration> {
-            crate::can_be_retried_after(
-                self.execution_events.iter(),
-                self.max_retries(),
-                self.retry_exp_backoff(),
-            )
         }
 
         pub(crate) fn truncate(&mut self, len: usize) {

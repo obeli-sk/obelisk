@@ -1,12 +1,12 @@
 use crate::{EngineConfig, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{ConfigId, JoinSetId};
+use concepts::prefixed_ulid::{ConfigId, DelayId, JoinSetId};
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use concepts::{Params, SupportedFunctionResult};
 use db::storage::AsyncResponse;
 use db::storage::{HistoryEvent, Version};
-use executor::worker::{ChildExecutionRequest, FatalError};
+use executor::worker::{ChildExecutionRequest, FatalError, SleepRequest};
 use executor::worker::{Worker, WorkerError};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -46,7 +46,7 @@ struct WorkflowWorker<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> 
     config: WorkflowConfig<C>,
     engine: Arc<Engine>,
     exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
-    linker: wasmtime::component::Linker<WorkflowCtx>,
+    linker: wasmtime::component::Linker<WorkflowCtx<C>>,
     component: wasmtime::component::Component,
 }
 
@@ -57,13 +57,14 @@ wasmtime::component::bindgen!({
     interfaces: "import my-org:workflow-engine/host-activities;",
 });
 
-struct WorkflowCtx {
+struct WorkflowCtx<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
     execution_id: ExecutionId,
     events: Vec<HistoryEvent>,
     events_idx: usize,
     rng: StdRng,
+    clock_fn: C,
 }
-impl WorkflowCtx {
+impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowCtx<C> {
     fn replay_or_interrupt(
         &mut self,
         request: ChildExecutionRequest,
@@ -106,31 +107,73 @@ impl WorkflowCtx {
                 }
             }
         }
-        Err(FunctionError::Interrupt(request))
+        Err(FunctionError::ChildExecutionRequest(request))
     }
+
     fn next_u128(&mut self) -> u128 {
         let mut bytes = [0; 16];
         self.rng.fill_bytes(&mut bytes);
         u128::from_be_bytes(bytes)
     }
+
+    fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), wasmtime::Error> {
+        my_org::workflow_engine::host_activities::add_to_linker(linker, |state: &mut Self| state)
+    }
 }
 #[async_trait::async_trait]
-impl my_org::workflow_engine::host_activities::Host for WorkflowCtx {
+impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static>
+    my_org::workflow_engine::host_activities::Host for WorkflowCtx<C>
+{
     async fn noop(&mut self) -> wasmtime::Result<()> {
         Ok(())
     }
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
-        if millis > 0 {
-            Err(FunctionError::Sleep(Duration::from_millis(millis)))?
-        } else {
-            // TODO: Write the event do DB for determinism checks
-            Ok(())
+        let new_join_set_id =
+            JoinSetId::from_parts(self.execution_id.timestamp(), self.next_u128());
+        let delay_id = DelayId::from_parts(self.execution_id.timestamp(), self.next_u128());
+        trace!(
+            "Querying history for {delay_id}, index: {}, history: {:?}",
+            self.events_idx,
+            self.events
+        );
+
+        while let Some(found) = self.events.get(self.events_idx) {
+            match found {
+                HistoryEvent::JoinSet { .. } => {
+                    debug!("Skipping JoinSet");
+                    self.events_idx += 1;
+                }
+                HistoryEvent::DelayedUntilAsyncRequest { .. } => {
+                    debug!("Skipping ChildExecutionAsyncRequest");
+                    self.events_idx += 1;
+                }
+                HistoryEvent::JoinNextBlocking { .. } => {
+                    debug!("Skipping JoinNextBlocking");
+                    self.events_idx += 1;
+                }
+                HistoryEvent::AsyncResponse {
+                    response:
+                        AsyncResponse::DelayFinishedAsyncResponse {
+                            delay_id: found_delay_id,
+                        },
+                    ..
+                } if delay_id == *found_delay_id => {
+                    debug!("Found response in history: {found:?}");
+                    self.events_idx += 1;
+                    return Ok(());
+                }
+                _ => {
+                    panic!("{found:?}")
+                }
+            }
         }
-    }
-}
-impl WorkflowCtx {
-    fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), wasmtime::Error> {
-        my_org::workflow_engine::host_activities::add_to_linker(linker, |state: &mut Self| state)
+        let expires_at = (self.clock_fn)() + Duration::from_millis(millis);
+        Err(FunctionError::SleepRequest(SleepRequest {
+            new_join_set_id,
+            delay_id,
+            expires_at,
+        }))?
+        // TODO: optimize for zero millis - write to db and continue
     }
 }
 
@@ -138,10 +181,10 @@ impl WorkflowCtx {
 enum FunctionError {
     #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(StrVariant),
-    #[error("interrupt: {}", .0.child_execution_id)]
-    Interrupt(ChildExecutionRequest),
-    #[error("sleep: `{0:?}`")]
-    Sleep(Duration),
+    #[error("child({})", .0.child_execution_id)]
+    ChildExecutionRequest(ChildExecutionRequest),
+    #[error("sleep({})", .0.delay_id)]
+    SleepRequest(SleepRequest),
 }
 
 const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
@@ -197,7 +240,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
                     trace!("Adding mock for imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(&component, function_name, {
                         let ffqn = ffqn.clone();
-                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx>,
+                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
                               params: &[Val],
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
@@ -284,18 +327,11 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> Worker for Workfl
                             )),
                             version,
                         ),
-                        Some(FunctionError::Interrupt(request)) => {
-                            (WorkerError::Interrupt(request.clone()), version)
+                        Some(FunctionError::ChildExecutionRequest(request)) => {
+                            (WorkerError::ChildExecutionRequest(request.clone()), version)
                         }
-                        Some(FunctionError::Sleep(duration)) => {
-                            let expires_at = (self.config.clock_fn)() + *duration;
-                            (
-                                WorkerError::Sleep {
-                                    expires_at,
-                                    new_join_set_id: JoinSetId::generate(),
-                                },
-                                version,
-                            )
+                        Some(FunctionError::SleepRequest(request)) => {
+                            (WorkerError::SleepRequest(request.clone()), version)
                         }
                         None => (WorkerError::IntermittentError { err, reason }, version),
                     }
@@ -327,6 +363,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
                 events,
                 events_idx: 0,
                 rng: StdRng::seed_from_u64(seed),
+                clock_fn: self.config.clock_fn.clone(),
             };
             let mut store = Store::new(&self.engine, ctx);
             let instance = self
@@ -454,7 +491,10 @@ mod tests {
     use assert_matches::assert_matches;
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
     use db::storage::{inmemory_dao::DbTask, journal::PendingState, DbConnection};
-    use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
+    use executor::{
+        executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
+        expired_timers_watcher,
+    };
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use utils::time::now;
@@ -465,6 +505,8 @@ mod tests {
         FunctionFqn::new_static("testing:fibo-workflow/workflow", "fiboa"); // fiboa: func(n: u8, iterations: u32) -> u64;
     const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqn = // TODO: generate
         FunctionFqn::new_static("testing:sleep-workflow/workflow", "sleep-host-activity"); // sleep-host-activity: func(millis: u64);
+
+    const TICK_SLEEP: Duration = Duration::from_millis(1);
 
     pub(crate) fn spawn_workflow_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
         let fibo_worker = WorkflowWorker::new_with_config(
@@ -485,7 +527,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(10),
-            tick_sleep: Duration::ZERO,
+            tick_sleep: TICK_SLEEP,
             clock_fn: || now(),
         };
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
@@ -563,11 +605,12 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             lock_expiry_leeway: Duration::from_millis(10),
-            tick_sleep: Duration::ZERO,
+            tick_sleep: TICK_SLEEP,
             clock_fn,
         };
         ExecTask::spawn_new(db_connection, worker, exec_config, None)
     }
+
     #[tokio::test]
     async fn sleep_should_be_persisted_after_executor_restart() {
         const SLEEP_MILLIS: u64 = 100;
@@ -576,6 +619,13 @@ mod tests {
         let mut db_task = DbTask::spawn_new(10);
         let db_connection = db_task.as_db_connection().expect("must be open");
         let workflow_exec_task = spawn_workflow_sleep(db_connection.clone(), sim_clock.clock_fn());
+        let timers_watcher_task = expired_timers_watcher::Task::spawn_new(
+            db_connection.clone(),
+            expired_timers_watcher::Config {
+                tick_sleep: TICK_SLEEP,
+                clock_fn: sim_clock.clock_fn(),
+            },
+        );
         let execution_id = ExecutionId::generate();
         db_connection
             .create(
@@ -596,11 +646,19 @@ mod tests {
             .await
             .unwrap();
 
+        workflow_exec_task.close().await;
         sim_clock.sleep(Duration::from_millis(SLEEP_MILLIS));
-        // TODO: the executor should insert DelayFinishedAsyncResponse
-
+        // Restart worker
+        let workflow_exec_task = spawn_workflow_sleep(db_connection.clone(), sim_clock.clock_fn());
+        let res = db_connection
+            .wait_for_finished_result(execution_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(SupportedFunctionResult::None, res);
         drop(db_connection);
         workflow_exec_task.close().await;
+        timers_watcher_task.close().await;
         db_task.close().await;
     }
 }
