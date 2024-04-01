@@ -1,4 +1,4 @@
-name: test
+name: test-nosim
 permissions:
   contents: read
 # This configuration allows maintainers of this repo to create a branch and pull request based on
@@ -29,10 +29,6 @@ jobs:
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
       - name: cargo test (nosim)
-        run: nix develop --command cargo test --workspace --target-dir=target/debug/nosim  -- --skip perf
+        run: nix develop --command cargo nextest run --profile ci --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
-      - name: cargo test (madsim)
-        run: nix develop --command cargo test --workspace --target-dir=target/debug/madsim -- --skip perf
-        env:
-          RUSTFLAGS: "--cfg madsim --cfg tokio_unstable --cfg tracing_unstable"

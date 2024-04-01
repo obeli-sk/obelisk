@@ -1,0 +1,4 @@
+[profile.ci]
+failure-output = "immediate"
+fail-fast = false
+status-level = "all"
