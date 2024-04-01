@@ -40,5 +40,11 @@ jobs:
         uses: cachix/install-nix-action@v26
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
-      - name: cargo clippy
-        run: nix develop --command cargo clippy
+      - name: cargo clippy (nosim)
+        run: nix develop --command cargo clippy --all-targets --no-default-features --target-dir=target/debug/nosim
+        env:
+          RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
+      - name: cargo clippy (madsim)
+        run: nix develop --command cargo clippy --all-targets --no-default-features --target-dir=target/debug/madsim
+        env:
+          RUSTFLAGS: "--cfg madsim --cfg tokio_unstable --cfg tracing_unstable"
