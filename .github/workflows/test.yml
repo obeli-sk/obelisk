@@ -27,6 +27,13 @@ jobs:
         uses: cachix/install-nix-action@v26
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+      - name: Restore nix cache
+        id: target-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /nix/store/
+          key: nixstore-${{ runner.os }}-${{ hashFiles('flake.lock') }}
       - name: Load nix store
         run: nix develop --command echo
       - name: cargo test (nosim)
@@ -34,6 +41,13 @@ jobs:
         env:
           RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
+      - name: Save nix store cache
+        id: target-cache-save
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /nix/store/
+          key: nixstore-${{ runner.os }}-${{ hashFiles('flake.lock') }}
   test-madsim:
     runs-on: ubuntu-latest
     strategy:
@@ -46,8 +60,24 @@ jobs:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
       - name: Load nix store
         run: nix develop --command echo
+      - name: Restore rust cache
+        id: target-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            target
+            /home/runner/.cargo
+          key: rust-madsim-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo test (madsim)
         run: nix develop --command cargo nextest run --profile ci --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg madsim --cfg tokio_unstable --cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
+      - name: Save rust cache
+        id: target-cache-save
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            target
+            /home/runner/.cargo
+          key: rust-madsim-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
