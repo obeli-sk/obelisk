@@ -16,12 +16,15 @@
 
 # Planned features
 * Host function: generate a random value
-* Allow starting multiple child executions
+* Allow starting multiple child executions in parallel
+* Allow scheduling new execution from the current one
 * Persistence using sqlite
+* CLI + server binary
 * Persistence using postgresql
-* Concurrent non blocking child executions
+* Advanced concurrency patterns
 * Cancellation
 * Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
+* Labels restricting workflows/activities to executors
 
 ## Setting up environment
 ```sh

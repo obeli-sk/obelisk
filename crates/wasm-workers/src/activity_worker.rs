@@ -331,7 +331,6 @@ pub(crate) mod tests {
             ffqns: vec![FIBO_ACTIVITY_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::ZERO,
             clock_fn: || now(),
         };
@@ -478,7 +477,6 @@ pub(crate) mod tests {
                     ffqns: vec![fibo_ffqn.clone()],
                     batch_size,
                     lock_expiry,
-                    lock_expiry_leeway: Duration::from_millis(10),
                     tick_sleep,
                     clock_fn: || now(),
                 };
@@ -709,7 +707,6 @@ pub(crate) mod tests {
                 ffqns: vec![SLEEP_LOOP_ACTIVITY_FFQN.to_owned()],
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
-                lock_expiry_leeway: Duration::from_millis(10),
                 tick_sleep: Duration::from_millis(10),
                 clock_fn: || now(),
             };

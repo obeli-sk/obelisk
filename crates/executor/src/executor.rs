@@ -26,7 +26,6 @@ use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
 pub struct ExecConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
     pub ffqns: Vec<FunctionFqn>,
     pub lock_expiry: Duration,
-    pub lock_expiry_leeway: Duration,
     pub tick_sleep: Duration,
     pub batch_size: u32,
     pub clock_fn: C, // Used for obtaining current time when the execution finishes.
@@ -197,8 +196,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
             assert_eq!(permits.len(), locked_executions.len());
             locked_executions.into_iter().zip(permits)
         };
-        let execution_deadline =
-            executed_at + self.config.lock_expiry - self.config.lock_expiry_leeway;
+        let execution_deadline = executed_at + self.config.lock_expiry;
 
         let mut executions = Vec::new();
         for (locked_execution, permit) in locked_executions {
@@ -619,7 +617,6 @@ mod tests {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
             clock_fn: clock_fn.clone(),
         };
@@ -665,7 +662,6 @@ mod tests {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::from_millis(100),
             clock_fn,
         };
@@ -711,7 +707,6 @@ mod tests {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
             clock_fn,
         };
@@ -835,7 +830,6 @@ mod tests {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
             clock_fn: sim_clock.clock_fn(),
         };
@@ -932,7 +926,6 @@ mod tests {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            lock_expiry_leeway: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
             clock_fn,
         };
@@ -1061,7 +1054,6 @@ mod tests {
             ffqns: vec![SOME_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_millis(100),
-            lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: Duration::ZERO,
             clock_fn: sim_clock.clock_fn(),
         };
@@ -1073,7 +1065,7 @@ mod tests {
         };
 
         let worker = SleepyWorker {
-            duration: exec_config.lock_expiry + exec_config.lock_expiry_leeway * 2, // sleep more than allowed by the lock expiry
+            duration: exec_config.lock_expiry + Duration::from_millis(1), // sleep more than allowed by the lock expiry
             result: SupportedFunctionResult::None,
         };
         // Create an execution
@@ -1103,7 +1095,7 @@ mod tests {
         let mut first_execution_progress = executor.tick(sim_clock.now()).await.unwrap();
         assert_eq!(1, first_execution_progress.executions.len());
         // Started hanging, wait for lock expiry.
-        sim_clock.sleep(exec_config.lock_expiry + exec_config.lock_expiry_leeway);
+        sim_clock.sleep(exec_config.lock_expiry);
         // cleanup should be called
         let now_after_first_lock_expiry = sim_clock.now();
         {
@@ -1147,7 +1139,7 @@ mod tests {
         assert_eq!(1, second_execution_progress.executions.len());
 
         // Started hanging, wait for lock expiry.
-        sim_clock.sleep(exec_config.lock_expiry + exec_config.lock_expiry_leeway);
+        sim_clock.sleep(exec_config.lock_expiry);
         // cleanup should be called
         let now_after_second_lock_expiry = sim_clock.now();
         debug!(now = %now_after_second_lock_expiry, "Expecting the second lock to be expired");

@@ -503,7 +503,7 @@ mod tests {
 
     pub const FIBO_WORKFLOW_FFQN: FunctionFqn =
         FunctionFqn::new_static("testing:fibo-workflow/workflow", "fiboa"); // fiboa: func(n: u8, iterations: u32) -> u64;
-    const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqn = // TODO: generate
+    const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqn = // TODO: generate in builder
         FunctionFqn::new_static("testing:sleep-workflow/workflow", "sleep-host-activity"); // sleep-host-activity: func(millis: u64);
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
@@ -526,7 +526,6 @@ mod tests {
             ffqns: vec![FIBO_WORKFLOW_FFQN.to_owned()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: TICK_SLEEP,
             clock_fn: || now(),
         };
@@ -604,7 +603,6 @@ mod tests {
             ffqns: vec![SLEEP_HOST_ACTIVITY_FFQN.to_owned()], // TODO get the list of functions from the worker
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
-            lock_expiry_leeway: Duration::from_millis(10),
             tick_sleep: TICK_SLEEP,
             clock_fn,
         };
