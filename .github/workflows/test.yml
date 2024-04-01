@@ -1,4 +1,4 @@
-name: test-nosim
+name: test
 permissions:
   contents: read
 # This configuration allows maintainers of this repo to create a branch and pull request based on
@@ -37,10 +37,16 @@ jobs:
       - name: Load nix store
         run: nix develop --command echo
       - name: cargo test (nosim)
-        run: nix develop --command cargo nextest run --profile ci --no-capture --filter-expr '!test(/perf/)'
+        run: nix develop --command cargo nextest run --profile ci-nosim --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: |
+            target/nextest/junit-*.xml
       - name: Save nix store cache
         id: target-cache-save
         uses: actions/cache/save@v4
@@ -69,10 +75,16 @@ jobs:
             /home/runner/.cargo
           key: rust-madsim-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo test (madsim)
-        run: nix develop --command cargo nextest run --profile ci --no-capture --filter-expr '!test(/perf/)'
+        run: nix develop --command cargo nextest run --profile ci-madsim --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg madsim --cfg tokio_unstable --cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: |
+            target/nextest/junit-*.xml
       - name: Save rust cache
         id: target-cache-save
         uses: actions/cache/save@v4
