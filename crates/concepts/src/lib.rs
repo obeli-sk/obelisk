@@ -497,19 +497,37 @@ mod tests {
     #[test]
     fn ulid_generation_should_be_deterministic() {
         let seed: u64 = 0;
-        let builder = madsim::runtime::Builder {
+        // https://github.com/madsim-rs/madsim/issues/201
+        // first run is ignored
+        madsim::runtime::Builder {
             seed,
             count: 1,
             jobs: 1,
             config: madsim::Config::default(),
             time_limit: None,
             check: false,
-        };
-        insta::assert_snapshot!(builder.run(|| async {
-            let ulid = ulid::Ulid::new();
-            println!("ulid1 {ulid}");
-            ulid
-        }));
+        }
+        .run(|| async { ulid::Ulid::new() });
+        assert_eq!(
+            madsim::runtime::Builder {
+                seed,
+                count: 1,
+                jobs: 1,
+                config: madsim::Config::default(),
+                time_limit: None,
+                check: false,
+            }
+            .run(|| async { ulid::Ulid::new() }),
+            madsim::runtime::Builder {
+                seed,
+                count: 1,
+                jobs: 1,
+                config: madsim::Config::default(),
+                time_limit: None,
+                check: false,
+            }
+            .run(|| async { ulid::Ulid::new() })
+        );
     }
 
     // FIXME https://github.com/madsim-rs/madsim/issues/201

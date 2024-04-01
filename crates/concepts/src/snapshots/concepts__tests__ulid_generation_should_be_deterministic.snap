@@ -1,5 +1,0 @@
----
-source: crates/concepts/src/lib.rs
-expression: "builder.run(||\n        async {\n            let ulid = ulid::Ulid::new();\n            println!(\"ulid1 {ulid}\");\n            ulid\n        })"
----
-01G0S1DVA8QGQCVNS2HYS2XDBF
