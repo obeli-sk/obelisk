@@ -40,9 +40,9 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: test-${{ github.job_id }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: test-${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo test
-        run: nix develop --command cargo nextest run --profile ${{ github.job_id }} --no-capture --filter-expr '!test(/perf/)'
+        run: nix develop --command cargo nextest run --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
@@ -51,7 +51,7 @@ jobs:
         if: always()
         with:
           files: |
-            target/nextest/${{ github.job_id }}/junit.xml
+            target/nextest/${{ github.job }}/junit.xml
       - name: Save rust cache
         id: target-cache-save
         uses: actions/cache/save@v4
@@ -59,7 +59,7 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: test-${{ github.job_id }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: test-${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
   ci-test-madsim:
     runs-on: ubuntu-latest
@@ -80,9 +80,9 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: test-${{ github.job_id }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: test-${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo test
-        run: nix develop --command cargo nextest run --profile ${{ github.job_id }} --no-capture --filter-expr '!test(/perf/)'
+        run: nix develop --command cargo nextest run --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg madsim --cfg tokio_unstable --cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
@@ -91,7 +91,7 @@ jobs:
         if: always()
         with:
           files: |
-            target/nextest/${{ github.job_id }}/junit.xml
+            target/nextest/${{ github.job }}/junit.xml
       - name: Save rust cache
         id: target-cache-save
         uses: actions/cache/save@v4
@@ -99,4 +99,4 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: test-${{ github.job_id }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: test-${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
