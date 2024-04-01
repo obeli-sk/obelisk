@@ -2,3 +2,4 @@
 failure-output = "immediate"
 fail-fast = false
 status-level = "all"
+slow-timeout = { period = "10s", terminate-after = 2 }
