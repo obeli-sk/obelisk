@@ -18,7 +18,6 @@ concurrency:
 
 jobs:
   test-nosim:
-    name: test
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -28,12 +27,14 @@ jobs:
         uses: cachix/install-nix-action@v26
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+      - name: Load nix store
+        run: nix develop --command echo
       - name: cargo test (nosim)
-        run: nix develop --command cargo nextest run --profile ci --filter-expr '!test(/perf/)'
+        run: nix develop --command cargo nextest run --profile ci --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
+          RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
   test-madsim:
-    name: test
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -43,7 +44,10 @@ jobs:
         uses: cachix/install-nix-action@v26
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
-      - name: cargo test (nosim)
-        run: nix develop --command cargo nextest run --profile ci --filter-expr '!test(/perf/)'
+      - name: Load nix store
+        run: nix develop --command echo
+      - name: cargo test (madsim)
+        run: nix develop --command cargo nextest run --profile ci --no-capture --filter-expr '!test(/perf/)'
         env:
-          RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
+          RUSTFLAGS: "--cfg madsim --cfg tokio_unstable --cfg tracing_unstable"
+          RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
