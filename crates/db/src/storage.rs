@@ -21,7 +21,8 @@ use std::time::Duration;
 pub struct Version(usize);
 impl Version {
     #[cfg(any(test, feature = "test"))]
-    #[must_use] pub fn new(arg: usize) -> Self {
+    #[must_use]
+    pub fn new(arg: usize) -> Self {
         Self(arg)
     }
 }

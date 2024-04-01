@@ -8,7 +8,8 @@ pub struct EpochTicker {
 }
 
 impl EpochTicker {
-    #[must_use] pub fn spawn_new(engines: Vec<EngineWeak>, epoch: Duration) -> Self {
+    #[must_use]
+    pub fn spawn_new(engines: Vec<EngineWeak>, epoch: Duration) -> Self {
         let abort_handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(epoch).await;
