@@ -15,6 +15,7 @@
     * Cleans up old hanging executions with expired locks. Executions that have the budget will be retried.
 
 # Planned features
+* Test HTTP client activity
 * Host function: generate a random value
 * Allow starting multiple child executions in parallel
 * Allow scheduling new execution from the current one

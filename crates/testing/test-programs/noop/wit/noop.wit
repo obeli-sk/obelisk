@@ -1,6 +1,0 @@
-package testing:noop;
-
-interface noop {
-    noop: func();
-    noop2: func();
-}

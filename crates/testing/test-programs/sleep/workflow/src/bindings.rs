@@ -27,23 +27,6 @@ pub mod my_org {
                     wit_import(_rt::as_i64(&millis));
                 }
             }
-            #[allow(unused_unsafe, clippy::all)]
-            pub fn noop() {
-                unsafe {
-                    #[cfg(target_arch = "wasm32")]
-                    #[link(wasm_import_module = "my-org:workflow-engine/host-activities")]
-                    extern "C" {
-                        #[link_name = "noop"]
-                        fn wit_import();
-                    }
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import() {
-                        unreachable!()
-                    }
-                    wit_import();
-                }
-            }
         }
     }
 }
@@ -330,18 +313,17 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.21.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 483] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xe9\x02\x01A\x02\x01\
-A\x08\x01B\x04\x01@\x01\x06millisw\x01\0\x04\0\x05sleep\x01\0\x01@\0\x01\0\x04\0\
-\x04noop\x01\x01\x03\x01&my-org:workflow-engine/host-activities\x05\0\x01B\x04\x01\
-@\x01\x06millisw\x01\0\x04\0\x05sleep\x01\0\x01@\x02\x06millisw\x0aiterationsy\x01\
-\0\x04\0\x0asleep-loop\x01\x01\x03\x01\x13testing:sleep/sleep\x05\x01\x01B\x03\x01\
-j\0\0\x01@\0\0\0\x04\0\x03run\x01\x01\x03\x01\x12wasi:cli/run@0.2.0\x05\x02\x01B\
-\x05\x01@\x01\x06millisw\x01\0\x04\0\x13sleep-host-activity\x01\0\x04\0\x0esleep\
--activity\x01\0\x01@\0\x01\0\x04\0\x03run\x01\x01\x04\x01\x1ftesting:sleep-workf\
-low/workflow\x05\x03\x04\x01\x1atesting:sleep-workflow/any\x04\0\x0b\x09\x01\0\x03\
-any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.201.0\x10\
-wit-bindgen-rust\x060.21.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 469] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xdb\x02\x01A\x02\x01\
+A\x08\x01B\x02\x01@\x01\x06millisw\x01\0\x04\0\x05sleep\x01\0\x03\x01&my-org:wor\
+kflow-engine/host-activities\x05\0\x01B\x04\x01@\x01\x06millisw\x01\0\x04\0\x05s\
+leep\x01\0\x01@\x02\x06millisw\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\x01\x03\
+\x01\x13testing:sleep/sleep\x05\x01\x01B\x03\x01j\0\0\x01@\0\0\0\x04\0\x03run\x01\
+\x01\x03\x01\x12wasi:cli/run@0.2.0\x05\x02\x01B\x05\x01@\x01\x06millisw\x01\0\x04\
+\0\x13sleep-host-activity\x01\0\x04\0\x0esleep-activity\x01\0\x01@\0\x01\0\x04\0\
+\x03run\x01\x01\x04\x01\x1ftesting:sleep-workflow/workflow\x05\x03\x04\x01\x1ate\
+sting:sleep-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0c\
+processed-by\x02\x0dwit-component\x070.201.0\x10wit-bindgen-rust\x060.21.0";
 
 #[inline(never)]
 #[doc(hidden)]

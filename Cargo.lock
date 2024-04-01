@@ -2097,36 +2097,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-programs-noop-activity"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.5.0",
- "wit-bindgen-rt",
-]
-
-[[package]]
-name = "test-programs-noop-activity-builder"
-version = "0.1.0"
-dependencies = [
- "cargo-component-builder",
-]
-
-[[package]]
-name = "test-programs-noop-workflow"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.5.0",
- "wit-bindgen-rt",
-]
-
-[[package]]
-name = "test-programs-noop-workflow-builder"
-version = "0.1.0"
-dependencies = [
- "cargo-component-builder",
-]
-
-[[package]]
 name = "test-programs-patch-activity-broken"
 version = "0.1.0"
 dependencies = [

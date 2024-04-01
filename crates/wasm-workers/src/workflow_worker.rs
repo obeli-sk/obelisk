@@ -124,9 +124,6 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowCtx<C> {
 impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static>
     my_org::workflow_engine::host_activities::Host for WorkflowCtx<C>
 {
-    async fn noop(&mut self) -> wasmtime::Result<()> {
-        Ok(())
-    }
     async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
         let new_join_set_id =
             JoinSetId::from_parts(self.execution_id.timestamp(), self.next_u128());

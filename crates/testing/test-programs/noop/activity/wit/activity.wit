@@ -1,5 +1,0 @@
-package any:any;
-
-world any {
-    export testing:noop/noop;
-}
