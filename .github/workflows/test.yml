@@ -17,8 +17,23 @@ concurrency:
 
 
 jobs:
-  test:
-    name: stable / test
+  test-nosim:
+    name: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v26
+        with:
+          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+      - name: cargo test (nosim)
+        run: nix develop --command cargo nextest run --profile ci --filter-expr '!test(/perf/)'
+        env:
+          RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
+  test-madsim:
+    name: test
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
