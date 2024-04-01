@@ -50,7 +50,7 @@ jobs:
         if: always()
         with:
           files: |
-            target/nextest/junit-*.xml
+            target/nextest/ci-nosim/junit.xml
       - name: Save nix store cache
         if: always()
         uses: actions/cache/save@v4
@@ -88,7 +88,7 @@ jobs:
         if: always()
         with:
           files: |
-            target/nextest/junit-*.xml
+            target/nextest/ci-madsim/junit.xml
       - name: Save rust cache
         id: target-cache-save
         uses: actions/cache/save@v4

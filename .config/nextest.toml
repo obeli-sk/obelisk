@@ -3,7 +3,7 @@ failure-output = "immediate"
 fail-fast = false
 status-level = "all"
 slow-timeout = { period = "10s", terminate-after = 2 }
-junit.path = "junit-madsim.xml"
+junit.path = "junit.xml"
 junit.report-name = "madsim"
 junit.store-success-output = true
 junit.store-failure-output = true
@@ -13,7 +13,7 @@ failure-output = "immediate"
 fail-fast = false
 status-level = "all"
 slow-timeout = { period = "10s", terminate-after = 2 }
-junit.path = "junit-nosim.xml"
+junit.path = "junit.xml"
 junit.report-name = "nosim"
 junit.store-success-output = true
 junit.store-failure-output = true
