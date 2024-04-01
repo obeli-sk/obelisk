@@ -737,12 +737,15 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             // Check the result.
-            assert_matches!(
-                db_connection
-                    .wait_for_finished_result(execution_id)
-                    .await
-                    .unwrap(),
-                expected
+            assert_eq!(
+                expected,
+                assert_matches!(
+                    db_connection
+                        .wait_for_finished_result(execution_id)
+                        .await
+                        .unwrap(),
+                    actual => actual
+                )
             );
             let stopwatch = stopwatch.elapsed();
             warn!("Finished in {stopwatch:?}");
