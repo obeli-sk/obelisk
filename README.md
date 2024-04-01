@@ -28,8 +28,13 @@
 * Labels restricting workflows/activities to executors
 
 ## Setting up environment
+Using nix flakes:
 ```sh
 nix develop # or direnv allow, after simlinking .envrc-example -> .envrc
+```
+Otherwise:
+```sh
+cargo install cargo-component
 ```
 
 ## Building

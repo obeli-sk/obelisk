@@ -1,0 +1,65 @@
+name: check
+
+# This workflow runs whenever a PR is opened or updated, or a commit is pushed to main. It runs
+# several checks:
+# - fmt: checks that the code is formatted according to rustfmt
+# - clippy: checks that the code does not contain any clippy warnings
+# - doc: checks that the code can be documented without errors
+# - hack: check combinations of feature flags
+# - msrv: check that the msrv specified in the crate is correct
+permissions:
+  contents: read
+# This configuration allows maintainers of this repo to create a branch and pull request based on
+# the new branch. Restricting the push trigger to the main branch ensures that the PR only gets
+# built once.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+# If new code is pushed to a PR branch, then cancel in progress workflows for that PR. Ensures that
+# we don't waste CI time, and returns results quicker https://github.com/jonhoo/rust-ci-conf/pull/5
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+
+jobs:
+  fmt:
+    name: stable / fmt
+    runs-on: ubuntu-latest
+    needs: install_dependencies
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: cargo fmt --check
+        run: cargo fmt --check
+  clippy:
+    name: stable / clippy
+    runs-on: ubuntu-latest
+    needs: install_dependencies
+    permissions:
+      contents: read
+      checks: write
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: cargo clippy
+        uses: giraffate/clippy-action@v1
+        with:
+          reporter: 'github-pr-check'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+  semver:
+    name: semver
+    runs-on: ubuntu-latest
+    needs: install_dependencies
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: cargo-semver-checks
+        uses: obi1kenobi/cargo-semver-checks-action@v2
