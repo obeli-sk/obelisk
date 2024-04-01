@@ -21,44 +21,7 @@ concurrency:
 
 
 jobs:
-  test-nosim:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Nix
-        uses: cachix/install-nix-action@v26
-        with:
-          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
-      - name: Restore nix cache
-        id: target-cache-restore
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            /nix/store/
-          key: nixstore-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-      - name: Load nix store
-        run: nix develop --command echo
-      - name: cargo test (nosim)
-        run: nix develop --command cargo nextest run --profile ci-nosim --no-capture --filter-expr '!test(/perf/)'
-        env:
-          RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
-          RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
-      - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        if: always()
-        with:
-          files: |
-            target/nextest/ci-nosim/junit.xml
-      - name: Save nix store cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            /nix/store/
-          key: nixstore-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-  test-madsim:
+  ci-test-nosim:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -77,9 +40,49 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: rust-madsim-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-      - name: cargo test (madsim)
-        run: nix develop --command cargo nextest run --profile ci-madsim --no-capture --filter-expr '!test(/perf/)'
+          key: test-${{ github.job_id }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: cargo test
+        run: nix develop --command cargo nextest run --profile ${{ github.job_id }} --no-capture --filter-expr '!test(/perf/)'
+        env:
+          RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
+          RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: |
+            target/nextest/${{ github.job_id }}/junit.xml
+      - name: Save rust cache
+        id: target-cache-save
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            target
+            /home/runner/.cargo
+          key: test-${{ github.job_id }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+  ci-test-madsim:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v26
+        with:
+          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+      - name: Load nix store
+        run: nix develop --command echo
+      - name: Restore rust cache
+        id: target-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            target
+            /home/runner/.cargo
+          key: test-${{ github.job_id }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: cargo test
+        run: nix develop --command cargo nextest run --profile ${{ github.job_id }} --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg madsim --cfg tokio_unstable --cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
@@ -88,7 +91,7 @@ jobs:
         if: always()
         with:
           files: |
-            target/nextest/ci-madsim/junit.xml
+            target/nextest/${{ github.job_id }}/junit.xml
       - name: Save rust cache
         id: target-cache-save
         uses: actions/cache/save@v4
@@ -96,4 +99,4 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: rust-madsim-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: test-${{ github.job_id }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
