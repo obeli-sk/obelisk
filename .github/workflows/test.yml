@@ -1,4 +1,4 @@
-name: check
+name: test
 permissions:
   contents: read
 # This configuration allows maintainers of this repo to create a branch and pull request based on
@@ -17,20 +17,8 @@ concurrency:
 
 
 jobs:
-  fmt:
-    name: stable / fmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Nix
-        uses: cachix/install-nix-action@v26
-        with:
-          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
-      - name: cargo fmt
-        run: nix develop --command cargo fmt --check
-
-  clippy:
-    name: stable / clippy
+  test:
+    name: stable / test
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -40,11 +28,11 @@ jobs:
         uses: cachix/install-nix-action@v26
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
-      - name: cargo clippy (nosim)
-        run: nix develop --command cargo clippy --all-targets --no-default-features --target-dir=target/debug/nosim
+      - name: cargo test (nosim)
+        run: nix develop --command cargo test --workspace --target-dir=target/debug/nosim  -- --skip perf
         env:
           RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
-      - name: cargo clippy (madsim)
-        run: nix develop --command cargo clippy --all-targets --no-default-features --target-dir=target/debug/madsim
+      - name: cargo test (madsim)
+        run: nix develop --command cargo test --workspace --target-dir=target/debug/madsim -- --skip perf
         env:
           RUSTFLAGS: "--cfg madsim --cfg tokio_unstable --cfg tracing_unstable"
