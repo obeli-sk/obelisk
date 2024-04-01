@@ -52,7 +52,7 @@ jobs:
           files: |
             target/nextest/junit-*.xml
       - name: Save nix store cache
-        id: target-cache-save
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: |
