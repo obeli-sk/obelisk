@@ -39,12 +39,13 @@ type MaybeRecycledInstances =
 impl RecycleInstancesSetting {
     pub(crate) fn instantiate(&self) -> MaybeRecycledInstances {
         match self {
-            Self::Enable => Some(Default::default()),
+            Self::Enable => Some(Arc::default()),
             Self::Disable => None,
         }
     }
 }
 
+#[must_use]
 pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
     let mut wasmtime_config = wasmtime::Config::new();
     wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
@@ -165,27 +166,26 @@ impl ActivityWorker {
             .recycled_instances
             .as_ref()
             .and_then(|i| i.lock().unwrap().pop());
-        let (instance, mut store) = match instance_and_store {
-            Some((instance, store)) => (instance, store),
-            None => {
-                let mut store = utils::wasi_http::store(&self.engine);
-                let instance = self
-                    .linker
-                    .instantiate_async(&mut store, &self.component)
-                    .await
-                    .map_err(|err| {
-                        let reason = err.to_string();
-                        if reason.starts_with("maximum concurrent") {
-                            WorkerError::LimitReached(reason)
-                        } else {
-                            WorkerError::IntermittentError {
-                                reason: StrVariant::Static("cannot instantiate"),
-                                err: err.into(),
-                            }
+        let (instance, mut store) = if let Some((instance, store)) = instance_and_store {
+            (instance, store)
+        } else {
+            let mut store = utils::wasi_http::store(&self.engine);
+            let instance = self
+                .linker
+                .instantiate_async(&mut store, &self.component)
+                .await
+                .map_err(|err| {
+                    let reason = err.to_string();
+                    if reason.starts_with("maximum concurrent") {
+                        WorkerError::LimitReached(reason)
+                    } else {
+                        WorkerError::IntermittentError {
+                            reason: StrVariant::Static("cannot instantiate"),
+                            err: err.into(),
                         }
-                    })?;
-                (instance, store)
-            }
+                    }
+                })?;
+            (instance, store)
         };
         let epoch_millis = self.config.epoch_millis;
         store.epoch_deadline_callback(move |_store_ctx| {
@@ -261,7 +261,7 @@ impl ActivityWorker {
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %select_based_execution_deadline, "Finished");
                 res
             },
-            _   = tokio::time::sleep_until(sleep_until) => {
+            ()   = tokio::time::sleep_until(sleep_until) => {
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %select_based_execution_deadline, "Sending select based timeout");
                 Err(WorkerError::IntermittentTimeout { epoch_based: false }) // Epoch interruption only applies to actively executing wasm.
             }
@@ -270,7 +270,7 @@ impl ActivityWorker {
 }
 
 mod valuable {
-    use super::*;
+    use super::ActivityWorker;
     static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
     impl ::valuable::Structable for ActivityWorker {
         fn definition(&self) -> ::valuable::StructDef<'_> {
@@ -328,11 +328,11 @@ pub(crate) mod tests {
         .unwrap();
 
         let exec_config = ExecConfig {
-            ffqns: vec![FIBO_ACTIVITY_FFQN.to_owned()],
+            ffqns: vec![FIBO_ACTIVITY_FFQN.clone()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            clock_fn: || now(),
+            clock_fn: now,
         };
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
     }
@@ -349,8 +349,8 @@ pub(crate) mod tests {
         db_connection
             .create(
                 created_at,
-                execution_id.clone(),
-                FIBO_ACTIVITY_FFQN.to_owned(),
+                execution_id,
+                FIBO_ACTIVITY_FFQN.clone(),
                 Params::from([Val::U8(FIBO_10_INPUT)]),
                 None,
                 None,
@@ -369,6 +369,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(all(test, not(madsim)))] // https://github.com/madsim-rs/madsim/issues/198
+    #[allow(clippy::too_many_lines)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_parallel() {
         use db::storage::{AppendRequest, ExecutionEventInner};
@@ -434,7 +435,7 @@ pub(crate) mod tests {
 
         // create executions
         let stopwatch = Instant::now();
-        let fibo_ffqn = FIBO_ACTIVITY_FFQN.to_owned();
+        let fibo_ffqn = FIBO_ACTIVITY_FFQN.clone();
         let params = Params::from([Val::U8(fibo_input)]);
 
         let created_at = now();
@@ -453,7 +454,7 @@ pub(crate) mod tests {
                 },
             };
             db_connection
-                .append_batch(vec![req], execution_id.clone(), None)
+                .append_batch(vec![req], execution_id, None)
                 .await
                 .unwrap();
             execution_ids.push(execution_id);
@@ -478,7 +479,7 @@ pub(crate) mod tests {
                     batch_size,
                     lock_expiry,
                     tick_sleep,
-                    clock_fn: || now(),
+                    clock_fn: now,
                 };
                 ExecTask::spawn_new(
                     db_task.as_db_connection().unwrap(),
@@ -566,7 +567,7 @@ pub(crate) mod tests {
                         vec.push(
                             fibo_worker
                                 .run(
-                                    FIBO_ACTIVITY_FFQN.to_owned(),
+                                    FIBO_ACTIVITY_FFQN.clone(),
                                     Params::from([Val::U8(fibo_input)]),
                                     execution_deadline,
                                     execution_deadline,
@@ -641,7 +642,7 @@ pub(crate) mod tests {
                 tokio::spawn(async move {
                     fibo_worker
                         .run(
-                            FIBO_ACTIVITY_FFQN.to_owned(),
+                            FIBO_ACTIVITY_FFQN.clone(),
                             Params::from([Val::U8(fibo_input)]),
                             execution_deadline,
                             execution_deadline,
@@ -697,18 +698,18 @@ pub(crate) mod tests {
                     ),
                     epoch_millis: EPOCH_MILLIS,
                     config_id: ConfigId::generate(),
-                    recycled_instances: recycled_instances.clone(),
+                    recycled_instances,
                 },
                 engine,
             )
             .unwrap();
 
             let exec_config = ExecConfig {
-                ffqns: vec![SLEEP_LOOP_ACTIVITY_FFQN.to_owned()],
+                ffqns: vec![SLEEP_LOOP_ACTIVITY_FFQN.clone()],
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::from_millis(10),
-                clock_fn: || now(),
+                clock_fn: now,
             };
             let exec_task = ExecTask::spawn_new(
                 db_task.as_db_connection().unwrap(),
@@ -725,8 +726,8 @@ pub(crate) mod tests {
             db_connection
                 .create(
                     created_at,
-                    execution_id.clone(),
-                    SLEEP_LOOP_ACTIVITY_FFQN.to_owned(),
+                    execution_id,
+                    SLEEP_LOOP_ACTIVITY_FFQN.clone(),
                     Params::from([Val::U64(sleep_millis), Val::U32(sleep_iterations)]),
                     None,
                     None,
@@ -788,7 +789,7 @@ pub(crate) mod tests {
             let executed_at = now();
             let err = worker
                 .run(
-                    SLEEP_LOOP_ACTIVITY_FFQN.to_owned(),
+                    SLEEP_LOOP_ACTIVITY_FFQN.clone(),
                     Params::from([Val::U64(sleep_millis), Val::U32(sleep_iterations)]),
                     executed_at + EPOCH_BAED_TIMEOUT,
                     executed_at + SELECT_BASED_TIMEOUT,

@@ -27,6 +27,7 @@ pub struct Task<DB: DbConnection> {
     pub(crate) db_connection: DB,
 }
 
+#[allow(dead_code)] // FIXME: add test
 #[derive(Debug)]
 pub(crate) struct TickProgress {
     pub(crate) expired_locks: usize,
@@ -71,7 +72,7 @@ impl<DB: DbConnection> Task<DB> {
         let span = info_span!("lock_watcher",
             executor = %executor_id,
         );
-        let is_closing: Arc<AtomicBool> = Default::default();
+        let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let tick_sleep = config.tick_sleep;
         let abort_handle = tokio::spawn(
@@ -93,8 +94,8 @@ impl<DB: DbConnection> Task<DB> {
         .abort_handle();
         TaskHandle {
             executor_id,
-            abort_handle,
             is_closing,
+            abort_handle,
         }
     }
 

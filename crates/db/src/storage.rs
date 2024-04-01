@@ -21,7 +21,7 @@ use std::time::Duration;
 pub struct Version(usize);
 impl Version {
     #[cfg(any(test, feature = "test"))]
-    pub fn new(arg: usize) -> Self {
+    #[must_use] pub fn new(arg: usize) -> Self {
         Self(arg)
     }
 }
@@ -101,6 +101,7 @@ impl ExecutionEventInner {
         }
     }
 
+    #[must_use]
     pub fn is_retry(&self) -> bool {
         matches!(
             self,
@@ -253,6 +254,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbConnectionError>;
 
+    #[allow(clippy::too_many_arguments)]
     /// Specialized `append` which does not require a version.
     async fn create(
         &self,
@@ -273,7 +275,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
             retry_exp_backoff,
             max_retries,
         };
-        self.append(execution_id, None, AppendRequest { event, created_at })
+        self.append(execution_id, None, AppendRequest { created_at, event })
             .await
     }
 
@@ -323,7 +325,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         expected_pending_state: PendingState,
     ) -> Result<ExecutionHistory, DbError> {
         loop {
-            let execution_history = self.get(execution_id.clone()).await?;
+            let execution_history = self.get(execution_id).await?;
             if execution_history.pending_state == expected_pending_state {
                 return Ok(execution_history);
             }
@@ -373,6 +375,7 @@ pub mod journal {
     }
 
     impl ExecutionJournal {
+        #[allow(clippy::too_many_arguments)]
         pub(crate) fn new(
             execution_id: ExecutionId,
             ffqn: FunctionFqn,
@@ -410,7 +413,7 @@ pub mod journal {
         }
 
         pub(crate) fn ffqn(&self) -> &FunctionFqn {
-            match self.execution_events.get(0).unwrap() {
+            match self.execution_events.front().unwrap() {
                 ExecutionEvent {
                     event: ExecutionEventInner::Created { ffqn, .. },
                     ..
@@ -495,7 +498,7 @@ pub mod journal {
                 ))));
             }
             self.execution_events
-                .push_back(ExecutionEvent { event, created_at });
+                .push_back(ExecutionEvent { created_at, event });
             // update the state
             self.pending_state = self.calculate_pending_state();
             Ok(self.version())
@@ -511,6 +514,10 @@ pub mod journal {
                         _,
                         ExecutionEventInner::Created {
                             scheduled_at: None, ..
+                        }
+                        | ExecutionEventInner::HistoryEvent {
+                            event: HistoryEvent::Yield { .. },
+                            ..
                         },
                     ) => Some(PendingState::PendingNow),
 
@@ -520,7 +527,7 @@ pub mod journal {
                             scheduled_at: Some(scheduled_at),
                             ..
                         },
-                    ) => Some(PendingState::PendingAt(scheduled_at.clone())),
+                    ) => Some(PendingState::PendingAt(*scheduled_at)),
 
                     (_, ExecutionEventInner::Finished { .. }) => Some(PendingState::Finished),
 
@@ -532,26 +539,17 @@ pub mod journal {
                             run_id,
                         },
                     ) => Some(PendingState::Locked {
-                        executor_id: executor_id.clone(),
+                        executor_id: *executor_id,
                         lock_expires_at: *lock_expires_at,
-                        run_id: run_id.clone(),
+                        run_id: *run_id,
                     }),
-
-                    (_, ExecutionEventInner::IntermittentFailure { expires_at, .. }) => {
-                        Some(PendingState::PendingAt(*expires_at))
-                    }
-
-                    (_, ExecutionEventInner::IntermittentTimeout { expires_at, .. }) => {
-                        Some(PendingState::PendingAt(*expires_at))
-                    }
 
                     (
                         _,
-                        ExecutionEventInner::HistoryEvent {
-                            event: HistoryEvent::Yield { .. },
-                            ..
-                        },
-                    ) => Some(PendingState::PendingNow),
+                        ExecutionEventInner::IntermittentFailure { expires_at, .. }
+                        | ExecutionEventInner::IntermittentTimeout { expires_at, .. },
+                    ) => Some(PendingState::PendingAt(*expires_at)),
+
                     (
                         idx,
                         ExecutionEventInner::HistoryEvent {
@@ -564,21 +562,15 @@ pub mod journal {
                         },
                     ) => {
                         // pending if this event is followed by an async response
-                        if self
-                            .execution_events
-                            .iter()
-                            .skip(idx + 1)
-                            .find(|event| {
-                                matches!(event, ExecutionEvent {
-                            event:
-                                ExecutionEventInner::HistoryEvent{event:
-                                    HistoryEvent::AsyncResponse { join_set_id, .. },
-                                .. },
-                        .. }
-                        if expected_join_set_id == join_set_id)
-                            })
-                            .is_some()
-                        {
+                        if self.execution_events.iter().skip(idx + 1).any(|event| {
+                            matches!(event, ExecutionEvent {
+                                event:
+                                    ExecutionEventInner::HistoryEvent{event:
+                                        HistoryEvent::AsyncResponse { join_set_id, .. },
+                                    .. },
+                                .. }
+                                if expected_join_set_id == join_set_id)
+                        }) {
                             Some(PendingState::PendingNow)
                         } else {
                             Some(PendingState::BlockedByJoinSet)
@@ -614,10 +606,13 @@ pub mod journal {
         }
 
         pub(crate) fn already_retried_count(&self) -> u32 {
-            self.execution_events
-                .iter()
-                .filter(|event| event.event.is_retry())
-                .count() as u32
+            u32::try_from(
+                self.execution_events
+                    .iter()
+                    .filter(|event| event.event.is_retry())
+                    .count(),
+            )
+            .unwrap()
         }
 
         pub(crate) fn params(&self) -> Params {
@@ -629,7 +624,7 @@ pub mod journal {
 
         pub fn as_execution_history(&self) -> ExecutionHistory {
             ExecutionHistory {
-                execution_id: self.execution_id.clone(),
+                execution_id: self.execution_id,
                 events: self.execution_events.iter().cloned().collect(),
                 version: self.version(),
                 pending_state: self.pending_state.clone(),

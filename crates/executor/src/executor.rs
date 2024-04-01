@@ -1,9 +1,6 @@
 use crate::worker::{FatalError, Worker, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
-use concepts::{
-    prefixed_ulid::{DelayId, ExecutorId},
-    ExecutionId, FunctionFqn, Params, StrVariant,
-};
+use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params, StrVariant};
 use db::{
     storage::{
         AppendRequest, AsyncResponse, DbConnection, DbConnectionError, DbError,
@@ -94,7 +91,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
             executor = %executor_id,
             worker = worker.as_value()
         );
-        let is_closing: Arc<AtomicBool> = Default::default();
+        let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let tick_sleep = config.tick_sleep;
         let abort_handle = tokio::spawn(
@@ -123,8 +120,8 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
         .abort_handle();
         ExecutorTaskHandle {
             executor_id,
-            abort_handle,
             is_closing,
+            abort_handle,
         }
     }
 
@@ -185,7 +182,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                     executed_at,   // fetch expiring before now
                     self.config.ffqns.clone(),
                     executed_at, // created at
-                    self.executor_id.clone(),
+                    self.executor_id,
                     lock_expires_at,
                 )
                 .await?;
@@ -200,9 +197,8 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
 
         let mut executions = Vec::new();
         for (locked_execution, permit) in locked_executions {
-            let execution_id = locked_execution.execution_id.clone();
+            let execution_id = locked_execution.execution_id;
             let join_handle = {
-                let execution_id = execution_id.clone();
                 let worker = self.worker.clone();
                 let db_connection = self.db_connection.clone();
                 let clock_fn = self.config.clock_fn.clone();
@@ -238,6 +234,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
     }
 
     #[instrument(skip_all, fields(%execution_id, %ffqn))]
+    #[allow(clippy::too_many_arguments)]
     async fn run_worker(
         worker: W,
         db_connection: DB,
@@ -252,7 +249,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
         trace!(%version, ?params, ?event_history, "Worker::run starting");
         let worker_result = worker
             .run(
-                execution_id.clone(),
+                execution_id,
                 ffqn,
                 params,
                 event_history,
@@ -261,11 +258,11 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
             )
             .await;
         trace!(?worker_result, "Worker::run finished");
-        let execution_history = db_connection.get(execution_id.clone()).await?;
+        let execution_history = db_connection.get(execution_id).await?;
         match Self::worker_result_to_execution_event(
-            execution_id.clone(),
+            execution_id,
             worker_result,
-            execution_history,
+            &execution_history,
             clock_fn(),
         ) {
             Ok(append) => {
@@ -289,11 +286,12 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
         }
     }
 
-    /// Map the WorkerError to an intermittent or a permanent failure.
+    /// Map the `WorkerError` to an intermittent or a permanent failure.
+    #[allow(clippy::too_many_lines)]
     fn worker_result_to_execution_event(
         execution_id: ExecutionId,
         worker_result: WorkerResult,
-        execution_history: ExecutionHistory,
+        execution_history: &ExecutionHistory,
         created_at: DateTime<Utc>,
     ) -> Result<Append, DbError> {
         Ok(match worker_result {
@@ -335,7 +333,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                                 event: HistoryEvent::AsyncResponse {
                                     join_set_id,
                                     response: AsyncResponse::ChildExecutionAsyncResponse {
-                                        child_execution_id: execution_id.clone(),
+                                        child_execution_id: execution_id,
                                         result: finished_res,
                                     },
                                 },
@@ -364,30 +362,26 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                 let event = match err {
                     WorkerError::ChildExecutionRequest(request) => {
                         trace!("ChildExecutionRequest {request:?}");
-                        let join_set_id = request.new_join_set_id.clone();
+                        let join_set_id = request.new_join_set_id;
                         let join = AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinSet {
-                                    join_set_id: join_set_id.clone(),
-                                },
+                                event: HistoryEvent::JoinSet { join_set_id },
                             },
                         };
                         let child_exec_async_req = AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::ChildExecutionAsyncRequest {
-                                    join_set_id: join_set_id.clone(),
-                                    child_execution_id: request.child_execution_id.clone(),
+                                    join_set_id,
+                                    child_execution_id: request.child_execution_id,
                                 },
                             },
                         };
                         let block = AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinNextBlocking {
-                                    join_set_id: join_set_id.clone(),
-                                },
+                                event: HistoryEvent::JoinNextBlocking { join_set_id },
                             },
                         };
                         let child_execution_id = request.child_execution_id;
@@ -397,7 +391,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                             event: ExecutionEventInner::Created {
                                 ffqn: request.ffqn,
                                 params: request.params,
-                                parent: Some((execution_id.clone(), join_set_id)),
+                                parent: Some((execution_id, join_set_id)),
                                 scheduled_at: None,
                                 retry_exp_backoff: execution_history.retry_exp_backoff(),
                                 max_retries: execution_history.max_retries(),
@@ -416,7 +410,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinSet {
-                                    join_set_id: request.new_join_set_id.clone(),
+                                    join_set_id: request.new_join_set_id,
                                 },
                             },
                         };
@@ -424,7 +418,7 @@ impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::DelayedUntilAsyncRequest {
-                                    join_set_id: request.new_join_set_id.clone(),
+                                    join_set_id: request.new_join_set_id,
                                     delay_id: request.delay_id,
                                     expires_at: request.expires_at,
                                 },
@@ -614,11 +608,11 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.to_owned()],
+            ffqns: vec![SOME_FFQN.clone()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            clock_fn: clock_fn.clone(),
+            clock_fn,
         };
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
@@ -659,7 +653,7 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.to_owned()],
+            ffqns: vec![SOME_FFQN.clone()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
@@ -704,7 +698,7 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.to_owned()],
+            ffqns: vec![SOME_FFQN.clone()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -757,6 +751,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_and_tick<
         DB: DbConnection,
         W: Worker,
@@ -778,8 +773,8 @@ mod tests {
         db_connection
             .create(
                 created_at,
-                execution_id.clone(),
-                SOME_FFQN.to_owned(),
+                execution_id,
+                SOME_FFQN.clone(),
                 Params::default(),
                 None,
                 None,
@@ -800,7 +795,7 @@ mod tests {
         debug!("Execution history after tick: {execution_history:?}");
         // check that DB contains Created and Locked events.
         assert_matches!(
-            execution_history.events.get(0).unwrap(),
+            execution_history.events.first().unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Created { .. },
                 created_at: actually_created_at,
@@ -827,7 +822,7 @@ mod tests {
         set_up();
         let sim_clock = SimClock::new(now());
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.to_owned()],
+            ffqns: vec![SOME_FFQN.clone()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -923,7 +918,7 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.to_owned()],
+            ffqns: vec![SOME_FFQN.clone()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -1046,12 +1041,13 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn hanging_lock_should_be_cleaned_and_execution_retried() {
         set_up();
         let sim_clock = SimClock::new(now());
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.to_owned()],
+            ffqns: vec![SOME_FFQN.clone()],
             batch_size: 1,
             lock_expiry: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
@@ -1074,8 +1070,8 @@ mod tests {
         db_connection
             .create(
                 sim_clock.now(),
-                execution_id.clone(),
-                SOME_FFQN.to_owned(),
+                execution_id,
+                SOME_FFQN.clone(),
                 Params::default(),
                 None,
                 None,
@@ -1118,7 +1114,7 @@ mod tests {
             .1
             .is_finished());
 
-        let execution_history = db_connection.get(execution_id.clone()).await.unwrap();
+        let execution_history = db_connection.get(execution_id).await.unwrap();
         let expected_first_timeout_expiry = now_after_first_lock_expiry + timeout_duration;
         assert_matches!(
             &execution_history.events.get(2).unwrap(),

@@ -7,12 +7,14 @@ pub mod time {
 
     cfg_if::cfg_if! {
         if #[cfg(all(test, madsim))] {
+            #[must_use]
             pub fn now() -> DateTime<Utc> {
                 if madsim::rand::random() {
                     madsim::time::advance(std::time::Duration::from_millis(madsim::rand::random()));
                 }
                 DateTime::from(madsim::time::TimeHandle::current().now_time())
             }
+            #[must_use]
             pub fn now_tokio_instant() -> tokio::time::Instant {
                 if madsim::rand::random() {
                     madsim::time::advance(std::time::Duration::from_millis(madsim::rand::random()));
@@ -20,9 +22,11 @@ pub mod time {
                 madsim::time::Instant::now()
             }
         } else {
+            #[must_use]
             pub fn now() -> DateTime<Utc> {
                 Utc::now()
             }
+            #[must_use]
             pub fn now_tokio_instant() -> tokio::time::Instant {
                 tokio::time::Instant::now()
             }
@@ -40,7 +44,7 @@ pub fn tracing_panic_hook(panic_info: &std::panic::PanicInfo) {
     } else {
         None
     };
-    let location = panic_info.location().map(|l| l.to_string());
+    let location = panic_info.location().map(ToString::to_string);
     let backtrace = std::backtrace::Backtrace::capture();
     if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
         tracing::error!(

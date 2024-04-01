@@ -32,7 +32,7 @@ impl Hash for StrVariant {
             StrVariant::Static(val) => val.hash(state),
             StrVariant::Arc(val) => {
                 let str: &str = val.deref();
-                str.hash(state)
+                str.hash(state);
             }
         }
     }
@@ -69,6 +69,8 @@ impl<T> Name<T> {
             phantom_data: PhantomData,
         }
     }
+
+    #[must_use]
     pub const fn new_static(value: &'static str) -> Self {
         Self {
             value: StrVariant::Static(value),
@@ -114,12 +116,15 @@ pub struct FunctionFqn {
 }
 
 impl FunctionFqn {
+    #[must_use]
     pub fn new_owned(ifc_fqn: Arc<str>, function_name: Arc<str>) -> FunctionFqn {
         FunctionFqn {
             ifc_fqn: Name::new_owned(ifc_fqn),
             function_name: Name::new_owned(function_name),
         }
     }
+
+    #[must_use]
     pub const fn new_static(ifc_fqn: &'static str, function_name: &'static str) -> FunctionFqn {
         FunctionFqn {
             ifc_fqn: Name::new_static(ifc_fqn),
@@ -186,7 +191,6 @@ pub enum ResultParsingError {
 }
 
 impl SupportedFunctionResult {
-    #[must_use]
     pub fn new(mut vec: Vec<wasmtime::component::Val>) -> Result<Self, ResultParsingError> {
         if vec.is_empty() {
             Ok(Self::None)
@@ -205,10 +209,12 @@ impl SupportedFunctionResult {
         }
     }
 
+    #[must_use]
     pub fn is_fallible_err(&self) -> bool {
         matches!(self, Self::Fallible(_, Err(())))
     }
 
+    #[must_use]
     pub fn fallible_err(&self) -> Option<Option<&WastVal>> {
         match self {
             SupportedFunctionResult::Fallible(WastVal::Result(Err(err)), Err(())) => {
@@ -218,19 +224,27 @@ impl SupportedFunctionResult {
         }
     }
 
+    #[must_use]
     pub fn value(&self) -> Option<&WastVal> {
         match self {
             SupportedFunctionResult::None => None,
-            SupportedFunctionResult::Fallible(v, _) => Some(v),
-            SupportedFunctionResult::Infallible(v) => Some(v),
+            SupportedFunctionResult::Fallible(v, _) | SupportedFunctionResult::Infallible(v) => {
+                Some(v)
+            }
         }
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         match self {
             SupportedFunctionResult::None => 0,
             _ => 1,
         }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::None)
     }
 }
 
@@ -261,6 +275,7 @@ pub enum ParamsParsingError {
 }
 
 impl Params {
+    #[must_use]
     pub fn new(params: Vec<wasmtime::component::Val>) -> Self {
         Self::Vals(Arc::new(params))
     }
@@ -271,7 +286,7 @@ impl Params {
         types: &[wasmtime::component::Type],
     ) -> Result<Arc<Vec<wasmtime::component::Val>>, ParamsParsingError> {
         match self {
-            Self::Empty => Ok(Default::default()),
+            Self::Empty => Ok(Arc::default()),
             Self::Vals(vals) => Ok(vals.clone()),
             Self::WastVals(wast_vals) => {
                 if types.len() != wast_vals.len() {
@@ -292,12 +307,18 @@ impl Params {
         }
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         match self {
             Self::Empty => 0,
             Self::Vals(vals) => vals.len(),
             Self::WastVals(vals) => vals.len(),
         }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
     }
 }
 
@@ -315,11 +336,7 @@ impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
 
 pub mod prefixed_ulid {
     use arbitrary::Arbitrary;
-    use std::{
-        fmt::{Debug, Display},
-        hash::Hash,
-        marker::PhantomData,
-    };
+    use std::marker::PhantomData;
     use ulid::Ulid;
 
     #[derive(derive_more::Display)]
@@ -346,26 +363,31 @@ pub mod prefixed_ulid {
     }
 
     impl<T> PrefixedUlid<T> {
+        #[must_use]
         pub fn generate() -> Self {
             Self::new(Ulid::new())
         }
 
+        #[must_use]
         pub fn from_parts(timestamp_ms: u64, random: u128) -> Self {
             Self::new(Ulid::from_parts(timestamp_ms, random))
         }
 
+        #[must_use]
         pub fn timestamp(&self) -> u64 {
             self.ulid.timestamp_ms()
         }
 
-        pub fn random(&self) -> u128 {
-            self.ulid.random() as u128
+        #[must_use]
+        #[allow(clippy::cast_possible_truncation)]
+        pub fn random(&self) -> u64 {
+            self.ulid.random() as u64
         }
     }
 
     mod impls {
-        use super::*;
-        use std::str::FromStr;
+        use super::{PrefixedUlid, Ulid};
+        use std::{fmt::Debug, fmt::Display, hash::Hash, marker::PhantomData, str::FromStr};
 
         impl<T> FromStr for PrefixedUlid<T> {
             type Err = &'static str;
@@ -373,8 +395,7 @@ pub mod prefixed_ulid {
             fn from_str(input: &str) -> Result<Self, Self::Err> {
                 let prefix = Self::prefix();
                 let mut input_chars = input.chars();
-                let mut prefix_chars = prefix.chars();
-                while let Some(exp) = prefix_chars.next() {
+                for exp in prefix.chars() {
                     if input_chars.next() != Some(exp) {
                         return Err("wrong prefix");
                     }
@@ -401,11 +422,7 @@ pub mod prefixed_ulid {
 
         impl<T> Clone for PrefixedUlid<T> {
             fn clone(&self) -> Self {
-                Self {
-                    prefix: self.prefix,
-                    ulid: self.ulid,
-                    phantom_data: self.phantom_data.clone(),
-                }
+                *self
             }
         }
 
@@ -429,7 +446,7 @@ pub mod prefixed_ulid {
 
         impl<T> PartialOrd for PrefixedUlid<T> {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                self.ulid.partial_cmp(&other.ulid)
+                Some(self.cmp(other))
             }
         }
 

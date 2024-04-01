@@ -20,12 +20,16 @@ pub struct ExecutionHistory {
 
 impl ExecutionHistory {
     fn already_retried_count(&self) -> u32 {
-        self.events
-            .iter()
-            .filter(|event| event.event.is_retry())
-            .count() as u32
+        u32::try_from(
+            self.events
+                .iter()
+                .filter(|event| event.event.is_retry())
+                .count(),
+        )
+        .unwrap()
     }
 
+    #[must_use]
     pub fn can_be_retried_after(&self) -> Option<Duration> {
         let already_retried_count = self.already_retried_count();
         if already_retried_count < self.max_retries() {
@@ -36,34 +40,39 @@ impl ExecutionHistory {
         }
     }
 
+    #[must_use]
     pub fn retry_exp_backoff(&self) -> Duration {
-        assert_matches!(self.events.get(0), Some(ExecutionEvent {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
             event: ExecutionEventInner::Created { retry_exp_backoff, .. },
             ..
         }) => *retry_exp_backoff)
     }
 
+    #[must_use]
     pub fn max_retries(&self) -> u32 {
-        assert_matches!(self.events.get(0), Some(ExecutionEvent {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
             event: ExecutionEventInner::Created { max_retries, .. },
             ..
         }) => *max_retries)
     }
 
+    #[must_use]
     pub fn params(&self) -> Params {
-        assert_matches!(self.events.get(0), Some(ExecutionEvent {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
             event: ExecutionEventInner::Created { params, .. },
             ..
         }) => params.clone())
     }
 
+    #[must_use]
     pub fn parent(&self) -> Option<(ExecutionId, JoinSetId)> {
-        assert_matches!(self.events.get(0), Some(ExecutionEvent {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
             event: ExecutionEventInner::Created { parent, .. },
             ..
-        }) => parent.clone())
+        }) => *parent)
     }
 
+    #[must_use]
     pub fn last_event(&self) -> &ExecutionEvent {
         self.events.last().expect("must contain at least one event")
     }

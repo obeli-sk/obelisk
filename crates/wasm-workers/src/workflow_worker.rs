@@ -22,6 +22,7 @@ use wasmtime::component::Linker;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
+#[must_use]
 pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
     let mut wasmtime_config = wasmtime::Config::new();
     wasmtime_config.wasm_backtrace(true);
@@ -65,6 +66,7 @@ struct WorkflowCtx<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
     clock_fn: C,
 }
 impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowCtx<C> {
+    #[allow(dead_code)] // False positive
     fn replay_or_interrupt(
         &mut self,
         request: ChildExecutionRequest,
@@ -116,6 +118,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowCtx<C> {
         u128::from_be_bytes(bytes)
     }
 
+    #[allow(dead_code)] // False positive
     fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), wasmtime::Error> {
         my_org::workflow_engine::host_activities::add_to_linker(linker, |state: &mut Self| state)
     }
@@ -174,6 +177,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static>
     }
 }
 
+#[allow(dead_code)] // FIXME: Implement non determinism check
 #[derive(thiserror::Error, Debug)]
 enum FunctionError {
     #[error("non deterministic execution: `{0}`")]
@@ -184,14 +188,14 @@ enum FunctionError {
     SleepRequest(SleepRequest),
 }
 
-const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
-
 impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C> {
     #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
         config: WorkflowConfig<C>,
         engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
+        const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
+
         info!("Reading");
         let wasm = std::fs::read(config.wasm_path.deref())
             .map_err(|err| WasmFileError::CannotOpen(config.wasm_path.clone(), err))?;
@@ -285,7 +289,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
         }
         WorkflowCtx::add_to_linker(&mut linker).map_err(|err| WasmFileError::LinkingError {
             file: config.wasm_path.clone(),
-            reason: StrVariant::Arc(Arc::from(format!("cannot add host activities"))),
+            reason: StrVariant::Arc(Arc::from("cannot add host activities".to_string())),
             err: err.into(),
         })?;
         Ok(Self {
@@ -354,7 +358,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
             .expect("executor must only run existing functions");
         trace!("Params: {params:?}, results_len:{results_len}",);
         let (instance, mut store) = {
-            let seed = execution_id.random() as u64;
+            let seed = execution_id.random();
             let ctx = WorkflowCtx {
                 execution_id,
                 events,
@@ -440,7 +444,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished");
                 res
             },
-            _   = tokio::time::sleep_until(sleep_until) => {
+            ()   = tokio::time::sleep_until(sleep_until) => {
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %now(), "Timed out");
                 Err(WorkerError::IntermittentTimeout { epoch_based: false })
             }
@@ -449,7 +453,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
 }
 
 mod valuable {
-    use super::*;
+    use super::{DateTime, Utc, WorkflowWorker};
     static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
     impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ::valuable::Structable
         for WorkflowWorker<C>
@@ -475,7 +479,7 @@ mod valuable {
     }
 }
 
-#[cfg(all(test))]
+#[cfg(test)]
 mod tests {
     // TODO: test epoch and select-based timeouts
     use super::*;
@@ -513,18 +517,18 @@ mod tests {
                 ),
                 epoch_millis: EPOCH_MILLIS,
                 config_id: ConfigId::generate(),
-                clock_fn: || now(),
+                clock_fn: now,
             },
             workflow_engine(EngineConfig::default()),
         )
         .unwrap();
 
         let exec_config = ExecConfig {
-            ffqns: vec![FIBO_WORKFLOW_FFQN.to_owned()],
+            ffqns: vec![FIBO_WORKFLOW_FFQN.clone()],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
-            clock_fn: || now(),
+            clock_fn: now,
         };
         ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
     }
@@ -543,8 +547,8 @@ mod tests {
         db_connection
             .create(
                 created_at,
-                execution_id.clone(),
-                FIBO_WORKFLOW_FFQN.to_owned(),
+                execution_id,
+                FIBO_WORKFLOW_FFQN.clone(),
                 Params::from([Val::U8(FIBO_10_INPUT), Val::U32(INPUT_ITERATIONS)]),
                 None,
                 None,
@@ -555,7 +559,7 @@ mod tests {
             .unwrap();
         // Should end as BlockedByJoinSet
         db_connection
-            .wait_for_pending_state(execution_id.clone(), PendingState::BlockedByJoinSet)
+            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet)
             .await
             .unwrap();
 
@@ -597,7 +601,7 @@ mod tests {
         .unwrap();
 
         let exec_config = ExecConfig {
-            ffqns: vec![SLEEP_HOST_ACTIVITY_FFQN.to_owned()], // TODO get the list of functions from the worker
+            ffqns: vec![SLEEP_HOST_ACTIVITY_FFQN.clone()], // TODO get the list of functions from the worker
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
@@ -625,8 +629,8 @@ mod tests {
         db_connection
             .create(
                 sim_clock.now(),
-                execution_id.clone(),
-                SLEEP_HOST_ACTIVITY_FFQN.to_owned(),
+                execution_id,
+                SLEEP_HOST_ACTIVITY_FFQN.clone(),
                 Params::from([Val::U64(SLEEP_MILLIS)]),
                 None,
                 None,
@@ -637,7 +641,7 @@ mod tests {
             .unwrap();
 
         db_connection
-            .wait_for_pending_state(execution_id.clone(), PendingState::BlockedByJoinSet)
+            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet)
             .await
             .unwrap();
 

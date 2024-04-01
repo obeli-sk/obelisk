@@ -59,7 +59,7 @@ impl TryFrom<Val> for WastVal {
             Val::String(v) => Self::String(v),
             Val::List(v) => Self::List(
                 v.deref()
-                    .into_iter()
+                    .iter()
                     .map(|v| WastVal::try_from(v.clone()))
                     .collect::<Result<_, _>>()?,
             ),
@@ -72,7 +72,7 @@ impl TryFrom<Val> for WastVal {
             ),
             Val::Tuple(v) => Self::Tuple(
                 v.values()
-                    .into_iter()
+                    .iter()
                     .map(|v| WastVal::try_from(v.clone()))
                     .collect::<Result<_, _>>()?,
             ),
@@ -105,7 +105,7 @@ impl TryFrom<Val> for WastVal {
     }
 }
 
-impl<'a> PartialEq for WastVal {
+impl PartialEq for WastVal {
     #[allow(clippy::match_same_arms)]
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -171,8 +171,10 @@ impl<'a> PartialEq for WastVal {
     }
 }
 
-impl<'a> Eq for WastVal {}
+impl Eq for WastVal {}
 
+#[allow(clippy::too_many_lines)]
+#[allow(clippy::manual_let_else)]
 pub fn val(v: &WastVal, ty: &Type) -> anyhow::Result<Val> {
     Ok(match v {
         WastVal::Bool(b) => Val::Bool(*b),
@@ -275,7 +277,7 @@ pub fn val(v: &WastVal, ty: &Type) -> anyhow::Result<Val> {
         },
         WastVal::Flags(v) => match ty {
             Type::Flags(t) => {
-                t.new_val(v.iter().map(|v| v.as_ref()).collect::<Vec<_>>().as_slice())?
+                t.new_val(v.iter().map(AsRef::as_ref).collect::<Vec<_>>().as_slice())?
             }
             _ => bail!("expected a flags value"),
         },
@@ -291,6 +293,7 @@ fn payload_val(name: &str, v: Option<&WastVal>, ty: Option<&Type>) -> anyhow::Re
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn match_val(expected: &WastVal, actual: &Val) -> anyhow::Result<()> {
     match expected {
         WastVal::Bool(e) => match actual {
@@ -409,10 +412,10 @@ pub fn match_val(expected: &WastVal, actual: &Val) -> anyhow::Result<()> {
         },
         WastVal::Enum(name) => match actual {
             Val::Enum(a) => {
-                if a.discriminant() != name.as_ref() {
-                    bail!("expected discriminant `{name}` got `{}`", a.discriminant());
-                } else {
+                if a.discriminant() == name.as_ref() {
                     Ok(())
+                } else {
+                    bail!("expected discriminant `{name}` got `{}`", a.discriminant());
                 }
             }
             _ => mismatch(expected, actual),
@@ -437,7 +440,7 @@ pub fn match_val(expected: &WastVal, actual: &Val) -> anyhow::Result<()> {
         },
         WastVal::Flags(e) => match actual {
             Val::Flags(a) => {
-                let expected = e.iter().map(|v| v.as_ref()).collect::<BTreeSet<_>>();
+                let expected = e.iter().map(AsRef::as_ref).collect::<BTreeSet<_>>();
                 let actual = a.flags().collect::<BTreeSet<_>>();
                 match_debug(&actual, &expected)
             }

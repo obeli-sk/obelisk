@@ -10,7 +10,7 @@ use std::error::Error;
 pub mod executor;
 pub mod expired_timers_watcher;
 pub mod worker {
-    use super::*;
+    use super::{DateTime, Error, ExecutionId, FunctionFqn, HistoryEvent, JoinSetId, Params, ParamsParsingError, ResultParsingError, SupportedFunctionResult, Utc, Version, async_trait};
     use concepts::{prefixed_ulid::DelayId, StrVariant};
 
     pub type WorkerResult = Result<(SupportedFunctionResult, Version), (WorkerError, Version)>;

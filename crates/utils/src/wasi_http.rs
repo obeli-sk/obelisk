@@ -64,6 +64,7 @@ impl WasiHttpView for Ctx {
     }
 }
 
+#[must_use]
 pub fn store(engine: &Engine) -> Store<Ctx> {
     // let stdout = MemoryOutputPipe::new(4096);
     // let stderr = MemoryOutputPipe::new(4096);
@@ -82,5 +83,5 @@ pub fn store(engine: &Engine) -> Store<Ctx> {
         rejected_authority: None,
     };
 
-    Store::new(&engine, ctx)
+    Store::new(engine, ctx)
 }

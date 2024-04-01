@@ -8,6 +8,7 @@ pub struct SimClock {
 }
 
 impl SimClock {
+    #[must_use]
     pub fn new(now: DateTime<Utc>) -> Self {
         Self {
             current_time: Arc::new(std::sync::Mutex::new(now)),
@@ -24,6 +25,7 @@ impl SimClock {
         move || *current_time.lock().unwrap()
     }
 
+    #[must_use]
     pub fn now(&self) -> DateTime<Utc> {
         *self.current_time.lock().unwrap()
     }

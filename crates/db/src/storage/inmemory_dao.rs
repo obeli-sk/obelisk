@@ -19,7 +19,7 @@ use concepts::{ExecutionId, FunctionFqn, Params, StrVariant};
 use derivative::Derivative;
 use hashbrown::{HashMap, HashSet};
 use std::collections::{BTreeMap, BTreeSet};
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tokio::{
     sync::{mpsc, oneshot},
     task::AbortHandle,
@@ -106,7 +106,7 @@ impl DbConnection for InMemoryDbConnection {
         resp_receiver
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
-            .map_err(|err| DbError::Specific(err))
+            .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -130,7 +130,7 @@ impl DbConnection for InMemoryDbConnection {
         resp_receiver
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
-            .map_err(|err| DbError::Specific(err))
+            .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all)]
@@ -154,7 +154,7 @@ impl DbConnection for InMemoryDbConnection {
         resp_receiver
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
-            .map_err(|err| DbError::Specific(err))
+            .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -171,7 +171,7 @@ impl DbConnection for InMemoryDbConnection {
         resp_receiver
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
-            .map_err(|err| DbError::Specific(err))
+            .map_err(DbError::Specific)
     }
 }
 
@@ -180,13 +180,17 @@ mod index {
 
     use crate::storage::{AsyncResponse, HistoryEvent};
 
-    use super::*;
+    use super::{
+        debug, BTreeMap, BTreeSet, DateTime, ExecutionId, ExecutionJournal, HashMap, HashSet,
+        JoinSetId, PendingState, Utc,
+    };
 
-    #[derive(Debug)]
+    #[derive(Debug, Default)]
     pub(super) struct JournalsIndex {
         pending: BTreeSet<ExecutionId>,
         pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ExecutionId>>,
         pending_scheduled_rev: HashMap<ExecutionId, DateTime<Utc>>,
+        #[allow(clippy::type_complexity)]
         locked: BTreeMap<DateTime<Utc>, HashMap<ExecutionId, Option<(JoinSetId, DelayId)>>>,
         locked_rev: HashMap<ExecutionId, Vec<DateTime<Utc>>>,
     }
@@ -197,7 +201,7 @@ mod index {
             journals: &'a BTreeMap<ExecutionId, ExecutionJournal>,
             batch_size: usize,
             expiring_at_or_before: DateTime<Utc>,
-            ffqns: Vec<concepts::FunctionFqn>,
+            ffqns: &[concepts::FunctionFqn],
         ) -> Vec<(&'a ExecutionJournal, Option<DateTime<Utc>>)> {
             let mut pending = self
                 .pending
@@ -209,7 +213,7 @@ mod index {
                     .range(..=expiring_at_or_before)
                     .flat_map(|(scheduled_at, ids)| {
                         ids.iter()
-                            .map(|id| (journals.get(id).unwrap(), Some(scheduled_at.clone())))
+                            .map(|id| (journals.get(id).unwrap(), Some(*scheduled_at)))
                     }),
             );
             // filter by ffqn
@@ -255,7 +259,7 @@ mod index {
                         self.pending_scheduled
                             .entry(expires_at)
                             .or_default()
-                            .insert(execution_id.clone());
+                            .insert(execution_id);
                         self.pending_scheduled_rev.insert(execution_id, expires_at);
                     }
                     PendingState::Locked {
@@ -305,18 +309,6 @@ mod index {
                 }
             } // else do nothing - rolling back creation
             debug!("Journal index updated: {self:?}");
-        }
-    }
-
-    impl Default for JournalsIndex {
-        fn default() -> Self {
-            Self {
-                pending: Default::default(),
-                pending_scheduled: Default::default(),
-                pending_scheduled_rev: Default::default(),
-                locked: Default::default(),
-                locked_rev: Default::default(),
-            }
         }
     }
 }
@@ -394,6 +386,7 @@ pub struct DbTaskHandle {
 }
 
 impl DbTaskHandle {
+    #[must_use]
     pub fn as_db_connection(&self) -> Option<impl DbConnection> {
         self.client_to_store_req_sender
             .as_ref()
@@ -422,7 +415,7 @@ impl Drop for DbTaskHandle {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DbTask {
     journals: BTreeMap<ExecutionId, ExecutionJournal>,
     index: JournalsIndex,
@@ -431,10 +424,10 @@ pub struct DbTask {
 impl ExecutionSpecificRequest {
     fn execution_id(&self) -> ExecutionId {
         match self {
-            Self::Lock { execution_id, .. } => *execution_id,
-            Self::Append { execution_id, .. } => *execution_id,
-            Self::AppendBatch { execution_id, .. } => *execution_id,
-            Self::Get { execution_id, .. } => *execution_id,
+            Self::Lock { execution_id, .. }
+            | Self::Append { execution_id, .. }
+            | Self::AppendBatch { execution_id, .. }
+            | Self::Get { execution_id, .. } => *execution_id,
         }
     }
 }
@@ -513,7 +506,7 @@ impl DbTask {
             async move {
                 info!("Spawned inmemory db task");
                 let mut task = Self {
-                    journals: Default::default(),
+                    journals: BTreeMap::default(),
                     index: JournalsIndex::default(),
                 };
                 while let Some(request) = client_to_store_receiver.recv().await {
@@ -533,9 +526,10 @@ impl DbTask {
     }
 
     #[cfg(any(test, feature = "test"))]
+    #[must_use]
     pub fn new() -> Self {
         Self {
-            journals: Default::default(),
+            journals: BTreeMap::default(),
             index: JournalsIndex::default(),
         }
     }
@@ -586,7 +580,7 @@ impl DbTask {
             } => self.lock_pending(
                 batch_size,
                 pending_at_or_sooner,
-                ffqns,
+                &ffqns,
                 created_at,
                 executor_id,
                 lock_expires_at,
@@ -602,11 +596,12 @@ impl DbTask {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lock_pending(
         &mut self,
         batch_size: usize,
         expiring_before: DateTime<Utc>,
-        ffqns: Vec<FunctionFqn>,
+        ffqns: &[FunctionFqn],
         created_at: DateTime<Utc>,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
@@ -618,12 +613,12 @@ impl DbTask {
         let mut payload = Vec::with_capacity(pending.len());
         for (journal, scheduled_at) in pending {
             let item = LockedExecution {
-                execution_id: journal.execution_id().clone(),
+                execution_id: journal.execution_id(),
                 version: journal.version(), // updated later
                 ffqn: journal.ffqn().clone(),
                 params: journal.params(),
                 event_history: Vec::default(), // updated later
-                scheduled_at: scheduled_at,
+                scheduled_at,
                 retry_exp_backoff: journal.retry_exp_backoff(),
                 max_retries: journal.max_retries(),
                 run_id: RunId::generate(),
@@ -631,14 +626,14 @@ impl DbTask {
             payload.push(item);
         }
         // Lock, update the version and event history.
-        for row in payload.iter_mut() {
+        for row in &mut payload {
             let (new_event_history, new_version) = self
                 .lock(
                     created_at,
-                    row.execution_id.clone(),
-                    row.run_id.clone(),
+                    row.execution_id,
+                    row.run_id,
                     row.version,
-                    executor_id.clone(),
+                    executor_id,
                     lock_expires_at,
                 )
                 .expect("must be lockable within the same transaction");
@@ -701,6 +696,7 @@ impl DbTask {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create(
         &mut self,
         created_at: DateTime<Utc>,
@@ -718,7 +714,7 @@ impl DbTask {
             )));
         }
         let journal = ExecutionJournal::new(
-            execution_id.clone(),
+            execution_id,
             ffqn,
             params,
             scheduled_at,
@@ -728,7 +724,7 @@ impl DbTask {
             max_retries,
         );
         let version = journal.version();
-        let old_val = self.journals.insert(execution_id.clone(), journal);
+        let old_val = self.journals.insert(execution_id, journal);
         assert!(
             old_val.is_none(),
             "journals cannot contain the new execution"
@@ -747,11 +743,11 @@ impl DbTask {
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse, SpecificError> {
         let event = ExecutionEventInner::Locked {
-            executor_id: executor_id,
+            executor_id,
             lock_expires_at,
             run_id,
         };
-        self.append(created_at, execution_id.clone(), Some(version), event)
+        self.append(created_at, execution_id, Some(version), event)
             .map(|_| {
                 let journal = self.journals.get(&execution_id).unwrap();
                 (journal.event_history().collect(), journal.version())
@@ -774,8 +770,8 @@ impl DbTask {
             max_retries,
         } = event
         {
-            if version.is_none() {
-                return self.create(
+            return if version.is_none() {
+                self.create(
                     created_at,
                     execution_id,
                     ffqn,
@@ -784,10 +780,10 @@ impl DbTask {
                     parent,
                     retry_exp_backoff,
                     max_retries,
-                );
+                )
             } else {
                 info!("Wrong version");
-                return Err(SpecificError::VersionMismatch);
+                Err(SpecificError::VersionMismatch)
             };
         }
         // Check version
@@ -859,17 +855,17 @@ impl DbTask {
                 max_retries,
             },
             created_at,
-        )) = batch.get(0).map(|req| (&req.event, req.created_at))
+        )) = batch.first().map(|req| (&req.event, req.created_at))
         {
             if version.is_none() {
                 version = Some(self.create(
                     created_at,
-                    execution_id.clone(),
+                    execution_id,
                     ffqn.clone(),
                     params.clone(),
-                    scheduled_at.clone(),
-                    parent.clone(),
-                    retry_exp_backoff.clone(),
+                    *scheduled_at,
+                    *parent,
+                    *retry_exp_backoff,
                     *max_retries,
                 )?);
                 begin_idx = 1;
@@ -937,9 +933,14 @@ impl DbTask {
 
 #[cfg(any(test, feature = "test"))]
 pub mod tick {
+    use super::{
+        async_trait, instrument, oneshot, AppendBatchResponse, AppendRequest, AppendResponse,
+        DateTime, DbConnection, DbConnectionError, DbError, DbRequest, DbTask, DbTickResponse,
+        ExecutionHistory, ExecutionId, ExecutionSpecificRequest, ExecutorId, ExpiredTimer,
+        FunctionFqn, GeneralRequest, LockPendingResponse, LockResponse, RunId, Utc, Version,
+    };
     use assert_matches::assert_matches;
-
-    use super::*;
+    use std::sync::Arc;
 
     #[derive(Clone)]
     pub struct TickBasedDbConnection {
@@ -1006,7 +1007,7 @@ pub mod tick {
             });
             let response = self.db_task.lock().unwrap().tick(request);
             assert_matches!(response, DbTickResponse::Lock { payload, .. } => payload)
-                .map_err(|err| DbError::Specific(err))
+                .map_err(DbError::Specific)
         }
 
         async fn append(
@@ -1023,7 +1024,7 @@ pub mod tick {
             });
             let response = self.db_task.lock().unwrap().tick(request);
             assert_matches!(response, DbTickResponse::AppendResult { payload, .. } => payload)
-                .map_err(|err| DbError::Specific(err))
+                .map_err(DbError::Specific)
         }
 
         async fn append_batch(
@@ -1041,7 +1042,7 @@ pub mod tick {
 
             let response = self.db_task.lock().unwrap().tick(request);
             assert_matches!(response, DbTickResponse::AppendBatchResult { payload, .. } => payload)
-                .map_err(|err| DbError::Specific(err))
+                .map_err(DbError::Specific)
         }
 
         async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError> {
@@ -1051,7 +1052,7 @@ pub mod tick {
             });
             let response = self.db_task.lock().unwrap().tick(request);
             assert_matches!(response, DbTickResponse::Get { payload, .. } => payload)
-                .map_err(|err| DbError::Specific(err))
+                .map_err(DbError::Specific)
         }
     }
 }
@@ -1066,6 +1067,7 @@ pub mod tests {
     use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
     use std::{
         ops::Deref,
+        sync::Arc,
         time::{Duration, Instant},
     };
     use test_utils::{env_or_default, sim_clock::SimClock};
@@ -1106,6 +1108,7 @@ pub mod tests {
         db_task.close().await;
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn lifecycle(db_connection: impl DbConnection) {
         let sim_clock = SimClock::new(now());
         let execution_id = ExecutionId::generate();
@@ -1117,9 +1120,9 @@ pub mod tests {
             .lock_pending(
                 1,
                 sim_clock.now(),
-                vec![SOME_FFQN.to_owned()],
+                vec![SOME_FFQN.clone()],
                 sim_clock.now(),
-                exec1.clone(),
+                exec1,
                 sim_clock.now() + lock_expiry,
             )
             .await
@@ -1133,8 +1136,8 @@ pub mod tests {
             db_connection
                 .create(
                     created_at,
-                    execution_id.clone(),
-                    SOME_FFQN.to_owned(),
+                    execution_id,
+                    SOME_FFQN.clone(),
                     Params::default(),
                     None,
                     None,
@@ -1152,9 +1155,9 @@ pub mod tests {
                 .lock_pending(
                     1,
                     created_at,
-                    vec![SOME_FFQN.to_owned()],
+                    vec![SOME_FFQN.clone()],
                     created_at,
-                    exec1.clone(),
+                    exec1,
                     created_at + lock_expiry,
                 )
                 .await
@@ -1164,7 +1167,7 @@ pub mod tests {
             assert_eq!(execution_id, locked_execution.execution_id);
             assert_eq!(Version::new(2), locked_execution.version);
             assert_eq!(0, locked_execution.params.len());
-            assert_eq!(SOME_FFQN.to_owned(), locked_execution.ffqn);
+            assert_eq!(SOME_FFQN.clone(), locked_execution.ffqn);
             version = locked_execution.version;
             locked_execution.run_id
         };
@@ -1180,7 +1183,7 @@ pub mod tests {
             };
 
             version = db_connection
-                .append(execution_id.clone(), Some(version), req)
+                .append(execution_id, Some(version), req)
                 .await
                 .unwrap();
         }
@@ -1191,10 +1194,10 @@ pub mod tests {
             assert!(db_connection
                 .lock(
                     created_at,
-                    execution_id.clone(),
+                    execution_id,
                     RunId::generate(),
                     version,
-                    exec2.clone(),
+                    exec2,
                     created_at + lock_expiry,
                 )
                 .await
@@ -1208,10 +1211,10 @@ pub mod tests {
             let (event_history, current_version) = db_connection
                 .lock(
                     created_at,
-                    execution_id.clone(),
-                    run_id.clone(),
+                    execution_id,
+                    run_id,
                     version,
-                    exec1.clone(),
+                    exec1,
                     created_at + Duration::from_secs(1),
                 )
                 .await
@@ -1226,10 +1229,10 @@ pub mod tests {
             assert!(db_connection
                 .lock(
                     created_at,
-                    execution_id.clone(),
+                    execution_id,
                     RunId::generate(),
                     version,
-                    exec2.clone(),
+                    exec2,
                     created_at + lock_expiry,
                 )
                 .await
@@ -1243,10 +1246,10 @@ pub mod tests {
             let (event_history, current_version) = db_connection
                 .lock(
                     created_at,
-                    execution_id.clone(),
+                    execution_id,
                     run_id,
                     version,
-                    exec1.clone(),
+                    exec1,
                     created_at + lock_expiry,
                 )
                 .await
@@ -1261,10 +1264,10 @@ pub mod tests {
             assert!(db_connection
                 .lock(
                     created_at,
-                    execution_id.clone(),
+                    execution_id,
                     RunId::generate(),
                     version,
-                    exec1.clone(),
+                    exec1,
                     created_at + lock_expiry,
                 )
                 .await
@@ -1280,7 +1283,7 @@ pub mod tests {
                 created_at,
             };
             version = db_connection
-                .append(execution_id.clone(), Some(version), req)
+                .append(execution_id, Some(version), req)
                 .await
                 .unwrap();
         }
@@ -1291,10 +1294,10 @@ pub mod tests {
             let (event_history, current_version) = db_connection
                 .lock(
                     created_at,
-                    execution_id.clone(),
+                    execution_id,
                     RunId::generate(),
                     version,
-                    exec1.clone(),
+                    exec1,
                     created_at + lock_expiry,
                 )
                 .await
@@ -1315,7 +1318,7 @@ pub mod tests {
             };
 
             db_connection
-                .append(execution_id.clone(), Some(version), req)
+                .append(execution_id, Some(version), req)
                 .await
                 .unwrap();
         }
@@ -1355,8 +1358,8 @@ pub mod tests {
             db_connection
                 .create(
                     sim_clock.now(),
-                    execution_id.clone(),
-                    SOME_FFQN.to_owned(),
+                    execution_id,
+                    SOME_FFQN.clone(),
                     Params::default(),
                     None,
                     None,
@@ -1373,9 +1376,9 @@ pub mod tests {
                 .lock_pending(
                     1,
                     sim_clock.now(),
-                    vec![SOME_FFQN.to_owned()],
+                    vec![SOME_FFQN.clone()],
                     sim_clock.now(),
-                    exec1.clone(),
+                    exec1,
                     sim_clock.now() + lock_duration,
                 )
                 .await
@@ -1383,7 +1386,7 @@ pub mod tests {
             assert_eq!(1, locked_executions.len());
             let locked_execution = locked_executions.pop().unwrap();
             assert_eq!(execution_id, locked_execution.execution_id);
-            assert_eq!(SOME_FFQN.to_owned(), locked_execution.ffqn);
+            assert_eq!(SOME_FFQN.clone(), locked_execution.ffqn);
             assert_eq!(Version::new(2), locked_execution.version);
         }
         // Calling `get_expired_timers` after lock expiry should return the expired execution.
@@ -1434,8 +1437,8 @@ pub mod tests {
             version = db_connection
                 .create(
                     now(),
-                    execution_id.clone(),
-                    SOME_FFQN.to_owned(),
+                    execution_id,
+                    SOME_FFQN.clone(),
                     Params::default(),
                     None,
                     None,
@@ -1451,10 +1454,7 @@ pub mod tests {
                 event: unstructured.arbitrary().unwrap(),
                 created_at: now(),
             };
-            match db_connection
-                .append(execution_id.clone(), Some(version), req)
-                .await
-            {
+            match db_connection.append(execution_id, Some(version), req).await {
                 Ok(new_version) => version = new_version,
                 Err(err) => debug!("Ignoring {err:?}"),
             }
@@ -1480,7 +1480,7 @@ pub mod tests {
 
         let stopwatch = Instant::now();
         let created_at = now();
-        let ffqn = SOME_FFQN.to_owned();
+        let ffqn = SOME_FFQN.clone();
         let append_req = AppendRequest {
             created_at,
             event: ExecutionEventInner::Created {
@@ -1513,7 +1513,6 @@ pub mod tests {
         let exec_tasks = (0..tasks)
             .map(|_| {
                 let db_connection = db_connection.clone();
-                let exec_id = exec_id.clone();
                 tokio::spawn(async move {
                     let target = executions / tasks;
                     let mut locked = Vec::with_capacity(target);
@@ -1523,9 +1522,9 @@ pub mod tests {
                             .lock_pending(
                                 batch_size,
                                 now,
-                                vec![SOME_FFQN.to_owned()],
+                                vec![SOME_FFQN.clone()],
                                 now,
-                                exec_id.clone(),
+                                exec_id,
                                 now + Duration::from_secs(1),
                             )
                             .await
@@ -1559,7 +1558,7 @@ pub mod tests {
             AppendRequest {
                 created_at,
                 event: ExecutionEventInner::Created {
-                    ffqn: SOME_FFQN.to_owned(),
+                    ffqn: SOME_FFQN.clone(),
                     params: Params::default(),
                     parent: None,
                     scheduled_at: None,
@@ -1582,7 +1581,7 @@ pub mod tests {
         ];
         // invalid creation
         let err = db_connection
-            .append_batch(batch.clone(), execution_id.clone(), None)
+            .append_batch(batch.clone(), execution_id, None)
             .await
             .unwrap_err();
         assert_matches!(
@@ -1590,21 +1589,17 @@ pub mod tests {
             DbError::Specific(SpecificError::ValidationFailed(reason))
             if reason.deref() == "already finished"
         );
-        let err = db_connection.get(execution_id.clone()).await.unwrap_err();
+        let err = db_connection.get(execution_id).await.unwrap_err();
         assert_eq!(DbError::Specific(SpecificError::NotFound), err);
         // Split into [created], [finished,finished]
         let (first, rest) = batch.split_first().unwrap();
         let version = db_connection
-            .append_batch(vec![first.clone()], execution_id.clone(), None)
+            .append_batch(vec![first.clone()], execution_id, None)
             .await
             .unwrap();
         // this should be rolled back
         let err = db_connection
-            .append_batch(
-                rest.into_iter().cloned().collect(),
-                execution_id.clone(),
-                Some(version),
-            )
+            .append_batch(rest.to_vec(), execution_id, Some(version))
             .await
             .unwrap_err();
         assert_matches!(
@@ -1612,7 +1607,7 @@ pub mod tests {
             DbError::Specific(SpecificError::ValidationFailed(reason))
             if reason.deref() == "already finished"
         );
-        let created = db_connection.get(execution_id.clone()).await.unwrap();
+        let created = db_connection.get(execution_id).await.unwrap();
         assert_eq!(version, created.version);
         assert_eq!(PendingState::PendingNow, created.pending_state);
     }

@@ -130,6 +130,9 @@ clippy.missing_errors_doc = "allow" # Allow missing docs for now
 clippy.missing_panics_doc = "allow" # Allow missing docs for now
 # lower the priority to allow overriding later
 clippy.trivially_copy_pass_by_ref = "allow" # Lots of false positives.
+
+clippy.module_name_repetitions = "allow"
+
 rust.unknown_lints = "deny"
 
 [profile.release]
