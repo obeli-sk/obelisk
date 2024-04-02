@@ -43,11 +43,10 @@ cargo build --workspace
 
 ## Tests
 ```sh
-RUSTFLAGS="--cfg tracing_unstable" cargo test --workspace
+cargo test --workspace
 ```
 
 ### Deterministic tests using madsim simulator
 ```sh
 RUSTFLAGS="--cfg madsim --cfg tracing_unstable" cargo test --workspace
 ```
-
