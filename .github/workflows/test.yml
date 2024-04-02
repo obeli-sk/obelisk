@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-nosim:
+  ci-test-nosim:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -41,7 +41,7 @@ jobs:
             /home/runner/.cargo
           key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo test
-        run: nix develop --command cargo nextest run --profile ci-${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
+        run: nix develop --command cargo nextest run --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
@@ -60,7 +60,7 @@ jobs:
             target
             /home/runner/.cargo
           key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-  test-madsim:
+  ci-test-madsim:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -81,7 +81,7 @@ jobs:
             /home/runner/.cargo
           key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo test
-        run: nix develop --command cargo nextest run --profile ci-${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
+        run: nix develop --command cargo nextest run --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg madsim --cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
