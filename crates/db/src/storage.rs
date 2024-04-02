@@ -197,6 +197,8 @@ pub enum DbConnectionError {
     SendError,
     #[error("receive error")]
     RecvError,
+    #[error("timeout")]
+    Timeout,
 }
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
@@ -308,29 +310,40 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError>;
 
     async fn wait_for_finished_result(
-        // FIXME timeout
         &self,
         execution_id: ExecutionId,
+        timeout: Option<Duration>,
     ) -> Result<FinishedExecutionResult, DbError> {
         let ExecutionHistory { mut events, .. } = self
-            .wait_for_pending_state(execution_id, PendingState::Finished)
+            .wait_for_pending_state(execution_id, PendingState::Finished, timeout)
             .await?;
         Ok(assert_matches!(events.pop().expect("must not be empty"),
             ExecutionEvent { event: ExecutionEventInner::Finished { result, .. } ,..} => result))
     }
 
     async fn wait_for_pending_state(
-        // FIXME timeout
         &self,
         execution_id: ExecutionId,
         expected_pending_state: PendingState,
+        timeout: Option<Duration>,
     ) -> Result<ExecutionHistory, DbError> {
-        loop {
-            let execution_history = self.get(execution_id).await?;
-            if execution_history.pending_state == expected_pending_state {
-                return Ok(execution_history);
+        let fut = async move {
+            loop {
+                let execution_history = self.get(execution_id).await?;
+                if execution_history.pending_state == expected_pending_state {
+                    return Ok(execution_history);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+
+        if let Some(timeout) = timeout {
+            tokio::select! {
+                res = fut => res,
+                () = tokio::time::sleep(timeout) => Err(DbError::Connection(DbConnectionError::Timeout))
+            }
+        } else {
+            fut.await
         }
     }
 

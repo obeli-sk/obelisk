@@ -563,7 +563,7 @@ mod tests {
             .unwrap();
         // Should end as BlockedByJoinSet
         db_connection
-            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet)
+            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet, None)
             .await
             .unwrap();
 
@@ -571,7 +571,7 @@ mod tests {
         let activity_exec_task = spawn_activity_fibo(db_connection.clone());
 
         let res = db_connection
-            .wait_for_finished_result(execution_id)
+            .wait_for_finished_result(execution_id, None)
             .await
             .unwrap()
             .unwrap();
@@ -645,7 +645,7 @@ mod tests {
             .unwrap();
 
         db_connection
-            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet)
+            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet, None)
             .await
             .unwrap();
 
@@ -654,7 +654,7 @@ mod tests {
         // Restart worker
         let workflow_exec_task = spawn_workflow_sleep(db_connection.clone(), sim_clock.clock_fn());
         let res = db_connection
-            .wait_for_finished_result(execution_id)
+            .wait_for_finished_result(execution_id, None)
             .await
             .unwrap()
             .unwrap();

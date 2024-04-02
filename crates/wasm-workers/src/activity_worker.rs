@@ -379,7 +379,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         // Check the result.
-        let fibo = assert_matches!(db_connection.wait_for_finished_result(execution_id).await.unwrap(),
+        let fibo = assert_matches!(db_connection.wait_for_finished_result(execution_id, None).await.unwrap(),
             Ok(SupportedFunctionResult::Infallible(WastVal::U64(val))) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
@@ -515,7 +515,7 @@ pub(crate) mod tests {
             // Check that the computation succeded.
             assert_matches!(
                 db_connection
-                    .wait_for_finished_result(execution_id)
+                    .wait_for_finished_result(execution_id, Some(Duration::from_secs(2)))
                     .await
                     .unwrap(),
                 Ok(SupportedFunctionResult::Infallible(WastVal::U64(_)))
@@ -764,7 +764,7 @@ pub(crate) mod tests {
                 expected,
                 assert_matches!(
                     db_connection
-                        .wait_for_finished_result(execution_id)
+                        .wait_for_finished_result(execution_id, Some(Duration::from_secs(1)))
                         .await
                         .unwrap(),
                     actual => actual
@@ -875,8 +875,9 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             // Check the result.
-            let (val, res) = assert_matches!(db_connection.wait_for_finished_result(execution_id).await.unwrap(),
-                    Ok(SupportedFunctionResult::Fallible(val, res)) => (val, res));
+            let (val, res) = assert_matches!(
+                db_connection.wait_for_finished_result(execution_id, Some(Duration::from_secs(1))).await.unwrap(),
+                Ok(SupportedFunctionResult::Fallible(val, res)) => (val, res));
             res.unwrap();
             let val = assert_matches!(val, WastVal::Result(Ok(Some(val))) => val);
             let val = assert_matches!(val.deref(), WastVal::String(val) => val);
