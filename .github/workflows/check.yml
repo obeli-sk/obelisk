@@ -26,10 +26,12 @@ jobs:
         uses: cachix/install-nix-action@v26
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+      - name: Load nix store
+        run: nix develop --command echo
       - name: cargo fmt
         run: nix develop --command cargo fmt --check
 
-  clippy:
+  clippy-nosim:
     name: stable / clippy
     runs-on: ubuntu-latest
     strategy:
@@ -40,11 +42,42 @@ jobs:
         uses: cachix/install-nix-action@v26
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+      - name: Load nix store
+        run: nix develop --command echo
+      - name: Restore rust cache
+        id: target-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            target
+            /home/runner/.cargo
+          key: test-ci-test-nosim-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo clippy (nosim)
-        run: nix develop --command cargo clippy --all-targets --no-default-features --target-dir=target/debug/nosim
+        run: nix develop --command cargo clippy --all-targets --no-default-features
         env:
           RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
+  clippy-madsim:
+    name: stable / clippy
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v26
+        with:
+          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+      - name: Load nix store
+        run: nix develop --command echo
+      - name: Restore rust cache
+        id: target-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            target
+            /home/runner/.cargo
+          key: test-ci-test-madsim-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo clippy (madsim)
-        run: nix develop --command cargo clippy --all-targets --no-default-features --target-dir=target/debug/madsim
+        run: nix develop --command cargo clippy --all-targets --no-default-features
         env:
           RUSTFLAGS: "--cfg madsim --cfg tokio_unstable --cfg tracing_unstable"
