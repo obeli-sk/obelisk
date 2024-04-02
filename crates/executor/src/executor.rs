@@ -608,7 +608,7 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.clone()],
+            ffqns: vec![SOME_FFQN],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -653,7 +653,7 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.clone()],
+            ffqns: vec![SOME_FFQN],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
@@ -698,7 +698,7 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.clone()],
+            ffqns: vec![SOME_FFQN],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -774,7 +774,7 @@ mod tests {
             .create(
                 created_at,
                 execution_id,
-                SOME_FFQN.clone(),
+                SOME_FFQN,
                 Params::default(),
                 None,
                 None,
@@ -822,7 +822,7 @@ mod tests {
         set_up();
         let sim_clock = SimClock::new(now());
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.clone()],
+            ffqns: vec![SOME_FFQN],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -918,7 +918,7 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.clone()],
+            ffqns: vec![SOME_FFQN],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -1047,7 +1047,7 @@ mod tests {
         set_up();
         let sim_clock = SimClock::new(now());
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN.clone()],
+            ffqns: vec![SOME_FFQN],
             batch_size: 1,
             lock_expiry: Duration::from_millis(100),
             tick_sleep: Duration::ZERO,
@@ -1071,7 +1071,7 @@ mod tests {
             .create(
                 sim_clock.now(),
                 execution_id,
-                SOME_FFQN.clone(),
+                SOME_FFQN,
                 Params::default(),
                 None,
                 None,

@@ -6,6 +6,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+utils.workspace = true
+
 cargo_metadata.workspace = true
 
 [lints]

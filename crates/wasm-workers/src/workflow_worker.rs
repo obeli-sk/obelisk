@@ -507,9 +507,9 @@ mod tests {
     use wasmtime::component::Val;
 
     pub const FIBO_WORKFLOW_FFQN: FunctionFqn =
-        FunctionFqn::new_static("testing:fibo-workflow/workflow", "fiboa"); // fiboa: func(n: u8, iterations: u32) -> u64;
-    const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqn = // TODO: generate in builder
-        FunctionFqn::new_static("testing:sleep-workflow/workflow", "sleep-host-activity"); // sleep-host-activity: func(millis: u64);
+        FunctionFqn::new_static_tuple(test_programs_fibo_workflow_builder::FIBOA); // fiboa: func(n: u8, iterations: u32) -> u64;
+    const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqn =
+        FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::SLEEP_HOST_ACTIVITY); // sleep-host-activity: func(millis: u64);
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
@@ -528,7 +528,7 @@ mod tests {
         .unwrap();
 
         let exec_config = ExecConfig {
-            ffqns: vec![FIBO_WORKFLOW_FFQN.clone()],
+            ffqns: vec![FIBO_WORKFLOW_FFQN],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
@@ -552,7 +552,7 @@ mod tests {
             .create(
                 created_at,
                 execution_id,
-                FIBO_WORKFLOW_FFQN.clone(),
+                FIBO_WORKFLOW_FFQN,
                 Params::from([Val::U8(FIBO_10_INPUT), Val::U32(INPUT_ITERATIONS)]),
                 None,
                 None,
@@ -605,7 +605,7 @@ mod tests {
         .unwrap();
 
         let exec_config = ExecConfig {
-            ffqns: vec![SLEEP_HOST_ACTIVITY_FFQN.clone()], // TODO get the list of functions from the worker
+            ffqns: vec![SLEEP_HOST_ACTIVITY_FFQN],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
@@ -634,7 +634,7 @@ mod tests {
             .create(
                 sim_clock.now(),
                 execution_id,
-                SLEEP_HOST_ACTIVITY_FFQN.clone(),
+                SLEEP_HOST_ACTIVITY_FFQN,
                 Params::from([Val::U64(SLEEP_MILLIS)]),
                 None,
                 None,

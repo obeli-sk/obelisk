@@ -117,19 +117,24 @@ pub struct FunctionFqn {
 
 impl FunctionFqn {
     #[must_use]
-    pub fn new_owned(ifc_fqn: Arc<str>, function_name: Arc<str>) -> FunctionFqn {
-        FunctionFqn {
+    pub fn new_owned(ifc_fqn: Arc<str>, function_name: Arc<str>) -> Self {
+        Self {
             ifc_fqn: Name::new_owned(ifc_fqn),
             function_name: Name::new_owned(function_name),
         }
     }
 
     #[must_use]
-    pub const fn new_static(ifc_fqn: &'static str, function_name: &'static str) -> FunctionFqn {
-        FunctionFqn {
+    pub const fn new_static(ifc_fqn: &'static str, function_name: &'static str) -> Self {
+        Self {
             ifc_fqn: Name::new_static(ifc_fqn),
             function_name: Name::new_static(function_name),
         }
+    }
+
+    #[must_use]
+    pub const fn new_static_tuple(tuple: (&'static str, &'static str)) -> Self {
+        Self::new_static(tuple.0, tuple.1)
     }
 }
 

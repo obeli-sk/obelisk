@@ -1120,7 +1120,7 @@ pub mod tests {
             .lock_pending(
                 1,
                 sim_clock.now(),
-                vec![SOME_FFQN.clone()],
+                vec![SOME_FFQN],
                 sim_clock.now(),
                 exec1,
                 sim_clock.now() + lock_expiry,
@@ -1137,7 +1137,7 @@ pub mod tests {
                 .create(
                     created_at,
                     execution_id,
-                    SOME_FFQN.clone(),
+                    SOME_FFQN,
                     Params::default(),
                     None,
                     None,
@@ -1155,7 +1155,7 @@ pub mod tests {
                 .lock_pending(
                     1,
                     created_at,
-                    vec![SOME_FFQN.clone()],
+                    vec![SOME_FFQN],
                     created_at,
                     exec1,
                     created_at + lock_expiry,
@@ -1167,7 +1167,7 @@ pub mod tests {
             assert_eq!(execution_id, locked_execution.execution_id);
             assert_eq!(Version::new(2), locked_execution.version);
             assert_eq!(0, locked_execution.params.len());
-            assert_eq!(SOME_FFQN.clone(), locked_execution.ffqn);
+            assert_eq!(SOME_FFQN, locked_execution.ffqn);
             version = locked_execution.version;
             locked_execution.run_id
         };
@@ -1359,7 +1359,7 @@ pub mod tests {
                 .create(
                     sim_clock.now(),
                     execution_id,
-                    SOME_FFQN.clone(),
+                    SOME_FFQN,
                     Params::default(),
                     None,
                     None,
@@ -1376,7 +1376,7 @@ pub mod tests {
                 .lock_pending(
                     1,
                     sim_clock.now(),
-                    vec![SOME_FFQN.clone()],
+                    vec![SOME_FFQN],
                     sim_clock.now(),
                     exec1,
                     sim_clock.now() + lock_duration,
@@ -1386,7 +1386,7 @@ pub mod tests {
             assert_eq!(1, locked_executions.len());
             let locked_execution = locked_executions.pop().unwrap();
             assert_eq!(execution_id, locked_execution.execution_id);
-            assert_eq!(SOME_FFQN.clone(), locked_execution.ffqn);
+            assert_eq!(SOME_FFQN, locked_execution.ffqn);
             assert_eq!(Version::new(2), locked_execution.version);
         }
         // Calling `get_expired_timers` after lock expiry should return the expired execution.
@@ -1440,7 +1440,7 @@ pub mod tests {
                 .create(
                     now(),
                     execution_id,
-                    SOME_FFQN.clone(),
+                    SOME_FFQN,
                     Params::default(),
                     None,
                     None,
@@ -1482,7 +1482,7 @@ pub mod tests {
 
         let stopwatch = Instant::now();
         let created_at = now();
-        let ffqn = SOME_FFQN.clone();
+        let ffqn = SOME_FFQN;
         let append_req = AppendRequest {
             created_at,
             event: ExecutionEventInner::Created {
@@ -1524,7 +1524,7 @@ pub mod tests {
                             .lock_pending(
                                 batch_size,
                                 now,
-                                vec![SOME_FFQN.clone()],
+                                vec![SOME_FFQN],
                                 now,
                                 exec_id,
                                 now + Duration::from_secs(1),
@@ -1560,7 +1560,7 @@ pub mod tests {
             AppendRequest {
                 created_at,
                 event: ExecutionEventInner::Created {
-                    ffqn: SOME_FFQN.clone(),
+                    ffqn: SOME_FFQN,
                     params: Params::default(),
                     parent: None,
                     scheduled_at: None,

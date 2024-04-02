@@ -308,6 +308,7 @@ name = "cargo-component-builder"
 version = "0.1.0"
 dependencies = [
  "cargo_metadata",
+ "utils",
 ]
 
 [[package]]

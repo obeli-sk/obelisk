@@ -4,6 +4,7 @@ use std::{
 };
 
 use cargo_metadata::camino::Utf8Path;
+use utils::wasm_tools;
 
 fn to_snake_case(input: &str) -> String {
     input.replace('-', "_")
@@ -32,6 +33,22 @@ fn build_internal(tripple: &str) {
         "pub const {name_upper}: &str = {wasm:?};\n",
         name_upper = to_snake_case(pkg_name).to_uppercase()
     );
+    {
+        let wasm = std::fs::read(wasm).unwrap();
+        let (resolve, world_id) = wasm_tools::decode(&wasm).expect("cannot decode wasm component");
+        let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
+            .expect("cannot parse functions of wasm component");
+        let ffqns =
+            wasm_tools::functions_and_result_lengths(exported_interfaces).expect("metadata error");
+        for ffqn in ffqns.keys() {
+            generated_code += &format!(
+                "pub const {name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\");\n",
+                name_upper = to_snake_case(&ffqn.function_name).to_uppercase(),
+                ifc = ffqn.ifc_fqn,
+                fn = ffqn.function_name,
+            );
+        }
+    }
     std::fs::write(out_dir.join("gen.rs"), generated_code).unwrap();
 
     let meta = cargo_metadata::MetadataCommand::new().exec().unwrap();

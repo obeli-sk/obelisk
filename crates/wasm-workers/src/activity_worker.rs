@@ -317,16 +317,18 @@ pub(crate) mod tests {
 
     pub const EPOCH_MILLIS: u64 = 10;
     pub const FIBO_ACTIVITY_FFQN: FunctionFqn =
-        FunctionFqn::new_static("testing:fibo/fibo", "fibo"); // func(n: u8) -> u64;
+        FunctionFqn::new_static_tuple(test_programs_fibo_activity_builder::FIBO); // func(n: u8) -> u64;
     pub const FIBO_10_INPUT: u8 = 10;
     pub const FIBO_10_OUTPUT: u64 = 55;
 
-    pub(crate) fn spawn_activity_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
-        let fibo_worker = ActivityWorker::new_with_config(
+    pub(crate) fn spawn_activity<DB: DbConnection>(
+        db_connection: DB,
+        wasm_path: &'static str,
+        ffqn: FunctionFqn,
+    ) -> ExecutorTaskHandle {
+        let worker = ActivityWorker::new_with_config(
             ActivityConfig {
-                wasm_path: StrVariant::Static(
-                    test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                ),
+                wasm_path: StrVariant::Static(wasm_path),
                 epoch_millis: 10,
                 config_id: ConfigId::generate(),
                 recycled_instances: RecycleInstancesSetting::Disable,
@@ -337,13 +339,21 @@ pub(crate) mod tests {
         .unwrap();
 
         let exec_config = ExecConfig {
-            ffqns: vec![FIBO_ACTIVITY_FFQN.clone()],
+            ffqns: vec![ffqn],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             clock_fn: now,
         };
-        ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
+        ExecTask::spawn_new(db_connection, worker, exec_config, None)
+    }
+
+    pub(crate) fn spawn_activity_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
+        spawn_activity(
+            db_connection,
+            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+            FIBO_ACTIVITY_FFQN,
+        )
     }
 
     #[tokio::test]
@@ -359,7 +369,7 @@ pub(crate) mod tests {
             .create(
                 created_at,
                 execution_id,
-                FIBO_ACTIVITY_FFQN.clone(),
+                FIBO_ACTIVITY_FFQN,
                 Params::from([Val::U8(FIBO_10_INPUT)]),
                 None,
                 None,
@@ -445,7 +455,7 @@ pub(crate) mod tests {
 
         // create executions
         let stopwatch = Instant::now();
-        let fibo_ffqn = FIBO_ACTIVITY_FFQN.clone();
+        let fibo_ffqn = FIBO_ACTIVITY_FFQN;
         let params = Params::from([Val::U8(fibo_input)]);
 
         let created_at = now();
@@ -578,7 +588,7 @@ pub(crate) mod tests {
                         vec.push(
                             fibo_worker
                                 .run(
-                                    FIBO_ACTIVITY_FFQN.clone(),
+                                    FIBO_ACTIVITY_FFQN,
                                     Params::from([Val::U8(fibo_input)]),
                                     execution_deadline,
                                     execution_deadline,
@@ -654,7 +664,7 @@ pub(crate) mod tests {
                 tokio::spawn(async move {
                     fibo_worker
                         .run(
-                            FIBO_ACTIVITY_FFQN.clone(),
+                            FIBO_ACTIVITY_FFQN,
                             Params::from([Val::U8(fibo_input)]),
                             execution_deadline,
                             execution_deadline,
@@ -672,11 +682,11 @@ pub(crate) mod tests {
         assert!(limit_reached > 0, "Limit was not reached");
     }
 
-    #[cfg(all(test, not(madsim)))] // Requires madsim support in wasmtime
+    // #[cfg(all(test, not(madsim)))] // Requires madsim support in wasmtime
     mod wasmtime_nosim {
         use super::*;
         pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn =
-            FunctionFqn::new_static("testing:sleep/sleep", "sleep-loop"); // sleep-loop: func(millis: u64, iterations: u32);
+            FunctionFqn::new_static_tuple(test_programs_sleep_activity_builder::SLEEP_LOOP); // sleep-loop: func(millis: u64, iterations: u32);
 
         #[rstest::rstest]
         #[case(10, 100, Err(db::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
@@ -718,7 +728,7 @@ pub(crate) mod tests {
             .unwrap();
 
             let exec_config = ExecConfig {
-                ffqns: vec![SLEEP_LOOP_ACTIVITY_FFQN.clone()],
+                ffqns: vec![SLEEP_LOOP_ACTIVITY_FFQN],
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::from_millis(10),
@@ -740,7 +750,7 @@ pub(crate) mod tests {
                 .create(
                     created_at,
                     execution_id,
-                    SLEEP_LOOP_ACTIVITY_FFQN.clone(),
+                    SLEEP_LOOP_ACTIVITY_FFQN,
                     Params::from([Val::U64(sleep_millis), Val::U32(sleep_iterations)]),
                     None,
                     None,
@@ -806,7 +816,7 @@ pub(crate) mod tests {
             let executed_at = now();
             let err = worker
                 .run(
-                    SLEEP_LOOP_ACTIVITY_FFQN.clone(),
+                    SLEEP_LOOP_ACTIVITY_FFQN,
                     Params::from([Val::U64(sleep_millis), Val::U32(sleep_iterations)]),
                     executed_at + EPOCH_BAED_TIMEOUT,
                     executed_at + SELECT_BASED_TIMEOUT,
