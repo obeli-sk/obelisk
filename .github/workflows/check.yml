@@ -30,7 +30,6 @@ jobs:
         run: nix develop --command echo
       - name: cargo fmt
         run: nix develop --command cargo fmt --check
-
   clippy-nosim:
     name: stable / clippy
     runs-on: ubuntu-latest
@@ -51,11 +50,19 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: test-ci-test-nosim-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo clippy (nosim)
         run: nix develop --command cargo clippy --all-targets --no-default-features
         env:
-          RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
+          RUSTFLAGS: "--cfg tracing_unstable"
+      - name: Save rust cache
+        id: target-cache-save
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            target
+            /home/runner/.cargo
+          key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
   clippy-madsim:
     name: stable / clippy
     runs-on: ubuntu-latest
@@ -76,8 +83,16 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: test-ci-test-madsim-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo clippy (madsim)
         run: nix develop --command cargo clippy --all-targets --no-default-features
         env:
-          RUSTFLAGS: "--cfg madsim --cfg tokio_unstable --cfg tracing_unstable"
+          RUSTFLAGS: "--cfg madsim --cfg tracing_unstable"
+      - name: Save rust cache
+        id: target-cache-save
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            target
+            /home/runner/.cargo
+          key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}

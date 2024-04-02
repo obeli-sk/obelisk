@@ -44,7 +44,7 @@ jobs:
       - name: cargo test
         run: nix develop --command cargo nextest run --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
-          RUSTFLAGS: "--cfg tokio_unstable --cfg tracing_unstable"
+          RUSTFLAGS: "--cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
@@ -85,7 +85,7 @@ jobs:
       - name: cargo test
         run: nix develop --command cargo nextest run --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
-          RUSTFLAGS: "--cfg madsim --cfg tokio_unstable --cfg tracing_unstable"
+          RUSTFLAGS: "--cfg madsim --cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
