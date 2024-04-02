@@ -5,6 +5,7 @@ use utils::wasm_tools;
 
 pub mod activity_worker;
 pub mod epoch_ticker;
+mod workflow_ctx;
 pub mod workflow_worker;
 
 pub struct EngineConfig {
