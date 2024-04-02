@@ -682,7 +682,7 @@ pub(crate) mod tests {
         assert!(limit_reached > 0, "Limit was not reached");
     }
 
-    // #[cfg(all(test, not(madsim)))] // Requires madsim support in wasmtime
+    #[cfg(all(test, not(madsim)))] // Requires madsim support in wasmtime
     mod wasmtime_nosim {
         use super::*;
         pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn =
@@ -824,6 +824,66 @@ pub(crate) mod tests {
                 .await
                 .unwrap_err();
             assert_matches!(err, WorkerError::IntermittentTimeout { epoch_based } if epoch_based == expected_epoch_based);
+        }
+
+        const HTTP_GET_ACTIVITY_FFQN: FunctionFqn =
+            FunctionFqn::new_static_tuple(test_programs_http_get_activity_builder::GET);
+        // get: func(authority: string, path: string) -> result<string, string>;
+
+        #[tokio::test]
+        async fn http_get() {
+            use wiremock::{
+                matchers::{method, path},
+                Mock, MockServer, ResponseTemplate,
+            };
+            const BODY: &str = "ok";
+            test_utils::set_up();
+            let mut db_task = DbTask::spawn_new(1);
+            let db_connection = db_task.as_db_connection().expect("must be open");
+
+            let exec_task = spawn_activity(
+                db_connection.clone(),
+                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                HTTP_GET_ACTIVITY_FFQN,
+            );
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
+                .expect(1)
+                .mount(&server)
+                .await;
+            info!("started mock server on {}", server.address());
+            let params = Params::from([
+                Val::String(format!("127.0.0.1:{port}", port = server.address().port()).into()),
+                Val::String("/".into()),
+            ]);
+            // Create an execution.
+            let execution_id = ExecutionId::generate();
+            let created_at = now();
+            db_connection
+                .create(
+                    created_at,
+                    execution_id,
+                    HTTP_GET_ACTIVITY_FFQN,
+                    params,
+                    None,
+                    None,
+                    Duration::from_millis(10),
+                    5, // retries enabled due to racy test
+                )
+                .await
+                .unwrap();
+            // Check the result.
+            let (val, res) = assert_matches!(db_connection.wait_for_finished_result(execution_id).await.unwrap(),
+                    Ok(SupportedFunctionResult::Fallible(val, res)) => (val, res));
+            res.unwrap();
+            let val = assert_matches!(val, WastVal::Result(Ok(Some(val))) => val);
+            let val = assert_matches!(val.deref(), WastVal::String(val) => val);
+            assert_eq!(BODY, val.deref());
+            drop(db_connection);
+            exec_task.close().await;
+            db_task.close().await;
         }
     }
 }

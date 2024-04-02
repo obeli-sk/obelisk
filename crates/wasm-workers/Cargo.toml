@@ -35,12 +35,15 @@ test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-programs-sleep-activity-builder.workspace = true
 test-programs-sleep-workflow-builder.workspace = true
+test-programs-http-get-activity-builder.workspace = true
+test-programs-http-get-workflow-builder.workspace = true
 test-utils.workspace = true
 
 async-trait.workspace = true
 futures-util.workspace = true
 madsim.workspace = true
 rstest.workspace = true
+wiremock.workspace = true
 
 [lints]
 workspace = true
