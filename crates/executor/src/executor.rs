@@ -808,7 +808,7 @@ mod tests {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: locked_at
             } if created_at <= *locked_at
-             => *locked_at
+            => *locked_at
         );
         assert_matches!(execution_history.events.get(2).unwrap(), ExecutionEvent {
             event: _,
@@ -963,7 +963,7 @@ mod tests {
                 },
                 created_at: at,
             } if *at == created_at
-             => reason.to_string()
+            => reason.to_string()
         );
         assert_eq!("Execution returned error result: `None`", reason);
         // tick again to finish the execution

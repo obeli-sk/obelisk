@@ -1402,7 +1402,9 @@ pub mod tests {
                 already_retried_count,
                 max_retries,
                 retry_exp_backoff,
-            ) = assert_matches!(expired, ExpiredTimer::Lock { execution_id, version, already_retried_count, max_retries, retry_exp_backoff } => (execution_id, version, already_retried_count, max_retries, retry_exp_backoff));
+            ) = assert_matches!(expired,
+                ExpiredTimer::Lock { execution_id, version, already_retried_count, max_retries, retry_exp_backoff } =>
+                (execution_id, version, already_retried_count, max_retries, retry_exp_backoff));
             assert_eq!(execution_id, *found_execution_id);
             assert_eq!(Version::new(2), *version);
             assert_eq!(0, *already_retried_count);
