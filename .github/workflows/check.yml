@@ -95,4 +95,4 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ steps.target-cache-restore.outputs.cache-primary-key }}
