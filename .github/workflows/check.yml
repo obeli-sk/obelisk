@@ -37,6 +37,10 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
+      - id: git-info
+        run: |
+          echo "::set-output name=sha::$(git rev-parse HEAD)"
+          echo "::set-output name=branch::$(git rev-parse --abbrev-ref HEAD)"
       - name: Install Nix
         uses: cachix/install-nix-action@v26
         with:
@@ -50,7 +54,11 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-${{ hashFiles('Cargo.lock') }}-${{ steps.git-info.outputs.sha }}
+          restore-keys: |
+            ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-${{ hashFiles('Cargo.lock') }}-
+            ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-
+            ${{ github.job }}-${{ runner.os }}-
       - name: cargo clippy (nosim)
         run: nix develop --command cargo clippy --all-targets -- -D warnings
         env:
@@ -62,7 +70,7 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ steps.target-cache-restore.outputs.cache-primary-key }}
   clippy-madsim:
     name: clippy - madsim
     runs-on: ubuntu-latest
@@ -70,6 +78,10 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
+      - id: git-info
+        run: |
+          echo "::set-output name=sha::$(git rev-parse HEAD)"
+          echo "::set-output name=branch::$(git rev-parse --abbrev-ref HEAD)"
       - name: Install Nix
         uses: cachix/install-nix-action@v26
         with:
@@ -83,7 +95,11 @@ jobs:
           path: |
             target
             /home/runner/.cargo
-          key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-${{ hashFiles('Cargo.lock') }}-${{ steps.git-info.outputs.sha }}
+          restore-keys: |
+            ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-${{ hashFiles('Cargo.lock') }}-
+            ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-
+            ${{ github.job }}-${{ runner.os }}-
       - name: cargo clippy (madsim)
         run: nix develop --command cargo clippy --all-targets -- -D warnings
         env:
