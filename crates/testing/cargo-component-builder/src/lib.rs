@@ -76,8 +76,8 @@ fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str) -> PathB
         .arg(format!("--package={name}"))
         .env("CARGO_TARGET_DIR", out_dir)
         .env("RUSTFLAGS", "-g") // keep debuginfo for backtraces
-        .env_remove("CARGO_ENCODED_RUSTFLAGS");
-    eprintln!("running: {cmd:?}");
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env_remove("CLIPPY_ARGS"); // do not pass clippy parameters
     let status = cmd.status().unwrap();
     assert!(status.success());
     let name_snake_case = to_snake_case(name);
