@@ -15,7 +15,7 @@ use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
-use utils::time::{now, now_tokio_instant};
+use utils::time::now_tokio_instant;
 use utils::wasm_tools;
 use val_json::wast_val::val;
 use wasmtime::component::Linker;
@@ -378,8 +378,8 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
             (instance, store)
         };
         let epoch_millis = self.config.epoch_millis;
-        store.epoch_deadline_callback(move |_store_ctx| {
-            let delta = execution_deadline - now();
+        store.epoch_deadline_callback(move |store_ctx| {
+            let delta = execution_deadline - (store_ctx.data().clock_fn)();
             match delta.to_std() {
                 Err(_) => {
                     trace!(%execution_deadline, %delta, "Sending OutOfFuel");
@@ -436,16 +436,18 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
             })?;
             Ok(result)
         };
-        let deadline_duration = (execution_deadline - now()).to_std().unwrap_or_default();
-        let stopwatch = now_tokio_instant();
-        let sleep_until = stopwatch + deadline_duration;
+        let started_at = (self.config.clock_fn)();
+        let deadline_duration = (execution_deadline - started_at)
+            .to_std()
+            .unwrap_or_default();
+        let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! {
             res = call_function =>{
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished");
                 res
             },
-            ()   = tokio::time::sleep_until(sleep_until) => {
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %now(), "Timed out");
+            () = tokio::time::sleep(deadline_duration) => {
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
                 Err(WorkerError::IntermittentTimeout { epoch_based: false })
             }
         }
