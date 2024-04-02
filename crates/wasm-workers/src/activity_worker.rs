@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
-use utils::time::{now, now_tokio_instant};
+use utils::time::now_tokio_instant;
 use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
