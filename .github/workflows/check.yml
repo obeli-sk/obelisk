@@ -31,7 +31,7 @@ jobs:
       - name: cargo fmt
         run: nix develop --command cargo fmt --check
   clippy-nosim:
-    name: stable / clippy
+    name: clippy - nosim
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -52,7 +52,7 @@ jobs:
             /home/runner/.cargo
           key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo clippy (nosim)
-        run: nix develop --command cargo clippy --all-targets --no-default-features
+        run: nix develop --command cargo clippy --all-targets --no-default-features -- -D warnings
         env:
           RUSTFLAGS: "--cfg tracing_unstable"
       - name: Save rust cache
@@ -64,7 +64,7 @@ jobs:
             /home/runner/.cargo
           key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
   clippy-madsim:
-    name: stable / clippy
+    name: clippy - madsim
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -85,7 +85,7 @@ jobs:
             /home/runner/.cargo
           key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
       - name: cargo clippy (madsim)
-        run: nix develop --command cargo clippy --all-targets --no-default-features
+        run: nix develop --command cargo clippy --all-targets --no-default-features -- -D warnings
         env:
           RUSTFLAGS: "--cfg madsim --cfg tracing_unstable"
       - name: Save rust cache
