@@ -455,7 +455,9 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
 }
 
 mod valuable {
-    use super::{DateTime, Utc, WorkflowWorker};
+    use super::WorkflowWorker;
+    use chrono::{DateTime, Utc};
+
     static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
     impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ::valuable::Structable
         for WorkflowWorker<C>

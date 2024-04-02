@@ -57,16 +57,17 @@ pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ActivityConfig {
+pub struct ActivityConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
     pub config_id: ConfigId,
     pub wasm_path: StrVariant,
     pub epoch_millis: u64,
     pub recycled_instances: RecycleInstancesSetting,
+    pub clock_fn: C,
 }
 
 #[derive(Clone)]
-pub struct ActivityWorker {
-    config: ActivityConfig,
+pub struct ActivityWorker<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
+    config: ActivityConfig<C>,
     engine: Arc<Engine>,
     ffqns_to_results_len: HashMap<FunctionFqn, usize>,
     linker: wasmtime::component::Linker<StoreCtx>,
@@ -74,10 +75,10 @@ pub struct ActivityWorker {
     recycled_instances: MaybeRecycledInstances,
 }
 
-impl ActivityWorker {
+impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ActivityWorker<C> {
     #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
-        config: ActivityConfig,
+        config: ActivityConfig<C>,
         engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
         info!("Reading");
@@ -129,7 +130,7 @@ impl ActivityWorker {
 }
 
 #[async_trait]
-impl Worker for ActivityWorker {
+impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> Worker for ActivityWorker<C> {
     async fn run(
         &self,
         _execution_id: ExecutionId,
@@ -147,7 +148,7 @@ impl Worker for ActivityWorker {
     }
 }
 
-impl ActivityWorker {
+impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ActivityWorker<C> {
     #[tracing::instrument(skip_all)]
     pub(crate) async fn run(
         &self,
@@ -188,11 +189,12 @@ impl ActivityWorker {
             (instance, store)
         };
         let epoch_millis = self.config.epoch_millis;
+        let clock_fn = self.config.clock_fn.clone();
         store.epoch_deadline_callback(move |_store_ctx| {
-            let delta = epoch_based_execution_deadline - now();
+            let delta = epoch_based_execution_deadline - clock_fn();
             match delta.to_std() {
                 Err(_) => {
-                    trace!(%epoch_based_execution_deadline, %delta, "Epoch based timeout, sending OutOfFuel");
+                    trace!(%epoch_based_execution_deadline, %delta, "Sending OutOfFuel");
                     Err(wasmtime::Trap::OutOfFuel.into())
                 }
                 Ok(duration) => {
@@ -251,18 +253,18 @@ impl ActivityWorker {
 
             Ok(result)
         };
-        let deadline_duration = (select_based_execution_deadline - now())
+        let started_at = (self.config.clock_fn)();
+        let deadline_duration = (select_based_execution_deadline - started_at)
             .to_std()
             .unwrap_or_default();
-        let stopwatch = now_tokio_instant();
-        let sleep_until = stopwatch + deadline_duration;
+        let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! {
             res = call_function =>{
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %select_based_execution_deadline, "Finished");
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration,  "Finished");
                 res
             },
-            ()   = tokio::time::sleep_until(sleep_until) => {
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %select_based_execution_deadline, "Sending select based timeout");
+            ()   = tokio::time::sleep(deadline_duration) => {
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %select_based_execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
                 Err(WorkerError::IntermittentTimeout { epoch_based: false }) // Epoch interruption only applies to actively executing wasm.
             }
         }
@@ -271,13 +273,19 @@ impl ActivityWorker {
 
 mod valuable {
     use super::ActivityWorker;
+    use chrono::{DateTime, Utc};
+
     static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
-    impl ::valuable::Structable for ActivityWorker {
+    impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ::valuable::Structable
+        for ActivityWorker<C>
+    {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             ::valuable::StructDef::new_static("ActivityWorker", ::valuable::Fields::Named(FIELDS))
         }
     }
-    impl ::valuable::Valuable for ActivityWorker {
+    impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ::valuable::Valuable
+        for ActivityWorker<C>
+    {
         fn as_value(&self) -> ::valuable::Value<'_> {
             ::valuable::Value::Structable(self)
         }
@@ -322,6 +330,7 @@ pub(crate) mod tests {
                 epoch_millis: 10,
                 config_id: ConfigId::generate(),
                 recycled_instances: RecycleInstancesSetting::Disable,
+                clock_fn: now,
             },
             activity_engine(EngineConfig::default()),
         )
@@ -428,6 +437,7 @@ pub(crate) mod tests {
                 ),
                 epoch_millis: EPOCH_MILLIS,
                 recycled_instances,
+                clock_fn: now,
             },
             engine,
         )
@@ -549,6 +559,7 @@ pub(crate) mod tests {
                 ),
                 epoch_millis: EPOCH_MILLIS,
                 recycled_instances,
+                clock_fn: now,
             },
             engine,
         )
@@ -628,6 +639,7 @@ pub(crate) mod tests {
                 ),
                 epoch_millis: 10,
                 recycled_instances,
+                clock_fn: now,
             },
             activity_engine(EngineConfig {
                 allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
@@ -699,6 +711,7 @@ pub(crate) mod tests {
                     epoch_millis: EPOCH_MILLIS,
                     config_id: ConfigId::generate(),
                     recycled_instances,
+                    clock_fn: now,
                 },
                 engine,
             )
@@ -784,6 +797,7 @@ pub(crate) mod tests {
                     epoch_millis: EPOCH_MILLIS,
                     config_id: ConfigId::generate(),
                     recycled_instances: RecycleInstancesSetting::Disable,
+                    clock_fn: now,
                 },
                 engine,
             )
