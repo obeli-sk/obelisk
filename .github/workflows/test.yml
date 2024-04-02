@@ -40,6 +40,10 @@ jobs:
             target
             /home/runner/.cargo
           key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: Build tests
+        run: nix develop --command cargo nextest --no-run
+        env:
+          RUSTFLAGS: "--cfg tracing_unstable"
       - name: cargo test
         run: nix develop --command cargo nextest run --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
@@ -80,6 +84,10 @@ jobs:
             target
             /home/runner/.cargo
           key: ${{ github.job }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: Build tests
+        run: nix develop --command cargo nextest --no-run
+        env:
+          RUSTFLAGS: "--cfg madsim --cfg tracing_unstable"
       - name: cargo test
         run: nix develop --command cargo nextest run --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
