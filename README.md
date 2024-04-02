@@ -39,7 +39,7 @@ cargo install cargo-component
 
 ## Building
 ```sh
-cargo build --workspace --no-default-features
+cargo build --workspace
 ```
 
 ## Tests

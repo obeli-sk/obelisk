@@ -17,11 +17,13 @@ pub fn build_workflow() {
     build_internal("wasm32-unknown-unknown");
 }
 
+const FEATURES: &str = "wasm";
+
 fn build_internal(tripple: &str) {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
-    let wasm = run_cargo_component_build(&out_dir, pkg_name, tripple);
+    let wasm = run_cargo_component_build(&out_dir, pkg_name, tripple, FEATURES);
     if std::env::var("RUST_LOG").is_ok() {
         println!("cargo:warning=Built {wasm:?}");
     }
@@ -68,12 +70,13 @@ fn add_dependency(file: &Utf8Path) {
     }
 }
 
-fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str) -> PathBuf {
+fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str, features: &str) -> PathBuf {
     let mut cmd = Command::new("cargo-component");
     cmd.arg("build")
         .arg("--release")
         .arg(format!("--target={tripple}"))
         .arg(format!("--package={name}"))
+        .arg(format!("--features={features}"))
         .env("CARGO_TARGET_DIR", out_dir)
         .env("RUSTFLAGS", "-g") // keep debuginfo for backtraces
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
