@@ -91,7 +91,6 @@ impl ExecutionHistory {
         }
     }
 
-    #[must_use]
     pub fn event_history(&self) -> impl Iterator<Item = HistoryEvent> + '_ {
         self.events.iter().filter_map(|event| {
             if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {

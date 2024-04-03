@@ -3,7 +3,6 @@ pub mod inmemory_dao;
 use self::journal::PendingState;
 use crate::ExecutionHistory;
 use crate::FinishedExecutionResult;
-use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::DelayId;
