@@ -212,14 +212,12 @@ impl<C: ClockFn> my_org::workflow_engine::host_activities::Host for WorkflowCtx<
 #[cfg(test)]
 mod tests {
     use crate::workflow_ctx::WorkflowCtx;
-    use assert_matches::assert_matches;
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
     use db::{
         storage::{
-            inmemory_dao::DbTask, journal::PendingState, AsyncResponse, DbConnection, HistoryEvent,
-            Version,
+            inmemory_dao::DbTask, journal::PendingState, DbConnection, HistoryEvent, Version,
         },
         FinishedExecutionResult,
     };
@@ -234,7 +232,8 @@ mod tests {
     use utils::time::{now, ClockFn};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
-    const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+    const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+    const CHILD_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/child-ifc", "fn");
 
     #[derive(Debug, Clone)]
     #[allow(dead_code)]
@@ -284,102 +283,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn verify_sleep_host_activity() {
-        let _guard = test_utils::set_up();
-        let mut db_task = DbTask::spawn_new(10);
-        let db_connection = db_task.as_db_connection().expect("must be open");
-        let sim_clock = SimClock::new(now());
-        const SLEEP_MILLIS: u64 = 10;
-        let steps = vec![WorkflowStep::Sleep {
-            millis: SLEEP_MILLIS,
-        }];
-        let timers_watcher_task = expired_timers_watcher::Task::spawn_new(
-            db_connection.clone(),
-            expired_timers_watcher::Config {
-                tick_sleep: TICK_SLEEP,
-                clock_fn: sim_clock.clock_fn(),
-            },
-        );
-        let workflow_exec_task = {
-            let worker = WorkflowWorkerMock {
-                steps,
-                clock_fn: sim_clock.clock_fn(),
-            };
-            let exec_config = ExecConfig {
-                ffqns: vec![SOME_FFQN],
-                batch_size: 1,
-                lock_expiry: Duration::from_secs(1),
-                tick_sleep: TICK_SLEEP,
-                clock_fn: now,
-            };
-            ExecTask::spawn_new(db_connection.clone(), worker, exec_config, None)
-        };
-        // Create an execution.
-        let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        db_connection
-            .create(
-                created_at,
-                execution_id,
-                SOME_FFQN,
-                Params::from([]),
-                None,
-                None,
-                Duration::ZERO,
-                0,
-            )
-            .await
-            .unwrap();
-        db_connection
-            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet, None)
-            .await
-            .unwrap();
-        sim_clock.sleep(Duration::from_millis(SLEEP_MILLIS));
-        db_connection
-            .wait_for_pending_state(execution_id, PendingState::Finished, None)
-            .await
-            .unwrap();
-        // write activity result
-
-        let execution_history = db_connection.get(execution_id).await.unwrap();
-        let mut event_history = execution_history.event_history();
-
-        let join_set_id = assert_matches!(event_history.next(), Some(HistoryEvent::JoinSet { join_set_id }) => join_set_id);
-
-        let (found_join_set_id, delay_id, expires_at) = assert_matches!(
-            event_history.next(),
-            Some(HistoryEvent::DelayedUntilAsyncRequest { join_set_id,  delay_id, expires_at }  )
-            => (join_set_id,  delay_id, expires_at));
-        assert_eq!(join_set_id, found_join_set_id);
-        assert_eq!(sim_clock.now(), expires_at);
-
-        let found_join_set_id = assert_matches!(event_history.next(), Some(HistoryEvent::JoinNextBlocking { join_set_id })
-            => join_set_id);
-        assert_eq!(join_set_id, found_join_set_id);
-
-        let (found_join_set_id, found_delay_id) = assert_matches!(
-            event_history.next(),
-            Some(HistoryEvent::AsyncResponse {
-                join_set_id,
-                response: AsyncResponse::DelayFinishedAsyncResponse { delay_id }
-            })
-            => (join_set_id, delay_id)
-        );
-        assert_eq!(join_set_id, found_join_set_id);
-        assert_eq!(delay_id, found_delay_id);
-
-        // run again to check the determinism
-
-        drop(db_connection);
-        workflow_exec_task.close().await;
-        timers_watcher_task.close().await;
-        db_task.close().await;
-    }
-
     const SLEEP_MILLIS_IN_STEP: u64 = 10;
     #[tokio::test]
-    async fn check_determinism() {
+    async fn check_determinism_sleep() {
         let _guard = test_utils::set_up();
         let steps = vec![WorkflowStep::Sleep {
             millis: SLEEP_MILLIS_IN_STEP,
@@ -401,8 +307,8 @@ mod tests {
         let total_sleep_count = u64::try_from(
             steps
                 .iter()
-                .filter_map(|s| {
-                    if let WorkflowStep::Sleep { millis } = s {
+                .filter_map(|step| {
+                    if let WorkflowStep::Sleep { millis } = step {
                         Some(millis)
                     } else {
                         None
@@ -424,7 +330,7 @@ mod tests {
                 clock_fn: sim_clock.clock_fn(),
             };
             let exec_config = ExecConfig {
-                ffqns: vec![SOME_FFQN],
+                ffqns: vec![MOCK_FFQN],
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
@@ -438,7 +344,7 @@ mod tests {
             .create(
                 created_at,
                 execution_id,
-                SOME_FFQN,
+                MOCK_FFQN,
                 Params::from([]),
                 None,
                 None,
