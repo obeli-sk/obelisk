@@ -20,7 +20,7 @@ pub mod worker {
 
     #[derive(Debug, thiserror::Error)]
     pub enum WorkerError {
-        #[error("intermittent error: `{reason}`, {err:?}")]
+        #[error("intermittent error: {reason} - `{err}`")]
         IntermittentError {
             reason: StrVariant,
             err: Box<dyn Error + Send + Sync>,

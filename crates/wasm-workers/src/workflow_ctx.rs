@@ -4,7 +4,7 @@ use concepts::SupportedFunctionResult;
 use concepts::{ExecutionId, StrVariant};
 use db::storage::AsyncResponse;
 use db::storage::HistoryEvent;
-use executor::worker::{ChildExecutionRequest, SleepRequest};
+use executor::worker::{ChildExecutionRequest, FatalError, SleepRequest, WorkerError};
 
 use rand::rngs::StdRng;
 use rand::RngCore;
@@ -14,7 +14,7 @@ use tracing::{debug, trace};
 use wasmtime::component::Linker;
 
 #[allow(dead_code)] // FIXME: Implement non determinism check
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub(crate) enum FunctionError {
     #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(StrVariant),
@@ -22,6 +22,21 @@ pub(crate) enum FunctionError {
     ChildExecutionRequest(ChildExecutionRequest),
     #[error("sleep({})", .0.delay_id)]
     SleepRequest(SleepRequest),
+}
+
+impl From<FunctionError> for WorkerError {
+    fn from(value: FunctionError) -> Self {
+        match value {
+            FunctionError::NonDeterminismDetected(reason) => {
+                WorkerError::FatalError(FatalError::NonDeterminismDetected(reason.clone()))
+            }
+
+            FunctionError::ChildExecutionRequest(request) => {
+                WorkerError::ChildExecutionRequest(request.clone())
+            }
+            FunctionError::SleepRequest(request) => WorkerError::SleepRequest(request.clone()),
+        }
+    }
 }
 
 // Generate `host_activities::Host` trait

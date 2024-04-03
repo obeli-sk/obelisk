@@ -11,6 +11,7 @@ use executor::worker::{Worker, WorkerError};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::collections::HashMap;
+use std::error::Error;
 use std::ops::Deref;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
@@ -178,29 +179,32 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> Worker for Workfl
             .await
             .map(|supported_result| (supported_result, version))
             .map_err(|err| match err {
-                WorkerError::IntermittentError { err, reason } => {
+                RunError::FunctionCall(err) => {
                     match err
                         .source()
                         .and_then(|source| source.downcast_ref::<FunctionError>())
                     {
-                        Some(FunctionError::NonDeterminismDetected(reason)) => (
-                            WorkerError::FatalError(FatalError::NonDeterminismDetected(
-                                reason.clone(),
-                            )),
+                        Some(err) => (WorkerError::from(err.clone()), version),
+                        None => (
+                            WorkerError::IntermittentError {
+                                err,
+                                reason: StrVariant::Static("uncategorized error"),
+                            },
                             version,
                         ),
-                        Some(FunctionError::ChildExecutionRequest(request)) => {
-                            (WorkerError::ChildExecutionRequest(request.clone()), version)
-                        }
-                        Some(FunctionError::SleepRequest(request)) => {
-                            (WorkerError::SleepRequest(request.clone()), version)
-                        }
-                        None => (WorkerError::IntermittentError { err, reason }, version),
                     }
                 }
-                err => (err, version),
+                RunError::WorkerError(err) => (err, version),
             })
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum RunError {
+    #[error(transparent)]
+    WorkerError(WorkerError),
+    #[error("wasm function call error")]
+    FunctionCall(Box<dyn Error + Send + Sync>),
 }
 
 impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C> {
@@ -212,7 +216,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
         params: Params,
         events: Vec<HistoryEvent>,
         execution_deadline: DateTime<Utc>,
-    ) -> Result<SupportedFunctionResult, WorkerError> {
+    ) -> Result<SupportedFunctionResult, RunError> {
         let results_len = *self
             .exported_ffqns_to_results_len
             .get(&ffqn)
@@ -232,9 +236,11 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
                 .linker
                 .instantiate_async(&mut store, &self.component)
                 .await
-                .map_err(|err| WorkerError::IntermittentError {
-                    reason: StrVariant::Static("cannot instantiate"),
-                    err: err.into(),
+                .map_err(|err| {
+                    RunError::WorkerError(WorkerError::IntermittentError {
+                        reason: StrVariant::Static("cannot instantiate"),
+                        err: err.into(),
+                    })
                 })?;
             (instance, store)
         };
@@ -268,32 +274,29 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
             let mut results = vec![Val::Bool(false); results_len];
             func.call_async(
                 &mut store,
-                &params
-                    .as_vals(&param_types)
-                    .map_err(|err| WorkerError::FatalError(FatalError::ParamsParsingError(err)))?,
+                &params.as_vals(&param_types).map_err(|err| {
+                    RunError::WorkerError(WorkerError::FatalError(FatalError::ParamsParsingError(
+                        err,
+                    )))
+                })?,
                 &mut results,
             )
             .await
             .map_err(|err| {
                 if matches!(err.downcast_ref(), Some(wasmtime::Trap::OutOfFuel)) {
-                    WorkerError::IntermittentTimeout { epoch_based: true }
+                    RunError::WorkerError(WorkerError::IntermittentTimeout { epoch_based: true })
                 } else {
-                    let err = err.into();
-                    WorkerError::IntermittentError {
-                        reason: StrVariant::Arc(Arc::from(format!(
-                            "wasm function call error: `{err}`"
-                        ))),
-                        err,
-                    }
+                    RunError::FunctionCall(err.into())
                 }
             })?; // guest panic exits here
-            let result = SupportedFunctionResult::new(results)
-                .map_err(|err| WorkerError::FatalError(FatalError::ResultParsingError(err)))?;
+            let result = SupportedFunctionResult::new(results).map_err(|err| {
+                RunError::WorkerError(WorkerError::FatalError(FatalError::ResultParsingError(err)))
+            })?;
             func.post_return_async(&mut store).await.map_err(|err| {
-                WorkerError::IntermittentError {
+                RunError::WorkerError(WorkerError::IntermittentError {
                     reason: StrVariant::Static("wasm post function call error"),
                     err: err.into(),
-                }
+                })
             })?;
             Ok(result)
         };
@@ -309,7 +312,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
             },
             () = tokio::time::sleep(deadline_duration) => {
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
-                Err(WorkerError::IntermittentTimeout { epoch_based: false })
+                Err(RunError::WorkerError(WorkerError::IntermittentTimeout { epoch_based: false }))
             }
         }
     }
