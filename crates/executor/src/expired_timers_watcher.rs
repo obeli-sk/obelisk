@@ -16,9 +16,10 @@ use std::{
 };
 use tokio::task::AbortHandle;
 use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
+use utils::time::ClockFn;
 
 #[derive(Debug, Clone)]
-pub struct Config<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
+pub struct Config<C: ClockFn> {
     pub tick_sleep: Duration,
     pub clock_fn: C,
 }
@@ -64,10 +65,7 @@ impl Drop for TaskHandle {
 }
 
 impl<DB: DbConnection> Task<DB> {
-    pub fn spawn_new<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static>(
-        db_connection: DB,
-        config: Config<C>,
-    ) -> TaskHandle {
+    pub fn spawn_new<C: ClockFn + 'static>(db_connection: DB, config: Config<C>) -> TaskHandle {
         let executor_id = ExecutorId::generate();
         let span = info_span!("lock_watcher",
             executor = %executor_id,

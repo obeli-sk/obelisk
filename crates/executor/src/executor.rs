@@ -18,9 +18,10 @@ use std::{
 };
 use tokio::task::AbortHandle;
 use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
+use utils::time::ClockFn;
 
 #[derive(Debug, Clone)]
-pub struct ExecConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
+pub struct ExecConfig<C: ClockFn> {
     pub ffqns: Vec<FunctionFqn>,
     pub lock_expiry: Duration,
     pub tick_sleep: Duration,
@@ -28,11 +29,7 @@ pub struct ExecConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> 
     pub clock_fn: C, // Used for obtaining current time when the execution finishes.
 }
 
-pub struct ExecTask<
-    DB: DbConnection,
-    W: Worker,
-    C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static,
-> {
+pub struct ExecTask<DB: DbConnection, W: Worker, C: ClockFn> {
     db_connection: DB,
     worker: W,
     config: ExecConfig<C>,
@@ -77,9 +74,7 @@ impl Drop for ExecutorTaskHandle {
     }
 }
 
-impl<DB: DbConnection, W: Worker, C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static>
-    ExecTask<DB, W, C>
-{
+impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
     pub fn spawn_new(
         db_connection: DB,
         worker: W,
@@ -572,11 +567,7 @@ mod tests {
         }
     }
 
-    async fn tick_fn<
-        DB: DbConnection,
-        W: Worker + Debug,
-        C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static,
-    >(
+    async fn tick_fn<DB: DbConnection, W: Worker + Debug, C: ClockFn + 'static>(
         db_connection: DB,
         config: ExecConfig<C>,
         worker: W,
@@ -755,7 +746,7 @@ mod tests {
     async fn create_and_tick<
         DB: DbConnection,
         W: Worker,
-        C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static,
+        C: ClockFn,
         T: FnMut(DB, ExecConfig<C>, W, DateTime<Utc>) -> F,
         F: Future<Output = ExecutionProgress>,
     >(

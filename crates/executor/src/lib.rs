@@ -9,6 +9,7 @@ use std::error::Error;
 
 pub mod executor;
 pub mod expired_timers_watcher;
+
 pub mod worker {
     use super::{
         async_trait, DateTime, Error, ExecutionId, FunctionFqn, HistoryEvent, JoinSetId, Params,
@@ -63,7 +64,7 @@ pub mod worker {
     }
 
     #[async_trait]
-    pub trait Worker: Clone + valuable::Valuable + Send + Sync + 'static {
+    pub trait Worker: Clone + valuable::Valuable + Send + Sync + 'static { // FIXME: Remove Clone
         async fn run(
             &self,
             execution_id: ExecutionId,

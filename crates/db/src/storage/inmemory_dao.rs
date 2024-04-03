@@ -943,6 +943,7 @@ pub mod tick {
     use std::sync::Arc;
 
     #[derive(Clone)]
+    // FIXME: pub(crate)
     pub struct TickBasedDbConnection {
         pub db_task: Arc<std::sync::Mutex<DbTask>>,
     }

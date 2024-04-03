@@ -2,6 +2,10 @@ pub mod wasi_http;
 pub mod wasm_tools;
 
 pub mod time {
+    pub trait ClockFn: Fn() -> DateTime<Utc> + Send + Sync + Clone {}
+
+    impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone> ClockFn for C {}
+
     use chrono::DateTime;
     use chrono::Utc;
 

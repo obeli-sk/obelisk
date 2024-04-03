@@ -4,12 +4,13 @@ use assert_matches::assert_matches;
 use concepts::{
     prefixed_ulid::JoinSetId, ExecutionId, Params, StrVariant, SupportedFunctionResult,
 };
-use storage::{journal::PendingState, ExecutionEvent, Version};
+use storage::{journal::PendingState, ExecutionEvent, HistoryEvent, Version};
 
 use crate::storage::ExecutionEventInner;
 
 pub mod storage;
 
+/// Remote client representation of the execution journal.
 #[derive(Debug)]
 pub struct ExecutionHistory {
     pub execution_id: ExecutionId,
@@ -75,6 +76,30 @@ impl ExecutionHistory {
     #[must_use]
     pub fn last_event(&self) -> &ExecutionEvent {
         self.events.last().expect("must contain at least one event")
+    }
+
+    #[must_use]
+    pub fn finished_result(&self) -> Option<&FinishedExecutionResult> {
+        if let ExecutionEvent {
+            event: ExecutionEventInner::Finished { result, .. },
+            ..
+        } = self.last_event()
+        {
+            Some(result)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn event_history(&self) -> impl Iterator<Item = HistoryEvent> + '_ {
+        self.events.iter().filter_map(|event| {
+            if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {
+                Some(eh.clone())
+            } else {
+                None
+            }
+        })
     }
 }
 

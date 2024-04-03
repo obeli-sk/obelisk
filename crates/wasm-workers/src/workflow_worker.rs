@@ -2,22 +2,19 @@ use crate::workflow_ctx::{FunctionError, WorkflowCtx};
 use crate::{EngineConfig, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{ConfigId, JoinSetId};
+use concepts::prefixed_ulid::ConfigId;
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use concepts::{Params, SupportedFunctionResult};
 use db::storage::{HistoryEvent, Version};
-use executor::worker::{ChildExecutionRequest, FatalError};
+use executor::worker::FatalError;
 use executor::worker::{Worker, WorkerError};
-use rand::rngs::StdRng;
-use rand::SeedableRng;
 use std::collections::HashMap;
 use std::error::Error;
 use std::ops::Deref;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
-use utils::time::now_tokio_instant;
+use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools;
-use val_json::wast_val::val;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -34,7 +31,7 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkflowConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
+pub struct WorkflowConfig<C: ClockFn> {
     pub config_id: ConfigId,
     pub wasm_path: StrVariant,
     pub epoch_millis: u64,
@@ -42,7 +39,7 @@ pub struct WorkflowConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'stat
 }
 
 #[derive(Clone)]
-struct WorkflowWorker<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
+struct WorkflowWorker<C: ClockFn> {
     config: WorkflowConfig<C>,
     engine: Arc<Engine>,
     exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
@@ -50,7 +47,7 @@ struct WorkflowWorker<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> 
     component: wasmtime::component::Component,
 }
 
-impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C> {
+impl<C: ClockFn> WorkflowWorker<C> {
     #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
         config: WorkflowConfig<C>,
@@ -108,26 +105,9 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
                             Box::new(async move {
-                                let ctx = store_ctx.data_mut();
-                                let request = ChildExecutionRequest {
-                                    new_join_set_id: JoinSetId::from_parts(
-                                        ctx.execution_id.timestamp(),
-                                        ctx.next_u128(),
-                                    ),
-                                    child_execution_id: ExecutionId::from_parts(
-                                        ctx.execution_id.timestamp(),
-                                        ctx.next_u128(),
-                                    ),
-                                    ffqn,
-                                    params: Params::Vals(Arc::new(Vec::from(params))),
-                                };
-                                let res = store_ctx.data_mut().replay_or_interrupt(request);
-                                let res = res?;
-                                assert_eq!(results.len(), res.len(), "unexpected results length");
-                                for (idx, item) in res.value().into_iter().enumerate() {
-                                    results[idx] = val(item, &results[idx].ty()).unwrap();
-                                }
-                                Ok(())
+                                Ok(store_ctx
+                                    .data_mut()
+                                    .call_imported_func(ffqn, params, results)?)
                             })
                         }
                     });
@@ -165,7 +145,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
 }
 
 #[async_trait]
-impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> Worker for WorkflowWorker<C> {
+impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
     async fn run(
         &self,
         execution_id: ExecutionId,
@@ -207,7 +187,7 @@ enum RunError {
     FunctionCall(Box<dyn Error + Send + Sync>),
 }
 
-impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C> {
+impl<C: ClockFn> WorkflowWorker<C> {
     #[tracing::instrument(skip_all)]
     pub(crate) async fn run(
         &self,
@@ -223,14 +203,8 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
             .expect("executor must only run existing functions");
         trace!("Params: {params:?}, results_len:{results_len}",);
         let (instance, mut store) = {
-            let seed = execution_id.random();
-            let ctx = WorkflowCtx {
-                execution_id,
-                events,
-                events_idx: 0,
-                rng: StdRng::seed_from_u64(seed),
-                clock_fn: self.config.clock_fn.clone(),
-            };
+            let seed = execution_id.random_part();
+            let ctx = WorkflowCtx::new(execution_id, events, seed, self.config.clock_fn.clone());
             let mut store = Store::new(&self.engine, ctx);
             let instance = self
                 .linker
@@ -320,19 +294,15 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> WorkflowWorker<C>
 
 mod valuable {
     use super::WorkflowWorker;
-    use chrono::{DateTime, Utc};
+    use utils::time::ClockFn;
 
     static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
-    impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ::valuable::Structable
-        for WorkflowWorker<C>
-    {
+    impl<C: ClockFn> ::valuable::Structable for WorkflowWorker<C> {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             ::valuable::StructDef::new_static("WorkflowWorker", ::valuable::Fields::Named(FIELDS))
         }
     }
-    impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ::valuable::Valuable
-        for WorkflowWorker<C>
-    {
+    impl<C: ClockFn> ::valuable::Valuable for WorkflowWorker<C> {
         fn as_value(&self) -> ::valuable::Value<'_> {
             ::valuable::Value::Structable(self)
         }
@@ -453,7 +423,7 @@ mod tests {
 
     pub(crate) fn spawn_workflow_sleep<DB: DbConnection>(
         db_connection: DB,
-        clock_fn: impl Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static,
+        clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
         let worker = WorkflowWorker::new_with_config(
             WorkflowConfig {

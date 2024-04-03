@@ -314,11 +314,13 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         execution_id: ExecutionId,
         timeout: Option<Duration>,
     ) -> Result<FinishedExecutionResult, DbError> {
-        let ExecutionHistory { mut events, .. } = self
+        let execution_history = self
             .wait_for_pending_state(execution_id, PendingState::Finished, timeout)
             .await?;
-        Ok(assert_matches!(events.pop().expect("must not be empty"),
-            ExecutionEvent { event: ExecutionEventInner::Finished { result, .. } ,..} => result))
+        Ok(execution_history
+            .finished_result()
+            .expect("pending state was checked")
+            .clone())
     }
 
     async fn wait_for_pending_state(

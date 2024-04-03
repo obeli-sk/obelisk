@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
-use utils::time::now_tokio_instant;
+use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
@@ -57,7 +57,7 @@ pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ActivityConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
+pub struct ActivityConfig<C: ClockFn> {
     pub config_id: ConfigId,
     pub wasm_path: StrVariant,
     pub epoch_millis: u64,
@@ -66,7 +66,7 @@ pub struct ActivityConfig<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'stat
 }
 
 #[derive(Clone)]
-pub struct ActivityWorker<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> {
+pub struct ActivityWorker<C: ClockFn> {
     config: ActivityConfig<C>,
     engine: Arc<Engine>,
     ffqns_to_results_len: HashMap<FunctionFqn, usize>,
@@ -75,7 +75,7 @@ pub struct ActivityWorker<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'stat
     recycled_instances: MaybeRecycledInstances,
 }
 
-impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ActivityWorker<C> {
+impl<C: ClockFn> ActivityWorker<C> {
     #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
         config: ActivityConfig<C>,
@@ -130,7 +130,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ActivityWorker<C>
 }
 
 #[async_trait]
-impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> Worker for ActivityWorker<C> {
+impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
     async fn run(
         &self,
         _execution_id: ExecutionId,
@@ -148,7 +148,7 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> Worker for Activi
     }
 }
 
-impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ActivityWorker<C> {
+impl<C: ClockFn + 'static> ActivityWorker<C> {
     #[tracing::instrument(skip_all)]
     pub(crate) async fn run(
         &self,
@@ -273,19 +273,15 @@ impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ActivityWorker<C>
 
 mod valuable {
     use super::ActivityWorker;
-    use chrono::{DateTime, Utc};
+    use utils::time::ClockFn;
 
     static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
-    impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ::valuable::Structable
-        for ActivityWorker<C>
-    {
+    impl<C: ClockFn> ::valuable::Structable for ActivityWorker<C> {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             ::valuable::StructDef::new_static("ActivityWorker", ::valuable::Fields::Named(FIELDS))
         }
     }
-    impl<C: Fn() -> DateTime<Utc> + Send + Sync + Clone + 'static> ::valuable::Valuable
-        for ActivityWorker<C>
-    {
+    impl<C: ClockFn> ::valuable::Valuable for ActivityWorker<C> {
         fn as_value(&self) -> ::valuable::Value<'_> {
             ::valuable::Value::Structable(self)
         }

@@ -379,13 +379,13 @@ pub mod prefixed_ulid {
         }
 
         #[must_use]
-        pub fn timestamp(&self) -> u64 {
+        pub fn timestamp_part(&self) -> u64 {
             self.ulid.timestamp_ms()
         }
 
         #[must_use]
         #[allow(clippy::cast_possible_truncation)]
-        pub fn random(&self) -> u64 {
+        pub fn random_part(&self) -> u64 {
             self.ulid.random() as u64
         }
     }
