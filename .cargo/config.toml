@@ -1,2 +1,2 @@
 [build]
-rustflags = ["--cfg", "tracing_unstable", "--cfg", "madsim"]
+rustflags = ["--cfg", "tracing_unstable"]
