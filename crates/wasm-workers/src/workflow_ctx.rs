@@ -81,19 +81,25 @@ impl<C: ClockFn> WorkflowCtx<C> {
         );
         while let Some(found) = self.events.get(self.events_idx) {
             match found {
-                HistoryEvent::JoinSet { .. } => {
-                    debug!("Skipping JoinSet");
+                HistoryEvent::JoinSet { join_set_id }
+                    if *join_set_id == request.new_join_set_id =>
+                {
+                    trace!("Matched JoinSet");
                     self.events_idx += 1;
                 }
                 HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
-                } => {
-                    debug!("Skipping ChildExecutionAsyncRequest");
+                } if *join_set_id == request.new_join_set_id
+                    && *child_execution_id == request.child_execution_id =>
+                {
+                    trace!("Matched ChildExecutionRequest");
                     self.events_idx += 1;
                 }
-                HistoryEvent::JoinNextBlocking { .. } => {
-                    debug!("Skipping JoinNextBlocking");
+                HistoryEvent::JoinNextBlocking { join_set_id }
+                    if *join_set_id == request.new_join_set_id =>
+                {
+                    trace!("Matched JoinNextBlocking");
                     self.events_idx += 1;
                 }
                 HistoryEvent::JoinSetResponse {
@@ -109,8 +115,13 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     // TODO: Map FinishedExecutionError somehow
                     return Ok(result.clone().unwrap());
                 }
-                _ => {
-                    panic!("{found:?}")
+                unexpected => {
+                    return Err(FunctionError::NonDeterminismDetected(StrVariant::Arc(
+                        Arc::from(format!(
+                            "sleep: unexpected event {unexpected:?} at index {}",
+                            self.events_idx
+                        )),
+                    )));
                 }
             }
         }
@@ -147,17 +158,18 @@ impl<C: ClockFn> WorkflowCtx<C> {
     fn sleep(&mut self, millis: u64) -> Result<(), FunctionError> {
         let new_join_set_id =
             JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
-        let delay_id = DelayId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+        let new_delay_id =
+            DelayId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
         trace!(
-            "Querying history for {delay_id}, index: {}, history: {:?}",
+            "Querying history for {new_delay_id}, index: {}, history: {:?}",
             self.events_idx,
             self.events
         );
 
         while let Some(found) = self.events.get(self.events_idx) {
             match found {
-                HistoryEvent::JoinSet { .. } => {
-                    debug!("Skipping JoinSet");
+                HistoryEvent::JoinSet { join_set_id: found } if *found == new_join_set_id => {
+                    trace!("Matched JoinSet");
                     self.events_idx += 1;
                 }
                 HistoryEvent::JoinSetRequest {
@@ -167,34 +179,38 @@ impl<C: ClockFn> WorkflowCtx<C> {
                             delay_id,
                             expires_at: _,
                         },
-                } => {
-                    debug!("Skipping ChildExecutionAsyncRequest");
+                } if *join_set_id == new_join_set_id && *delay_id == new_delay_id => {
+                    trace!("Matched DelayRequest");
                     self.events_idx += 1;
                 }
-                HistoryEvent::JoinNextBlocking { .. } => {
-                    debug!("Skipping JoinNextBlocking");
+                HistoryEvent::JoinNextBlocking { join_set_id }
+                    if *join_set_id == new_join_set_id =>
+                {
+                    trace!("Matched JoinNextBlocking");
                     self.events_idx += 1;
                 }
                 HistoryEvent::JoinSetResponse {
-                    response:
-                        JoinSetResponse::DelayFinished {
-                            delay_id: found_delay_id,
-                        },
+                    response: JoinSetResponse::DelayFinished { delay_id },
                     ..
-                } if delay_id == *found_delay_id => {
-                    debug!("Found response in history: {found:?}");
+                } if new_delay_id == *delay_id => {
+                    debug!(%delay_id, join_set_id = %new_join_set_id, "Found response in history");
                     self.events_idx += 1;
                     return Ok(());
                 }
-                _ => {
-                    panic!("{found:?}")
+                unexpected => {
+                    return Err(FunctionError::NonDeterminismDetected(StrVariant::Arc(
+                        Arc::from(format!(
+                            "sleep: unexpected event {unexpected:?} at index {}",
+                            self.events_idx
+                        )),
+                    )));
                 }
             }
         }
         let expires_at = (self.clock_fn)() + Duration::from_millis(millis);
         Err(FunctionError::SleepRequest(SleepRequest {
             new_join_set_id,
-            delay_id,
+            delay_id: new_delay_id,
             expires_at,
         }))?
         // TODO: optimize for zero millis - write to db and continue
