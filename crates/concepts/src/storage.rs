@@ -255,7 +255,7 @@ pub enum HistoryEvent {
     #[display(fmt = "JoinSet({join_set_id})")]
     JoinSet {
         join_set_id: JoinSetId,
-        kind: JoinSetKind,
+        // TODO: add JoinSetKind (unordered, ordered)
     },
     #[display(fmt = "JoinSetRequest({join_set_id})")]
     JoinSetRequest {
@@ -278,11 +278,6 @@ pub enum HistoryEvent {
     JoinNextBlocking {
         join_set_id: JoinSetId,
     },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
-pub enum JoinSetKind {
-    Unordered,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]

@@ -5,7 +5,7 @@ use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params, StrV
 use concepts::{
     storage::{
         AppendRequest, DbConnection, DbConnectionError, DbError, ExecutionEventInner, HistoryEvent,
-        JoinSetKind, JoinSetRequest, JoinSetResponse, SpecificError, Version,
+        JoinSetRequest, JoinSetResponse, SpecificError, Version,
     },
     FinishedExecutionError,
 };
@@ -364,7 +364,6 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinSet {
                                     join_set_id,
-                                    kind: JoinSetKind::Unordered,
                                 },
                             },
                         };
@@ -412,7 +411,6 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinSet {
                                     join_set_id: request.new_join_set_id,
-                                    kind: JoinSetKind::Unordered,
                                 },
                             },
                         };
