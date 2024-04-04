@@ -16,7 +16,7 @@ derivative.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

@@ -362,9 +362,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                         let join = AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinSet {
-                                    join_set_id,
-                                },
+                                event: HistoryEvent::JoinSet { join_set_id },
                             },
                         };
                         let child_exec_async_req = AppendRequest {
@@ -519,7 +517,10 @@ pub mod simple_worker {
     use async_trait::async_trait;
     use indexmap::IndexMap;
 
-    use super::*;
+    use super::{
+        trace, Arc, DateTime, ExecutionId, FunctionFqn, HistoryEvent, Params, Utc, Version, Worker,
+        WorkerResult,
+    };
 
     pub type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent>, WorkerResult)>>>;

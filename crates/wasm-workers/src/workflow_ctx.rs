@@ -207,7 +207,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 }
             }
         }
-        let expires_at = (self.clock_fn)() + Duration::from_millis(millis as u64);
+        let expires_at = (self.clock_fn)() + Duration::from_millis(u64::from(millis));
         Err(FunctionError::SleepRequest(SleepRequest {
             new_join_set_id,
             delay_id: new_delay_id,
@@ -315,7 +315,7 @@ mod tests {
             unstructured
                 .arbitrary_iter()
                 .unwrap()
-                .map(|i| i.unwrap())
+                .map(std::result::Result::unwrap)
                 .collect::<Vec<_>>()
         };
         let created_at = now();
@@ -328,6 +328,7 @@ mod tests {
         assert_eq!(first, second);
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn execute_steps(
         execution_id: ExecutionId,
         steps: Vec<WorkflowStep>,
@@ -405,18 +406,18 @@ mod tests {
                 continue;
             }
             assert_eq!(1, req.len());
-            match req[0] {
+            match req.first().unwrap() {
                 JoinSetRequest::DelayRequest {
                     delay_id: _,
                     expires_at,
                 } => {
                     assert!(delay_request_count > 0);
-                    sim_clock.sleep_until(expires_at);
+                    sim_clock.sleep_until(*expires_at);
                     delay_request_count -= 1;
                 }
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
                     assert!(child_execution_count > 0);
-                    let child_request = db_connection.get(child_execution_id).await.unwrap();
+                    let child_request = db_connection.get(*child_execution_id).await.unwrap();
                     assert_eq!(Some((execution_id, join_set_id)), child_request.parent());
                     // execute
                     let child_exec_task = {

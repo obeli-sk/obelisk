@@ -209,6 +209,7 @@ pub enum ExecutionEventInner {
 }
 
 impl ExecutionEventInner {
+    #[must_use]
     pub fn appendable_only_in_lock(&self) -> bool {
         match self {
             Self::Locked { .. } // only if the lock is being extended by the same executor
@@ -228,6 +229,7 @@ impl ExecutionEventInner {
         )
     }
 
+    #[must_use]
     pub fn appendable_without_version(&self) -> bool {
         matches!(
             self,
@@ -543,6 +545,7 @@ pub mod journal {
 
     impl ExecutionJournal {
         #[allow(clippy::too_many_arguments)]
+        #[must_use]
         pub fn new(
             execution_id: ExecutionId,
             ffqn: FunctionFqn,
@@ -575,10 +578,17 @@ pub mod journal {
             }
         }
 
+        #[must_use]
         pub fn len(&self) -> usize {
             self.execution_events.len()
         }
 
+        #[must_use]
+        pub fn is_empty(&self) -> bool {
+            self.execution_events.is_empty()
+        }
+
+        #[must_use]
         pub fn ffqn(&self) -> &FunctionFqn {
             match self.execution_events.front().unwrap() {
                 ExecutionEvent {
@@ -589,10 +599,12 @@ pub mod journal {
             }
         }
 
+        #[must_use]
         pub fn version(&self) -> Version {
             Version(self.execution_events.len())
         }
 
+        #[must_use]
         pub fn execution_id(&self) -> ExecutionId {
             self.execution_id
         }
@@ -760,6 +772,7 @@ pub mod journal {
             })
         }
 
+        #[must_use]
         pub fn retry_exp_backoff(&self) -> Duration {
             assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
                 event: ExecutionEventInner::Created { retry_exp_backoff, .. },
@@ -767,6 +780,7 @@ pub mod journal {
             }) => *retry_exp_backoff)
         }
 
+        #[must_use]
         pub fn max_retries(&self) -> u32 {
             assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
                 event: ExecutionEventInner::Created { max_retries, .. },
@@ -774,6 +788,7 @@ pub mod journal {
             }) => *max_retries)
         }
 
+        #[must_use]
         pub fn already_retried_count(&self) -> u32 {
             u32::try_from(
                 self.execution_events
@@ -784,6 +799,7 @@ pub mod journal {
             .unwrap()
         }
 
+        #[must_use]
         pub fn params(&self) -> Params {
             assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
                 event: ExecutionEventInner::Created { params, .. },
@@ -791,12 +807,13 @@ pub mod journal {
             }) => params.clone())
         }
 
+        #[must_use]
         pub fn as_execution_history(&self) -> ExecutionHistory {
             ExecutionHistory {
                 execution_id: self.execution_id,
                 events: self.execution_events.iter().cloned().collect(),
                 version: self.version(),
-                pending_state: self.pending_state.clone(),
+                pending_state: self.pending_state,
             }
         }
 

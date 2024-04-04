@@ -21,7 +21,7 @@ derivative.workspace = true
 derive_more.workspace = true
 indexmap.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+tokio.workspace = true
 tracing.workspace = true
 ulid.workspace = true
 valuable.workspace = true

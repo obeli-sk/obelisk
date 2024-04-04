@@ -25,7 +25,7 @@ wit-parser.workspace = true
 madsim.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-utils.workspace = true
-tokio = { workspace = true, features = ["full"] }
+tokio.workspace = true
 
 [lints]
 workspace = true

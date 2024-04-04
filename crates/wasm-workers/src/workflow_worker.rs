@@ -505,7 +505,7 @@ mod tests {
             .unwrap();
 
         workflow_exec_task.close().await;
-        sim_clock.sleep(Duration::from_millis(SLEEP_MILLIS as u64));
+        sim_clock.sleep(Duration::from_millis(u64::from(SLEEP_MILLIS)));
         // Restart worker
         let workflow_exec_task = spawn_workflow_sleep(db_connection.clone(), sim_clock.clock_fn());
         let res = db_connection
