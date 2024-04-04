@@ -16,11 +16,23 @@ impl SimClock {
         }
     }
 
+    /// Called by a test to move the time forward.
     pub fn sleep(&self, duration: Duration) {
-        // FIXME: yield with a probability in madsim
-        let old = *self.current_time.lock().unwrap();
+        // FIXME: async, yield/sleep? with a probability in madsim, so that
+        // other tasks can proceed
+        let mut guard = self.current_time.lock().unwrap();
+        let old = *guard;
         let new = old + duration;
-        *self.current_time.lock().unwrap() = new;
+        *guard = new;
+        info!("Set clock from `{old}` to `{new}`");
+    }
+
+    pub fn sleep_until(&self, new: DateTime<Utc>) {
+        // TODO async, yield
+        let mut guard = self.current_time.lock().unwrap();
+        let old = *guard;
+        assert!(old <= new);
+        *guard = new;
         info!("Set clock from `{old}` to `{new}`");
     }
 

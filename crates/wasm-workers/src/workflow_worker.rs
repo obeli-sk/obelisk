@@ -461,7 +461,7 @@ mod tests {
 
     #[tokio::test]
     async fn sleep_should_be_persisted_after_executor_restart() {
-        const SLEEP_MILLIS: u64 = 100;
+        const SLEEP_MILLIS: u32 = 100;
         let _guard = test_utils::set_up();
         let sim_clock = SimClock::new(now());
         let mut db_task = DbTask::spawn_new(10);
@@ -480,7 +480,7 @@ mod tests {
                 sim_clock.now(),
                 execution_id,
                 SLEEP_HOST_ACTIVITY_FFQN,
-                Params::from([Val::U64(SLEEP_MILLIS)]),
+                Params::from([Val::U32(SLEEP_MILLIS)]),
                 None,
                 None,
                 Duration::ZERO,
@@ -505,7 +505,7 @@ mod tests {
             .unwrap();
 
         workflow_exec_task.close().await;
-        sim_clock.sleep(Duration::from_millis(SLEEP_MILLIS));
+        sim_clock.sleep(Duration::from_millis(SLEEP_MILLIS as u64));
         // Restart worker
         let workflow_exec_task = spawn_workflow_sleep(db_connection.clone(), sim_clock.clock_fn());
         let res = db_connection

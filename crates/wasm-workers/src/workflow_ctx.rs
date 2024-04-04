@@ -155,7 +155,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         Ok(())
     }
 
-    fn sleep(&mut self, millis: u64) -> Result<(), FunctionError> {
+    fn sleep(&mut self, millis: u32) -> Result<(), FunctionError> {
         let new_join_set_id =
             JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
         let new_delay_id =
@@ -207,7 +207,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 }
             }
         }
-        let expires_at = (self.clock_fn)() + Duration::from_millis(millis);
+        let expires_at = (self.clock_fn)() + Duration::from_millis(millis as u64);
         Err(FunctionError::SleepRequest(SleepRequest {
             new_join_set_id,
             delay_id: new_delay_id,
@@ -230,7 +230,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
 
 #[async_trait::async_trait]
 impl<C: ClockFn> my_org::workflow_engine::host_activities::Host for WorkflowCtx<C> {
-    async fn sleep(&mut self, millis: u64) -> wasmtime::Result<()> {
+    async fn sleep(&mut self, millis: u32) -> wasmtime::Result<()> {
         Ok(self.sleep(millis)?)
     }
 }
@@ -253,7 +253,7 @@ mod tests {
     };
     use std::{fmt::Debug, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
-    use tracing::info;
+    use tracing::{debug, info};
     use utils::time::{now, ClockFn};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
@@ -262,7 +262,7 @@ mod tests {
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
     #[allow(dead_code)]
     enum WorkflowStep {
-        Sleep { millis: u64 },
+        Sleep { millis: u32 },
         Call { ffqn: FunctionFqn },
     }
 
@@ -306,8 +306,6 @@ mod tests {
         }
     }
 
-    const SLEEP_MILLIS_IN_STEP: u64 = 10;
-
     #[tokio::test]
     async fn check_determinism() {
         let _guard = test_utils::set_up();
@@ -321,6 +319,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let created_at = now();
+        debug!(now = %created_at, "Generated steps: {steps:?}");
         let execution_id = ExecutionId::generate();
         info!("first execution");
         let first = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
@@ -412,11 +411,7 @@ mod tests {
                     expires_at,
                 } => {
                     assert!(delay_request_count > 0);
-                    assert_eq!(
-                        sim_clock.now() + Duration::from_millis(SLEEP_MILLIS_IN_STEP),
-                        expires_at
-                    );
-                    sim_clock.sleep(Duration::from_millis(SLEEP_MILLIS_IN_STEP));
+                    sim_clock.sleep_until(expires_at);
                     delay_request_count -= 1;
                 }
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {

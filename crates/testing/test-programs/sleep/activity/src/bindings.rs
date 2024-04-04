@@ -12,17 +12,17 @@ pub mod exports {
                     super::super::super::super::__link_custom_section_describing_imports;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_sleep_cabi<T: Guest>(arg0: i64) {
-                    T::sleep(arg0 as u64);
+                pub unsafe fn _export_sleep_cabi<T: Guest>(arg0: i32) {
+                    T::sleep(arg0 as u32);
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_sleep_loop_cabi<T: Guest>(arg0: i64, arg1: i32) {
-                    T::sleep_loop(arg0 as u64, arg1 as u32);
+                pub unsafe fn _export_sleep_loop_cabi<T: Guest>(arg0: i32, arg1: i32) {
+                    T::sleep_loop(arg0 as u32, arg1 as u32);
                 }
                 pub trait Guest {
-                    fn sleep(millis: u64);
-                    fn sleep_loop(millis: u64, iterations: u32);
+                    fn sleep(millis: u32);
+                    fn sleep_loop(millis: u32, iterations: u32);
                 }
                 #[doc(hidden)]
 
@@ -30,11 +30,11 @@ pub mod exports {
       ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
 
         #[export_name = "testing:sleep/sleep#sleep"]
-        unsafe extern "C" fn export_sleep(arg0: i64,) {
+        unsafe extern "C" fn export_sleep(arg0: i32,) {
           $($path_to_types)*::_export_sleep_cabi::<$ty>(arg0)
         }
         #[export_name = "testing:sleep/sleep#sleep-loop"]
-        unsafe extern "C" fn export_sleep_loop(arg0: i64,arg1: i32,) {
+        unsafe extern "C" fn export_sleep_loop(arg0: i32,arg1: i32,) {
           $($path_to_types)*::_export_sleep_loop_cabi::<$ty>(arg0, arg1)
         }
       };);
@@ -119,8 +119,8 @@ pub(crate) use __export_any_impl as export;
 #[doc(hidden)]
 pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 277] = *b"\
 \0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x9b\x01\x01A\x02\x01\
-A\x04\x01B\x04\x01@\x01\x06millisw\x01\0\x04\0\x05sleep\x01\0\x01@\x02\x06millis\
-w\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\x01\x04\x01\x13testing:sleep/slee\
+A\x04\x01B\x04\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\x02\x06millis\
+y\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\x01\x04\x01\x13testing:sleep/slee\
 p\x05\0\x01B\x03\x01j\0\0\x01@\0\0\0\x04\0\x03run\x01\x01\x04\x01\x12wasi:cli/ru\
 n@0.2.0\x05\x01\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09\
 producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.201.0\x10wit-bindgen-rus\

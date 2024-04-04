@@ -11,20 +11,20 @@ pub mod my_org {
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn sleep(millis: u64) {
+            pub fn sleep(millis: u32) {
                 unsafe {
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "my-org:workflow-engine/host-activities")]
                     extern "C" {
                         #[link_name = "sleep"]
-                        fn wit_import(_: i64);
+                        fn wit_import(_: i32);
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: i64) {
+                    fn wit_import(_: i32) {
                         unreachable!()
                     }
-                    wit_import(_rt::as_i64(&millis));
+                    wit_import(_rt::as_i32(&millis));
                 }
             }
         }
@@ -41,37 +41,37 @@ pub mod testing {
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn sleep(millis: u64) {
+            pub fn sleep(millis: u32) {
                 unsafe {
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:sleep/sleep")]
                     extern "C" {
                         #[link_name = "sleep"]
-                        fn wit_import(_: i64);
+                        fn wit_import(_: i32);
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: i64) {
+                    fn wit_import(_: i32) {
                         unreachable!()
                     }
-                    wit_import(_rt::as_i64(&millis));
+                    wit_import(_rt::as_i32(&millis));
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            pub fn sleep_loop(millis: u64, iterations: u32) {
+            pub fn sleep_loop(millis: u32, iterations: u32) {
                 unsafe {
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:sleep/sleep")]
                     extern "C" {
                         #[link_name = "sleep-loop"]
-                        fn wit_import(_: i64, _: i32);
+                        fn wit_import(_: i32, _: i32);
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: i64, _: i32) {
+                    fn wit_import(_: i32, _: i32) {
                         unreachable!()
                     }
-                    wit_import(_rt::as_i64(&millis), _rt::as_i32(&iterations));
+                    wit_import(_rt::as_i32(&millis), _rt::as_i32(&iterations));
                 }
             }
         }
@@ -131,13 +131,13 @@ pub mod exports {
                     super::super::super::super::__link_custom_section_describing_imports;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_sleep_host_activity_cabi<T: Guest>(arg0: i64) {
-                    T::sleep_host_activity(arg0 as u64);
+                pub unsafe fn _export_sleep_host_activity_cabi<T: Guest>(arg0: i32) {
+                    T::sleep_host_activity(arg0 as u32);
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_sleep_activity_cabi<T: Guest>(arg0: i64) {
-                    T::sleep_activity(arg0 as u64);
+                pub unsafe fn _export_sleep_activity_cabi<T: Guest>(arg0: i32) {
+                    T::sleep_activity(arg0 as u32);
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
@@ -145,8 +145,8 @@ pub mod exports {
                     T::run();
                 }
                 pub trait Guest {
-                    fn sleep_host_activity(millis: u64);
-                    fn sleep_activity(millis: u64);
+                    fn sleep_host_activity(millis: u32);
+                    fn sleep_activity(millis: u32);
                     fn run();
                 }
                 #[doc(hidden)]
@@ -155,11 +155,11 @@ pub mod exports {
     ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
 
       #[export_name = "testing:sleep-workflow/workflow#sleep-host-activity"]
-      unsafe extern "C" fn export_sleep_host_activity(arg0: i64,) {
+      unsafe extern "C" fn export_sleep_host_activity(arg0: i32,) {
         $($path_to_types)*::_export_sleep_host_activity_cabi::<$ty>(arg0)
       }
       #[export_name = "testing:sleep-workflow/workflow#sleep-activity"]
-      unsafe extern "C" fn export_sleep_activity(arg0: i64,) {
+      unsafe extern "C" fn export_sleep_activity(arg0: i32,) {
         $($path_to_types)*::_export_sleep_activity_cabi::<$ty>(arg0)
       }
       #[export_name = "testing:sleep-workflow/workflow#run"]
@@ -175,34 +175,6 @@ pub mod exports {
     }
 }
 mod _rt {
-
-    pub fn as_i64<T: AsI64>(t: T) -> i64 {
-        t.as_i64()
-    }
-
-    pub trait AsI64 {
-        fn as_i64(self) -> i64;
-    }
-
-    impl<'a, T: Copy + AsI64> AsI64 for &'a T {
-        fn as_i64(self) -> i64 {
-            (*self).as_i64()
-        }
-    }
-
-    impl AsI64 for i64 {
-        #[inline]
-        fn as_i64(self) -> i64 {
-            self as i64
-        }
-    }
-
-    impl AsI64 for u64 {
-        #[inline]
-        fn as_i64(self) -> i64 {
-            self as i64
-        }
-    }
 
     pub fn as_i32<T: AsI32>(t: T) -> i32 {
         t.as_i32()
@@ -315,11 +287,11 @@ pub(crate) use __export_any_impl as export;
 #[doc(hidden)]
 pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 469] = *b"\
 \0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xdb\x02\x01A\x02\x01\
-A\x08\x01B\x02\x01@\x01\x06millisw\x01\0\x04\0\x05sleep\x01\0\x03\x01&my-org:wor\
-kflow-engine/host-activities\x05\0\x01B\x04\x01@\x01\x06millisw\x01\0\x04\0\x05s\
-leep\x01\0\x01@\x02\x06millisw\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\x01\x03\
+A\x08\x01B\x02\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x03\x01&my-org:wor\
+kflow-engine/host-activities\x05\0\x01B\x04\x01@\x01\x06millisy\x01\0\x04\0\x05s\
+leep\x01\0\x01@\x02\x06millisy\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\x01\x03\
 \x01\x13testing:sleep/sleep\x05\x01\x01B\x03\x01j\0\0\x01@\0\0\0\x04\0\x03run\x01\
-\x01\x03\x01\x12wasi:cli/run@0.2.0\x05\x02\x01B\x05\x01@\x01\x06millisw\x01\0\x04\
+\x01\x03\x01\x12wasi:cli/run@0.2.0\x05\x02\x01B\x05\x01@\x01\x06millisy\x01\0\x04\
 \0\x13sleep-host-activity\x01\0\x04\0\x0esleep-activity\x01\0\x01@\0\x01\0\x04\0\
 \x03run\x01\x01\x04\x01\x1ftesting:sleep-workflow/workflow\x05\x03\x04\x01\x1ate\
 sting:sleep-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0c\

@@ -176,12 +176,12 @@ impl DbConnection for InMemoryDbConnection {
 
 mod index {
     use super::{
-        debug, BTreeMap, BTreeSet, DateTime, ExecutionId, HashMap, HashSet, JoinSetId,
-        PendingState, Utc,
+        BTreeMap, BTreeSet, DateTime, ExecutionId, HashMap, HashSet, JoinSetId, PendingState, Utc,
     };
     use concepts::prefixed_ulid::DelayId;
     use concepts::storage::journal::ExecutionJournal;
     use concepts::storage::{HistoryEvent, JoinSetRequest, JoinSetResponse};
+    use tracing::trace;
 
     #[derive(Debug, Default)]
     pub(super) struct JournalsIndex {
@@ -309,7 +309,7 @@ mod index {
                         .push(expires_at);
                 }
             } // else do nothing - rolling back creation
-            debug!("Journal index updated: {self:?}");
+            trace!("Journal index updated: {self:?}");
         }
     }
 }

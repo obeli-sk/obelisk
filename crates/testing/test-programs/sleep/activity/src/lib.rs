@@ -9,13 +9,13 @@ bindings::export!(Component with_types_in bindings);
 struct Component;
 
 impl crate::bindings::exports::testing::sleep::sleep::Guest for Component {
-    fn sleep(millis: u64) {
-        std::thread::sleep(Duration::from_millis(millis));
+    fn sleep(millis: u32) {
+        std::thread::sleep(Duration::from_millis(millis as u64));
     }
 
-    fn sleep_loop(millis: u64, iterations: u32) {
+    fn sleep_loop(millis: u32, iterations: u32) {
         for _ in 0..iterations {
-            std::thread::sleep(Duration::from_millis(millis));
+            Self::sleep(millis);
         }
     }
 }

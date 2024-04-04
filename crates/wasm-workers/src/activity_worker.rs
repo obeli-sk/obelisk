@@ -690,7 +690,7 @@ pub(crate) mod tests {
         #[case(1500, 1, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
         #[tokio::test]
         async fn sleep_should_produce_intermittent_timeout(
-            #[case] sleep_millis: u64,
+            #[case] sleep_millis: u32,
             #[case] sleep_iterations: u32,
             #[case] expected: concepts::FinishedExecutionResult,
             #[values(false, true)] recycle: bool,
@@ -747,7 +747,7 @@ pub(crate) mod tests {
                     created_at,
                     execution_id,
                     SLEEP_LOOP_ACTIVITY_FFQN,
-                    Params::from([Val::U64(sleep_millis), Val::U32(sleep_iterations)]),
+                    Params::from([Val::U32(sleep_millis), Val::U32(sleep_iterations)]),
                     None,
                     None,
                     Duration::ZERO,
@@ -780,7 +780,7 @@ pub(crate) mod tests {
         #[case(2000, 1, false)] // one long sleep cannot be detected by the epoch mechanism
         #[tokio::test]
         async fn epoch_or_sleep_based_timeout(
-            #[case] sleep_millis: u64,
+            #[case] sleep_millis: u32,
             #[case] sleep_iterations: u32,
             #[case] expected_epoch_based: bool,
         ) {
@@ -813,7 +813,7 @@ pub(crate) mod tests {
             let err = worker
                 .run(
                     SLEEP_LOOP_ACTIVITY_FFQN,
-                    Params::from([Val::U64(sleep_millis), Val::U32(sleep_iterations)]),
+                    Params::from([Val::U32(sleep_millis), Val::U32(sleep_iterations)]),
                     executed_at + EPOCH_BAED_TIMEOUT,
                     executed_at + SELECT_BASED_TIMEOUT,
                 )
