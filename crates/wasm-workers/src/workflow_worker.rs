@@ -398,7 +398,17 @@ mod tests {
             .unwrap();
         // Should end as BlockedByJoinSet
         db_connection
-            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet, None)
+            .wait_for_pending_state_fn(
+                execution_id,
+                |exe_history| {
+                    matches!(
+                        exe_history.pending_state,
+                        PendingState::BlockedByJoinSet { .. }
+                    )
+                    .then_some(())
+                },
+                None,
+            )
             .await
             .unwrap();
 
@@ -480,7 +490,17 @@ mod tests {
             .unwrap();
 
         db_connection
-            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet, None)
+            .wait_for_pending_state_fn(
+                execution_id,
+                |exe_history| {
+                    matches!(
+                        exe_history.pending_state,
+                        PendingState::BlockedByJoinSet { .. }
+                    )
+                    .then_some(())
+                },
+                None,
+            )
             .await
             .unwrap();
 

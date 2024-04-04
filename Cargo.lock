@@ -2182,7 +2182,9 @@ dependencies = [
 name = "test-utils"
 version = "0.1.0"
 dependencies = [
+ "arbitrary",
  "chrono",
+ "madsim",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",

@@ -12,8 +12,10 @@ use crate::SupportedFunctionResult;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use std::fmt::Debug;
 use std::time::Duration;
 use tracing::debug;
+use tracing::trace;
 
 /// Remote client representation of the execution journal.
 #[derive(Debug)]
@@ -63,6 +65,14 @@ impl ExecutionHistory {
     }
 
     #[must_use]
+    pub fn ffqn(&self) -> &FunctionFqn {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
+            event: ExecutionEventInner::Created { ffqn, .. },
+            ..
+        }) => ffqn)
+    }
+
+    #[must_use]
     pub fn params(&self) -> Params {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
             event: ExecutionEventInner::Created { params, .. },
@@ -106,7 +116,10 @@ impl ExecutionHistory {
         })
     }
 
-    pub fn async_requests(&self, join_set_id: JoinSetId) -> impl Iterator<Item = &JoinSetRequest> {
+    pub fn join_set_requests(
+        &self,
+        join_set_id: JoinSetId,
+    ) -> impl Iterator<Item = &JoinSetRequest> {
         self.events
             .iter()
             .filter_map(move |event| match &event.event {
@@ -442,11 +455,12 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         expected_pending_state: PendingState,
         timeout: Option<Duration>,
     ) -> Result<ExecutionHistory, DbError> {
-        debug!(%execution_id, "Waiting for {expected_pending_state}");
+        trace!(%execution_id, "Waiting for {expected_pending_state}");
         let fut = async move {
             loop {
                 let execution_history = self.get(execution_id).await?;
                 if execution_history.pending_state == expected_pending_state {
+                    debug!(%execution_id, "Found: {expected_pending_state}");
                     return Ok(execution_history);
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -463,18 +477,19 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         }
     }
 
-    async fn wait_for_pending_state_fn(
+    async fn wait_for_pending_state_fn<T: Debug>(
         &self,
         execution_id: ExecutionId,
-        prdicate: impl Fn(PendingState) -> bool + Send,
+        prdicate: impl Fn(ExecutionHistory) -> Option<T> + Send,
         timeout: Option<Duration>,
-    ) -> Result<ExecutionHistory, DbError> {
-        debug!(%execution_id, "Waiting for predicate");
+    ) -> Result<T, DbError> {
+        trace!(%execution_id, "Waiting for predicate");
         let fut = async move {
             loop {
                 let execution_history = self.get(execution_id).await?;
-                if prdicate(execution_history.pending_state) {
-                    return Ok(execution_history);
+                if let Some(t) = prdicate(execution_history) {
+                    debug!(%execution_id, "Found: {t:?}");
+                    return Ok(t);
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -638,7 +653,7 @@ pub mod journal {
                             )));
                         }
                     }
-                    PendingState::BlockedByJoinSet => {
+                    PendingState::BlockedByJoinSet { .. } => {
                         return Err(SpecificError::ValidationFailed(StrVariant::Static(
                             "cannot append Locked event when in BlockedByJoinSet state",
                         )));
@@ -730,7 +745,9 @@ pub mod journal {
                         }) {
                             Some(PendingState::PendingNow)
                         } else {
-                            Some(PendingState::BlockedByJoinSet)
+                            Some(PendingState::BlockedByJoinSet {
+                                join_set_id: *expected_join_set_id,
+                            })
                         }
                     }
                     _ => None,
@@ -805,7 +822,9 @@ pub mod journal {
         },
         #[display(fmt = "PendingAt(`{_0}`)")]
         PendingAt(DateTime<Utc>), // e.g. created with a schedule, intermittent timeout/failure
-        BlockedByJoinSet,
+        BlockedByJoinSet {
+            join_set_id: JoinSetId,
+        },
         Finished,
     }
 }

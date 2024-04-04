@@ -92,7 +92,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
         let tick_sleep = config.tick_sleep;
         let abort_handle = tokio::spawn(
             async move {
-                info!("Spawned executor");
+                info!(ffqns = ?config.ffqns, "Spawned executor");
                 let clock_fn = config.clock_fn.clone();
                 let task = Self {
                     db_connection,

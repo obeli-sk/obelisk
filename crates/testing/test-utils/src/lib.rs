@@ -1,6 +1,7 @@
 use std::str::FromStr;
 use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 
+pub mod arbitrary;
 pub mod sim_clock;
 
 static mut CHRMOE_TRACE_FILE_GUARD: Option<tracing_chrome::FlushGuard> = None;

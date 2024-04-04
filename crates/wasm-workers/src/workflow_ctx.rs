@@ -222,14 +222,10 @@ impl<C: ClockFn> my_org::workflow_engine::host_activities::Host for WorkflowCtx<
 #[cfg(test)]
 mod tests {
     use crate::workflow_ctx::WorkflowCtx;
-    use assert_matches::assert_matches;
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
     use concepts::{
-        storage::{
-            journal::PendingState, DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
-            JoinSetRequest, Version,
-        },
+        storage::{journal::PendingState, DbConnection, HistoryEvent, JoinSetRequest, Version},
         FinishedExecutionResult,
     };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
@@ -240,14 +236,12 @@ mod tests {
         worker::{Worker, WorkerError, WorkerResult},
     };
     use std::{fmt::Debug, time::Duration};
-    use test_utils::sim_clock::SimClock;
-    use tracing::debug;
-
+    use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
+    use tracing::info;
     use utils::time::{now, ClockFn};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
-    const CHILD_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/child-ifc", "fn");
 
     #[derive(Debug, Clone)]
     #[allow(dead_code)]
@@ -306,7 +300,26 @@ mod tests {
         }];
         let created_at = now();
         let execution_id = ExecutionId::generate();
+        info!("first execution");
         let first = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
+        info!("second execution");
+        let second = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
+        assert_eq!(first, second);
+    }
+
+    #[tokio::test]
+    async fn check_determinism_call() {
+        let _guard = test_utils::set_up();
+        let unstructured_holder = UnstructuredHolder::new();
+        let mut unstructured = unstructured_holder.unstructured();
+        let steps = vec![WorkflowStep::Call {
+            ffqn: unstructured.arbitrary().unwrap(),
+        }];
+        let created_at = now();
+        let execution_id = ExecutionId::generate();
+        info!("first execution");
+        let first = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
+        info!("second execution");
         let second = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
         assert_eq!(first, second);
     }
@@ -318,22 +331,13 @@ mod tests {
     ) -> (Vec<HistoryEvent>, FinishedExecutionResult) {
         let mut db_task = DbTask::spawn_new(10);
         let db_connection = db_task.as_db_connection().expect("must be open");
-        let total_sleep_count = u64::try_from(
-            steps
-                .iter()
-                .filter_map(|step| {
-                    if let WorkflowStep::Sleep { millis } = step {
-                        Some(millis)
-                    } else {
-                        None
-                    }
-                })
-                .count(),
-        )
-        .unwrap();
         let mut child_execution_count = steps
             .iter()
             .filter(|step| matches!(step, WorkflowStep::Call { .. }))
+            .count();
+        let mut delay_request_count = steps
+            .iter()
+            .filter(|step| matches!(step, WorkflowStep::Sleep { .. }))
             .count();
         let timers_watcher_task = expired_timers_watcher::Task::spawn_new(
             db_connection.clone(),
@@ -352,7 +356,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                clock_fn: now,
+                clock_fn: sim_clock.clock_fn(),
             };
             ExecTask::spawn_new(db_connection.clone(), worker, exec_config, None)
         };
@@ -371,53 +375,83 @@ mod tests {
             )
             .await
             .unwrap();
-        db_connection
-            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet, None)
+
+        let mut processed = Vec::new();
+        let mut spawned_child_executors = Vec::new();
+        while let Some((join_set_id, req)) = db_connection
+            .wait_for_pending_state_fn(
+                execution_id,
+                |execution_history| match &execution_history.pending_state {
+                    PendingState::BlockedByJoinSet { join_set_id } => Some(Some((
+                        *join_set_id,
+                        execution_history
+                            .join_set_requests(*join_set_id)
+                            .cloned()
+                            .collect::<Vec<_>>(),
+                    ))),
+                    PendingState::Finished => Some(None),
+                    _ => None,
+                },
+                None,
+            )
             .await
-            .unwrap();
-        sim_clock.sleep(Duration::from_millis(
-            SLEEP_MILLIS_IN_STEP * total_sleep_count,
-        ));
-        while child_execution_count > 0 {
-            db_connection
-                .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet, None)
-                .await
-                .unwrap();
-            let execution_history = db_connection.get(execution_id).await.unwrap();
-            let last = assert_history_event(execution_history.last_event());
-            let last = assert_matches!(last, HistoryEvent::JoinNextBlocking { join_set_id } => *join_set_id);
-            let child_request = execution_history.async_requests(last).collect::<Vec<_>>();
-            assert_eq!(child_request.len(), 1);
-            let child_request = child_request[0];
-            let child_request = assert_matches!(
-                child_request,
-                JoinSetRequest::ChildExecutionRequest { child_execution_id } => *child_execution_id
-            );
-            // TODO: publish child execution result
-            child_execution_count -= 1;
+            .unwrap()
+        {
+            if processed.contains(&join_set_id) {
+                continue;
+            }
+            assert_eq!(1, req.len());
+            match req[0] {
+                JoinSetRequest::DelayRequest {
+                    delay_id: _,
+                    expires_at,
+                } => {
+                    assert!(delay_request_count > 0);
+                    assert_eq!(
+                        sim_clock.now() + Duration::from_millis(SLEEP_MILLIS_IN_STEP),
+                        expires_at
+                    );
+                    sim_clock.sleep(Duration::from_millis(SLEEP_MILLIS_IN_STEP));
+                    delay_request_count -= 1;
+                }
+                JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
+                    assert!(child_execution_count > 0);
+                    let child_request = db_connection.get(child_execution_id).await.unwrap();
+                    assert_eq!(Some((execution_id, join_set_id)), child_request.parent());
+                    // execute
+                    let child_exec_task = {
+                        let worker = WorkflowWorkerMock {
+                            steps: vec![],
+                            clock_fn: sim_clock.clock_fn(),
+                        };
+                        let exec_config = ExecConfig {
+                            ffqns: vec![child_request.ffqn().clone()],
+                            batch_size: 1,
+                            lock_expiry: Duration::from_secs(1),
+                            tick_sleep: TICK_SLEEP,
+                            clock_fn: sim_clock.clock_fn(),
+                        };
+                        ExecTask::spawn_new(db_connection.clone(), worker, exec_config, None)
+                    };
+                    spawned_child_executors.push(child_exec_task);
+                    child_execution_count -= 1;
+                }
+            }
+            processed.push(join_set_id);
         }
-        db_connection
-            .wait_for_pending_state(execution_id, PendingState::Finished, None)
-            .await
-            .unwrap();
+        // must be finished at this point
         let execution_history = db_connection.get(execution_id).await.unwrap();
+        assert_eq!(PendingState::Finished, execution_history.pending_state);
         drop(db_connection);
+        for child_task in spawned_child_executors {
+            child_task.close().await;
+        }
         workflow_exec_task.close().await;
         timers_watcher_task.close().await;
         db_task.close().await;
         (
             execution_history.event_history().collect(),
             execution_history.finished_result().unwrap().clone(),
-        )
-    }
-
-    fn assert_history_event(event: &ExecutionEvent) -> &HistoryEvent {
-        assert_matches!(
-            event,
-            ExecutionEvent {
-                event: ExecutionEventInner::HistoryEvent { event },
-                ..
-            } => event
         )
     }
 }

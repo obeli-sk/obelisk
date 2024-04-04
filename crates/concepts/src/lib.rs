@@ -161,7 +161,7 @@ impl Display for FunctionFqn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "`{ifc_fqn}.{function_name}`",
+            "{ifc_fqn}.{function_name}",
             ifc_fqn = self.ifc_fqn,
             function_name = self.function_name
         )

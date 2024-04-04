@@ -6,7 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+arbitrary.workspace = true
 chrono.workspace = true
+madsim.workspace = true
 tracing.workspace = true
 tracing-chrome.workspace = true
 tracing-subscriber.workspace = true

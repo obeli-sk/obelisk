@@ -272,7 +272,7 @@ mod index {
                             .or_default()
                             .push(lock_expires_at);
                     }
-                    PendingState::BlockedByJoinSet | PendingState::Finished => {}
+                    PendingState::BlockedByJoinSet { .. } | PendingState::Finished => {}
                 }
                 // Add all open async timers
                 let delay_req_resp = journal
@@ -1071,6 +1071,7 @@ pub mod tests {
         sync::Arc,
         time::{Duration, Instant},
     };
+    use test_utils::arbitrary::UnstructuredHolder;
     use test_utils::{env_or_default, sim_clock::SimClock};
     use tracing::info;
     use utils::time::now;
@@ -1417,17 +1418,8 @@ pub mod tests {
     #[tokio::test]
     async fn stochastic_proptest() {
         set_up();
-
-        let raw_data: Vec<u8> = {
-            let len = madsim::rand::random::<u16>() as usize;
-            let mut raw_data = Vec::with_capacity(len);
-            while raw_data.len() < len {
-                raw_data.push(madsim::rand::random::<u8>());
-            }
-            raw_data
-        };
-        let mut unstructured = arbitrary::Unstructured::new(&raw_data);
-
+        let unstructured_holder = UnstructuredHolder::new();
+        let mut unstructured = unstructured_holder.unstructured();
         let db_task = DbTask::new();
         let db_task = Arc::new(std::sync::Mutex::new(db_task));
         let db_connection = TickBasedDbConnection {
