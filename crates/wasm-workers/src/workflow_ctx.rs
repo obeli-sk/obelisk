@@ -259,10 +259,9 @@ mod tests {
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, arbitrary::Arbitrary)]
     #[allow(dead_code)]
     enum WorkflowStep {
-        // Yield,
         Sleep { millis: u64 },
         Call { ffqn: FunctionFqn },
     }
@@ -308,29 +307,19 @@ mod tests {
     }
 
     const SLEEP_MILLIS_IN_STEP: u64 = 10;
-    #[tokio::test]
-    async fn check_determinism_sleep() {
-        let _guard = test_utils::set_up();
-        let steps = vec![WorkflowStep::Sleep {
-            millis: SLEEP_MILLIS_IN_STEP,
-        }];
-        let created_at = now();
-        let execution_id = ExecutionId::generate();
-        info!("first execution");
-        let first = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
-        info!("second execution");
-        let second = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
-        assert_eq!(first, second);
-    }
 
     #[tokio::test]
-    async fn check_determinism_call() {
+    async fn check_determinism() {
         let _guard = test_utils::set_up();
         let unstructured_holder = UnstructuredHolder::new();
         let mut unstructured = unstructured_holder.unstructured();
-        let steps = vec![WorkflowStep::Call {
-            ffqn: unstructured.arbitrary().unwrap(),
-        }];
+        let steps = {
+            unstructured
+                .arbitrary_iter()
+                .unwrap()
+                .map(|i| i.unwrap())
+                .collect::<Vec<_>>()
+        };
         let created_at = now();
         let execution_id = ExecutionId::generate();
         info!("first execution");
