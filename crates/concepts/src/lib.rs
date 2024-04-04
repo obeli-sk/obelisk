@@ -9,6 +9,25 @@ use std::{
 };
 use val_json::{wast_val::WastVal, TypeWrapper, ValWrapper};
 
+pub mod storage;
+pub mod worker;
+
+pub type FinishedExecutionResult = Result<SupportedFunctionResult, FinishedExecutionError>;
+
+#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
+pub enum FinishedExecutionError {
+    #[error("permanent timeout")]
+    PermanentTimeout,
+    #[error("non-determinism detected, reason: `{0}`")]
+    NonDeterminismDetected(StrVariant),
+    #[error("uncategorized error: `{0}`")]
+    PermanentFailure(StrVariant), // intermittent failure that is not retried (anymore)
+    #[error("cancelled, reason: `{0}`")]
+    Cancelled(StrVariant),
+    #[error("continuing as {execution_id}")]
+    ContinueAsNew { execution_id: ExecutionId },
+}
+
 #[derive(Clone, Eq, derive_more::Display)]
 pub enum StrVariant {
     Static(&'static str),

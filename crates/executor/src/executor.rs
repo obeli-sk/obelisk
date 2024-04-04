@@ -1,12 +1,13 @@
 use crate::worker::{FatalError, Worker, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
+use concepts::storage::ExecutionHistory;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params, StrVariant};
-use db::{
+use concepts::{
     storage::{
-        AppendRequest, AsyncResponse, DbConnection, DbConnectionError, DbError,
-        ExecutionEventInner, HistoryEvent, SpecificError, Version,
+        AppendRequest, DbConnection, DbConnectionError, DbError, ExecutionEventInner, HistoryEvent,
+        JoinSetKind, JoinSetRequest, JoinSetResponse, SpecificError, Version,
     },
-    ExecutionHistory, FinishedExecutionError,
+    FinishedExecutionError,
 };
 use derivative::Derivative;
 use std::{
@@ -325,9 +326,9 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                         AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::AsyncResponse {
+                                event: HistoryEvent::JoinSetResponse {
                                     join_set_id,
-                                    response: AsyncResponse::ChildExecutionAsyncResponse {
+                                    response: JoinSetResponse::ChildExecutionFinished {
                                         child_execution_id: execution_id,
                                         result: finished_res,
                                     },
@@ -361,15 +362,20 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                         let join = AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinSet { join_set_id },
+                                event: HistoryEvent::JoinSet {
+                                    join_set_id,
+                                    kind: JoinSetKind::Unordered,
+                                },
                             },
                         };
                         let child_exec_async_req = AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::ChildExecutionAsyncRequest {
+                                event: HistoryEvent::JoinSetRequest {
                                     join_set_id,
-                                    child_execution_id: request.child_execution_id,
+                                    request: JoinSetRequest::ChildExecutionRequest {
+                                        child_execution_id: request.child_execution_id,
+                                    },
                                 },
                             },
                         };
@@ -406,16 +412,19 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinSet {
                                     join_set_id: request.new_join_set_id,
+                                    kind: JoinSetKind::Unordered,
                                 },
                             },
                         };
                         let delayed_until = AppendRequest {
                             created_at,
                             event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::DelayedUntilAsyncRequest {
+                                event: HistoryEvent::JoinSetRequest {
                                     join_set_id: request.new_join_set_id,
-                                    delay_id: request.delay_id,
-                                    expires_at: request.expires_at,
+                                    request: JoinSetRequest::DelayRequest {
+                                        delay_id: request.delay_id,
+                                        expires_at: request.expires_at,
+                                    },
                                 },
                             },
                         };
@@ -507,35 +516,19 @@ struct Append {
     async_resp_to_other_execution: Option<(ExecutionId, AppendRequest)>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{expired_timers_watcher, worker::WorkerResult};
-    use anyhow::anyhow;
-    use assert_matches::assert_matches;
+#[cfg(any(test, feature = "test"))]
+pub mod simple_worker {
     use async_trait::async_trait;
-    use concepts::{Params, SupportedFunctionResult};
-    use db::storage::{
-        inmemory_dao::{tick::TickBasedDbConnection, DbTask},
-        journal::PendingState,
-        DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
-    };
     use indexmap::IndexMap;
-    use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
-    use test_utils::sim_clock::SimClock;
-    use utils::time::now;
 
-    fn set_up() {
-        test_utils::set_up();
-    }
+    use super::*;
 
-    const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
-    type SimpleWorkerResultMap =
+    pub type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent>, WorkerResult)>>>;
 
     #[derive(Clone, Debug)]
-    struct SimpleWorker {
-        worker_results_rev: SimpleWorkerResultMap,
+    pub struct SimpleWorker {
+        pub worker_results_rev: SimpleWorkerResultMap,
     }
 
     impl valuable::Valuable for SimpleWorker {
@@ -551,13 +544,12 @@ mod tests {
         async fn run(
             &self,
             _execution_id: ExecutionId,
-            ffqn: FunctionFqn,
+            _ffqn: FunctionFqn,
             _params: Params,
             eh: Vec<HistoryEvent>,
             version: Version,
             _execution_deadline: DateTime<Utc>,
         ) -> WorkerResult {
-            assert_eq!(SOME_FFQN, ffqn);
             let (expected_version, (expected_eh, worker_result)) =
                 self.worker_results_rev.lock().unwrap().pop().unwrap();
             trace!(%expected_version, %version, ?expected_eh, ?eh, "Running SimpleWorker");
@@ -566,6 +558,31 @@ mod tests {
             worker_result
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use self::simple_worker::SimpleWorker;
+    use super::*;
+    use crate::{expired_timers_watcher, worker::WorkerResult};
+    use anyhow::anyhow;
+    use assert_matches::assert_matches;
+    use async_trait::async_trait;
+    use concepts::storage::{
+        journal::PendingState, DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
+    };
+    use concepts::{Params, SupportedFunctionResult};
+    use db::inmemory_dao::{tick::TickBasedDbConnection, DbTask};
+    use indexmap::IndexMap;
+    use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
+    use test_utils::sim_clock::SimClock;
+    use utils::time::now;
+
+    fn set_up() {
+        test_utils::set_up();
+    }
+
+    const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
 
     async fn tick_fn<DB: DbConnection, W: Worker + Debug, C: ClockFn + 'static>(
         db_connection: DB,

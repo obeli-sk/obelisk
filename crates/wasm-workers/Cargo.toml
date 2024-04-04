@@ -17,7 +17,7 @@ assert_matches.workspace = true
 async-channel.workspace = true
 async-trait.workspace = true
 cfg-if.workspace = true
-chrono = { workspace = true, features = ["arbitrary"] }
+chrono.workspace = true
 derive_more.workspace = true
 indexmap.workspace = true
 rand.workspace = true
@@ -38,6 +38,7 @@ test-programs-sleep-workflow-builder.workspace = true
 test-programs-http-get-activity-builder.workspace = true
 test-programs-http-get-workflow-builder.workspace = true
 test-utils.workspace = true
+executor = { workspace = true, features = ["test"] }
 
 async-trait.workspace = true
 futures-util.workspace = true

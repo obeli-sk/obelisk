@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutorId;
-use db::{
+use concepts::{
     storage::{
-        AppendRequest, AsyncResponse, DbConnection, DbConnectionError, ExecutionEventInner,
-        ExpiredTimer, HistoryEvent,
+        AppendRequest, DbConnection, DbConnectionError, ExecutionEventInner, ExpiredTimer,
+        HistoryEvent, JoinSetResponse,
     },
     FinishedExecutionError,
 };
@@ -79,7 +79,8 @@ impl<DB: DbConnection> Task<DB> {
                 let task = Self { db_connection };
                 let mut old_err = None;
                 loop {
-                    let res = task.tick((config.clock_fn)()).await;
+                    let executed_at = (config.clock_fn)();
+                    let res = task.tick(executed_at).await;
                     Self::log_err_if_new(res, &mut old_err);
                     if is_closing_inner.load(Ordering::Relaxed) {
                         return;
@@ -165,9 +166,9 @@ impl<DB: DbConnection> Task<DB> {
                     delay_id,
                 } => {
                     let event = ExecutionEventInner::HistoryEvent {
-                        event: HistoryEvent::AsyncResponse {
+                        event: HistoryEvent::JoinSetResponse {
                             join_set_id,
-                            response: AsyncResponse::DelayFinishedAsyncResponse { delay_id },
+                            response: JoinSetResponse::DelayFinished { delay_id },
                         },
                     };
                     debug!(%execution_id, %join_set_id, %delay_id, "Appending DelayFinishedAsyncResponse");

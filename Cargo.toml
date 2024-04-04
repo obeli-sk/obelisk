@@ -62,7 +62,7 @@ async-trait = "0.1"
 bitflags = "2.4.2"
 cargo_metadata = "0.18"
 cfg-if = "1.0.0"
-chrono = "0.4.34"
+chrono = { version = "0.4.34", features = ["arbitrary"] }
 criterion = "0.5"
 derivative = "2.2.0"
 derive_more = "0.99.17"

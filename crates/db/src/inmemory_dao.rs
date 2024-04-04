@@ -5,16 +5,15 @@
 //! When inserting, the row in the journal must contain a version that must be equal
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::index::JournalsIndex;
-use super::{journal::ExecutionJournal, ExecutionEventInner};
-use super::{AppendBatchResponse, AppendRequest, ExpiredTimer, LockedExecution};
-use crate::storage::journal::PendingState;
-use crate::storage::{
-    AppendResponse, DbConnection, DbConnectionError, DbError, ExecutionHistory,
-    LockPendingResponse, LockResponse, SpecificError, Version,
-};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
+use concepts::storage::journal::{ExecutionJournal, PendingState};
+use concepts::storage::{
+    AppendBatchResponse, AppendRequest, AppendResponse, DbConnection, DbConnectionError, DbError,
+    ExecutionEventInner, ExecutionHistory, ExpiredTimer, LockPendingResponse, LockResponse,
+    LockedExecution, SpecificError, Version,
+};
 use concepts::{ExecutionId, FunctionFqn, Params, StrVariant};
 use derivative::Derivative;
 use hashbrown::{HashMap, HashSet};
@@ -176,14 +175,13 @@ impl DbConnection for InMemoryDbConnection {
 }
 
 mod index {
-    use concepts::prefixed_ulid::DelayId;
-
-    use crate::storage::{AsyncResponse, HistoryEvent};
-
     use super::{
-        debug, BTreeMap, BTreeSet, DateTime, ExecutionId, ExecutionJournal, HashMap, HashSet,
-        JoinSetId, PendingState, Utc,
+        debug, BTreeMap, BTreeSet, DateTime, ExecutionId, HashMap, HashSet, JoinSetId,
+        PendingState, Utc,
     };
+    use concepts::prefixed_ulid::DelayId;
+    use concepts::storage::journal::ExecutionJournal;
+    use concepts::storage::{HistoryEvent, JoinSetRequest, JoinSetResponse};
 
     #[derive(Debug, Default)]
     pub(super) struct JournalsIndex {
@@ -280,14 +278,17 @@ mod index {
                 let delay_req_resp = journal
                     .event_history()
                     .filter_map(|e| match e {
-                        HistoryEvent::DelayedUntilAsyncRequest {
+                        HistoryEvent::JoinSetRequest {
                             join_set_id,
-                            delay_id,
-                            expires_at,
+                            request:
+                                JoinSetRequest::DelayRequest {
+                                    delay_id,
+                                    expires_at,
+                                },
                         } => Some(((join_set_id, delay_id), Some(expires_at))),
-                        HistoryEvent::AsyncResponse {
+                        HistoryEvent::JoinSetResponse {
                             join_set_id,
-                            response: AsyncResponse::DelayFinishedAsyncResponse { delay_id },
+                            response: JoinSetResponse::DelayFinished { delay_id },
                         } => Some(((join_set_id, delay_id), None)),
                         _ => None,
                     })
@@ -1061,11 +1062,10 @@ pub mod tick {
 #[cfg(test)]
 pub mod tests {
     use self::tick::TickBasedDbConnection;
-
     use super::*;
-    use crate::{storage::HistoryEvent, FinishedExecutionError, FinishedExecutionResult};
     use assert_matches::assert_matches;
     use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
+    use concepts::{storage::HistoryEvent, FinishedExecutionError, FinishedExecutionResult};
     use std::{
         ops::Deref,
         sync::Arc,

@@ -2,9 +2,9 @@ use crate::{EngineConfig, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
+use concepts::storage::{HistoryEvent, Version};
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use concepts::{Params, SupportedFunctionResult};
-use db::storage::{HistoryEvent, Version};
 use executor::worker::FatalError;
 use executor::worker::{Worker, WorkerError};
 use std::collections::HashMap;
@@ -301,8 +301,8 @@ pub(crate) mod tests {
     use super::*;
     use crate::EngineConfig;
     use assert_matches::assert_matches;
-    use concepts::{ExecutionId, Params, SupportedFunctionResult};
-    use db::storage::{inmemory_dao::DbTask, DbConnection};
+    use concepts::{storage::DbConnection, ExecutionId, Params, SupportedFunctionResult};
+    use db::inmemory_dao::DbTask;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::time::{Duration, Instant};
     use test_utils::env_or_default;
@@ -387,7 +387,7 @@ pub(crate) mod tests {
     #[allow(clippy::too_many_lines)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_parallel() {
-        use db::storage::{AppendRequest, ExecutionEventInner};
+        use concepts::storage::{AppendRequest, ExecutionEventInner};
         use std::sync::Arc;
 
         const EXECUTIONS: usize = 20_000; // release: 70_000
@@ -685,14 +685,14 @@ pub(crate) mod tests {
             FunctionFqn::new_static_tuple(test_programs_sleep_activity_builder::SLEEP_LOOP); // sleep-loop: func(millis: u64, iterations: u32);
 
         #[rstest::rstest]
-        #[case(10, 100, Err(db::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
+        #[case(10, 100, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
         #[case(10, 10, Ok(SupportedFunctionResult::None))] // 0.1s -> Ok
-        #[case(1500, 1, Err(db::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
+        #[case(1500, 1, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
         #[tokio::test]
         async fn sleep_should_produce_intermittent_timeout(
             #[case] sleep_millis: u64,
             #[case] sleep_iterations: u32,
-            #[case] expected: db::FinishedExecutionResult,
+            #[case] expected: concepts::FinishedExecutionResult,
             #[values(false, true)] recycle: bool,
         ) {
             const EPOCH_MILLIS: u64 = 10;

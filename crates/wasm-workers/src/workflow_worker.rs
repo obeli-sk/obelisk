@@ -3,9 +3,9 @@ use crate::{EngineConfig, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
+use concepts::storage::{HistoryEvent, Version};
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use concepts::{Params, SupportedFunctionResult};
-use db::storage::{HistoryEvent, Version};
 use executor::worker::FatalError;
 use executor::worker::{Worker, WorkerError};
 use std::collections::HashMap;
@@ -328,8 +328,9 @@ mod tests {
         EngineConfig,
     };
     use assert_matches::assert_matches;
+    use concepts::storage::{journal::PendingState, DbConnection};
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
-    use db::storage::{inmemory_dao::DbTask, journal::PendingState, DbConnection};
+    use db::inmemory_dao::DbTask;
     use executor::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
         expired_timers_watcher,

@@ -380,13 +380,19 @@ name = "concepts"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
+ "assert_matches",
+ "async-trait",
+ "chrono",
  "derive_more",
  "getrandom",
  "madsim",
+ "madsim-tokio",
  "serde_json",
  "thiserror",
+ "tracing",
  "ulid",
  "val-json",
+ "valuable",
  "wasmtime",
 ]
 
@@ -2177,6 +2183,7 @@ name = "test-utils"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "tracing",
  "tracing-chrome",
  "tracing-subscriber",
  "utils",

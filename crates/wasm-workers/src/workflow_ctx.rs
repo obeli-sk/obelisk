@@ -1,8 +1,8 @@
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
+use concepts::storage::JoinSetResponse;
+use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionResult};
-use db::storage::AsyncResponse;
-use db::storage::HistoryEvent;
 use executor::worker::{ChildExecutionRequest, FatalError, SleepRequest, WorkerError};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -85,7 +85,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     debug!("Skipping JoinSet");
                     self.events_idx += 1;
                 }
-                HistoryEvent::ChildExecutionAsyncRequest { .. } => {
+                HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                } => {
                     debug!("Skipping ChildExecutionAsyncRequest");
                     self.events_idx += 1;
                 }
@@ -93,9 +96,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     debug!("Skipping JoinNextBlocking");
                     self.events_idx += 1;
                 }
-                HistoryEvent::AsyncResponse {
+                HistoryEvent::JoinSetResponse {
                     response:
-                        AsyncResponse::ChildExecutionAsyncResponse {
+                        JoinSetResponse::ChildExecutionFinished {
                             child_execution_id,
                             result,
                         },
@@ -157,7 +160,14 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     debug!("Skipping JoinSet");
                     self.events_idx += 1;
                 }
-                HistoryEvent::DelayedUntilAsyncRequest { .. } => {
+                HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request:
+                        JoinSetRequest::DelayRequest {
+                            delay_id,
+                            expires_at: _,
+                        },
+                } => {
                     debug!("Skipping ChildExecutionAsyncRequest");
                     self.events_idx += 1;
                 }
@@ -165,9 +175,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     debug!("Skipping JoinNextBlocking");
                     self.events_idx += 1;
                 }
-                HistoryEvent::AsyncResponse {
+                HistoryEvent::JoinSetResponse {
                     response:
-                        AsyncResponse::DelayFinishedAsyncResponse {
+                        JoinSetResponse::DelayFinished {
                             delay_id: found_delay_id,
                         },
                     ..
@@ -212,15 +222,18 @@ impl<C: ClockFn> my_org::workflow_engine::host_activities::Host for WorkflowCtx<
 #[cfg(test)]
 mod tests {
     use crate::workflow_ctx::WorkflowCtx;
+    use assert_matches::assert_matches;
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
-    use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
-    use db::{
+    use concepts::{
         storage::{
-            inmemory_dao::DbTask, journal::PendingState, DbConnection, HistoryEvent, Version,
+            journal::PendingState, DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
+            JoinSetRequest, Version,
         },
         FinishedExecutionResult,
     };
+    use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
+    use db::inmemory_dao::DbTask;
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
@@ -228,6 +241,7 @@ mod tests {
     };
     use std::{fmt::Debug, time::Duration};
     use test_utils::sim_clock::SimClock;
+    use tracing::debug;
 
     use utils::time::{now, ClockFn};
 
@@ -317,6 +331,10 @@ mod tests {
                 .count(),
         )
         .unwrap();
+        let mut child_execution_count = steps
+            .iter()
+            .filter(|step| matches!(step, WorkflowStep::Call { .. }))
+            .count();
         let timers_watcher_task = expired_timers_watcher::Task::spawn_new(
             db_connection.clone(),
             expired_timers_watcher::Config {
@@ -353,10 +371,31 @@ mod tests {
             )
             .await
             .unwrap();
-
+        db_connection
+            .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet, None)
+            .await
+            .unwrap();
         sim_clock.sleep(Duration::from_millis(
             SLEEP_MILLIS_IN_STEP * total_sleep_count,
         ));
+        while child_execution_count > 0 {
+            db_connection
+                .wait_for_pending_state(execution_id, PendingState::BlockedByJoinSet, None)
+                .await
+                .unwrap();
+            let execution_history = db_connection.get(execution_id).await.unwrap();
+            let last = assert_history_event(execution_history.last_event());
+            let last = assert_matches!(last, HistoryEvent::JoinNextBlocking { join_set_id } => *join_set_id);
+            let child_request = execution_history.async_requests(last).collect::<Vec<_>>();
+            assert_eq!(child_request.len(), 1);
+            let child_request = child_request[0];
+            let child_request = assert_matches!(
+                child_request,
+                JoinSetRequest::ChildExecutionRequest { child_execution_id } => *child_execution_id
+            );
+            // TODO: publish child execution result
+            child_execution_count -= 1;
+        }
         db_connection
             .wait_for_pending_state(execution_id, PendingState::Finished, None)
             .await
@@ -369,6 +408,16 @@ mod tests {
         (
             execution_history.event_history().collect(),
             execution_history.finished_result().unwrap().clone(),
+        )
+    }
+
+    fn assert_history_event(event: &ExecutionEvent) -> &HistoryEvent {
+        assert_matches!(
+            event,
+            ExecutionEvent {
+                event: ExecutionEventInner::HistoryEvent { event },
+                ..
+            } => event
         )
     }
 }

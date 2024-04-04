@@ -1,25 +1,131 @@
-pub mod inmemory_dao;
-
 use self::journal::PendingState;
-use crate::ExecutionHistory;
+use crate::prefixed_ulid::DelayId;
+use crate::prefixed_ulid::ExecutorId;
+use crate::prefixed_ulid::JoinSetId;
+use crate::prefixed_ulid::RunId;
+use crate::ExecutionId;
 use crate::FinishedExecutionResult;
+use crate::FunctionFqn;
+use crate::Params;
+use crate::StrVariant;
+use crate::SupportedFunctionResult;
+use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::DelayId;
-use concepts::prefixed_ulid::ExecutorId;
-use concepts::prefixed_ulid::JoinSetId;
-use concepts::prefixed_ulid::RunId;
-use concepts::ExecutionId;
-use concepts::FunctionFqn;
-use concepts::Params;
-use concepts::StrVariant;
-use concepts::SupportedFunctionResult;
 use std::time::Duration;
+use tracing::debug;
+
+/// Remote client representation of the execution journal.
+#[derive(Debug)]
+pub struct ExecutionHistory {
+    pub execution_id: ExecutionId,
+    pub events: Vec<ExecutionEvent>,
+    pub version: Version,
+    pub pending_state: PendingState,
+}
+
+impl ExecutionHistory {
+    fn already_retried_count(&self) -> u32 {
+        u32::try_from(
+            self.events
+                .iter()
+                .filter(|event| event.event.is_retry())
+                .count(),
+        )
+        .unwrap()
+    }
+
+    #[must_use]
+    pub fn can_be_retried_after(&self) -> Option<Duration> {
+        let already_retried_count = self.already_retried_count();
+        if already_retried_count < self.max_retries() {
+            let duration = self.retry_exp_backoff() * 2_u32.saturating_pow(already_retried_count);
+            Some(duration)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn retry_exp_backoff(&self) -> Duration {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
+            event: ExecutionEventInner::Created { retry_exp_backoff, .. },
+            ..
+        }) => *retry_exp_backoff)
+    }
+
+    #[must_use]
+    pub fn max_retries(&self) -> u32 {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
+            event: ExecutionEventInner::Created { max_retries, .. },
+            ..
+        }) => *max_retries)
+    }
+
+    #[must_use]
+    pub fn params(&self) -> Params {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
+            event: ExecutionEventInner::Created { params, .. },
+            ..
+        }) => params.clone())
+    }
+
+    #[must_use]
+    pub fn parent(&self) -> Option<(ExecutionId, JoinSetId)> {
+        assert_matches!(self.events.first(), Some(ExecutionEvent {
+            event: ExecutionEventInner::Created { parent, .. },
+            ..
+        }) => *parent)
+    }
+
+    #[must_use]
+    pub fn last_event(&self) -> &ExecutionEvent {
+        self.events.last().expect("must contain at least one event")
+    }
+
+    #[must_use]
+    pub fn finished_result(&self) -> Option<&FinishedExecutionResult> {
+        if let ExecutionEvent {
+            event: ExecutionEventInner::Finished { result, .. },
+            ..
+        } = self.last_event()
+        {
+            Some(result)
+        } else {
+            None
+        }
+    }
+
+    pub fn event_history(&self) -> impl Iterator<Item = HistoryEvent> + '_ {
+        self.events.iter().filter_map(|event| {
+            if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {
+                Some(eh.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn async_requests(&self, join_set_id: JoinSetId) -> impl Iterator<Item = &JoinSetRequest> {
+        self.events
+            .iter()
+            .filter_map(move |event| match &event.event {
+                ExecutionEventInner::HistoryEvent {
+                    event:
+                        HistoryEvent::JoinSetRequest {
+                            join_set_id: found,
+                            request,
+                        },
+                    ..
+                } if join_set_id == *found => Some(request),
+                _ => None,
+            })
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
 pub struct Version(usize);
 impl Version {
-    #[cfg(any(test, feature = "test"))]
     #[must_use]
     pub fn new(arg: usize) -> Self {
         Self(arg)
@@ -90,7 +196,7 @@ pub enum ExecutionEventInner {
 }
 
 impl ExecutionEventInner {
-    fn appendable_only_in_lock(&self) -> bool {
+    pub fn appendable_only_in_lock(&self) -> bool {
         match self {
             Self::Locked { .. } // only if the lock is being extended by the same executor
             | Self::IntermittentFailure { .. }
@@ -109,12 +215,12 @@ impl ExecutionEventInner {
         )
     }
 
-    fn appendable_without_version(&self) -> bool {
+    pub fn appendable_without_version(&self) -> bool {
         matches!(
             self,
             Self::HistoryEvent {
-                event: HistoryEvent::AsyncResponse {
-                    response: AsyncResponse::ChildExecutionAsyncResponse { .. },
+                event: HistoryEvent::JoinSetResponse {
+                    response: JoinSetResponse::ChildExecutionFinished { .. },
                     ..
                 }
             } | Self::Created { .. }
@@ -133,23 +239,15 @@ pub enum HistoryEvent {
         value: Vec<u8>,
     },
     // Must be created by the executor in `PotentiallyPending::Locked` state.
+    #[display(fmt = "JoinSet({join_set_id})")]
     JoinSet {
         join_set_id: JoinSetId,
+        kind: JoinSetKind,
     },
-    // JoinSet entry that will be unblocked by DelayFinishedAsyncResponse.
-    // Must be created by the executor in `PotentiallyPending::Locked` state.
-    #[display(fmt = "DelayedUntilAsyncRequest({join_set_id})")]
-    DelayedUntilAsyncRequest {
+    #[display(fmt = "JoinSetRequest({join_set_id})")]
+    JoinSetRequest {
         join_set_id: JoinSetId,
-        delay_id: DelayId,
-        expires_at: DateTime<Utc>,
-    },
-    // JoinSet entry that will be unblocked by ChildExecutionRequested.
-    // Must be created by the executor in `PotentiallyPending::Locked` state.
-    #[display(fmt = "ChildExecutionAsyncRequest({join_set_id})")]
-    ChildExecutionAsyncRequest {
-        join_set_id: JoinSetId,
-        child_execution_id: ExecutionId,
+        request: JoinSetRequest,
     },
     // Execution continues without blocking as the next pending response is in the journal.
     // Must be created by the executor in `PotentiallyPending::Locked` state.
@@ -158,9 +256,9 @@ pub enum HistoryEvent {
     },
     // Moves the execution to `PotentiallyPending::PendingNow` if it is currently blocked on `JoinNextBlocking`.
     #[display(fmt = "AsyncResponse({join_set_id}, {response})")]
-    AsyncResponse {
+    JoinSetResponse {
         join_set_id: JoinSetId,
-        response: AsyncResponse,
+        response: JoinSetResponse,
     },
     // Must be created by the executor in `PotentiallyPending::Locked` state.
     // Execution is `PotentiallyPending::BlockedByJoinSet` until the next response of the JoinSet arrives.
@@ -169,21 +267,37 @@ pub enum HistoryEvent {
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
+pub enum JoinSetKind {
+    Unordered,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
+pub enum JoinSetRequest {
+    // Must be created by the executor in `PotentiallyPending::Locked` state.
+    #[display(fmt = "DelayRequest({delay_id})")]
+    DelayRequest {
+        delay_id: DelayId,
+        expires_at: DateTime<Utc>,
+    },
+    // Must be created by the executor in `PotentiallyPending::Locked` state.
+    #[display(fmt = "ChildExecutionRequest({child_execution_id})")]
+    ChildExecutionRequest { child_execution_id: ExecutionId },
+}
+
 impl HistoryEvent {
     fn appendable_only_in_lock(&self) -> bool {
-        !matches!(self, Self::AsyncResponse { .. })
+        !matches!(self, Self::JoinSetResponse { .. })
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
-pub enum AsyncResponse {
-    // Created by a scheduler sometime after DelayedUntilAsyncRequest.
-    DelayFinishedAsyncResponse {
+pub enum JoinSetResponse {
+    DelayFinished {
         delay_id: DelayId,
     },
-    // Created by an executor after ChildExecutionRequested.
     #[display(fmt = "ChildExecutionAsyncResponse({child_execution_id})")]
-    ChildExecutionAsyncResponse {
+    ChildExecutionFinished {
         child_execution_id: ExecutionId,
         #[arbitrary(value = Ok(SupportedFunctionResult::None))]
         result: FinishedExecutionResult,
@@ -328,10 +442,38 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         expected_pending_state: PendingState,
         timeout: Option<Duration>,
     ) -> Result<ExecutionHistory, DbError> {
+        debug!(%execution_id, "Waiting for {expected_pending_state}");
         let fut = async move {
             loop {
                 let execution_history = self.get(execution_id).await?;
                 if execution_history.pending_state == expected_pending_state {
+                    return Ok(execution_history);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+
+        if let Some(timeout) = timeout {
+            tokio::select! {
+                res = fut => res,
+                () = tokio::time::sleep(timeout) => Err(DbError::Connection(DbConnectionError::Timeout))
+            }
+        } else {
+            fut.await
+        }
+    }
+
+    async fn wait_for_pending_state_fn(
+        &self,
+        execution_id: ExecutionId,
+        prdicate: impl Fn(PendingState) -> bool + Send,
+        timeout: Option<Duration>,
+    ) -> Result<ExecutionHistory, DbError> {
+        debug!(%execution_id, "Waiting for predicate");
+        let fut = async move {
+            loop {
+                let execution_history = self.get(execution_id).await?;
+                if prdicate(execution_history.pending_state) {
                     return Ok(execution_history);
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -374,24 +516,24 @@ pub enum ExpiredTimer {
 pub mod journal {
     use super::{ExecutionEvent, ExecutionEventInner, ExecutionId, HistoryEvent};
     use crate::storage::{ExecutionHistory, SpecificError, Version};
-    use assert_matches::assert_matches;
-    use chrono::{DateTime, Utc};
-    use concepts::{
+    use crate::{
         prefixed_ulid::{ExecutorId, JoinSetId, RunId},
         FunctionFqn, Params, StrVariant,
     };
+    use assert_matches::assert_matches;
+    use chrono::{DateTime, Utc};
     use std::{collections::VecDeque, sync::Arc, time::Duration};
 
     #[derive(Debug)]
-    pub(crate) struct ExecutionJournal {
-        execution_id: ExecutionId,
-        pub(crate) pending_state: PendingState,
-        execution_events: VecDeque<ExecutionEvent>,
+    pub struct ExecutionJournal {
+        pub execution_id: ExecutionId,
+        pub pending_state: PendingState,
+        pub execution_events: VecDeque<ExecutionEvent>,
     }
 
     impl ExecutionJournal {
         #[allow(clippy::too_many_arguments)]
-        pub(crate) fn new(
+        pub fn new(
             execution_id: ExecutionId,
             ffqn: FunctionFqn,
             params: Params,
@@ -423,11 +565,11 @@ pub mod journal {
             }
         }
 
-        pub(crate) fn len(&self) -> usize {
+        pub fn len(&self) -> usize {
             self.execution_events.len()
         }
 
-        pub(crate) fn ffqn(&self) -> &FunctionFqn {
+        pub fn ffqn(&self) -> &FunctionFqn {
             match self.execution_events.front().unwrap() {
                 ExecutionEvent {
                     event: ExecutionEventInner::Created { ffqn, .. },
@@ -437,15 +579,15 @@ pub mod journal {
             }
         }
 
-        pub(crate) fn version(&self) -> Version {
+        pub fn version(&self) -> Version {
             Version(self.execution_events.len())
         }
 
-        pub(crate) fn execution_id(&self) -> ExecutionId {
+        pub fn execution_id(&self) -> ExecutionId {
             self.execution_id
         }
 
-        pub(crate) fn append(
+        pub fn append(
             &mut self,
             created_at: DateTime<Utc>,
             event: ExecutionEventInner,
@@ -581,7 +723,7 @@ pub mod journal {
                             matches!(event, ExecutionEvent {
                                 event:
                                     ExecutionEventInner::HistoryEvent{event:
-                                        HistoryEvent::AsyncResponse { join_set_id, .. },
+                                        HistoryEvent::JoinSetResponse { join_set_id, .. },
                                     .. },
                                 .. }
                                 if expected_join_set_id == join_set_id)
@@ -596,7 +738,7 @@ pub mod journal {
                 .expect("journal must begin with Created event")
         }
 
-        pub(crate) fn event_history(&self) -> impl Iterator<Item = HistoryEvent> + '_ {
+        pub fn event_history(&self) -> impl Iterator<Item = HistoryEvent> + '_ {
             self.execution_events.iter().filter_map(|event| {
                 if let ExecutionEventInner::HistoryEvent { event: eh, .. } = &event.event {
                     Some(eh.clone())
@@ -606,21 +748,21 @@ pub mod journal {
             })
         }
 
-        pub(crate) fn retry_exp_backoff(&self) -> Duration {
+        pub fn retry_exp_backoff(&self) -> Duration {
             assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
                 event: ExecutionEventInner::Created { retry_exp_backoff, .. },
                 ..
             }) => *retry_exp_backoff)
         }
 
-        pub(crate) fn max_retries(&self) -> u32 {
+        pub fn max_retries(&self) -> u32 {
             assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
                 event: ExecutionEventInner::Created { max_retries, .. },
                 ..
             }) => *max_retries)
         }
 
-        pub(crate) fn already_retried_count(&self) -> u32 {
+        pub fn already_retried_count(&self) -> u32 {
             u32::try_from(
                 self.execution_events
                     .iter()
@@ -630,7 +772,7 @@ pub mod journal {
             .unwrap()
         }
 
-        pub(crate) fn params(&self) -> Params {
+        pub fn params(&self) -> Params {
             assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
                 event: ExecutionEventInner::Created { params, .. },
                 ..
@@ -646,13 +788,13 @@ pub mod journal {
             }
         }
 
-        pub(crate) fn truncate(&mut self, len: usize) {
+        pub fn truncate(&mut self, len: usize) {
             self.execution_events.truncate(len);
             self.pending_state = self.calculate_pending_state();
         }
     }
 
-    #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq)]
     pub enum PendingState {
         PendingNow,
         #[display(fmt = "Locked(`{lock_expires_at}`,{executor_id})")]

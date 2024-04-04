@@ -16,7 +16,7 @@ assert_matches.workspace = true
 async-channel.workspace = true
 async-trait.workspace = true
 cfg-if.workspace = true
-chrono = { workspace = true, features = ["arbitrary"] }
+chrono.workspace = true
 derivative.workspace = true
 derive_more.workspace = true
 indexmap.workspace = true
@@ -32,6 +32,9 @@ test-utils.workspace = true
 
 anyhow.workspace = true
 madsim.workspace = true
+
+[features]
+test = []
 
 [lints]
 workspace = true
