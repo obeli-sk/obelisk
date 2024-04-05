@@ -250,7 +250,7 @@ mod tests {
         expired_timers_watcher,
         worker::{Worker, WorkerError, WorkerResult},
     };
-    use std::{fmt::Debug, time::Duration};
+    use std::{fmt::Debug, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info};
     use utils::time::{now, ClockFn};
@@ -361,10 +361,10 @@ mod tests {
             },
         );
         let workflow_exec_task = {
-            let worker = WorkflowWorkerMock {
+            let worker = Arc::new(WorkflowWorkerMock {
                 steps,
                 clock_fn: sim_clock.clock_fn(),
-            };
+            });
             let exec_config = ExecConfig {
                 ffqns: vec![MOCK_FFQN],
                 batch_size: 1,
@@ -434,10 +434,10 @@ mod tests {
                     assert_eq!(Some((execution_id, join_set_id)), child_request.parent());
                     // execute
                     let child_exec_task = {
-                        let worker = WorkflowWorkerMock {
+                        let worker = Arc::new(WorkflowWorkerMock {
                             steps: vec![],
                             clock_fn: sim_clock.clock_fn(),
-                        };
+                        });
                         let exec_config = ExecConfig {
                             ffqns: vec![child_request.ffqn().clone()],
                             batch_size: 1,

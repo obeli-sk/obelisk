@@ -52,7 +52,7 @@ impl<C: ClockFn> WorkflowWorker<C> {
     pub fn new_with_config(
         config: WorkflowConfig<C>,
         engine: Arc<Engine>,
-    ) -> Result<Self, WasmFileError> {
+    ) -> Result<Arc<Self>, WasmFileError> {
         const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
 
         info!("Reading");
@@ -134,13 +134,13 @@ impl<C: ClockFn> WorkflowWorker<C> {
             reason: StrVariant::Arc(Arc::from("cannot add host activities".to_string())),
             err: err.into(),
         })?;
-        Ok(Self {
+        Ok(Arc::new(Self {
             config,
             engine,
             exported_ffqns_to_results_len,
             linker,
             component,
-        })
+        }))
     }
 }
 

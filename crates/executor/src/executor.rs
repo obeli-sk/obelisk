@@ -32,7 +32,7 @@ pub struct ExecConfig<C: ClockFn> {
 
 pub struct ExecTask<DB: DbConnection, W: Worker, C: ClockFn> {
     db_connection: DB,
-    worker: W,
+    worker: Arc<W>,
     config: ExecConfig<C>,
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_id: ExecutorId,
@@ -78,7 +78,7 @@ impl Drop for ExecutorTaskHandle {
 impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
     pub fn spawn_new(
         db_connection: DB,
-        worker: W,
+        worker: Arc<W>,
         config: ExecConfig<C>,
         task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> ExecutorTaskHandle {
@@ -232,7 +232,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
     #[instrument(skip_all, fields(%execution_id, %ffqn))]
     #[allow(clippy::too_many_arguments)]
     async fn run_worker(
-        worker: W,
+        worker: Arc<W>,
         db_connection: DB,
         execution_id: ExecutionId,
         version: Version,
@@ -586,7 +586,7 @@ mod tests {
     async fn tick_fn<DB: DbConnection, W: Worker + Debug, C: ClockFn + 'static>(
         db_connection: DB,
         config: ExecConfig<C>,
-        worker: W,
+        worker: Arc<W>,
         executed_at: DateTime<Utc>,
     ) -> ExecutionProgress {
         trace!("Ticking with {worker:?}");
@@ -636,7 +636,7 @@ mod tests {
             created_at,
             db_connection,
             exec_config,
-            SimpleWorker { worker_results_rev },
+            Arc::new(SimpleWorker { worker_results_rev }),
             0,
             created_at,
             Duration::ZERO,
@@ -680,7 +680,7 @@ mod tests {
             created_at,
             db_connection,
             exec_config,
-            SimpleWorker { worker_results_rev },
+            Arc::new(SimpleWorker { worker_results_rev }),
             0,
             created_at,
             Duration::ZERO,
@@ -721,9 +721,9 @@ mod tests {
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
-        let worker = SimpleWorker {
+        let worker = Arc::new(SimpleWorker {
             worker_results_rev: worker_results_rev.clone(),
-        };
+        });
         let exec_task = ExecTask::spawn_new(
             db_task.as_db_connection().unwrap(),
             worker.clone(),
@@ -763,13 +763,13 @@ mod tests {
         DB: DbConnection,
         W: Worker,
         C: ClockFn,
-        T: FnMut(DB, ExecConfig<C>, W, DateTime<Utc>) -> F,
+        T: FnMut(DB, ExecConfig<C>, Arc<W>, DateTime<Utc>) -> F,
         F: Future<Output = ExecutionProgress>,
     >(
         created_at: DateTime<Utc>,
         db_connection: DB,
         exec_config: ExecConfig<C>,
-        worker: W,
+        worker: Arc<W>,
         max_retries: u32,
         executed_at: DateTime<Utc>,
         retry_exp_backoff: Duration,
@@ -838,7 +838,7 @@ mod tests {
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
         };
-        let worker = SimpleWorker {
+        let worker = Arc::new(SimpleWorker {
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(2),
                 (
@@ -852,7 +852,7 @@ mod tests {
                     )),
                 ),
             )]))),
-        };
+        });
         let retry_exp_backoff = Duration::from_millis(100);
         debug!(now = %sim_clock.now(), "Creating an execution that should fail");
         let execution_history = create_and_tick(
@@ -877,12 +877,12 @@ mod tests {
                 created_at: at,
             } if reason.deref() == "fail" && *at == sim_clock.now() && *expires_at == sim_clock.now() + retry_exp_backoff
         );
-        let worker = SimpleWorker {
+        let worker = Arc::new(SimpleWorker {
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(4),
                 (vec![], Ok((SupportedFunctionResult::None, Version::new(4)))),
             )]))),
-        };
+        });
         // noop until `retry_exp_backoff` expires
         assert!(tick_fn(
             db_connection.clone(),
@@ -934,7 +934,7 @@ mod tests {
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
         };
-        let worker = SimpleWorker {
+        let worker = Arc::new(SimpleWorker {
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(2),
                 (
@@ -948,7 +948,7 @@ mod tests {
                     )),
                 ),
             )]))),
-        };
+        });
         let execution_history = create_and_tick(
             created_at,
             db_connection.clone(),
@@ -974,7 +974,7 @@ mod tests {
         );
         assert_eq!("Execution returned error result: `None`", reason);
         // tick again to finish the execution
-        let worker = SimpleWorker {
+        let worker = Arc::new(SimpleWorker {
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(4),
                 (
@@ -988,7 +988,7 @@ mod tests {
                     )),
                 ),
             )]))),
-        };
+        });
         tick_fn(db_connection.clone(), exec_config, worker, created_at).await;
         let execution_history = db_connection
             .get(execution_history.execution_id)
@@ -1067,10 +1067,10 @@ mod tests {
             db_connection: db_connection.clone(),
         };
 
-        let worker = SleepyWorker {
+        let worker = Arc::new(SleepyWorker {
             duration: exec_config.lock_expiry + Duration::from_millis(1), // sleep more than allowed by the lock expiry
             result: SupportedFunctionResult::None,
-        };
+        });
         // Create an execution
         let execution_id = ExecutionId::generate();
         let timeout_duration = Duration::from_millis(300);

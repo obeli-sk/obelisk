@@ -10,7 +10,6 @@ use std::{
 use val_json::{wast_val::WastVal, TypeWrapper, ValWrapper};
 
 pub mod storage;
-pub mod worker;
 
 pub type FinishedExecutionResult = Result<SupportedFunctionResult, FinishedExecutionError>;
 

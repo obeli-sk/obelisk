@@ -64,8 +64,7 @@ pub mod worker {
     }
 
     #[async_trait]
-    pub trait Worker: Clone + valuable::Valuable + Send + Sync + 'static {
-        // FIXME: Remove Clone
+    pub trait Worker: valuable::Valuable + Send + Sync + 'static {
         async fn run(
             &self,
             execution_id: ExecutionId,

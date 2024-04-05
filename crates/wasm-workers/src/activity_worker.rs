@@ -80,7 +80,7 @@ impl<C: ClockFn> ActivityWorker<C> {
     pub fn new_with_config(
         config: ActivityConfig<C>,
         engine: Arc<Engine>,
-    ) -> Result<Self, WasmFileError> {
+    ) -> Result<Arc<Self>, WasmFileError> {
         info!("Reading");
         let wasm = std::fs::read(config.wasm_path.deref())
             .map_err(|err| WasmFileError::CannotOpen(config.wasm_path.clone(), err))?;
@@ -118,14 +118,14 @@ impl<C: ClockFn> ActivityWorker<C> {
         let component = wasmtime::component::Component::from_binary(&engine, &wasm)
             .map_err(|err| WasmFileError::CompilationError(config.wasm_path.clone(), err.into()))?;
         let recycled_instances = config.recycled_instances.instantiate();
-        Ok(Self {
+        Ok(Arc::new(Self {
             config,
             engine,
             ffqns_to_results_len,
             linker,
             component,
             recycled_instances,
-        })
+        }))
     }
 }
 
