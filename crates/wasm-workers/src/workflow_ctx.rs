@@ -13,7 +13,6 @@ use tracing::{debug, trace};
 use utils::time::ClockFn;
 use wasmtime::component::{Linker, Val};
 
-#[allow(dead_code)] // FIXME: Implement non determinism check
 #[derive(thiserror::Error, Debug, Clone)]
 pub(crate) enum FunctionError {
     #[error("non deterministic execution: `{0}`")]
@@ -305,6 +304,16 @@ mod tests {
             Ok((SupportedFunctionResult::None, version))
         }
     }
+
+    // FIXME: verify non-determinism detection:
+    // Start WorkflowWorkerMock, wait until it completes.
+    // Copy its execution history to a new database
+    // A. Swap two event history items
+    // B. Swap two steps in WorkflowWorkerMock
+    // C. Add new event history item
+    // D. Add new step - needs whole execution history, must be done on another layer
+    // E. Remove a step
+    // F. Change the final result
 
     #[tokio::test]
     async fn check_determinism() {
