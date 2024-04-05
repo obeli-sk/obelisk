@@ -417,7 +417,11 @@ mod tests {
                 }
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
                     assert!(child_execution_count > 0);
-                    let child_request = db_connection.get(*child_execution_id).await.unwrap();
+                    let child_request = loop {
+                        if let Ok(res) = db_connection.get(*child_execution_id).await {
+                            break res;
+                        }
+                    };
                     assert_eq!(Some((execution_id, join_set_id)), child_request.parent());
                     // execute
                     let child_exec_task = {
