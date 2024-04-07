@@ -514,13 +514,15 @@ struct Append {
 
 #[cfg(any(test, feature = "test"))]
 pub mod simple_worker {
-    use async_trait::async_trait;
-    use indexmap::IndexMap;
-
     use super::{
         trace, Arc, DateTime, ExecutionId, FunctionFqn, HistoryEvent, Params, Utc, Version, Worker,
         WorkerResult,
     };
+    use async_trait::async_trait;
+    use indexmap::IndexMap;
+
+    pub(crate) const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+    pub(crate) const SOME_FFQN_PTR: &'static FunctionFqn = &SOME_FFQN;
 
     pub type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent>, WorkerResult)>>>;
@@ -556,12 +558,16 @@ pub mod simple_worker {
             assert_eq!(expected_eh, eh);
             worker_result
         }
+
+        fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+            Some(SOME_FFQN_PTR).into_iter()
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use self::simple_worker::SimpleWorker;
+    use self::simple_worker::{SimpleWorker, SOME_FFQN_PTR};
     use super::*;
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use anyhow::anyhow;
@@ -573,6 +579,7 @@ mod tests {
     use concepts::{Params, SupportedFunctionResult};
     use db::inmemory_dao::{tick::TickBasedDbConnection, DbTask};
     use indexmap::IndexMap;
+    use simple_worker::SOME_FFQN;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::sim_clock::SimClock;
     use utils::time::now;
@@ -580,8 +587,6 @@ mod tests {
     fn set_up() {
         test_utils::set_up();
     }
-
-    const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
 
     async fn tick_fn<DB: DbConnection, W: Worker + Debug, C: ClockFn + 'static>(
         db_connection: DB,
@@ -1045,6 +1050,10 @@ mod tests {
         ) -> WorkerResult {
             tokio::time::sleep(self.duration).await;
             Ok((self.result.clone(), version))
+        }
+
+        fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+            Some(SOME_FFQN_PTR).into_iter()
         }
     }
 

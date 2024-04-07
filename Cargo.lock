@@ -2660,6 +2660,7 @@ dependencies = [
  "executor",
  "futures-util",
  "indexmap",
+ "itertools",
  "madsim",
  "madsim-tokio",
  "rand",

@@ -165,6 +165,10 @@ impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
                 RunError::WorkerError(err) => (err, version),
             })
     }
+
+    fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+        self.exported_ffqns_to_results_len.keys()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

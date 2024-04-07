@@ -74,5 +74,7 @@ pub mod worker {
             version: Version,
             execution_deadline: DateTime<Utc>,
         ) -> WorkerResult;
+
+        fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn>;
     }
 }

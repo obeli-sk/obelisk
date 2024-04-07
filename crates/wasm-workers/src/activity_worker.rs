@@ -135,6 +135,10 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             .map(|supported_result| (supported_result, version))
             .map_err(|err| (err, version))
     }
+
+    fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+        self.exported_ffqns_to_results_len.keys()
+    }
 }
 
 impl<C: ClockFn + 'static> ActivityWorker<C> {

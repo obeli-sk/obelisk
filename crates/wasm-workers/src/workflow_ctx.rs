@@ -257,6 +257,7 @@ mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+    const MOCK_FFQN_PTR: &'static FunctionFqn = &MOCK_FFQN;
 
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
     #[allow(dead_code)]
@@ -302,6 +303,10 @@ mod tests {
                 .map_err(|err| (WorkerError::from(err), version))?;
             }
             Ok((SupportedFunctionResult::None, version))
+        }
+
+        fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+            Some(MOCK_FFQN_PTR).into_iter()
         }
     }
 

@@ -10,8 +10,9 @@ use crate::{
     WasmComponent, WasmFileError,
 };
 use async_trait::async_trait;
-use concepts::{prefixed_ulid::ConfigId, StrVariant};
+use concepts::{prefixed_ulid::ConfigId, FunctionFqn, StrVariant};
 use executor::worker::Worker;
+use itertools::Either;
 use std::sync::Arc;
 use utils::time::ClockFn;
 use wasmtime::Engine;
@@ -75,8 +76,8 @@ impl<C: ClockFn> AutoWorker<C> {
             Self::WorkflowWorker(_) => Kind::Workflow,
         }
     }
+}
 
-    // TODO: pub fn spawn_execs(&self)
 fn supported_wasi_imports<'a>(
     mut imported_packages: impl Iterator<Item = &'a wit_parser::PackageName>,
 ) -> bool {
@@ -118,6 +119,14 @@ impl<C: ClockFn + 'static> Worker for AutoWorker<C> {
                 .await
             }
         }
+    }
+
+    fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+        (match self {
+            AutoWorker::WorkflowWorker(w) => Either::Left(w.supported_functions()),
+            AutoWorker::ActivityWorker(a) => Either::Right(a.supported_functions()),
+        })
+        .into_iter()
     }
 }
 
