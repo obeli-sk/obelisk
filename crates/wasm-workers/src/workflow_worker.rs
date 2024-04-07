@@ -30,12 +30,27 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
     Arc::new(Engine::new(&wasmtime_config).unwrap())
 }
 
+/// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
+#[derive(Debug, Clone, Copy)]
+pub enum JoinNextBlockingStrategy {
+    /// Shut down the current runtime. When the `JoinSetResponse` is appended, workflow is reexecuted with a new `RunId`.
+    Interrupt,
+    // TODO: implement Await:
+    // Keep the execution hot. Worker will poll the database until the execution lock expires.
+}
+
+impl Default for JoinNextBlockingStrategy {
+    fn default() -> Self {
+        Self::Interrupt
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkflowConfig<C: ClockFn> {
     pub config_id: ConfigId,
     pub epoch_millis: u64,
     pub clock_fn: C,
-    // TODO: switch to keep the workflow hot
+    pub join_next_blocking_strategy: JoinNextBlockingStrategy,
 }
 
 #[derive(Clone)]
@@ -351,6 +366,7 @@ mod tests {
                     epoch_millis: EPOCH_MILLIS,
                     config_id: ConfigId::generate(),
                     clock_fn: now,
+                    join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
                 },
                 workflow_engine(EngineConfig::default()),
             )
@@ -441,6 +457,7 @@ mod tests {
                     epoch_millis: EPOCH_MILLIS,
                     config_id: ConfigId::generate(),
                     clock_fn: clock_fn.clone(),
+                    join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
                 },
                 workflow_engine(EngineConfig::default()),
             )
