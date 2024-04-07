@@ -522,7 +522,7 @@ pub mod simple_worker {
     use indexmap::IndexMap;
 
     pub(crate) const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
-    pub(crate) const SOME_FFQN_PTR: &'static FunctionFqn = &SOME_FFQN;
+    pub(crate) const SOME_FFQN_PTR: &FunctionFqn = &SOME_FFQN;
 
     pub type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent>, WorkerResult)>>>;

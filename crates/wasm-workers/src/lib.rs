@@ -74,9 +74,9 @@ impl WasmComponent {
             wasm_path,
             wasm,
             exported_ffqns_to_results_len,
+            imported_ifc_fns,
             resolve,
             world_id,
-            imported_ifc_fns,
         })
     }
 }
