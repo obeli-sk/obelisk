@@ -378,7 +378,7 @@ pub(crate) mod tests {
         db_task.close().await;
     }
 
-    #[cfg(all(test, not(madsim)))] // https://github.com/madsim-rs/madsim/issues/198
+    #[cfg(test)]
     #[allow(clippy::too_many_lines)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_parallel() {

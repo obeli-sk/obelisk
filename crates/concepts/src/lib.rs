@@ -519,63 +519,17 @@ mod tests {
     #[cfg(madsim)]
     #[test]
     fn ulid_generation_should_be_deterministic() {
-        let seed: u64 = 0;
-        // https://github.com/madsim-rs/madsim/issues/201
-        // first run is ignored
-        madsim::runtime::Builder {
-            seed,
-            count: 1,
-            jobs: 1,
-            config: madsim::Config::default(),
-            time_limit: None,
-            check: false,
-        }
-        .run(|| async { ulid::Ulid::new() });
-        assert_eq!(
-            madsim::runtime::Builder {
-                seed,
-                count: 1,
-                jobs: 1,
-                config: madsim::Config::default(),
-                time_limit: None,
-                check: false,
-            }
-            .run(|| async { ulid::Ulid::new() }),
-            madsim::runtime::Builder {
-                seed,
-                count: 1,
-                jobs: 1,
-                config: madsim::Config::default(),
-                time_limit: None,
-                check: false,
-            }
-            .run(|| async { ulid::Ulid::new() })
-        );
-    }
+        let mut builder_a = madsim::runtime::Builder::from_env();
+        builder_a.check = true;
 
-    // FIXME https://github.com/madsim-rs/madsim/issues/201
-    #[cfg(madsim)]
-    #[test]
-    fn madsim_getrandom_should_be_deterministic() {
-        let rnd_fn = || async {
-            let mut dst = [0];
-            getrandom::getrandom(&mut dst).unwrap();
-            println!("{dst:?}");
-            dst
-        };
-        let builder = madsim::runtime::Builder::from_env();
-        let seed = builder.seed;
-        for _ in 0..10 {
-            madsim::runtime::Builder {
-                seed,
-                count: 1,
-                jobs: 1,
-                config: madsim::Config::default(),
-                time_limit: None,
-                check: false,
-            }
-            .run(rnd_fn);
-        }
+        let mut builder_b = madsim::runtime::Builder::from_env(); // Builder: Clone would be useful
+        builder_b.check = true;
+        builder_b.seed = builder_a.seed;
+
+        assert_eq!(
+            builder_a.run(|| async { ulid::Ulid::new() }),
+            builder_b.run(|| async { ulid::Ulid::new() })
+        );
     }
 
     #[test]

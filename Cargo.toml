@@ -75,7 +75,7 @@ hyper-util = "0.1"
 indexmap = "2.1"
 itertools = "0.12.1"
 lazy_static = "1.4"
-madsim = "0.2.25"
+madsim = "0.2.27"
 rand = "0.8.5"
 rstest = "0.18.2"
 serde = { version = "1.0.193", features = ["derive"] }
