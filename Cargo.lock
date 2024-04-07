@@ -2655,6 +2655,7 @@ dependencies = [
  "chrono",
  "concepts",
  "db",
+ "derivative",
  "derive_more",
  "executor",
  "futures-util",
@@ -2680,6 +2681,7 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wiremock",
+ "wit-parser",
 ]
 
 [[package]]

@@ -8,7 +8,7 @@ use wit_parser::{Resolve, WorldId, WorldItem, WorldKey};
 pub enum DecodeError {
     #[error(transparent)]
     ParseError(Box<dyn Error>),
-    #[error("wasm is not a component")]
+    #[error("input file must be a WASI component")]
     NotAComponent,
     #[error("empty packages are not supported")]
     EmptyPackage,
@@ -24,25 +24,25 @@ pub fn decode(wasm: &[u8]) -> Result<(Resolve, WorldId), DecodeError> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct PackageIfcFns<'a> {
-    package_name: &'a wit_parser::PackageName,
-    ifc_name: &'a str,
-    fns: &'a indexmap::IndexMap<String, wit_parser::Function>,
+#[derive(Debug, Clone)]
+pub struct PackageIfcFns {
+    pub package_name: wit_parser::PackageName,
+    pub ifc_name: String,
+    pub fns: indexmap::IndexMap<String, wit_parser::Function>,
 }
 
-pub fn exported_ifc_fns<'a>(
-    resolve: &'a Resolve,
-    world_id: &'a WorldId,
-) -> Result<Vec<PackageIfcFns<'a>>, DecodeError> {
+pub fn exported_ifc_fns(
+    resolve: &Resolve,
+    world_id: &WorldId,
+) -> Result<Vec<PackageIfcFns>, DecodeError> {
     let world = resolve.worlds.get(*world_id).expect("world must exist");
     ifc_fns(resolve, world.exports.iter())
 }
 
-pub fn imported_ifc_fns<'a>(
-    resolve: &'a Resolve,
-    world_id: &'a WorldId,
-) -> Result<Vec<PackageIfcFns<'a>>, DecodeError> {
+pub fn imported_ifc_fns(
+    resolve: &Resolve,
+    world_id: &WorldId,
+) -> Result<Vec<PackageIfcFns>, DecodeError> {
     let world = resolve.worlds.get(*world_id).expect("world must exist");
     ifc_fns(resolve, world.imports.iter())
 }
@@ -50,7 +50,7 @@ pub fn imported_ifc_fns<'a>(
 fn ifc_fns<'a>(
     resolve: &'a Resolve,
     iter: impl Iterator<Item = (&'a WorldKey, &'a WorldItem)>,
-) -> Result<Vec<PackageIfcFns<'a>>, DecodeError> {
+) -> Result<Vec<PackageIfcFns>, DecodeError> {
     iter.filter_map(|(_, item)| match item {
         wit_parser::WorldItem::Interface(ifc) => {
             let ifc = resolve.interfaces.get(*ifc).unwrap();
@@ -65,9 +65,9 @@ fn ifc_fns<'a>(
                 return Some(Err(DecodeError::EmptyInterface));
             };
             Some(Ok(PackageIfcFns {
-                package_name,
-                ifc_name,
-                fns: &ifc.functions,
+                package_name: package_name.clone(),
+                ifc_name: ifc_name.to_owned(),
+                fns: ifc.functions.clone(),
             }))
         }
         _ => None,

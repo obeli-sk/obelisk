@@ -1,4 +1,4 @@
-use crate::{EngineConfig, WasmFileError};
+use crate::{EngineConfig, WasmComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
@@ -8,11 +8,9 @@ use concepts::{Params, SupportedFunctionResult};
 use executor::worker::FatalError;
 use executor::worker::{Worker, WorkerError};
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 use utils::time::{now_tokio_instant, ClockFn};
-use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -59,7 +57,6 @@ pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
 #[derive(Clone, Debug)]
 pub struct ActivityConfig<C: ClockFn> {
     pub config_id: ConfigId,
-    pub wasm_path: StrVariant,
     pub epoch_millis: u64,
     pub recycled_instances: RecycleInstancesSetting,
     pub clock_fn: C,
@@ -69,63 +66,55 @@ pub struct ActivityConfig<C: ClockFn> {
 pub struct ActivityWorker<C: ClockFn> {
     config: ActivityConfig<C>,
     engine: Arc<Engine>,
-    ffqns_to_results_len: HashMap<FunctionFqn, usize>,
+    exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
     linker: wasmtime::component::Linker<StoreCtx>,
     component: wasmtime::component::Component,
     recycled_instances: MaybeRecycledInstances,
 }
 
 impl<C: ClockFn> ActivityWorker<C> {
-    #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
+    #[tracing::instrument(skip_all, fields(wasm_path = %wasm_component.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
+        wasm_component: WasmComponent,
         config: ActivityConfig<C>,
         engine: Arc<Engine>,
-    ) -> Result<Arc<Self>, WasmFileError> {
-        info!("Reading");
-        let wasm = std::fs::read(config.wasm_path.deref())
-            .map_err(|err| WasmFileError::CannotOpen(config.wasm_path.clone(), err))?;
-        let (resolve, world_id) = wasm_tools::decode(&wasm)
-            .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?;
-        let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
-            .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?;
-        let ffqns_to_results_len = wasm_tools::functions_and_result_lengths(exported_interfaces)
-            .map_err(|err| WasmFileError::FunctionMetadataError(config.wasm_path.clone(), err))?;
-
-        debug!(?ffqns_to_results_len, "Decoded functions");
+    ) -> Result<Self, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&engine);
         // Link
         wasmtime_wasi::command::add_to_linker(&mut linker).map_err(|err| {
             WasmFileError::LinkingError {
-                file: config.wasm_path.clone(),
+                file: wasm_component.wasm_path.clone(),
                 reason: StrVariant::Static("cannot add wasi command"),
                 err: err.into(),
             }
         })?;
         wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(&mut linker, |t| t)
             .map_err(|err| WasmFileError::LinkingError {
-                file: config.wasm_path.clone(),
+                file: wasm_component.wasm_path.clone(),
                 reason: StrVariant::Static("cannot add http outgoing_handler"),
                 err: err.into(),
             })?;
         wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t).map_err(
             |err| WasmFileError::LinkingError {
-                file: config.wasm_path.clone(),
+                file: wasm_component.wasm_path.clone(),
                 reason: StrVariant::Static("cannot add http types"),
                 err: err.into(),
             },
         )?;
         // Compile
-        let component = wasmtime::component::Component::from_binary(&engine, &wasm)
-            .map_err(|err| WasmFileError::CompilationError(config.wasm_path.clone(), err.into()))?;
+        let component = wasmtime::component::Component::from_binary(&engine, &wasm_component.wasm)
+            .map_err(|err| {
+                WasmFileError::CompilationError(wasm_component.wasm_path.clone(), err.into())
+            })?;
         let recycled_instances = config.recycled_instances.instantiate();
-        Ok(Arc::new(Self {
+        Ok(Self {
             config,
             engine,
-            ffqns_to_results_len,
+            exported_ffqns_to_results_len: wasm_component.exported_ffqns_to_results_len,
             linker,
             component,
             recycled_instances,
-        }))
+        })
     }
 }
 
@@ -150,7 +139,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
 
 impl<C: ClockFn + 'static> ActivityWorker<C> {
     #[tracing::instrument(skip_all)]
-    pub(crate) async fn run(
+    async fn run(
         &self,
         ffqn: FunctionFqn,
         params: Params,
@@ -158,7 +147,7 @@ impl<C: ClockFn + 'static> ActivityWorker<C> {
         select_based_execution_deadline: DateTime<Utc>,
     ) -> Result<SupportedFunctionResult, WorkerError> {
         let results_len = *self
-            .ffqns_to_results_len
+            .exported_ffqns_to_results_len
             .get(&ffqn)
             .expect("executor must only run existing functions");
         trace!("Params: {params:?}, results_len:{results_len}",);
@@ -322,17 +311,19 @@ pub(crate) mod tests {
         wasm_path: &'static str,
         ffqn: FunctionFqn,
     ) -> ExecutorTaskHandle {
-        let worker = ActivityWorker::new_with_config(
-            ActivityConfig {
-                wasm_path: StrVariant::Static(wasm_path),
-                epoch_millis: 10,
-                config_id: ConfigId::generate(),
-                recycled_instances: RecycleInstancesSetting::Disable,
-                clock_fn: now,
-            },
-            activity_engine(EngineConfig::default()),
-        )
-        .unwrap();
+        let worker = Arc::new(
+            ActivityWorker::new_with_config(
+                WasmComponent::new(StrVariant::Static(wasm_path)).unwrap(),
+                ActivityConfig {
+                    epoch_millis: 10,
+                    config_id: ConfigId::generate(),
+                    recycled_instances: RecycleInstancesSetting::Disable,
+                    clock_fn: now,
+                },
+                activity_engine(EngineConfig::default()),
+            )
+            .unwrap(),
+        );
 
         let exec_config = ExecConfig {
             ffqns: vec![ffqn],
@@ -435,19 +426,22 @@ pub(crate) mod tests {
         let mut db_task = DbTask::spawn_new(db_rpc_capacity);
         let db_connection = db_task.as_db_connection().expect("must be open");
 
-        let fibo_worker = ActivityWorker::new_with_config(
-            ActivityConfig {
-                config_id: ConfigId::generate(),
-                wasm_path: StrVariant::Static(
+        let fibo_worker = Arc::new(
+            ActivityWorker::new_with_config(
+                WasmComponent::new(StrVariant::Static(
                     test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                ),
-                epoch_millis: EPOCH_MILLIS,
-                recycled_instances,
-                clock_fn: now,
-            },
-            engine,
-        )
-        .unwrap();
+                ))
+                .unwrap(),
+                ActivityConfig {
+                    config_id: ConfigId::generate(),
+                    epoch_millis: EPOCH_MILLIS,
+                    recycled_instances,
+                    clock_fn: now,
+                },
+                engine,
+            )
+            .unwrap(),
+        );
 
         // create executions
         let stopwatch = Instant::now();
@@ -558,11 +552,13 @@ pub(crate) mod tests {
             allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
         });
         let fibo_worker = ActivityWorker::new_with_config(
+            WasmComponent::new(StrVariant::Static(
+                test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+            ))
+            .unwrap(),
             ActivityConfig {
                 config_id: ConfigId::generate(),
-                wasm_path: StrVariant::Static(
-                    test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                ),
+
                 epoch_millis: EPOCH_MILLIS,
                 recycled_instances,
                 clock_fn: now,
@@ -638,11 +634,13 @@ pub(crate) mod tests {
         pool.total_tables(max_instances);
 
         let fibo_worker = ActivityWorker::new_with_config(
+            WasmComponent::new(StrVariant::Static(
+                test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+            ))
+            .unwrap(),
             ActivityConfig {
                 config_id: ConfigId::generate(),
-                wasm_path: StrVariant::Static(
-                    test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                ),
+
                 epoch_millis: 10,
                 recycled_instances,
                 clock_fn: now,
@@ -709,19 +707,22 @@ pub(crate) mod tests {
 
             let recycled_instances: RecycleInstancesSetting =
                 env_or_default("RECYCLE", recycle).into();
-            let worker = ActivityWorker::new_with_config(
-                ActivityConfig {
-                    wasm_path: StrVariant::Static(
+            let worker = Arc::new(
+                ActivityWorker::new_with_config(
+                    WasmComponent::new(StrVariant::Static(
                         test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                    ),
-                    epoch_millis: EPOCH_MILLIS,
-                    config_id: ConfigId::generate(),
-                    recycled_instances,
-                    clock_fn: now,
-                },
-                engine,
-            )
-            .unwrap();
+                    ))
+                    .unwrap(),
+                    ActivityConfig {
+                        epoch_millis: EPOCH_MILLIS,
+                        config_id: ConfigId::generate(),
+                        recycled_instances,
+                        clock_fn: now,
+                    },
+                    engine,
+                )
+                .unwrap(),
+            );
 
             let exec_config = ExecConfig {
                 ffqns: vec![SLEEP_LOOP_ACTIVITY_FFQN],
@@ -795,19 +796,22 @@ pub(crate) mod tests {
                 Duration::from_millis(EPOCH_MILLIS),
             );
 
-            let worker = ActivityWorker::new_with_config(
-                ActivityConfig {
-                    wasm_path: StrVariant::Static(
+            let worker = Arc::new(
+                ActivityWorker::new_with_config(
+                    WasmComponent::new(StrVariant::Static(
                         test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                    ),
-                    epoch_millis: EPOCH_MILLIS,
-                    config_id: ConfigId::generate(),
-                    recycled_instances: RecycleInstancesSetting::Disable,
-                    clock_fn: now,
-                },
-                engine,
-            )
-            .unwrap();
+                    ))
+                    .unwrap(),
+                    ActivityConfig {
+                        epoch_millis: EPOCH_MILLIS,
+                        config_id: ConfigId::generate(),
+                        recycled_instances: RecycleInstancesSetting::Disable,
+                        clock_fn: now,
+                    },
+                    engine,
+                )
+                .unwrap(),
+            );
 
             let executed_at = now();
             let err = worker
@@ -828,6 +832,7 @@ pub(crate) mod tests {
 
         #[tokio::test]
         async fn http_get() {
+            use std::ops::Deref;
             use wiremock::{
                 matchers::{method, path},
                 Mock, MockServer, ResponseTemplate,
@@ -849,7 +854,7 @@ pub(crate) mod tests {
                 .expect(1)
                 .mount(&server)
                 .await;
-            info!("started mock server on {}", server.address());
+            debug!("started mock server on {}", server.address());
             let params = Params::from([
                 Val::String(format!("127.0.0.1:{port}", port = server.address().port()).into()),
                 Val::String("/".into()),

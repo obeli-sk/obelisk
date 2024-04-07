@@ -18,6 +18,7 @@ async-channel.workspace = true
 async-trait.workspace = true
 cfg-if.workspace = true
 chrono.workspace = true
+derivative.workspace = true
 derive_more.workspace = true
 indexmap.workspace = true
 rand.workspace = true
@@ -29,6 +30,7 @@ valuable.workspace = true
 wasmtime-wasi-http.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
+wit-parser.workspace = true
 
 [dev-dependencies]
 test-programs-fibo-activity-builder.workspace = true

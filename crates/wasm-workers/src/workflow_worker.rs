@@ -1,5 +1,5 @@
 use crate::workflow_ctx::{FunctionError, WorkflowCtx};
-use crate::{EngineConfig, WasmFileError};
+use crate::{EngineConfig, WasmComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::ops::Deref;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
@@ -33,13 +33,13 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
 #[derive(Debug, Clone)]
 pub struct WorkflowConfig<C: ClockFn> {
     pub config_id: ConfigId,
-    pub wasm_path: StrVariant,
     pub epoch_millis: u64,
     pub clock_fn: C,
+    // TODO: switch to keep the workflow hot
 }
 
 #[derive(Clone)]
-struct WorkflowWorker<C: ClockFn> {
+pub struct WorkflowWorker<C: ClockFn> {
     config: WorkflowConfig<C>,
     engine: Arc<Engine>,
     exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
@@ -48,48 +48,36 @@ struct WorkflowWorker<C: ClockFn> {
 }
 
 impl<C: ClockFn> WorkflowWorker<C> {
-    #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
+    #[tracing::instrument(skip_all, fields(wasm_path = %wasm_component.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
+        wasm_component: WasmComponent,
         config: WorkflowConfig<C>,
         engine: Arc<Engine>,
-    ) -> Result<Arc<Self>, WasmFileError> {
+    ) -> Result<Self, WasmFileError> {
         const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
+        let mut linker = wasmtime::component::Linker::new(&engine);
+        // Compile the wasm component
+        let component = wasmtime::component::Component::from_binary(&engine, &wasm_component.wasm)
+            .map_err(|err| {
+                WasmFileError::CompilationError(wasm_component.wasm_path.clone(), err.into())
+            })?;
+        // Mock imported functions
 
-        info!("Reading");
-        let wasm = std::fs::read(config.wasm_path.deref())
-            .map_err(|err| WasmFileError::CannotOpen(config.wasm_path.clone(), err))?;
-        let (resolve, world_id) = wasm_tools::decode(&wasm)
-            .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?;
-        let exported_ffqns_to_results_len = {
-            let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
-                .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?;
-            trace!("Exported functions: {exported_interfaces:?}");
-            wasm_tools::functions_and_result_lengths(exported_interfaces).map_err(|err| {
-                WasmFileError::FunctionMetadataError(config.wasm_path.clone(), err)
-            })?
-        };
-        debug!(?exported_ffqns_to_results_len, "Exported functions");
         let imported_interfaces = {
             let imp_fns_to_metadata = wasm_tools::functions_to_metadata(
-                wasm_tools::imported_ifc_fns(&resolve, &world_id)
-                    .map_err(|err| WasmFileError::DecodeError(config.wasm_path.clone(), err))?,
+                wasm_component.imported_ifc_fns,
             )
-            .map_err(|err| WasmFileError::FunctionMetadataError(config.wasm_path.clone(), err))?;
-            let mut imp_ifcs_to_fn_names =
-                wasm_tools::group_by_ifc_to_fn_names(imp_fns_to_metadata.keys());
-            // Remove host-implemented functions
-            imp_ifcs_to_fn_names.remove(HOST_ACTIVITY_IFC_STRING);
-            imp_ifcs_to_fn_names
+            .map_err(|err| {
+                WasmFileError::FunctionMetadataError(wasm_component.wasm_path.clone(), err)
+            })?;
+            wasm_tools::group_by_ifc_to_fn_names(imp_fns_to_metadata.keys())
         };
-        trace!("Imported interfaces: {imported_interfaces:?}");
 
-        let mut linker = wasmtime::component::Linker::new(&engine);
-
-        // Compile the wasm component
-        let component = wasmtime::component::Component::from_binary(&engine, &wasm)
-            .map_err(|err| WasmFileError::CompilationError(config.wasm_path.clone(), err.into()))?;
-        // Mock imported functions
         for (ifc_fqn, functions) in &imported_interfaces {
+            if ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
+                // Skip host-implemented functions
+                continue;
+            }
             trace!("Adding imported interface {ifc_fqn} to the linker");
             if let Ok(mut linker_instance) = linker.instance(ifc_fqn) {
                 for function_name in functions {
@@ -116,7 +104,7 @@ impl<C: ClockFn> WorkflowWorker<C> {
                             debug!("Skipping mocking of {ffqn}");
                         } else {
                             return Err(WasmFileError::LinkingError {
-                                file: config.wasm_path.clone(),
+                                file: wasm_component.wasm_path.clone(),
                                 reason: StrVariant::Arc(Arc::from(format!(
                                     "cannot add mock for imported function {ffqn}"
                                 ))),
@@ -130,17 +118,17 @@ impl<C: ClockFn> WorkflowWorker<C> {
             }
         }
         WorkflowCtx::add_to_linker(&mut linker).map_err(|err| WasmFileError::LinkingError {
-            file: config.wasm_path.clone(),
+            file: wasm_component.wasm_path.clone(),
             reason: StrVariant::Arc(Arc::from("cannot add host activities".to_string())),
             err: err.into(),
         })?;
-        Ok(Arc::new(Self {
+        Ok(Self {
             config,
             engine,
-            exported_ffqns_to_results_len,
+            exported_ffqns_to_results_len: wasm_component.exported_ffqns_to_results_len,
             linker,
             component,
-        }))
+        })
     }
 }
 
@@ -189,7 +177,7 @@ enum RunError {
 
 impl<C: ClockFn> WorkflowWorker<C> {
     #[tracing::instrument(skip_all)]
-    pub(crate) async fn run(
+    async fn run(
         &self,
         execution_id: ExecutionId,
         ffqn: FunctionFqn,
@@ -349,18 +337,21 @@ mod tests {
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
     pub(crate) fn spawn_workflow_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
-        let fibo_worker = WorkflowWorker::new_with_config(
-            WorkflowConfig {
-                wasm_path: StrVariant::Static(
+        let fibo_worker = Arc::new(
+            WorkflowWorker::new_with_config(
+                WasmComponent::new(StrVariant::Static(
                     test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-                ),
-                epoch_millis: EPOCH_MILLIS,
-                config_id: ConfigId::generate(),
-                clock_fn: now,
-            },
-            workflow_engine(EngineConfig::default()),
-        )
-        .unwrap();
+                ))
+                .unwrap(),
+                WorkflowConfig {
+                    epoch_millis: EPOCH_MILLIS,
+                    config_id: ConfigId::generate(),
+                    clock_fn: now,
+                },
+                workflow_engine(EngineConfig::default()),
+            )
+            .unwrap(),
+        );
 
         let exec_config = ExecConfig {
             ffqns: vec![FIBO_WORKFLOW_FFQN],
@@ -436,18 +427,21 @@ mod tests {
         db_connection: DB,
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
-        let worker = WorkflowWorker::new_with_config(
-            WorkflowConfig {
-                wasm_path: StrVariant::Static(
+        let worker = Arc::new(
+            WorkflowWorker::new_with_config(
+                WasmComponent::new(StrVariant::Static(
                     test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
-                ),
-                epoch_millis: EPOCH_MILLIS,
-                config_id: ConfigId::generate(),
-                clock_fn: clock_fn.clone(),
-            },
-            workflow_engine(EngineConfig::default()),
-        )
-        .unwrap();
+                ))
+                .unwrap(),
+                WorkflowConfig {
+                    epoch_millis: EPOCH_MILLIS,
+                    config_id: ConfigId::generate(),
+                    clock_fn: clock_fn.clone(),
+                },
+                workflow_engine(EngineConfig::default()),
+            )
+            .unwrap(),
+        );
 
         let exec_config = ExecConfig {
             ffqns: vec![SLEEP_HOST_ACTIVITY_FFQN],
