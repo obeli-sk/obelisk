@@ -542,7 +542,7 @@ mod tests {
 
     #[test]
     fn hash_of_str_variants_should_be_equal() {
-        let input = "foo"; // TODO: use arbitrary
+        let input = "foo";
         let left = StrVariant::Arc(Arc::from(input));
         let right = StrVariant::Static(input);
         assert_eq!(left, right);
