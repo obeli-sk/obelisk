@@ -1,10 +1,13 @@
 use crate::workflow_worker::JoinNextBlockingStrategy;
+use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
-use concepts::storage::JoinSetResponse;
+use concepts::storage::{
+    AppendRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version,
+};
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionResult};
-use executor::worker::{ChildExecutionRequest, FatalError, SleepRequest, WorkerError};
+use executor::worker::{ChildExecutionRequest, FatalError, WorkerError};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::fmt::Debug;
@@ -14,14 +17,19 @@ use tracing::{debug, trace};
 use utils::time::ClockFn;
 use wasmtime::component::{Linker, Val};
 
+const DB_LATENCY_MILLIS: u32 = 10; // do not interrupt if requested to sleep for less time.
+const DB_POLL_SLEEP: Duration = Duration::from_millis(50);
+
 #[derive(thiserror::Error, Debug, Clone)]
 pub(crate) enum FunctionError {
     #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(StrVariant),
     #[error("child({})", .0.child_execution_id)]
     ChildExecutionRequest(ChildExecutionRequest),
-    #[error("sleep({})", .0.delay_id)]
-    SleepRequest(SleepRequest),
+    #[error("sleep")]
+    SleepRequest,
+    #[error(transparent)]
+    DbError(#[from] DbError),
 }
 
 impl From<FunctionError> for WorkerError {
@@ -34,7 +42,8 @@ impl From<FunctionError> for WorkerError {
             FunctionError::ChildExecutionRequest(request) => {
                 WorkerError::ChildExecutionRequest(request.clone())
             }
-            FunctionError::SleepRequest(request) => WorkerError::SleepRequest(request.clone()),
+            FunctionError::SleepRequest => WorkerError::SleepRequest,
+            FunctionError::DbError(db_error) => WorkerError::DbError(db_error),
         }
     }
 }
@@ -46,22 +55,28 @@ wasmtime::component::bindgen!({
     interfaces: "import my-org:workflow-engine/host-activities;",
 });
 
-pub(crate) struct WorkflowCtx<C: ClockFn> {
+pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection> {
     execution_id: ExecutionId,
     events: Vec<HistoryEvent>,
     events_idx: usize,
     rng: StdRng,
     pub(crate) clock_fn: C,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
+    db_connection: DB,
+    version: Version,
+    execution_deadline: DateTime<Utc>,
 }
 
-impl<C: ClockFn> WorkflowCtx<C> {
+impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
     pub(crate) fn new(
         execution_id: ExecutionId,
         events: Vec<HistoryEvent>,
         seed: u64,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
+        db_connection: DB,
+        version: Version,
+        execution_deadline: DateTime<Utc>,
     ) -> Self {
         Self {
             execution_id,
@@ -70,6 +85,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
             join_next_blocking_strategy,
+            db_connection,
+            version,
+            execution_deadline,
         }
     }
 
@@ -159,7 +177,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         Ok(())
     }
 
-    fn sleep(&mut self, millis: u32) -> Result<(), FunctionError> {
+    async fn sleep(&mut self, millis: u32) -> Result<(), FunctionError> {
         let new_join_set_id =
             JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
         let new_delay_id =
@@ -169,11 +187,12 @@ impl<C: ClockFn> WorkflowCtx<C> {
             self.events_idx,
             self.events
         );
-
+        let created_at = (self.clock_fn)();
+        let new_expires_at = created_at + Duration::from_millis(u64::from(millis));
         while let Some(found) = self.events.get(self.events_idx) {
             match found {
                 HistoryEvent::JoinSet { join_set_id: found } if *found == new_join_set_id => {
-                    trace!("Matched JoinSet");
+                    trace!(join_set_id = %new_join_set_id, delay_id = %new_delay_id, "Matched JoinSet");
                     self.events_idx += 1;
                 }
                 HistoryEvent::JoinSetRequest {
@@ -181,24 +200,24 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     request:
                         JoinSetRequest::DelayRequest {
                             delay_id,
-                            expires_at: _,
+                            expires_at: _do_not_compare, // already computed in the past, will not match
                         },
                 } if *join_set_id == new_join_set_id && *delay_id == new_delay_id => {
-                    trace!("Matched DelayRequest");
+                    trace!(join_set_id = %new_join_set_id, delay_id = %new_delay_id, "Matched DelayRequest");
                     self.events_idx += 1;
                 }
                 HistoryEvent::JoinNext {
                     join_set_id,
                     lock_expires_at: _,
                 } if *join_set_id == new_join_set_id => {
-                    trace!("Matched JoinNextBlocking");
+                    trace!(join_set_id = %new_join_set_id, delay_id = %new_delay_id, "Matched JoinNextBlocking");
                     self.events_idx += 1;
                 }
                 HistoryEvent::JoinSetResponse {
                     response: JoinSetResponse::DelayFinished { delay_id },
                     ..
                 } if new_delay_id == *delay_id => {
-                    debug!(%delay_id, join_set_id = %new_join_set_id, "Found response in history");
+                    debug!(join_set_id = %new_join_set_id, delay_id = %new_delay_id,  "Found response in history");
                     self.events_idx += 1;
                     return Ok(());
                 }
@@ -212,13 +231,80 @@ impl<C: ClockFn> WorkflowCtx<C> {
                 }
             }
         }
-        let expires_at = (self.clock_fn)() + Duration::from_millis(u64::from(millis));
-        Err(FunctionError::SleepRequest(SleepRequest {
-            new_join_set_id,
-            delay_id: new_delay_id,
-            expires_at,
-        }))?
-        // TODO: optimize for zero millis - write to db and continue
+
+        let join_set = AppendRequest {
+            created_at,
+            event: ExecutionEventInner::HistoryEvent {
+                event: HistoryEvent::JoinSet {
+                    join_set_id: new_join_set_id,
+                },
+            },
+        };
+        let delayed_until = AppendRequest {
+            created_at,
+            event: ExecutionEventInner::HistoryEvent {
+                event: HistoryEvent::JoinSetRequest {
+                    join_set_id: new_join_set_id,
+                    request: JoinSetRequest::DelayRequest {
+                        delay_id: new_delay_id,
+                        expires_at: new_expires_at,
+                    },
+                },
+            },
+        };
+
+        let interrupt = (matches!(
+            self.join_next_blocking_strategy,
+            JoinNextBlockingStrategy::Interrupt
+        ) && millis > DB_LATENCY_MILLIS)
+            || new_expires_at < self.execution_deadline;
+        let join_next = AppendRequest {
+            created_at,
+            event: ExecutionEventInner::HistoryEvent {
+                event: HistoryEvent::JoinNext {
+                    join_set_id: new_join_set_id,
+                    lock_expires_at: if interrupt {
+                        created_at
+                    } else {
+                        self.execution_deadline
+                    },
+                },
+            },
+        };
+
+        self.version = self
+            .db_connection
+            .append_batch(
+                vec![join_set, delayed_until, join_next],
+                self.execution_id,
+                Some(self.version),
+            )
+            .await?;
+
+        if interrupt {
+            return Err(FunctionError::SleepRequest);
+        } else {
+            let delay = (new_expires_at - (self.clock_fn)())
+                .to_std()
+                .unwrap_or_default();
+            debug!(join_set_id = %new_join_set_id, delay_id = %new_delay_id,  "Waiting for async timer for {delay:?}");
+            tokio::time::sleep(delay).await;
+            loop {
+                // fetch
+                let eh = self.db_connection.get(self.execution_id).await?; // TODO: fetch since the current version
+                let expected = HistoryEvent::JoinSetResponse {
+                    response: JoinSetResponse::DelayFinished {
+                        delay_id: new_delay_id,
+                    },
+                    join_set_id: new_join_set_id,
+                };
+                if eh.event_history().any(|e| e == expected) {
+                    debug!(join_set_id = %new_join_set_id, delay_id = %new_delay_id,  "Finished waiting for async timer");
+                    return Ok(());
+                }
+                tokio::time::sleep(DB_POLL_SLEEP).await;
+            }
+        }
     }
 
     pub(crate) fn next_u128(&mut self) -> u128 {
@@ -234,9 +320,11 @@ impl<C: ClockFn> WorkflowCtx<C> {
 }
 
 #[async_trait::async_trait]
-impl<C: ClockFn> my_org::workflow_engine::host_activities::Host for WorkflowCtx<C> {
+impl<C: ClockFn, DB: DbConnection> my_org::workflow_engine::host_activities::Host
+    for WorkflowCtx<C, DB>
+{
     async fn sleep(&mut self, millis: u32) -> wasmtime::Result<()> {
-        Ok(self.sleep(millis)?)
+        Ok(self.sleep(millis).await?)
     }
 }
 
@@ -273,12 +361,13 @@ mod tests {
     }
 
     #[derive(Clone, Debug)]
-    struct WorkflowWorkerMock<C: ClockFn> {
+    struct WorkflowWorkerMock<C: ClockFn, DB: DbConnection> {
         steps: Vec<WorkflowStep>,
         clock_fn: C,
+        db_connection: DB,
     }
 
-    impl<C: ClockFn> valuable::Valuable for WorkflowWorkerMock<C> {
+    impl<C: ClockFn, DB: DbConnection> valuable::Valuable for WorkflowWorkerMock<C, DB> {
         fn as_value(&self) -> valuable::Value<'_> {
             "WorkflowWorkerMock".as_value()
         }
@@ -287,7 +376,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl<C: ClockFn + 'static> Worker for WorkflowWorkerMock<C> {
+    impl<C: ClockFn + 'static, DB: DbConnection> Worker for WorkflowWorkerMock<C, DB> {
         async fn run(
             &self,
             execution_id: ExecutionId,
@@ -295,7 +384,7 @@ mod tests {
             _params: Params,
             events: Vec<HistoryEvent>,
             version: Version,
-            _execution_deadline: DateTime<Utc>,
+            execution_deadline: DateTime<Utc>,
         ) -> WorkerResult {
             let seed = execution_id.random_part();
             let mut ctx = WorkflowCtx::new(
@@ -304,10 +393,13 @@ mod tests {
                 seed,
                 self.clock_fn.clone(),
                 JoinNextBlockingStrategy::default(),
+                self.db_connection.clone(),
+                version,
+                execution_deadline,
             );
             for step in &self.steps {
                 match step {
-                    WorkflowStep::Sleep { millis } => ctx.sleep(*millis),
+                    WorkflowStep::Sleep { millis } => ctx.sleep(*millis).await,
                     WorkflowStep::Call { ffqn } => {
                         ctx.call_imported_func(ffqn.clone(), &[], &mut [])
                     }
@@ -381,6 +473,7 @@ mod tests {
             let worker = Arc::new(WorkflowWorkerMock {
                 steps,
                 clock_fn: sim_clock.clock_fn(),
+                db_connection: db_connection.clone(),
             });
             let exec_config = ExecConfig {
                 ffqns: vec![MOCK_FFQN],
@@ -454,6 +547,7 @@ mod tests {
                         let worker = Arc::new(WorkflowWorkerMock {
                             steps: vec![],
                             clock_fn: sim_clock.clock_fn(),
+                            db_connection: db_connection.clone(),
                         });
                         let exec_config = ExecConfig {
                             ffqns: vec![child_request.ffqn().clone()],

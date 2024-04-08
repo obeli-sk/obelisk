@@ -261,7 +261,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
             &execution_history,
             clock_fn(),
         ) {
-            Ok(append) => {
+            Ok(Some(append)) => {
                 db_connection
                     .append_batch(
                         append.primary_events,
@@ -278,6 +278,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                 }
                 Ok(())
             }
+            Ok(None) => Ok(()),
             Err(err) => Err(err),
         }
     }
@@ -289,7 +290,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
         worker_result: WorkerResult,
         execution_history: &ExecutionHistory,
         result_obtained_at: DateTime<Utc>,
-    ) -> Result<Append, DbError> {
+    ) -> Result<Option<Append>, DbError> {
         Ok(match worker_result {
             Ok((result, new_version)) => {
                 let finished_res;
@@ -342,12 +343,12 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                 } else {
                     None
                 };
-                Append {
+                Some(Append {
                     primary_events: vec![finished_event],
                     execution_id,
                     version: new_version,
                     async_resp_to_other_execution: secondary,
-                }
+                })
             }
             Err((err, new_version)) => {
                 if matches!(err, WorkerError::ChildExecutionRequest(_)) {
@@ -401,50 +402,15 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                                 max_retries: execution_history.max_retries(),
                             },
                         };
-                        return Ok(Append {
+                        return Ok(Some(Append {
                             primary_events: vec![join, child_exec_async_req, block],
                             execution_id,
                             version: new_version,
                             async_resp_to_other_execution: Some((child_execution_id, child_exec)),
-                        });
+                        }));
                     }
-                    WorkerError::SleepRequest(request) => {
-                        trace!("SleepRequest {request:?}");
-                        let join = AppendRequest {
-                            created_at: result_obtained_at,
-                            event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinSet {
-                                    join_set_id: request.new_join_set_id,
-                                },
-                            },
-                        };
-                        let delayed_until = AppendRequest {
-                            created_at: result_obtained_at,
-                            event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinSetRequest {
-                                    join_set_id: request.new_join_set_id,
-                                    request: JoinSetRequest::DelayRequest {
-                                        delay_id: request.delay_id,
-                                        expires_at: request.expires_at,
-                                    },
-                                },
-                            },
-                        };
-                        let block = AppendRequest {
-                            created_at: result_obtained_at,
-                            event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinNext {
-                                    join_set_id: request.new_join_set_id,
-                                    lock_expires_at: result_obtained_at,
-                                },
-                            },
-                        };
-                        return Ok(Append {
-                            primary_events: vec![join, delayed_until, block],
-                            execution_id,
-                            version: new_version,
-                            async_resp_to_other_execution: None,
-                        });
+                    WorkerError::SleepRequest => {
+                        return Ok(None);
                     }
                     WorkerError::IntermittentError { reason, err: _ } => {
                         if let Some(duration) = execution_history.can_be_retried_after() {
@@ -478,6 +444,10 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                             }
                         }
                     }
+                    WorkerError::DbError(db_error) => {
+                        info!("Worker encountered db error: {db_error:?}");
+                        return Err(db_error);
+                    }
                     WorkerError::FatalError(FatalError::NonDeterminismDetected(reason)) => {
                         info!("Non-determinism detected");
                         ExecutionEventInner::Finished {
@@ -501,7 +471,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                         }
                     }
                 };
-                Append {
+                Some(Append {
                     primary_events: vec![AppendRequest {
                         created_at: result_obtained_at,
                         event,
@@ -509,7 +479,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                     execution_id,
                     version: new_version,
                     async_resp_to_other_execution: None,
-                }
+                })
             }
         })
     }

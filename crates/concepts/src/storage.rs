@@ -367,8 +367,9 @@ pub struct AppendRequest {
     pub event: ExecutionEventInner,
 }
 
+// Must be cheap to clone
 #[async_trait]
-pub trait DbConnection: Send + 'static + Clone + Send + Sync {
+pub trait DbConnection: Send + Sync + Clone + 'static {
     async fn lock_pending(
         &self,
         batch_size: usize,
@@ -501,6 +502,7 @@ pub trait DbConnection: Send + 'static + Clone + Send + Sync {
         }
     }
 
+    /// Get currently expired locks and async timers (delay requests)
     async fn get_expired_timers(
         &self,
         at: DateTime<Utc>,

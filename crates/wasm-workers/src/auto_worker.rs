@@ -10,7 +10,7 @@ use crate::{
     WasmComponent, WasmFileError,
 };
 use async_trait::async_trait;
-use concepts::{prefixed_ulid::ConfigId, FunctionFqn, StrVariant};
+use concepts::{prefixed_ulid::ConfigId, storage::DbConnection, FunctionFqn, StrVariant};
 use executor::worker::Worker;
 use itertools::Either;
 use std::sync::Arc;
@@ -18,17 +18,18 @@ use utils::time::ClockFn;
 use wasmtime::Engine;
 
 #[derive(Clone, Debug)]
-pub struct AutoConfig<C: ClockFn> {
+pub struct AutoConfig<C: ClockFn, DB: DbConnection> {
     pub config_id: ConfigId,
     pub wasm_path: StrVariant,
     pub activity_recycled_instances: RecycleInstancesSetting,
     pub clock_fn: C,
     pub workflow_join_next_blocking_strategy: JoinNextBlockingStrategy,
+    pub workflow_db_connection: DB,
 }
 
-pub enum AutoWorker<C: ClockFn> {
+pub enum AutoWorker<C: ClockFn, DB: DbConnection> {
     ActivityWorker(ActivityWorker<C>),
-    WorkflowWorker(WorkflowWorker<C>),
+    WorkflowWorker(WorkflowWorker<C, DB>),
 }
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
@@ -37,10 +38,10 @@ pub enum Kind {
     Workflow,
 }
 
-impl<C: ClockFn> AutoWorker<C> {
+impl<C: ClockFn, DB: DbConnection> AutoWorker<C, DB> {
     #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
-        config: AutoConfig<C>,
+        config: AutoConfig<C, DB>,
         workflow_engine: Arc<Engine>,
         activity_engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
@@ -63,6 +64,7 @@ impl<C: ClockFn> AutoWorker<C> {
                 config_id: config.config_id,
                 clock_fn: config.clock_fn,
                 join_next_blocking_strategy: config.workflow_join_next_blocking_strategy,
+                db_connection: config.workflow_db_connection,
             };
             WorkflowWorker::new_with_config(wasm_component, config, workflow_engine)
                 .map(Self::WorkflowWorker)
@@ -84,7 +86,7 @@ fn supported_wasi_imports<'a>(
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static> Worker for AutoWorker<C> {
+impl<C: ClockFn + 'static, DB: DbConnection> Worker for AutoWorker<C, DB> {
     async fn run(
         &self,
         execution_id: concepts::ExecutionId,
@@ -131,9 +133,10 @@ impl<C: ClockFn + 'static> Worker for AutoWorker<C> {
 
 mod valuable {
     use super::AutoWorker;
+    use concepts::storage::DbConnection;
     use utils::time::ClockFn;
 
-    impl<C: ClockFn> ::valuable::Structable for AutoWorker<C> {
+    impl<C: ClockFn, DB: DbConnection> ::valuable::Structable for AutoWorker<C, DB> {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             match self {
                 AutoWorker::WorkflowWorker(w) => w.definition(),
@@ -142,7 +145,7 @@ mod valuable {
         }
     }
 
-    impl<C: ClockFn> ::valuable::Valuable for AutoWorker<C> {
+    impl<C: ClockFn, DB: DbConnection> ::valuable::Valuable for AutoWorker<C, DB> {
         fn as_value(&self) -> ::valuable::Value<'_> {
             ::valuable::Value::Structable(self)
         }
@@ -166,6 +169,7 @@ mod tests {
         EngineConfig,
     };
     use concepts::{prefixed_ulid::ConfigId, StrVariant};
+    use db::inmemory_dao::DbTask;
     use test_utils::set_up;
     use utils::time::now;
 
@@ -181,12 +185,15 @@ mod tests {
     #[tokio::test]
     async fn detection(#[case] file: &'static str, #[case] expected: Kind) {
         set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.as_db_connection().expect("must be open");
         let config = AutoConfig {
             wasm_path: StrVariant::Static(file),
             config_id: ConfigId::generate(),
             activity_recycled_instances: RecycleInstancesSetting::Disable,
             clock_fn: now,
             workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
+            workflow_db_connection: db_connection,
         };
         let worker = AutoWorker::new_with_config(
             config,
@@ -195,5 +202,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(expected, worker.kind());
+        drop(worker);
+        db_task.close().await;
     }
 }

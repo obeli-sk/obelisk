@@ -3,7 +3,7 @@ use crate::{EngineConfig, WasmComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
-use concepts::storage::{HistoryEvent, Version};
+use concepts::storage::{DbConnection, HistoryEvent, Version};
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use concepts::{Params, SupportedFunctionResult};
 use executor::worker::FatalError;
@@ -46,26 +46,27 @@ impl Default for JoinNextBlockingStrategy {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkflowConfig<C: ClockFn> {
+pub struct WorkflowConfig<C: ClockFn, DB: DbConnection> {
     pub config_id: ConfigId,
     pub clock_fn: C,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
+    pub db_connection: DB,
 }
 
 #[derive(Clone)]
-pub struct WorkflowWorker<C: ClockFn> {
-    config: WorkflowConfig<C>,
+pub struct WorkflowWorker<C: ClockFn, DB: DbConnection> {
+    config: WorkflowConfig<C, DB>,
     engine: Arc<Engine>,
     exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
-    linker: wasmtime::component::Linker<WorkflowCtx<C>>,
+    linker: wasmtime::component::Linker<WorkflowCtx<C, DB>>,
     component: wasmtime::component::Component,
 }
 
-impl<C: ClockFn> WorkflowWorker<C> {
+impl<C: ClockFn, DB: DbConnection> WorkflowWorker<C, DB> {
     #[tracing::instrument(skip_all, fields(wasm_path = %wasm_component.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
         wasm_component: WasmComponent,
-        config: WorkflowConfig<C>,
+        config: WorkflowConfig<C, DB>,
         engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
         const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
@@ -102,7 +103,7 @@ impl<C: ClockFn> WorkflowWorker<C> {
                     trace!("Adding mock for imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(&component, function_name, {
                         let ffqn = ffqn.clone();
-                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB>>,
                               params: &[Val],
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
@@ -147,7 +148,7 @@ impl<C: ClockFn> WorkflowWorker<C> {
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
+impl<C: ClockFn + 'static, DB: DbConnection> Worker for WorkflowWorker<C, DB> {
     async fn run(
         &self,
         execution_id: ExecutionId,
@@ -157,27 +158,34 @@ impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
         version: Version,
         execution_deadline: DateTime<Utc>,
     ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
-        self.run(execution_id, ffqn, params, events, execution_deadline)
-            .await
-            .map(|supported_result| (supported_result, version))
-            .map_err(|err| match err {
-                RunError::FunctionCall(err) => {
-                    match err
-                        .source()
-                        .and_then(|source| source.downcast_ref::<FunctionError>())
-                    {
-                        Some(err) => (WorkerError::from(err.clone()), version),
-                        None => (
-                            WorkerError::IntermittentError {
-                                err,
-                                reason: StrVariant::Static("uncategorized error"),
-                            },
-                            version,
-                        ),
-                    }
+        self.run(
+            execution_id,
+            ffqn,
+            params,
+            events,
+            version,
+            execution_deadline,
+        )
+        .await
+        .map(|supported_result| (supported_result, version))
+        .map_err(|err| match err {
+            RunError::FunctionCall(err) => {
+                match err
+                    .source()
+                    .and_then(|source| source.downcast_ref::<FunctionError>())
+                {
+                    Some(err) => (WorkerError::from(err.clone()), version),
+                    None => (
+                        WorkerError::IntermittentError {
+                            err,
+                            reason: StrVariant::Static("uncategorized error"),
+                        },
+                        version,
+                    ),
                 }
-                RunError::WorkerError(err) => (err, version),
-            })
+            }
+            RunError::WorkerError(err) => (err, version),
+        })
     }
 
     fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
@@ -193,7 +201,7 @@ enum RunError {
     FunctionCall(Box<dyn Error + Send + Sync>),
 }
 
-impl<C: ClockFn> WorkflowWorker<C> {
+impl<C: ClockFn, DB: DbConnection> WorkflowWorker<C, DB> {
     #[tracing::instrument(skip_all)]
     async fn run(
         &self,
@@ -201,6 +209,7 @@ impl<C: ClockFn> WorkflowWorker<C> {
         ffqn: FunctionFqn,
         params: Params,
         events: Vec<HistoryEvent>,
+        version: Version,
         execution_deadline: DateTime<Utc>,
     ) -> Result<SupportedFunctionResult, RunError> {
         let results_len = *self
@@ -216,6 +225,9 @@ impl<C: ClockFn> WorkflowWorker<C> {
                 seed,
                 self.config.clock_fn.clone(),
                 self.config.join_next_blocking_strategy,
+                self.config.db_connection.clone(),
+                version,
+                execution_deadline,
             );
             let mut store = Store::new(&self.engine, ctx);
             let instance = self
@@ -286,15 +298,16 @@ impl<C: ClockFn> WorkflowWorker<C> {
 
 mod valuable {
     use super::WorkflowWorker;
+    use concepts::storage::DbConnection;
     use utils::time::ClockFn;
 
     static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
-    impl<C: ClockFn> ::valuable::Structable for WorkflowWorker<C> {
+    impl<C: ClockFn, DB: DbConnection> ::valuable::Structable for WorkflowWorker<C, DB> {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             ::valuable::StructDef::new_static("WorkflowWorker", ::valuable::Fields::Named(FIELDS))
         }
     }
-    impl<C: ClockFn> ::valuable::Valuable for WorkflowWorker<C> {
+    impl<C: ClockFn, DB: DbConnection> ::valuable::Valuable for WorkflowWorker<C, DB> {
         fn as_value(&self) -> ::valuable::Value<'_> {
             ::valuable::Value::Structable(self)
         }
@@ -349,6 +362,7 @@ mod tests {
                     config_id: ConfigId::generate(),
                     clock_fn: now,
                     join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
+                    db_connection: db_connection.clone(),
                 },
                 workflow_engine(EngineConfig::default()),
             )
@@ -439,6 +453,7 @@ mod tests {
                     config_id: ConfigId::generate(),
                     clock_fn: clock_fn.clone(),
                     join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
+                    db_connection: db_connection.clone(),
                 },
                 workflow_engine(EngineConfig::default()),
             )

@@ -15,9 +15,7 @@ pub mod worker {
         async_trait, DateTime, Error, ExecutionId, FunctionFqn, HistoryEvent, JoinSetId, Params,
         ParamsParsingError, ResultParsingError, SupportedFunctionResult, Utc, Version,
     };
-    use concepts::{prefixed_ulid::DelayId, StrVariant};
-
-    pub type WorkerResult = Result<(SupportedFunctionResult, Version), (WorkerError, Version)>;
+    use concepts::{storage::DbError, StrVariant};
 
     #[derive(Debug, thiserror::Error)]
     pub enum WorkerError {
@@ -35,7 +33,9 @@ pub mod worker {
         #[error("child execution request")]
         ChildExecutionRequest(ChildExecutionRequest),
         #[error("sleep request")]
-        SleepRequest(SleepRequest),
+        SleepRequest,
+        #[error(transparent)]
+        DbError(DbError),
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,13 +44,6 @@ pub mod worker {
         pub child_execution_id: ExecutionId,
         pub ffqn: FunctionFqn,
         pub params: Params,
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct SleepRequest {
-        pub new_join_set_id: JoinSetId,
-        pub delay_id: DelayId,
-        pub expires_at: DateTime<Utc>,
     }
 
     #[derive(Debug, thiserror::Error)]
@@ -63,6 +56,10 @@ pub mod worker {
         ResultParsingError(ResultParsingError),
     }
 
+    pub type WorkerResult = Result<(SupportedFunctionResult, Version), (WorkerError, Version)>;
+
+    // FIXME: Version should not always be returned. Either the worker does not
+    // write to db, or takes care of all its writes.
     #[async_trait]
     pub trait Worker: valuable::Valuable + Send + Sync + 'static {
         async fn run(
