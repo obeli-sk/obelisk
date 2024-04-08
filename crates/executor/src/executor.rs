@@ -5,7 +5,7 @@ use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params, StrV
 use concepts::{
     storage::{
         AppendRequest, DbConnection, DbConnectionError, DbError, ExecutionEventInner, HistoryEvent,
-        JoinSetRequest, JoinSetResponse, SpecificError, Version,
+        JoinSetResponse, SpecificError, Version,
     },
     FinishedExecutionError,
 };
@@ -351,65 +351,14 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                 })
             }
             Err((err, new_version)) => {
-                if matches!(err, WorkerError::ChildExecutionRequest(_)) {
-                    // logged later
-                } else {
-                    debug!("Execution failed: {err:?}");
-                }
                 if execution_history.version != new_version {
                     return Err(DbError::Specific(SpecificError::VersionMismatch));
                 }
                 let event = match err {
-                    WorkerError::ChildExecutionRequest(request) => {
-                        trace!("ChildExecutionRequest {request:?}");
-                        let join_set_id = request.new_join_set_id;
-                        let join = AppendRequest {
-                            created_at: result_obtained_at,
-                            event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinSet { join_set_id },
-                            },
-                        };
-                        let child_exec_async_req = AppendRequest {
-                            created_at: result_obtained_at,
-                            event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinSetRequest {
-                                    join_set_id,
-                                    request: JoinSetRequest::ChildExecutionRequest {
-                                        child_execution_id: request.child_execution_id,
-                                    },
-                                },
-                            },
-                        };
-                        let block = AppendRequest {
-                            created_at: result_obtained_at,
-                            event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinNext {
-                                    join_set_id,
-                                    lock_expires_at: result_obtained_at,
-                                },
-                            },
-                        };
-                        let child_execution_id = request.child_execution_id;
-                        info!(%child_execution_id, "Interrupted, scheduling child execution");
-                        let child_exec = AppendRequest {
-                            created_at: result_obtained_at,
-                            event: ExecutionEventInner::Created {
-                                ffqn: request.ffqn,
-                                params: request.params,
-                                parent: Some((execution_id, join_set_id)),
-                                scheduled_at: None,
-                                retry_exp_backoff: execution_history.retry_exp_backoff(),
-                                max_retries: execution_history.max_retries(),
-                            },
-                        };
-                        return Ok(Some(Append {
-                            primary_events: vec![join, child_exec_async_req, block],
-                            execution_id,
-                            version: new_version,
-                            async_resp_to_other_execution: Some((child_execution_id, child_exec)),
-                        }));
+                    WorkerError::ChildExecutionRequest => {
+                        return Ok(None);
                     }
-                    WorkerError::SleepRequest => {
+                    WorkerError::DelayRequest => {
                         return Ok(None);
                     }
                     WorkerError::IntermittentError { reason, err: _ } => {

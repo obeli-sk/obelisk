@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use concepts::{prefixed_ulid::ConfigId, storage::DbConnection, FunctionFqn, StrVariant};
 use executor::worker::Worker;
 use itertools::Either;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use utils::time::ClockFn;
 use wasmtime::Engine;
 
@@ -25,6 +25,8 @@ pub struct AutoConfig<C: ClockFn, DB: DbConnection> {
     pub clock_fn: C,
     pub workflow_join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub workflow_db_connection: DB,
+    pub workflow_child_retry_exp_backoff: Duration,
+    pub workflow_child_max_retries: u32,
 }
 
 pub enum AutoWorker<C: ClockFn, DB: DbConnection> {
@@ -65,6 +67,8 @@ impl<C: ClockFn, DB: DbConnection> AutoWorker<C, DB> {
                 clock_fn: config.clock_fn,
                 join_next_blocking_strategy: config.workflow_join_next_blocking_strategy,
                 db_connection: config.workflow_db_connection,
+                child_retry_exp_backoff: config.workflow_child_retry_exp_backoff,
+                child_max_retries: config.workflow_child_max_retries,
             };
             WorkflowWorker::new_with_config(wasm_component, config, workflow_engine)
                 .map(Self::WorkflowWorker)
@@ -161,6 +165,8 @@ mod valuable {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::{AutoConfig, AutoWorker};
     use crate::{
         activity_worker::{activity_engine, RecycleInstancesSetting},
@@ -194,6 +200,8 @@ mod tests {
             clock_fn: now,
             workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
             workflow_db_connection: db_connection,
+            workflow_child_retry_exp_backoff: Duration::ZERO,
+            workflow_child_max_retries: 0,
         };
         let worker = AutoWorker::new_with_config(
             config,

@@ -11,6 +11,7 @@ use executor::worker::{Worker, WorkerError};
 use std::collections::HashMap;
 use std::error::Error;
 use std::ops::Deref;
+use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, trace};
 use utils::time::{now_tokio_instant, ClockFn};
@@ -31,7 +32,7 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
 }
 
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JoinNextBlockingStrategy {
     /// Shut down the current runtime. When the `JoinSetResponse` is appended, workflow is reexecuted with a new `RunId`.
     Interrupt,
@@ -51,6 +52,8 @@ pub struct WorkflowConfig<C: ClockFn, DB: DbConnection> {
     pub clock_fn: C,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub db_connection: DB,
+    pub child_retry_exp_backoff: Duration,
+    pub child_max_retries: u32,
 }
 
 #[derive(Clone)]
@@ -110,7 +113,8 @@ impl<C: ClockFn, DB: DbConnection> WorkflowWorker<C, DB> {
                             Box::new(async move {
                                 Ok(store_ctx
                                     .data_mut()
-                                    .call_imported_func(ffqn, params, results)?)
+                                    .call_imported_func(ffqn, params, results)
+                                    .await?)
                             })
                         }
                     });
@@ -228,6 +232,8 @@ impl<C: ClockFn, DB: DbConnection> WorkflowWorker<C, DB> {
                 self.config.db_connection.clone(),
                 version,
                 execution_deadline,
+                self.config.child_retry_exp_backoff,
+                self.config.child_max_retries,
             );
             let mut store = Store::new(&self.engine, ctx);
             let instance = self
@@ -363,6 +369,8 @@ mod tests {
                     clock_fn: now,
                     join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
                     db_connection: db_connection.clone(),
+                    child_retry_exp_backoff: Duration::ZERO,
+                    child_max_retries: 0,
                 },
                 workflow_engine(EngineConfig::default()),
             )
@@ -454,6 +462,8 @@ mod tests {
                     clock_fn: clock_fn.clone(),
                     join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
                     db_connection: db_connection.clone(),
+                    child_retry_exp_backoff: Duration::ZERO,
+                    child_max_retries: 0,
                 },
                 workflow_engine(EngineConfig::default()),
             )

@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use concepts::storage::HistoryEvent;
 use concepts::storage::Version;
 use concepts::ExecutionId;
-use concepts::{prefixed_ulid::JoinSetId, FunctionFqn, ParamsParsingError, ResultParsingError};
+use concepts::{FunctionFqn, ParamsParsingError, ResultParsingError};
 use concepts::{Params, SupportedFunctionResult};
 use std::error::Error;
 
@@ -12,7 +12,7 @@ pub mod expired_timers_watcher;
 
 pub mod worker {
     use super::{
-        async_trait, DateTime, Error, ExecutionId, FunctionFqn, HistoryEvent, JoinSetId, Params,
+        async_trait, DateTime, Error, ExecutionId, FunctionFqn, HistoryEvent, Params,
         ParamsParsingError, ResultParsingError, SupportedFunctionResult, Utc, Version,
     };
     use concepts::{storage::DbError, StrVariant};
@@ -31,19 +31,11 @@ pub mod worker {
         #[error(transparent)]
         FatalError(#[from] FatalError),
         #[error("child execution request")]
-        ChildExecutionRequest(ChildExecutionRequest),
+        ChildExecutionRequest,
         #[error("sleep request")]
-        SleepRequest,
+        DelayRequest,
         #[error(transparent)]
         DbError(DbError),
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct ChildExecutionRequest {
-        pub new_join_set_id: JoinSetId,
-        pub child_execution_id: ExecutionId,
-        pub ffqn: FunctionFqn,
-        pub params: Params,
     }
 
     #[derive(Debug, thiserror::Error)]

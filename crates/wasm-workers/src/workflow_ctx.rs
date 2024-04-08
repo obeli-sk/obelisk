@@ -7,7 +7,7 @@ use concepts::storage::{
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionResult};
-use executor::worker::{ChildExecutionRequest, FatalError, WorkerError};
+use executor::worker::{FatalError, WorkerError};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::fmt::Debug;
@@ -24,10 +24,10 @@ const DB_POLL_SLEEP: Duration = Duration::from_millis(50);
 pub(crate) enum FunctionError {
     #[error("non deterministic execution: `{0}`")]
     NonDeterminismDetected(StrVariant),
-    #[error("child({})", .0.child_execution_id)]
-    ChildExecutionRequest(ChildExecutionRequest),
-    #[error("sleep")]
-    SleepRequest,
+    #[error("child request")]
+    ChildExecutionRequest,
+    #[error("delay request")]
+    DelayRequest,
     #[error(transparent)]
     DbError(#[from] DbError),
 }
@@ -39,10 +39,8 @@ impl From<FunctionError> for WorkerError {
                 WorkerError::FatalError(FatalError::NonDeterminismDetected(reason.clone()))
             }
 
-            FunctionError::ChildExecutionRequest(request) => {
-                WorkerError::ChildExecutionRequest(request.clone())
-            }
-            FunctionError::SleepRequest => WorkerError::SleepRequest,
+            FunctionError::ChildExecutionRequest => WorkerError::ChildExecutionRequest,
+            FunctionError::DelayRequest => WorkerError::DelayRequest,
             FunctionError::DbError(db_error) => WorkerError::DbError(db_error),
         }
     }
@@ -65,6 +63,8 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection> {
     db_connection: DB,
     version: Version,
     execution_deadline: DateTime<Utc>,
+    child_retry_exp_backoff: Duration,
+    child_max_retries: u32,
 }
 
 impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
@@ -77,6 +77,8 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
         db_connection: DB,
         version: Version,
         execution_deadline: DateTime<Utc>,
+        retry_exp_backoff: Duration,
+        max_retries: u32,
     ) -> Self {
         Self {
             execution_id,
@@ -88,40 +90,51 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
             db_connection,
             version,
             execution_deadline,
+            child_retry_exp_backoff: retry_exp_backoff,
+            child_max_retries: max_retries,
         }
     }
 
-    fn replay_or_interrupt(
+    async fn replay_or_interrupt(
         &mut self,
-        request: ChildExecutionRequest,
+        ffqn: FunctionFqn,
+        params: Params,
     ) -> Result<SupportedFunctionResult, FunctionError> {
-        trace!(
-            "Querying history for {request:?}, index: {}, history: {:?}",
+        let new_join_set_id =
+            JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+
+        let new_child_execution_id =
+            ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+
+        trace!(child_execution_id = %new_child_execution_id,
+            join_set_id = %new_join_set_id,
+            "Querying history for child result, index: {}, history: {:?}",
             self.events_idx,
             self.events
         );
         while let Some(found) = self.events.get(self.events_idx) {
             match found {
-                HistoryEvent::JoinSet { join_set_id }
-                    if *join_set_id == request.new_join_set_id =>
-                {
-                    trace!("Matched JoinSet");
+                HistoryEvent::JoinSet { join_set_id } if *join_set_id == new_join_set_id => {
+                    trace!(child_execution_id = %new_child_execution_id,
+                        join_set_id = %new_join_set_id, "Matched JoinSet");
                     self.events_idx += 1;
                 }
                 HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
-                } if *join_set_id == request.new_join_set_id
-                    && *child_execution_id == request.child_execution_id =>
+                } if *join_set_id == new_join_set_id
+                    && *child_execution_id == new_child_execution_id =>
                 {
-                    trace!("Matched ChildExecutionRequest");
+                    trace!(child_execution_id = %new_child_execution_id,
+                        join_set_id = %new_join_set_id, "Matched ChildExecutionRequest");
                     self.events_idx += 1;
                 }
                 HistoryEvent::JoinNext {
                     join_set_id,
                     lock_expires_at: _,
-                } if *join_set_id == request.new_join_set_id => {
-                    trace!("Matched JoinNextBlocking");
+                } if *join_set_id == new_join_set_id => {
+                    trace!(child_execution_id = %new_child_execution_id,
+                        join_set_id = %new_join_set_id, "Matched JoinNextBlocking");
                     self.events_idx += 1;
                 }
                 HistoryEvent::JoinSetResponse {
@@ -131,11 +144,12 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
                             result,
                         },
                     ..
-                } if *child_execution_id == request.child_execution_id => {
-                    debug!("Found response in history: {found:?}");
+                } if *child_execution_id == new_child_execution_id => {
+                    debug!(child_execution_id = %new_child_execution_id,
+                        join_set_id = %new_join_set_id, "Found response in history: {found:?}");
                     self.events_idx += 1;
                     // TODO: Map FinishedExecutionError somehow
-                    return Ok(result.clone().unwrap());
+                    return Ok(result.clone().expect("FIXME"));
                 }
                 unexpected => {
                     return Err(FunctionError::NonDeterminismDetected(StrVariant::Arc(
@@ -147,29 +161,108 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
                 }
             }
         }
-        Err(FunctionError::ChildExecutionRequest(request))
+        // not found in the history, persisting the request
+        let created_at = (self.clock_fn)();
+        let interrupt = self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt;
+
+        let join_set = AppendRequest {
+            created_at,
+            event: ExecutionEventInner::HistoryEvent {
+                event: HistoryEvent::JoinSet {
+                    join_set_id: new_join_set_id,
+                },
+            },
+        };
+        let child_exec_req = AppendRequest {
+            created_at,
+            event: ExecutionEventInner::HistoryEvent {
+                event: HistoryEvent::JoinSetRequest {
+                    join_set_id: new_join_set_id,
+                    request: JoinSetRequest::ChildExecutionRequest {
+                        child_execution_id: new_child_execution_id,
+                    },
+                },
+            },
+        };
+        let join_next = AppendRequest {
+            created_at,
+            event: ExecutionEventInner::HistoryEvent {
+                event: HistoryEvent::JoinNext {
+                    join_set_id: new_join_set_id,
+                    lock_expires_at: if interrupt {
+                        created_at
+                    } else {
+                        self.execution_deadline
+                    },
+                },
+            },
+        };
+        debug!(child_execution_id = %new_child_execution_id, join_set_id = %new_join_set_id, "Interrupted, scheduling child execution");
+
+        // FIXME: Both writes should be in the same tx, otherwise if second one fails, the first one will keep failing on retries.
+        self.version = self
+            .db_connection
+            .append_batch(
+                vec![join_set, child_exec_req, join_next],
+                self.execution_id,
+                Some(self.version),
+            )
+            .await?;
+
+        self.version = self
+            .db_connection
+            .create(
+                created_at,
+                new_child_execution_id,
+                ffqn,
+                params,
+                Some((self.execution_id, new_join_set_id)),
+                None,
+                self.child_retry_exp_backoff,
+                self.child_max_retries,
+            )
+            .await?;
+        if interrupt {
+            Err(FunctionError::ChildExecutionRequest)
+        } else {
+            debug!(child_execution_id = %new_child_execution_id, join_set_id = %new_join_set_id,  "Waiting for child execution result");
+            loop {
+                // fetch
+                let eh = self.db_connection.get(self.execution_id).await?; // TODO: fetch since the current version
+
+                if let Some(res) = eh.event_history().find_map(|e| match e {
+                    HistoryEvent::JoinSetResponse {
+                        response:
+                            JoinSetResponse::ChildExecutionFinished {
+                                child_execution_id,
+                                result,
+                            },
+                        join_set_id,
+                    } if child_execution_id == new_child_execution_id
+                        && join_set_id == new_join_set_id =>
+                    {
+                        Some(result.expect("FIXME")) // TODO: Map FinishedExecutionError somehow
+                    }
+                    _ => None,
+                }) {
+                    debug!(join_set_id = %new_join_set_id, child_execution_id = %new_child_execution_id, "Got child execution result");
+                    return Ok(res);
+                }
+                tokio::time::sleep(DB_POLL_SLEEP).await;
+            }
+        }
     }
 
     #[allow(dead_code)] // False positive
-    pub(crate) fn call_imported_func(
+    pub(crate) async fn call_imported_func(
         &mut self,
         ffqn: FunctionFqn,
         params: &[Val],
         results: &mut [Val],
     ) -> Result<(), FunctionError> {
-        let request = ChildExecutionRequest {
-            new_join_set_id: JoinSetId::from_parts(
-                self.execution_id.timestamp_part(),
-                self.next_u128(),
-            ),
-            child_execution_id: ExecutionId::from_parts(
-                self.execution_id.timestamp_part(),
-                self.next_u128(),
-            ),
-            ffqn,
-            params: Params::Vals(Arc::new(Vec::from(params))),
-        };
-        let res = self.replay_or_interrupt(request)?;
+        let res = self
+            .replay_or_interrupt(ffqn, Params::Vals(Arc::new(Vec::from(params))))
+            .await?;
         assert_eq!(results.len(), res.len(), "unexpected results length");
         for (idx, item) in res.value().into_iter().enumerate() {
             results[idx] = val_json::wast_val::val(item, &results[idx].ty()).unwrap();
@@ -231,7 +324,7 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
                 }
             }
         }
-
+        // not found in the history, persisting the request
         let join_set = AppendRequest {
             created_at,
             event: ExecutionEventInner::HistoryEvent {
@@ -253,11 +346,9 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
             },
         };
 
-        let interrupt = (matches!(
-            self.join_next_blocking_strategy,
-            JoinNextBlockingStrategy::Interrupt
-        ) && millis > DB_LATENCY_MILLIS)
-            || new_expires_at < self.execution_deadline;
+        let interrupt = self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt
+            && millis > DB_LATENCY_MILLIS
+            || new_expires_at < self.execution_deadline; // do not interrupt on a short delay
         let join_next = AppendRequest {
             created_at,
             event: ExecutionEventInner::HistoryEvent {
@@ -282,7 +373,7 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
             .await?;
 
         if interrupt {
-            return Err(FunctionError::SleepRequest);
+            Err(FunctionError::DelayRequest)
         } else {
             let delay = (new_expires_at - (self.clock_fn)())
                 .to_std()
@@ -396,12 +487,14 @@ mod tests {
                 self.db_connection.clone(),
                 version,
                 execution_deadline,
+                Duration::ZERO,
+                0,
             );
             for step in &self.steps {
                 match step {
                     WorkflowStep::Sleep { millis } => ctx.sleep(*millis).await,
                     WorkflowStep::Call { ffqn } => {
-                        ctx.call_imported_func(ffqn.clone(), &[], &mut [])
+                        ctx.call_imported_func(ffqn.clone(), &[], &mut []).await
                     }
                 }
                 .map_err(|err| (WorkerError::from(err), version))?;
