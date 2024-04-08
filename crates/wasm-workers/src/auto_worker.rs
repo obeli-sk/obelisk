@@ -21,7 +21,6 @@ use wasmtime::Engine;
 pub struct AutoConfig<C: ClockFn> {
     pub config_id: ConfigId,
     pub wasm_path: StrVariant,
-    pub epoch_millis: u64,
     pub activity_recycled_instances: RecycleInstancesSetting,
     pub clock_fn: C,
     pub workflow_join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -54,7 +53,6 @@ impl<C: ClockFn> AutoWorker<C> {
         ) {
             let config = ActivityConfig {
                 config_id: config.config_id,
-                epoch_millis: config.epoch_millis,
                 recycled_instances: config.activity_recycled_instances,
                 clock_fn: config.clock_fn,
             };
@@ -63,7 +61,6 @@ impl<C: ClockFn> AutoWorker<C> {
         } else {
             let config = WorkflowConfig {
                 config_id: config.config_id,
-                epoch_millis: config.epoch_millis,
                 clock_fn: config.clock_fn,
                 join_next_blocking_strategy: config.workflow_join_next_blocking_strategy,
             };
@@ -186,7 +183,6 @@ mod tests {
         set_up();
         let config = AutoConfig {
             wasm_path: StrVariant::Static(file),
-            epoch_millis: 10,
             config_id: ConfigId::generate(),
             activity_recycled_instances: RecycleInstancesSetting::Disable,
             clock_fn: now,

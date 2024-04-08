@@ -29,7 +29,7 @@ pub mod worker {
         #[error("Limit reached: {0}")]
         LimitReached(String),
         #[error("intermittent timeout")]
-        IntermittentTimeout { epoch_based: bool },
+        IntermittentTimeout,
         #[error(transparent)]
         FatalError(#[from] FatalError),
         #[error("child execution request")]

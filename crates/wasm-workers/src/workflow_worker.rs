@@ -48,7 +48,6 @@ impl Default for JoinNextBlockingStrategy {
 #[derive(Debug, Clone)]
 pub struct WorkflowConfig<C: ClockFn> {
     pub config_id: ConfigId,
-    pub epoch_millis: u64,
     pub clock_fn: C,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
 }
@@ -231,21 +230,7 @@ impl<C: ClockFn> WorkflowWorker<C> {
                 })?;
             (instance, store)
         };
-        let epoch_millis = self.config.epoch_millis;
-        store.epoch_deadline_callback(move |store_ctx| {
-            let delta = execution_deadline - (store_ctx.data().clock_fn)();
-            match delta.to_std() {
-                Err(_) => {
-                    trace!(%execution_deadline, %delta, "Sending OutOfFuel");
-                    Err(wasmtime::Trap::OutOfFuel.into())
-                }
-                Ok(duration) => {
-                    let ticks = u64::try_from(duration.as_millis()).unwrap() / epoch_millis;
-                    trace!("epoch_deadline_callback in {ticks}");
-                    Ok(UpdateDeadline::Yield(ticks))
-                }
-            }
-        });
+        store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
         let call_function = async move {
             let func = {
                 let mut exports = instance.exports(&mut store);
@@ -269,13 +254,7 @@ impl<C: ClockFn> WorkflowWorker<C> {
                 &mut results,
             )
             .await
-            .map_err(|err| {
-                if matches!(err.downcast_ref(), Some(wasmtime::Trap::OutOfFuel)) {
-                    RunError::WorkerError(WorkerError::IntermittentTimeout { epoch_based: true })
-                } else {
-                    RunError::FunctionCall(err.into())
-                }
-            })?; // guest panic exits here
+            .map_err(|err| RunError::FunctionCall(err.into()))?; // guest panic exits here
             let result = SupportedFunctionResult::new(results).map_err(|err| {
                 RunError::WorkerError(WorkerError::FatalError(FatalError::ResultParsingError(err)))
             })?;
@@ -299,7 +278,7 @@ impl<C: ClockFn> WorkflowWorker<C> {
             },
             () = tokio::time::sleep(deadline_duration) => {
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
-                Err(RunError::WorkerError(WorkerError::IntermittentTimeout { epoch_based: false }))
+                Err(RunError::WorkerError(WorkerError::IntermittentTimeout))
             }
         }
     }
@@ -335,9 +314,7 @@ mod tests {
     // TODO: test epoch and select-based timeouts
     use super::*;
     use crate::{
-        activity_worker::tests::{
-            spawn_activity_fibo, EPOCH_MILLIS, FIBO_10_INPUT, FIBO_10_OUTPUT,
-        },
+        activity_worker::tests::{spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT},
         EngineConfig,
     };
     use assert_matches::assert_matches;
@@ -369,7 +346,6 @@ mod tests {
                 ))
                 .unwrap(),
                 WorkflowConfig {
-                    epoch_millis: EPOCH_MILLIS,
                     config_id: ConfigId::generate(),
                     clock_fn: now,
                     join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
@@ -460,7 +436,6 @@ mod tests {
                 ))
                 .unwrap(),
                 WorkflowConfig {
-                    epoch_millis: EPOCH_MILLIS,
                     config_id: ConfigId::generate(),
                     clock_fn: clock_fn.clone(),
                     join_next_blocking_strategy: JoinNextBlockingStrategy::default(),

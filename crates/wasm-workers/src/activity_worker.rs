@@ -57,7 +57,6 @@ pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
 #[derive(Clone, Debug)]
 pub struct ActivityConfig<C: ClockFn> {
     pub config_id: ConfigId,
-    pub epoch_millis: u64,
     pub recycled_instances: RecycleInstancesSetting,
     pub clock_fn: C,
 }
@@ -130,7 +129,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         execution_deadline: DateTime<Utc>,
     ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
         assert!(events.is_empty());
-        self.run(ffqn, params, execution_deadline, execution_deadline)
+        self.run(ffqn, params, execution_deadline)
             .await
             .map(|supported_result| (supported_result, version))
             .map_err(|err| (err, version))
@@ -147,8 +146,7 @@ impl<C: ClockFn + 'static> ActivityWorker<C> {
         &self,
         ffqn: FunctionFqn,
         params: Params,
-        epoch_based_execution_deadline: DateTime<Utc>,
-        select_based_execution_deadline: DateTime<Utc>,
+        execution_deadline: DateTime<Utc>,
     ) -> Result<SupportedFunctionResult, WorkerError> {
         let results_len = *self
             .exported_ffqns_to_results_len
@@ -181,22 +179,7 @@ impl<C: ClockFn + 'static> ActivityWorker<C> {
                 })?;
             (instance, store)
         };
-        let epoch_millis = self.config.epoch_millis;
-        let clock_fn = self.config.clock_fn.clone();
-        store.epoch_deadline_callback(move |_store_ctx| {
-            let delta = epoch_based_execution_deadline - clock_fn();
-            match delta.to_std() {
-                Err(_) => {
-                    trace!(%epoch_based_execution_deadline, %delta, "Sending OutOfFuel");
-                    Err(wasmtime::Trap::OutOfFuel.into())
-                }
-                Ok(duration) => {
-                    let ticks = u64::try_from(duration.as_millis()).unwrap() / epoch_millis;
-                    trace!("epoch_deadline_callback in {ticks}");
-                    Ok(UpdateDeadline::Yield(ticks))
-                }
-            }
-        });
+        store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
         let call_function = async move {
             let func = {
                 let mut exports = instance.exports(&mut store);
@@ -219,16 +202,12 @@ impl<C: ClockFn + 'static> ActivityWorker<C> {
             )
             .await
             .map_err(|err| {
-                if matches!(err.downcast_ref(), Some(wasmtime::Trap::OutOfFuel)) {
-                    WorkerError::IntermittentTimeout { epoch_based: true }
-                } else {
-                    let err = err.into();
-                    WorkerError::IntermittentError {
-                        reason: StrVariant::Arc(Arc::from(format!(
-                            "wasm function call error: `{err}`"
-                        ))),
-                        err,
-                    }
+                let err = err.into();
+                WorkerError::IntermittentError {
+                    reason: StrVariant::Arc(Arc::from(format!(
+                        "wasm function call error: `{err}`"
+                    ))),
+                    err,
                 }
             })?; // guest panic exits here
             let result = SupportedFunctionResult::new(results)
@@ -247,7 +226,7 @@ impl<C: ClockFn + 'static> ActivityWorker<C> {
             Ok(result)
         };
         let started_at = (self.config.clock_fn)();
-        let deadline_duration = (select_based_execution_deadline - started_at)
+        let deadline_duration = (execution_deadline - started_at)
             .to_std()
             .unwrap_or_default();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
@@ -257,8 +236,8 @@ impl<C: ClockFn + 'static> ActivityWorker<C> {
                 res
             },
             ()   = tokio::time::sleep(deadline_duration) => {
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %select_based_execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
-                Err(WorkerError::IntermittentTimeout { epoch_based: false }) // Epoch interruption only applies to actively executing wasm.
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
+                Err(WorkerError::IntermittentTimeout)
             }
         }
     }
@@ -319,7 +298,6 @@ pub(crate) mod tests {
             ActivityWorker::new_with_config(
                 WasmComponent::new(StrVariant::Static(wasm_path)).unwrap(),
                 ActivityConfig {
-                    epoch_millis: 10,
                     config_id: ConfigId::generate(),
                     recycled_instances: RecycleInstancesSetting::Disable,
                     clock_fn: now,
@@ -438,7 +416,6 @@ pub(crate) mod tests {
                 .unwrap(),
                 ActivityConfig {
                     config_id: ConfigId::generate(),
-                    epoch_millis: EPOCH_MILLIS,
                     recycled_instances,
                     clock_fn: now,
                 },
@@ -535,7 +512,6 @@ pub(crate) mod tests {
         const LOCK_EXPIRY_MILLIS: u64 = 1100;
         const TASKS: u32 = 10_000;
         const MAX_INSTANCES: u32 = 10_000;
-        const EPOCH_MILLIS: u64 = 10;
         test_utils::set_up();
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
         let executions = env_or_default("EXECUTIONS", EXECUTIONS);
@@ -562,8 +538,6 @@ pub(crate) mod tests {
             .unwrap(),
             ActivityConfig {
                 config_id: ConfigId::generate(),
-
-                epoch_millis: EPOCH_MILLIS,
                 recycled_instances,
                 clock_fn: now,
             },
@@ -586,7 +560,6 @@ pub(crate) mod tests {
                                 .run(
                                     FIBO_ACTIVITY_FFQN,
                                     Params::from([Val::U8(fibo_input)]),
-                                    execution_deadline,
                                     execution_deadline,
                                 )
                                 .await,
@@ -644,8 +617,6 @@ pub(crate) mod tests {
             .unwrap(),
             ActivityConfig {
                 config_id: ConfigId::generate(),
-
-                epoch_millis: 10,
                 recycled_instances,
                 clock_fn: now,
             },
@@ -664,7 +635,6 @@ pub(crate) mod tests {
                         .run(
                             FIBO_ACTIVITY_FFQN,
                             Params::from([Val::U8(fibo_input)]),
-                            execution_deadline,
                             execution_deadline,
                         )
                         .await
@@ -697,7 +667,6 @@ pub(crate) mod tests {
             #[case] expected: concepts::FinishedExecutionResult,
             #[values(false, true)] recycle: bool,
         ) {
-            const EPOCH_MILLIS: u64 = 10;
             const LOCK_EXPIRY: Duration = Duration::from_millis(500);
             test_utils::set_up();
             let mut db_task = DbTask::spawn_new(1);
@@ -718,7 +687,6 @@ pub(crate) mod tests {
                     ))
                     .unwrap(),
                     ActivityConfig {
-                        epoch_millis: EPOCH_MILLIS,
                         config_id: ConfigId::generate(),
                         recycled_instances,
                         clock_fn: now,
@@ -781,17 +749,14 @@ pub(crate) mod tests {
         }
 
         #[rstest::rstest]
-        #[case(1, 2000, true)] // many small sleeps give a chance to epoch timeout
-        #[case(2000, 1, false)] // one long sleep cannot be detected by the epoch mechanism
+        #[case(1, 2000)] // many small sleeps
+        #[case(2000, 1)] // one long sleep
         #[tokio::test]
-        async fn epoch_or_sleep_based_timeout(
+        async fn long_running_execution_should_timeout(
             #[case] sleep_millis: u32,
             #[case] sleep_iterations: u32,
-            #[case] expected_epoch_based: bool,
         ) {
-            const EPOCH_MILLIS: u64 = 10;
-            const EPOCH_BAED_TIMEOUT: Duration = Duration::from_millis(100);
-            const SELECT_BASED_TIMEOUT: Duration = Duration::from_millis(200);
+            const TIMEOUT: Duration = Duration::from_millis(200);
             test_utils::set_up();
 
             let engine = activity_engine(EngineConfig::default());
@@ -807,7 +772,6 @@ pub(crate) mod tests {
                     ))
                     .unwrap(),
                     ActivityConfig {
-                        epoch_millis: EPOCH_MILLIS,
                         config_id: ConfigId::generate(),
                         recycled_instances: RecycleInstancesSetting::Disable,
                         clock_fn: now,
@@ -822,12 +786,11 @@ pub(crate) mod tests {
                 .run(
                     SLEEP_LOOP_ACTIVITY_FFQN,
                     Params::from([Val::U32(sleep_millis), Val::U32(sleep_iterations)]),
-                    executed_at + EPOCH_BAED_TIMEOUT,
-                    executed_at + SELECT_BASED_TIMEOUT,
+                    executed_at + TIMEOUT,
                 )
                 .await
                 .unwrap_err();
-            assert_matches!(err, WorkerError::IntermittentTimeout { epoch_based } if epoch_based == expected_epoch_based);
+            assert_matches!(err, WorkerError::IntermittentTimeout);
         }
 
         const HTTP_GET_ACTIVITY_FFQN: FunctionFqn =
