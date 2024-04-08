@@ -5,6 +5,7 @@
     * Retries on timeouts
     * Exponential backoff
     * Execution result is persisted
+    * Option to keep blocked workflow executions running until an expiry date
 
 * Executing deterministic workflows
     * Calling a single workflow / activity, blocking the execution
@@ -15,7 +16,6 @@
     * Cleans up old hanging executions with expired locks. Executions that have the budget will be retried.
 
 # Planned features
-* Ability to keep the blocked workflow runtime hot
 * Persistence using sqlite
 * CLI + server binary
 * Host function: generate a random value

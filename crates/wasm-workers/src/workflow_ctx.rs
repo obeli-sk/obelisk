@@ -211,8 +211,8 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
             )
             .await?;
 
-        self.version = self
-            .db_connection
+        // create the child execution
+        self.db_connection
             .create(
                 created_at,
                 new_child_execution_id,
@@ -500,9 +500,9 @@ mod tests {
                         ctx.call_imported_func(ffqn.clone(), &[], &mut []).await
                     }
                 }
-                .map_err(|err| (WorkerError::from(err), version))?;
+                .map_err(|err| (WorkerError::from(err), ctx.version))?;
             }
-            Ok((SupportedFunctionResult::None, version))
+            Ok((SupportedFunctionResult::None, ctx.version))
         }
 
         fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
