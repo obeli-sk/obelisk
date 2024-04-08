@@ -1,3 +1,4 @@
+pub use prefixed_ulid::ExecutionId;
 use std::{
     borrow::Borrow,
     error::Error,
@@ -505,7 +506,6 @@ pub mod prefixed_ulid {
         }
     }
 }
-pub use prefixed_ulid::ExecutionId;
 
 #[cfg(test)]
 mod tests {

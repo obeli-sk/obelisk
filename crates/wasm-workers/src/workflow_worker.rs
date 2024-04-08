@@ -35,8 +35,8 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
 pub enum JoinNextBlockingStrategy {
     /// Shut down the current runtime. When the `JoinSetResponse` is appended, workflow is reexecuted with a new `RunId`.
     Interrupt,
-    // TODO: implement Await:
-    // Keep the execution hot. Worker will poll the database until the execution lock expires.
+    /// Keep the execution hot. Worker will poll the database until the execution lock expires.
+    Await,
 }
 
 impl Default for JoinNextBlockingStrategy {
@@ -211,7 +211,13 @@ impl<C: ClockFn> WorkflowWorker<C> {
         trace!("Params: {params:?}, results_len:{results_len}",);
         let (instance, mut store) = {
             let seed = execution_id.random_part();
-            let ctx = WorkflowCtx::new(execution_id, events, seed, self.config.clock_fn.clone());
+            let ctx = WorkflowCtx::new(
+                execution_id,
+                events,
+                seed,
+                self.config.clock_fn.clone(),
+                self.config.join_next_blocking_strategy,
+            );
             let mut store = Store::new(&self.engine, ctx);
             let instance = self
                 .linker

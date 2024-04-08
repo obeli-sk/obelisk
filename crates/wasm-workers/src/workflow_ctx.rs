@@ -1,3 +1,4 @@
+use crate::workflow_worker::JoinNextBlockingStrategy;
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::JoinSetResponse;
 use concepts::storage::{HistoryEvent, JoinSetRequest};
@@ -51,6 +52,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn> {
     events_idx: usize,
     rng: StdRng,
     pub(crate) clock_fn: C,
+    join_next_blocking_strategy: JoinNextBlockingStrategy,
 }
 
 impl<C: ClockFn> WorkflowCtx<C> {
@@ -59,6 +61,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         events: Vec<HistoryEvent>,
         seed: u64,
         clock_fn: C,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) -> Self {
         Self {
             execution_id,
@@ -66,6 +69,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             events_idx: 0,
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
+            join_next_blocking_strategy,
         }
     }
 
@@ -95,9 +99,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     trace!("Matched ChildExecutionRequest");
                     self.events_idx += 1;
                 }
-                HistoryEvent::JoinNextBlocking { join_set_id }
-                    if *join_set_id == request.new_join_set_id =>
-                {
+                HistoryEvent::JoinNext {
+                    join_set_id,
+                    lock_expires_at: _,
+                } if *join_set_id == request.new_join_set_id => {
                     trace!("Matched JoinNextBlocking");
                     self.events_idx += 1;
                 }
@@ -182,9 +187,10 @@ impl<C: ClockFn> WorkflowCtx<C> {
                     trace!("Matched DelayRequest");
                     self.events_idx += 1;
                 }
-                HistoryEvent::JoinNextBlocking { join_set_id }
-                    if *join_set_id == new_join_set_id =>
-                {
+                HistoryEvent::JoinNext {
+                    join_set_id,
+                    lock_expires_at: _,
+                } if *join_set_id == new_join_set_id => {
                     trace!("Matched JoinNextBlocking");
                     self.events_idx += 1;
                 }
@@ -236,7 +242,7 @@ impl<C: ClockFn> my_org::workflow_engine::host_activities::Host for WorkflowCtx<
 
 #[cfg(test)]
 mod tests {
-    use crate::workflow_ctx::WorkflowCtx;
+    use crate::{workflow_ctx::WorkflowCtx, workflow_worker::JoinNextBlockingStrategy};
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
     use concepts::{
@@ -292,7 +298,13 @@ mod tests {
             _execution_deadline: DateTime<Utc>,
         ) -> WorkerResult {
             let seed = execution_id.random_part();
-            let mut ctx = WorkflowCtx::new(execution_id, events, seed, self.clock_fn.clone());
+            let mut ctx = WorkflowCtx::new(
+                execution_id,
+                events,
+                seed,
+                self.clock_fn.clone(),
+                JoinNextBlockingStrategy::default(),
+            );
             for step in &self.steps {
                 match step {
                     WorkflowStep::Sleep { millis } => ctx.sleep(*millis),

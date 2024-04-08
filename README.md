@@ -15,11 +15,12 @@
     * Cleans up old hanging executions with expired locks. Executions that have the budget will be retried.
 
 # Planned features
+* Ability to keep the blocked workflow runtime hot
+* Persistence using sqlite
+* CLI + server binary
 * Host function: generate a random value
 * Allow starting multiple child executions in parallel
 * Allow scheduling new execution from the current one
-* Persistence using sqlite
-* CLI + server binary
 * Persistence using postgresql
 * Advanced concurrency patterns
 * Cancellation

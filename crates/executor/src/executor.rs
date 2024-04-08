@@ -288,7 +288,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
         execution_id: ExecutionId,
         worker_result: WorkerResult,
         execution_history: &ExecutionHistory,
-        created_at: DateTime<Utc>,
+        result_obtained_at: DateTime<Utc>,
     ) -> Result<Append, DbError> {
         Ok(match worker_result {
             Ok((result, new_version)) => {
@@ -299,7 +299,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                         "Execution returned error result: `{exec_err:?}`"
                     )));
                     if let Some(duration) = execution_history.can_be_retried_after() {
-                        let expires_at = created_at + duration;
+                        let expires_at = result_obtained_at + duration;
                         debug!("Retrying failed execution after {duration:?} at {expires_at}");
                         finished_res = None;
                         ExecutionEventInner::IntermittentFailure { expires_at, reason }
@@ -317,14 +317,17 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                     finished_res = Some(Ok(result.clone()));
                     ExecutionEventInner::Finished { result: Ok(result) }
                 };
-                let finished_event = AppendRequest { created_at, event };
+                let finished_event = AppendRequest {
+                    created_at: result_obtained_at,
+                    event,
+                };
                 let secondary = if let (Some(finished_res), Some((parent_id, join_set_id))) =
                     (finished_res, execution_history.parent())
                 {
                     Some((
                         parent_id,
                         AppendRequest {
-                            created_at,
+                            created_at: result_obtained_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinSetResponse {
                                     join_set_id,
@@ -360,13 +363,13 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                         trace!("ChildExecutionRequest {request:?}");
                         let join_set_id = request.new_join_set_id;
                         let join = AppendRequest {
-                            created_at,
+                            created_at: result_obtained_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinSet { join_set_id },
                             },
                         };
                         let child_exec_async_req = AppendRequest {
-                            created_at,
+                            created_at: result_obtained_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinSetRequest {
                                     join_set_id,
@@ -377,15 +380,18 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                             },
                         };
                         let block = AppendRequest {
-                            created_at,
+                            created_at: result_obtained_at,
                             event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinNextBlocking { join_set_id },
+                                event: HistoryEvent::JoinNext {
+                                    join_set_id,
+                                    lock_expires_at: result_obtained_at,
+                                },
                             },
                         };
                         let child_execution_id = request.child_execution_id;
                         info!(%child_execution_id, "Interrupted, scheduling child execution");
                         let child_exec = AppendRequest {
-                            created_at,
+                            created_at: result_obtained_at,
                             event: ExecutionEventInner::Created {
                                 ffqn: request.ffqn,
                                 params: request.params,
@@ -405,7 +411,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                     WorkerError::SleepRequest(request) => {
                         trace!("SleepRequest {request:?}");
                         let join = AppendRequest {
-                            created_at,
+                            created_at: result_obtained_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinSet {
                                     join_set_id: request.new_join_set_id,
@@ -413,7 +419,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                             },
                         };
                         let delayed_until = AppendRequest {
-                            created_at,
+                            created_at: result_obtained_at,
                             event: ExecutionEventInner::HistoryEvent {
                                 event: HistoryEvent::JoinSetRequest {
                                     join_set_id: request.new_join_set_id,
@@ -425,10 +431,11 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                             },
                         };
                         let block = AppendRequest {
-                            created_at,
+                            created_at: result_obtained_at,
                             event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinNextBlocking {
+                                event: HistoryEvent::JoinNext {
                                     join_set_id: request.new_join_set_id,
+                                    lock_expires_at: result_obtained_at,
                                 },
                             },
                         };
@@ -441,7 +448,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                     }
                     WorkerError::IntermittentError { reason, err: _ } => {
                         if let Some(duration) = execution_history.can_be_retried_after() {
-                            let expires_at = created_at + duration;
+                            let expires_at = result_obtained_at + duration;
                             debug!("Retrying failed execution after {duration:?} at {expires_at}");
                             ExecutionEventInner::IntermittentFailure { expires_at, reason }
                         } else {
@@ -459,7 +466,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                     }
                     WorkerError::IntermittentTimeout { .. } => {
                         if let Some(duration) = execution_history.can_be_retried_after() {
-                            let expires_at = created_at + duration;
+                            let expires_at = result_obtained_at + duration;
                             debug!(
                                 "Retrying timed out execution after {duration:?} at {expires_at}"
                             );
@@ -495,7 +502,10 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                     }
                 };
                 Append {
-                    primary_events: vec![AppendRequest { created_at, event }],
+                    primary_events: vec![AppendRequest {
+                        created_at: result_obtained_at,
+                        event,
+                    }],
                     execution_id,
                     version: new_version,
                     async_resp_to_other_execution: None,

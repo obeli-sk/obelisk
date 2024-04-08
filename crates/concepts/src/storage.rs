@@ -245,15 +245,15 @@ impl ExecutionEventInner {
 
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
 pub enum HistoryEvent {
-    // Must be created by the executor in `PotentiallyPending::Locked` state.
-    // Returns execution to `PotentiallyPending::PendingNow` state.
+    // Must be created by the executor in `PendingState::Locked`.
+    // Returns execution to `PendingState::PendingNow` state.
     Yield,
     #[display(fmt = "Persist")]
-    // Must be created by the executor in `PotentiallyPending::Locked` state.
+    // Must be created by the executor in `PendingState::Locked`.
     Persist {
         value: Vec<u8>,
     },
-    // Must be created by the executor in `PotentiallyPending::Locked` state.
+    // Must be created by the executor in `PendingState::Locked`.
     #[display(fmt = "JoinSet({join_set_id})")]
     JoinSet {
         join_set_id: JoinSetId,
@@ -264,33 +264,32 @@ pub enum HistoryEvent {
         join_set_id: JoinSetId,
         request: JoinSetRequest,
     },
-    // Execution continues without blocking as the next pending response is in the journal.
-    // Must be created by the executor in `PotentiallyPending::Locked` state.
-    JoinNextFetched {
-        join_set_id: JoinSetId,
-    },
-    // Moves the execution to `PotentiallyPending::PendingNow` if it is currently blocked on `JoinNextBlocking`.
+    // Moves the execution to `PendingState::PendingNow` if it is currently blocked on `JoinNextBlocking`.
     #[display(fmt = "AsyncResponse({join_set_id}, {response})")]
     JoinSetResponse {
         join_set_id: JoinSetId,
         response: JoinSetResponse,
     },
-    // Must be created by the executor in `PotentiallyPending::Locked` state.
-    // Execution is `PotentiallyPending::BlockedByJoinSet` until the next response of the JoinSet arrives.
-    JoinNextBlocking {
+    // Must be created by the executor in `PendingState::Locked`.
+    // Execution remains locked until `lock_expires_at`, after which it
+    // becomes `PendingState::BlockedByJoinSet` until the next response of the JoinSet arrives.
+    // After that, an executor can obtain the lock and continue.
+    #[display(fmt = "JoinNext({join_set_id})")]
+    JoinNext {
         join_set_id: JoinSetId,
+        lock_expires_at: DateTime<Utc>,
     },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
 pub enum JoinSetRequest {
-    // Must be created by the executor in `PotentiallyPending::Locked` state.
+    // Must be created by the executor in `PendingState::Locked`.
     #[display(fmt = "DelayRequest({delay_id})")]
     DelayRequest {
         delay_id: DelayId,
         expires_at: DateTime<Utc>,
     },
-    // Must be created by the executor in `PotentiallyPending::Locked` state.
+    // Must be created by the executor in `PendingState::Locked`.
     #[display(fmt = "ChildExecutionRequest({child_execution_id})")]
     ChildExecutionRequest { child_execution_id: ExecutionId },
 }
@@ -733,31 +732,35 @@ pub mod journal {
                         idx,
                         ExecutionEventInner::HistoryEvent {
                             event:
-                                HistoryEvent::JoinNextBlocking {
+                                HistoryEvent::JoinNext {
                                     join_set_id: expected_join_set_id,
-                                    ..
+                                    lock_expires_at,
                                 },
                             ..
                         },
                     ) => {
-                        // pending if this event is followed by an async response
-                        if self.execution_events.iter().skip(idx + 1).any(|event| {
-                            matches!(event, ExecutionEvent {
+                        // Did the async response arrive?
+                        let flollowed_by_resp =
+                            self.execution_events.iter().skip(idx + 1).any(|event| {
+                                matches!(event, ExecutionEvent {
                                 event:
-                                    ExecutionEventInner::HistoryEvent{event:
+                                    ExecutionEventInner::HistoryEvent { event:
                                         HistoryEvent::JoinSetResponse { join_set_id, .. },
                                     .. },
                                 .. }
                                 if expected_join_set_id == join_set_id)
-                        }) {
-                            Some(PendingState::PendingNow)
+                            });
+                        if flollowed_by_resp {
+                            // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
+                            Some(PendingState::PendingAt(*lock_expires_at))
                         } else {
                             Some(PendingState::BlockedByJoinSet {
                                 join_set_id: *expected_join_set_id,
                             })
                         }
                     }
-                    _ => None,
+
+                    _ => None, // previous event
                 })
                 .expect("journal must begin with Created event")
         }

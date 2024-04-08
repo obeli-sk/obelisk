@@ -6,7 +6,7 @@
 
 use crate::{
     activity_worker::{ActivityConfig, ActivityWorker, RecycleInstancesSetting},
-    workflow_worker::{WorkflowConfig, WorkflowWorker},
+    workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig, WorkflowWorker},
     WasmComponent, WasmFileError,
 };
 use async_trait::async_trait;
@@ -24,6 +24,7 @@ pub struct AutoConfig<C: ClockFn> {
     pub epoch_millis: u64,
     pub activity_recycled_instances: RecycleInstancesSetting,
     pub clock_fn: C,
+    pub workflow_join_next_blocking_strategy: JoinNextBlockingStrategy,
 }
 
 pub enum AutoWorker<C: ClockFn> {
@@ -64,6 +65,7 @@ impl<C: ClockFn> AutoWorker<C> {
                 config_id: config.config_id,
                 epoch_millis: config.epoch_millis,
                 clock_fn: config.clock_fn,
+                join_next_blocking_strategy: config.workflow_join_next_blocking_strategy,
             };
             WorkflowWorker::new_with_config(wasm_component, config, workflow_engine)
                 .map(Self::WorkflowWorker)
@@ -163,7 +165,7 @@ mod tests {
     use crate::{
         activity_worker::{activity_engine, RecycleInstancesSetting},
         auto_worker::Kind,
-        workflow_worker::workflow_engine,
+        workflow_worker::{workflow_engine, JoinNextBlockingStrategy},
         EngineConfig,
     };
     use concepts::{prefixed_ulid::ConfigId, StrVariant};
@@ -188,6 +190,7 @@ mod tests {
             config_id: ConfigId::generate(),
             activity_recycled_instances: RecycleInstancesSetting::Disable,
             clock_fn: now,
+            workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
         };
         let worker = AutoWorker::new_with_config(
             config,
