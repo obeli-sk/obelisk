@@ -355,10 +355,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                     return Err(DbError::Specific(SpecificError::VersionMismatch));
                 }
                 let event = match err {
-                    WorkerError::ChildExecutionRequest => {
-                        return Ok(None);
-                    }
-                    WorkerError::DelayRequest => {
+                    WorkerError::ChildExecutionRequest | WorkerError::DelayRequest => {
                         return Ok(None);
                     }
                     WorkerError::IntermittentError { reason, err: _ } => {

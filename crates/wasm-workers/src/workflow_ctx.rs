@@ -68,6 +68,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection> {
 }
 
 impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
         events: Vec<HistoryEvent>,
@@ -95,6 +96,7 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn replay_or_interrupt(
         &mut self,
         ffqn: FunctionFqn,
@@ -270,6 +272,7 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn sleep(&mut self, millis: u32) -> Result<(), FunctionError> {
         let new_join_set_id =
             JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
