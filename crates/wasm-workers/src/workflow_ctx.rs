@@ -2,7 +2,8 @@ use crate::workflow_worker::JoinNextBlockingStrategy;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{
-    AppendRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version,
+    AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse,
+    Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
@@ -212,16 +213,16 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
 
         // create the child execution
         self.db_connection
-            .create(
+            .create(CreateRequest {
                 created_at,
-                new_child_execution_id,
+                execution_id: new_child_execution_id,
                 ffqn,
                 params,
-                Some((self.execution_id, new_join_set_id)),
-                None,
-                self.child_retry_exp_backoff,
-                self.child_max_retries,
-            )
+                parent: Some((self.execution_id, new_join_set_id)),
+                scheduled_at: None,
+                retry_exp_backoff: self.child_retry_exp_backoff,
+                max_retries: self.child_max_retries,
+            })
             .await?;
         if interrupt {
             Err(FunctionError::ChildExecutionRequest)
@@ -427,7 +428,10 @@ mod tests {
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
     use concepts::{
-        storage::{journal::PendingState, DbConnection, HistoryEvent, JoinSetRequest, Version},
+        storage::{
+            journal::PendingState, CreateRequest, DbConnection, HistoryEvent, JoinSetRequest,
+            Version,
+        },
         FinishedExecutionResult,
     };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
@@ -584,16 +588,16 @@ mod tests {
         // Create an execution.
         let created_at = sim_clock.now();
         db_connection
-            .create(
+            .create(CreateRequest {
                 created_at,
                 execution_id,
-                MOCK_FFQN,
-                Params::from([]),
-                None,
-                None,
-                Duration::ZERO,
-                0,
-            )
+                ffqn: MOCK_FFQN,
+                params: Params::from([]),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
             .await
             .unwrap();
 

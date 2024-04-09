@@ -10,9 +10,9 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::journal::{ExecutionJournal, PendingState};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, DbConnection, DbConnectionError, DbError,
-    ExecutionEventInner, ExecutionLog, ExpiredTimer, LockPendingResponse, LockResponse,
-    LockedExecution, SpecificError, Version,
+    AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
+    DbConnectionError, DbError, ExecutionEventInner, ExecutionLog, ExpiredTimer,
+    LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version,
 };
 use concepts::{ExecutionId, FunctionFqn, Params, StrVariant};
 use derivative::Derivative;
@@ -714,16 +714,16 @@ impl DbTask {
                 "execution is already initialized",
             )));
         }
-        let journal = ExecutionJournal::new(
+        let journal = ExecutionJournal::new(CreateRequest {
+            created_at,
             execution_id,
             ffqn,
             params,
-            scheduled_at,
             parent,
-            created_at,
+            scheduled_at,
             retry_exp_backoff,
             max_retries,
-        );
+        });
         let version = journal.version();
         let old_val = self.journals.insert(execution_id, journal);
         assert!(
@@ -1137,16 +1137,16 @@ pub mod tests {
         {
             let created_at = sim_clock.now();
             db_connection
-                .create(
+                .create(CreateRequest {
                     created_at,
                     execution_id,
-                    SOME_FFQN,
-                    Params::default(),
-                    None,
-                    None,
-                    Duration::ZERO,
-                    0,
-                )
+                    ffqn: SOME_FFQN,
+                    params: Params::default(),
+                    parent: None,
+                    scheduled_at: None,
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                })
                 .await
                 .unwrap();
         }
@@ -1359,16 +1359,16 @@ pub mod tests {
         // Create
         {
             db_connection
-                .create(
-                    sim_clock.now(),
+                .create(CreateRequest {
+                    created_at: sim_clock.now(),
                     execution_id,
-                    SOME_FFQN,
-                    Params::default(),
-                    None,
-                    None,
-                    RETRY_EXP_BACKOFF,
-                    MAX_RETRIES,
-                )
+                    ffqn: SOME_FFQN,
+                    params: Params::default(),
+                    parent: None,
+                    scheduled_at: None,
+                    retry_exp_backoff: RETRY_EXP_BACKOFF,
+                    max_retries: MAX_RETRIES,
+                })
                 .await
                 .unwrap();
         }
@@ -1430,16 +1430,16 @@ pub mod tests {
         let mut version;
         // Create
         version = db_connection
-            .create(
-                now(),
+            .create(CreateRequest {
+                created_at: now(),
                 execution_id,
-                SOME_FFQN,
-                Params::default(),
-                None,
-                None,
-                Duration::ZERO,
-                0,
-            )
+                ffqn: SOME_FFQN,
+                params: Params::default(),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
             .await
             .unwrap();
 

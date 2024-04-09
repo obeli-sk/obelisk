@@ -522,6 +522,7 @@ mod tests {
     use anyhow::anyhow;
     use assert_matches::assert_matches;
     use async_trait::async_trait;
+    use concepts::storage::CreateRequest;
     use concepts::storage::{
         journal::PendingState, DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
     };
@@ -732,16 +733,16 @@ mod tests {
         // Create an execution
         let execution_id = ExecutionId::generate();
         db_connection
-            .create(
+            .create(CreateRequest {
                 created_at,
                 execution_id,
-                SOME_FFQN,
-                Params::default(),
-                None,
-                None,
+                ffqn: SOME_FFQN,
+                params: Params::default(),
+                parent: None,
+                scheduled_at: None,
                 retry_exp_backoff,
                 max_retries,
-            )
+            })
             .await
             .unwrap();
         // execute!
@@ -1025,16 +1026,16 @@ mod tests {
         let execution_id = ExecutionId::generate();
         let timeout_duration = Duration::from_millis(300);
         db_connection
-            .create(
-                sim_clock.now(),
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
                 execution_id,
-                SOME_FFQN,
-                Params::default(),
-                None,
-                None,
-                timeout_duration,
-                1,
-            )
+                ffqn: SOME_FFQN,
+                params: Params::default(),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: timeout_duration,
+                max_retries: 1,
+            })
             .await
             .unwrap();
 

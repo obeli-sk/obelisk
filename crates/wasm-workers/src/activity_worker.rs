@@ -271,7 +271,10 @@ pub(crate) mod tests {
     use super::*;
     use crate::EngineConfig;
     use assert_matches::assert_matches;
-    use concepts::{storage::DbConnection, ExecutionId, Params, SupportedFunctionResult};
+    use concepts::{
+        storage::{CreateRequest, DbConnection},
+        ExecutionId, Params, SupportedFunctionResult,
+    };
     use db::inmemory_dao::DbTask;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::time::{Duration, Instant};
@@ -333,16 +336,16 @@ pub(crate) mod tests {
         let execution_id = ExecutionId::generate();
         let created_at = now();
         db_connection
-            .create(
+            .create(CreateRequest {
                 created_at,
                 execution_id,
-                FIBO_ACTIVITY_FFQN,
-                Params::from([Val::U8(FIBO_10_INPUT)]),
-                None,
-                None,
-                Duration::ZERO,
-                0,
-            )
+                ffqn: FIBO_ACTIVITY_FFQN,
+                params: Params::from([Val::U8(FIBO_10_INPUT)]),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
             .await
             .unwrap();
         // Check the result.
@@ -727,16 +730,16 @@ pub(crate) mod tests {
             warn!("Testing {execution_id}");
             let created_at = now();
             db_connection
-                .create(
+                .create(CreateRequest {
                     created_at,
                     execution_id,
-                    SLEEP_LOOP_ACTIVITY_FFQN,
-                    Params::from([Val::U32(sleep_millis), Val::U32(sleep_iterations)]),
-                    None,
-                    None,
-                    Duration::ZERO,
-                    0,
-                )
+                    ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
+                    params: Params::from([Val::U32(sleep_millis), Val::U32(sleep_iterations)]),
+                    parent: None,
+                    scheduled_at: None,
+                    retry_exp_backoff: Duration::ZERO,
+                    max_retries: 0,
+                })
                 .await
                 .unwrap();
             // Check the result.
@@ -845,16 +848,16 @@ pub(crate) mod tests {
             let execution_id = ExecutionId::generate();
             let created_at = now();
             db_connection
-                .create(
+                .create(CreateRequest {
                     created_at,
                     execution_id,
-                    HTTP_GET_ACTIVITY_FFQN,
+                    ffqn: HTTP_GET_ACTIVITY_FFQN,
                     params,
-                    None,
-                    None,
-                    Duration::from_millis(10),
-                    5, // retries enabled due to racy test
-                )
+                    parent: None,
+                    scheduled_at: None,
+                    retry_exp_backoff: Duration::from_millis(10),
+                    max_retries: 5, // retries enabled due to racy test
+                })
                 .await
                 .unwrap();
             // Check the result.

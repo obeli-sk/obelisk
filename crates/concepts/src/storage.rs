@@ -367,6 +367,18 @@ pub struct AppendRequest {
     pub event: ExecutionEventInner,
 }
 
+#[derive(Debug, Clone)]
+pub struct CreateRequest {
+    pub created_at: DateTime<Utc>,
+    pub execution_id: ExecutionId,
+    pub ffqn: FunctionFqn,
+    pub params: Params,
+    pub parent: Option<(ExecutionId, JoinSetId)>,
+    pub scheduled_at: Option<DateTime<Utc>>,
+    pub retry_exp_backoff: Duration,
+    pub max_retries: u32,
+}
+
 // Must be cheap to clone
 #[async_trait]
 pub trait DbConnection: Send + Sync + Clone + 'static {
@@ -380,29 +392,25 @@ pub trait DbConnection: Send + Sync + Clone + 'static {
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbConnectionError>;
 
-    #[allow(clippy::too_many_arguments)]
     /// Specialized `append` which does not require a version.
-    async fn create(
-        &self,
-        created_at: DateTime<Utc>,
-        execution_id: ExecutionId,
-        ffqn: FunctionFqn,
-        params: Params,
-        parent: Option<(ExecutionId, JoinSetId)>,
-        scheduled_at: Option<DateTime<Utc>>,
-        retry_exp_backoff: Duration,
-        max_retries: u32,
-    ) -> Result<AppendResponse, DbError> {
+    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
         let event = ExecutionEventInner::Created {
-            ffqn,
-            params,
-            parent,
-            scheduled_at,
-            retry_exp_backoff,
-            max_retries,
+            ffqn: req.ffqn,
+            params: req.params,
+            parent: req.parent,
+            scheduled_at: req.scheduled_at,
+            retry_exp_backoff: req.retry_exp_backoff,
+            max_retries: req.max_retries,
         };
-        self.append(execution_id, None, AppendRequest { created_at, event })
-            .await
+        self.append(
+            req.execution_id,
+            None,
+            AppendRequest {
+                created_at: req.created_at,
+                event,
+            },
+        )
+        .await
     }
 
     /// Specialized `append` which returns the event history.
@@ -527,7 +535,7 @@ pub enum ExpiredTimer {
 }
 
 pub mod journal {
-    use super::{ExecutionEvent, ExecutionEventInner, ExecutionId, HistoryEvent};
+    use super::{CreateRequest, ExecutionEvent, ExecutionEventInner, ExecutionId, HistoryEvent};
     use crate::storage::{ExecutionLog, SpecificError, Version};
     use crate::{
         prefixed_ulid::{ExecutorId, JoinSetId, RunId},
@@ -545,35 +553,25 @@ pub mod journal {
     }
 
     impl ExecutionJournal {
-        #[allow(clippy::too_many_arguments)]
         #[must_use]
-        pub fn new(
-            execution_id: ExecutionId,
-            ffqn: FunctionFqn,
-            params: Params,
-            scheduled_at: Option<DateTime<Utc>>,
-            parent: Option<(ExecutionId, JoinSetId)>,
-            created_at: DateTime<Utc>,
-            retry_exp_backoff: Duration,
-            max_retries: u32,
-        ) -> Self {
-            let pending_state = match scheduled_at {
+        pub fn new(req: CreateRequest) -> Self {
+            let pending_state = match req.scheduled_at {
                 Some(pending_at) => PendingState::PendingAt(pending_at),
                 None => PendingState::PendingNow,
             };
             let event = ExecutionEvent {
                 event: ExecutionEventInner::Created {
-                    ffqn,
-                    params,
-                    scheduled_at,
-                    parent,
-                    retry_exp_backoff,
-                    max_retries,
+                    ffqn: req.ffqn,
+                    params: req.params,
+                    scheduled_at: req.scheduled_at,
+                    parent: req.parent,
+                    retry_exp_backoff: req.retry_exp_backoff,
+                    max_retries: req.max_retries,
                 },
-                created_at,
+                created_at: req.created_at,
             };
             Self {
-                execution_id,
+                execution_id: req.execution_id,
                 pending_state,
                 execution_events: VecDeque::from([event]),
             }

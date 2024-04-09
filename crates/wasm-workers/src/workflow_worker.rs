@@ -352,7 +352,7 @@ mod tests {
         EngineConfig,
     };
     use assert_matches::assert_matches;
-    use concepts::storage::{journal::PendingState, DbConnection};
+    use concepts::storage::{journal::PendingState, CreateRequest, DbConnection};
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
     use db::inmemory_dao::DbTask;
     use executor::{
@@ -414,16 +414,16 @@ mod tests {
         let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = now();
         db_connection
-            .create(
+            .create(CreateRequest {
                 created_at,
                 execution_id,
-                FIBO_WORKFLOW_FFQN,
-                Params::from([Val::U8(FIBO_10_INPUT), Val::U32(INPUT_ITERATIONS)]),
-                None,
-                None,
-                Duration::ZERO,
-                0,
-            )
+                ffqn: FIBO_WORKFLOW_FFQN,
+                params: Params::from([Val::U8(FIBO_10_INPUT), Val::U32(INPUT_ITERATIONS)]),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
             .await
             .unwrap();
         // Should end as BlockedByJoinSet
@@ -512,16 +512,16 @@ mod tests {
         );
         let execution_id = ExecutionId::generate();
         db_connection
-            .create(
-                sim_clock.now(),
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
                 execution_id,
-                SLEEP_HOST_ACTIVITY_FFQN,
-                Params::from([Val::U32(SLEEP_MILLIS)]),
-                None,
-                None,
-                Duration::ZERO,
-                0,
-            )
+                ffqn: SLEEP_HOST_ACTIVITY_FFQN,
+                params: Params::from([Val::U32(SLEEP_MILLIS)]),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
             .await
             .unwrap();
 
