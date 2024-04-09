@@ -1,6 +1,6 @@
 use crate::worker::{FatalError, Worker, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
-use concepts::storage::ExecutionHistory;
+use concepts::storage::ExecutionLog;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params, StrVariant};
 use concepts::{
     storage::{
@@ -288,10 +288,10 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
         db_connection: &DB,
         execution_id: ExecutionId,
         new_version: Version,
-    ) -> Result<(Version, ExecutionHistory), DbError> {
-        let execution_history = db_connection.get(execution_id).await?;
-        if execution_history.version == new_version {
-            Ok((new_version, execution_history))
+    ) -> Result<(Version, ExecutionLog), DbError> {
+        let execution_log = db_connection.get(execution_id).await?;
+        if execution_log.version == new_version {
+            Ok((new_version, execution_log))
         } else {
             Err(DbError::Specific(SpecificError::VersionMismatch))
         }
@@ -308,13 +308,13 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
         Ok(match worker_result {
             Ok((result, new_version)) => {
                 let finished_res;
-                let execution_history = db_connection.get(execution_id).await?;
+                let execution_log = db_connection.get(execution_id).await?;
                 let event = if let Some(exec_err) = result.fallible_err() {
                     info!("Execution finished with an error result");
                     let reason = StrVariant::Arc(Arc::from(format!(
                         "Execution returned error result: `{exec_err:?}`"
                     )));
-                    if let Some(duration) = execution_history.can_be_retried_after() {
+                    if let Some(duration) = execution_log.can_be_retried_after() {
                         let expires_at = result_obtained_at + duration;
                         debug!("Retrying failed execution after {duration:?} at {expires_at}");
                         finished_res = None;
@@ -338,7 +338,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                     event,
                 };
                 let secondary = if let (Some(finished_res), Some((parent_id, join_set_id))) =
-                    (finished_res, execution_history.parent())
+                    (finished_res, execution_log.parent())
                 {
                     Some((
                         parent_id,
@@ -385,11 +385,11 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                         err: _,
                         version: new_version,
                     } => {
-                        let version_and_history =
+                        let version_and_exec_log =
                             Self::check_version(db_connection, execution_id, new_version).await?;
-                        new_version2 = version_and_history.0;
-                        let execution_history = version_and_history.1;
-                        if let Some(duration) = execution_history.can_be_retried_after() {
+                        new_version2 = version_and_exec_log.0;
+                        let execution_log = version_and_exec_log.1;
+                        if let Some(duration) = execution_log.can_be_retried_after() {
                             let expires_at = result_obtained_at + duration;
                             debug!("Retrying failed execution after {duration:?} at {expires_at}");
                             ExecutionEventInner::IntermittentFailure { expires_at, reason }
@@ -586,7 +586,7 @@ mod tests {
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
-        let execution_history = create_and_tick(
+        let execution_log = create_and_tick(
             created_at,
             db_connection,
             exec_config,
@@ -598,7 +598,7 @@ mod tests {
         )
         .await;
         assert_matches!(
-            execution_history.events.get(2).unwrap(),
+            execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -630,7 +630,7 @@ mod tests {
             worker_results_rev.reverse();
             Arc::new(std::sync::Mutex::new(worker_results_rev))
         };
-        let execution_history = create_and_tick(
+        let execution_log = create_and_tick(
             created_at,
             db_connection,
             exec_config,
@@ -643,7 +643,7 @@ mod tests {
         .await;
         db_task.close().await;
         assert_matches!(
-            execution_history.events.get(2).unwrap(),
+            execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -685,7 +685,7 @@ mod tests {
             None,
         );
 
-        let execution_history = create_and_tick(
+        let execution_log = create_and_tick(
             created_at,
             db_task.as_db_connection().unwrap(),
             exec_config,
@@ -702,7 +702,7 @@ mod tests {
         exec_task.close().await;
         db_task.close().await;
         assert_matches!(
-            execution_history.events.get(2).unwrap(),
+            execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -728,7 +728,7 @@ mod tests {
         executed_at: DateTime<Utc>,
         retry_exp_backoff: Duration,
         mut tick: T,
-    ) -> ExecutionHistory {
+    ) -> ExecutionLog {
         // Create an execution
         let execution_id = ExecutionId::generate();
         db_connection
@@ -752,11 +752,11 @@ mod tests {
             executed_at,
         )
         .await;
-        let execution_history = db_connection.get(execution_id).await.unwrap();
-        debug!("Execution history after tick: {execution_history:?}");
+        let execution_log = db_connection.get(execution_id).await.unwrap();
+        debug!("Execution history after tick: {execution_log:?}");
         // check that DB contains Created and Locked events.
         assert_matches!(
-            execution_history.events.first().unwrap(),
+            execution_log.events.first().unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Created { .. },
                 created_at: actually_created_at,
@@ -764,18 +764,18 @@ mod tests {
             if created_at == *actually_created_at
         );
         let locked_at = assert_matches!(
-            execution_history.events.get(1).unwrap(),
+            execution_log.events.get(1).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: locked_at
             } if created_at <= *locked_at
             => *locked_at
         );
-        assert_matches!(execution_history.events.get(2).unwrap(), ExecutionEvent {
+        assert_matches!(execution_log.events.get(2).unwrap(), ExecutionEvent {
             event: _,
             created_at: executed_at,
         } if *executed_at >= locked_at);
-        execution_history
+        execution_log
     }
 
     #[tokio::test]
@@ -807,7 +807,7 @@ mod tests {
         });
         let retry_exp_backoff = Duration::from_millis(100);
         debug!(now = %sim_clock.now(), "Creating an execution that should fail");
-        let execution_history = create_and_tick(
+        let execution_log = create_and_tick(
             sim_clock.now(),
             db_connection.clone(),
             exec_config.clone(),
@@ -818,9 +818,9 @@ mod tests {
             tick_fn,
         )
         .await;
-        assert_eq!(3, execution_history.events.len());
+        assert_eq!(3, execution_log.events.len());
         assert_matches!(
-            &execution_history.events.get(2).unwrap(),
+            &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::IntermittentFailure {
                     reason,
@@ -848,20 +848,17 @@ mod tests {
         // tick again to finish the execution
         sim_clock.sleep(retry_exp_backoff);
         tick_fn(db_connection.clone(), exec_config, worker, sim_clock.now()).await;
-        let execution_history = db_connection
-            .get(execution_history.execution_id)
-            .await
-            .unwrap();
-        debug!(now = %sim_clock.now(), "Execution history after second tick: {execution_history:?}");
+        let execution_log = db_connection.get(execution_log.execution_id).await.unwrap();
+        debug!(now = %sim_clock.now(), "Execution history after second tick: {execution_log:?}");
         assert_matches!(
-            execution_history.events.get(3).unwrap(),
+            execution_log.events.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: at
             } if *at == sim_clock.now()
         );
         assert_matches!(
-            execution_history.events.get(4).unwrap(),
+            execution_log.events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::None),
@@ -901,7 +898,7 @@ mod tests {
                 ),
             )]))),
         });
-        let execution_history = create_and_tick(
+        let execution_log = create_and_tick(
             created_at,
             db_connection.clone(),
             exec_config.clone(),
@@ -912,9 +909,9 @@ mod tests {
             tick_fn,
         )
         .await;
-        assert_eq!(3, execution_history.events.len());
+        assert_eq!(3, execution_log.events.len());
         let reason = assert_matches!(
-            &execution_history.events.get(2).unwrap(),
+            &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::IntermittentFailure {
                     reason,
@@ -942,22 +939,19 @@ mod tests {
             )]))),
         });
         tick_fn(db_connection.clone(), exec_config, worker, created_at).await;
-        let execution_history = db_connection
-            .get(execution_history.execution_id)
-            .await
-            .unwrap();
-        debug!("Execution history after second tick: {execution_history:?}");
+        let execution_log = db_connection.get(execution_log.execution_id).await.unwrap();
+        debug!("Execution history after second tick: {execution_log:?}");
 
-        assert_eq!(5, execution_history.events.len());
+        assert_eq!(5, execution_log.events.len());
         assert_matches!(
-            execution_history.events.get(3).unwrap(),
+            execution_log.events.get(3).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: locked_at
             }  if *locked_at == created_at
         );
         assert_matches!(
-            execution_history.events.get(4).unwrap(),
+            execution_log.events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::Fallible(
@@ -1077,10 +1071,10 @@ mod tests {
             .1
             .is_finished());
 
-        let execution_history = db_connection.get(execution_id).await.unwrap();
+        let execution_log = db_connection.get(execution_id).await.unwrap();
         let expected_first_timeout_expiry = now_after_first_lock_expiry + timeout_duration;
         assert_matches!(
-            &execution_history.events.get(2).unwrap(),
+            &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::IntermittentTimeout { expires_at },
                 created_at: at,
@@ -1088,7 +1082,7 @@ mod tests {
         );
         assert_eq!(
             PendingState::PendingAt(expected_first_timeout_expiry),
-            execution_history.pending_state
+            execution_log.pending_state
         );
         sim_clock.sleep(timeout_duration);
         let now_after_first_timeout = sim_clock.now();

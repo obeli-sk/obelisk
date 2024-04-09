@@ -11,7 +11,7 @@ use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::journal::{ExecutionJournal, PendingState};
 use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, DbConnection, DbConnectionError, DbError,
-    ExecutionEventInner, ExecutionHistory, ExpiredTimer, LockPendingResponse, LockResponse,
+    ExecutionEventInner, ExecutionLog, ExpiredTimer, LockPendingResponse, LockResponse,
     LockedExecution, SpecificError, Version,
 };
 use concepts::{ExecutionId, FunctionFqn, Params, StrVariant};
@@ -157,7 +157,7 @@ impl DbConnection for InMemoryDbConnection {
     }
 
     #[instrument(skip_all, %execution_id)]
-    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError> {
+    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Get {
             execution_id,
@@ -355,7 +355,7 @@ enum ExecutionSpecificRequest {
     Get {
         execution_id: ExecutionId,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<ExecutionHistory, SpecificError>>,
+        resp_sender: oneshot::Sender<Result<ExecutionLog, SpecificError>>,
     },
 }
 
@@ -457,9 +457,9 @@ pub(crate) enum DbTickResponse {
         resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
     },
     Get {
-        payload: Result<ExecutionHistory, SpecificError>,
+        payload: Result<ExecutionLog, SpecificError>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<ExecutionHistory, SpecificError>>,
+        resp_sender: oneshot::Sender<Result<ExecutionLog, SpecificError>>,
     },
     GetExpiredTimers {
         payload: Vec<ExpiredTimer>,
@@ -803,11 +803,11 @@ impl DbTask {
         Ok(version)
     }
 
-    fn get(&mut self, execution_id: ExecutionId) -> Result<ExecutionHistory, SpecificError> {
+    fn get(&mut self, execution_id: ExecutionId) -> Result<ExecutionLog, SpecificError> {
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             return Err(SpecificError::NotFound);
         };
-        Ok(journal.as_execution_history())
+        Ok(journal.as_execution_log())
     }
 
     fn get_expired_timers(&mut self, at: DateTime<Utc>) -> Vec<ExpiredTimer> {
@@ -938,8 +938,8 @@ pub mod tick {
     use super::{
         async_trait, instrument, oneshot, AppendBatchResponse, AppendRequest, AppendResponse,
         DateTime, DbConnection, DbConnectionError, DbError, DbRequest, DbTask, DbTickResponse,
-        ExecutionHistory, ExecutionId, ExecutionSpecificRequest, ExecutorId, ExpiredTimer,
-        FunctionFqn, GeneralRequest, LockPendingResponse, LockResponse, RunId, Utc, Version,
+        ExecutionId, ExecutionLog, ExecutionSpecificRequest, ExecutorId, ExpiredTimer, FunctionFqn,
+        GeneralRequest, LockPendingResponse, LockResponse, RunId, Utc, Version,
     };
     use assert_matches::assert_matches;
     use std::sync::Arc;
@@ -1048,7 +1048,7 @@ pub mod tick {
                 .map_err(DbError::Specific)
         }
 
-        async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError> {
+        async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Get {
                 execution_id,
                 resp_sender: oneshot::channel().0,

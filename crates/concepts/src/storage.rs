@@ -19,14 +19,14 @@ use tracing::trace;
 
 /// Remote client representation of the execution journal.
 #[derive(Debug)]
-pub struct ExecutionHistory {// TODO: rename to ExecutionLog
+pub struct ExecutionLog {
     pub execution_id: ExecutionId,
     pub events: Vec<ExecutionEvent>,
     pub version: Version,
     pub pending_state: PendingState,
 }
 
-impl ExecutionHistory {
+impl ExecutionLog {
     fn already_retried_count(&self) -> u32 {
         u32::try_from(
             self.events
@@ -430,17 +430,17 @@ pub trait DbConnection: Send + Sync + Clone + 'static {
         version: Option<Version>,
     ) -> Result<AppendBatchResponse, DbError>;
 
-    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionHistory, DbError>;
+    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError>;
 
     async fn wait_for_finished_result(
         &self,
         execution_id: ExecutionId,
         timeout: Option<Duration>,
     ) -> Result<FinishedExecutionResult, DbError> {
-        let execution_history = self
+        let execution_log = self
             .wait_for_pending_state(execution_id, PendingState::Finished, timeout)
             .await?;
-        Ok(execution_history
+        Ok(execution_log
             .finished_result()
             .expect("pending state was checked")
             .clone())
@@ -451,14 +451,14 @@ pub trait DbConnection: Send + Sync + Clone + 'static {
         execution_id: ExecutionId,
         expected_pending_state: PendingState,
         timeout: Option<Duration>,
-    ) -> Result<ExecutionHistory, DbError> {
+    ) -> Result<ExecutionLog, DbError> {
         trace!(%execution_id, "Waiting for {expected_pending_state}");
         let fut = async move {
             loop {
-                let execution_history = self.get(execution_id).await?;
-                if execution_history.pending_state == expected_pending_state {
+                let execution_log = self.get(execution_id).await?;
+                if execution_log.pending_state == expected_pending_state {
                     debug!(%execution_id, "Found: {expected_pending_state}");
-                    return Ok(execution_history);
+                    return Ok(execution_log);
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -477,14 +477,14 @@ pub trait DbConnection: Send + Sync + Clone + 'static {
     async fn wait_for_pending_state_fn<T: Debug>(
         &self,
         execution_id: ExecutionId,
-        prdicate: impl Fn(ExecutionHistory) -> Option<T> + Send,
+        prdicate: impl Fn(ExecutionLog) -> Option<T> + Send,
         timeout: Option<Duration>,
     ) -> Result<T, DbError> {
         trace!(%execution_id, "Waiting for predicate");
         let fut = async move {
             loop {
-                let execution_history = self.get(execution_id).await?;
-                if let Some(t) = prdicate(execution_history) {
+                let execution_log = self.get(execution_id).await?;
+                if let Some(t) = prdicate(execution_log) {
                     debug!(%execution_id, "Found: {t:?}");
                     return Ok(t);
                 }
@@ -528,7 +528,7 @@ pub enum ExpiredTimer {
 
 pub mod journal {
     use super::{ExecutionEvent, ExecutionEventInner, ExecutionId, HistoryEvent};
-    use crate::storage::{ExecutionHistory, SpecificError, Version};
+    use crate::storage::{ExecutionLog, SpecificError, Version};
     use crate::{
         prefixed_ulid::{ExecutorId, JoinSetId, RunId},
         FunctionFqn, Params, StrVariant,
@@ -813,8 +813,8 @@ pub mod journal {
         }
 
         #[must_use]
-        pub fn as_execution_history(&self) -> ExecutionHistory {
-            ExecutionHistory {
+        pub fn as_execution_log(&self) -> ExecutionLog {
+            ExecutionLog {
                 execution_id: self.execution_id,
                 events: self.execution_events.iter().cloned().collect(),
                 version: self.version(),

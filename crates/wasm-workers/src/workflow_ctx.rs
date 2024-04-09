@@ -602,10 +602,10 @@ mod tests {
         while let Some((join_set_id, req)) = db_connection
             .wait_for_pending_state_fn(
                 execution_id,
-                |execution_history| match &execution_history.pending_state {
+                |execution_log| match &execution_log.pending_state {
                     PendingState::BlockedByJoinSet { join_set_id } => Some(Some((
                         *join_set_id,
-                        execution_history
+                        execution_log
                             .join_set_requests(*join_set_id)
                             .cloned()
                             .collect::<Vec<_>>(),
@@ -662,8 +662,8 @@ mod tests {
             processed.push(join_set_id);
         }
         // must be finished at this point
-        let execution_history = db_connection.get(execution_id).await.unwrap();
-        assert_eq!(PendingState::Finished, execution_history.pending_state);
+        let execution_log = db_connection.get(execution_id).await.unwrap();
+        assert_eq!(PendingState::Finished, execution_log.pending_state);
         drop(db_connection);
         for child_task in spawned_child_executors {
             child_task.close().await;
@@ -672,8 +672,8 @@ mod tests {
         timers_watcher_task.close().await;
         db_task.close().await;
         (
-            execution_history.event_history().collect(),
-            execution_history.finished_result().unwrap().clone(),
+            execution_log.event_history().collect(),
+            execution_log.finished_result().unwrap().clone(),
         )
     }
 }
