@@ -14,7 +14,7 @@ use concepts::storage::{
     DbConnectionError, DbError, ExecutionEventInner, ExecutionLog, ExpiredTimer,
     LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version,
 };
-use concepts::{ExecutionId, FunctionFqn, Params, StrVariant};
+use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use derivative::Derivative;
 use hashbrown::{HashMap, HashSet};
 use std::collections::{BTreeMap, BTreeSet};
@@ -697,40 +697,29 @@ impl DbTask {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn create(
-        &mut self,
-        created_at: DateTime<Utc>,
-        execution_id: ExecutionId,
-        ffqn: FunctionFqn,
-        params: Params,
-        scheduled_at: Option<DateTime<Utc>>,
-        parent: Option<(ExecutionId, JoinSetId)>,
-        retry_exp_backoff: Duration,
-        max_retries: u32,
-    ) -> Result<AppendResponse, SpecificError> {
-        if self.journals.contains_key(&execution_id) {
+    fn create(&mut self, req: CreateRequest) -> Result<AppendResponse, SpecificError> {
+        if self.journals.contains_key(&req.execution_id) {
             return Err(SpecificError::ValidationFailed(StrVariant::Static(
                 "execution is already initialized",
             )));
         }
         let journal = ExecutionJournal::new(CreateRequest {
-            created_at,
-            execution_id,
-            ffqn,
-            params,
-            parent,
-            scheduled_at,
-            retry_exp_backoff,
-            max_retries,
+            created_at: req.created_at,
+            execution_id: req.execution_id,
+            ffqn: req.ffqn,
+            params: req.params,
+            parent: req.parent,
+            scheduled_at: req.scheduled_at,
+            retry_exp_backoff: req.retry_exp_backoff,
+            max_retries: req.max_retries,
         });
         let version = journal.version();
-        let old_val = self.journals.insert(execution_id, journal);
+        let old_val = self.journals.insert(req.execution_id, journal);
         assert!(
             old_val.is_none(),
             "journals cannot contain the new execution"
         );
-        self.index.update(execution_id, &self.journals);
+        self.index.update(req.execution_id, &self.journals);
         Ok(version)
     }
 
@@ -772,16 +761,16 @@ impl DbTask {
         } = event
         {
             return if version.is_none() {
-                self.create(
+                self.create(CreateRequest {
                     created_at,
                     execution_id,
                     ffqn,
                     params,
-                    scheduled_at,
                     parent,
+                    scheduled_at,
                     retry_exp_backoff,
                     max_retries,
-                )
+                })
             } else {
                 info!("Wrong version");
                 Err(SpecificError::VersionMismatch)
@@ -859,16 +848,16 @@ impl DbTask {
         )) = batch.first().map(|req| (&req.event, req.created_at))
         {
             if version.is_none() {
-                version = Some(self.create(
+                version = Some(self.create(CreateRequest {
                     created_at,
                     execution_id,
-                    ffqn.clone(),
-                    params.clone(),
-                    *scheduled_at,
-                    *parent,
-                    *retry_exp_backoff,
-                    *max_retries,
-                )?);
+                    ffqn: ffqn.clone(),
+                    params: params.clone(),
+                    parent: *parent,
+                    scheduled_at: *scheduled_at,
+                    retry_exp_backoff: *retry_exp_backoff,
+                    max_retries: *max_retries,
+                })?);
                 begin_idx = 1;
             } else {
                 warn!("Version should not be passed to `Created` event");
@@ -1065,6 +1054,7 @@ pub mod tests {
     use self::tick::TickBasedDbConnection;
     use super::*;
     use assert_matches::assert_matches;
+    use concepts::Params;
     use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
     use concepts::{storage::HistoryEvent, FinishedExecutionError, FinishedExecutionResult};
     use std::{
