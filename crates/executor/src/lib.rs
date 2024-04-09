@@ -23,13 +23,14 @@ pub mod worker {
         IntermittentError {
             reason: StrVariant,
             err: Box<dyn Error + Send + Sync>,
+            version: Version,
         },
         #[error("Limit reached: {0}")]
-        LimitReached(String),
+        LimitReached(String, Version),
         #[error("intermittent timeout")]
         IntermittentTimeout,
-        #[error(transparent)]
-        FatalError(#[from] FatalError),
+        #[error("fatal error: {0}")]
+        FatalError(FatalError, Version),
         #[error("child execution request")]
         ChildExecutionRequest,
         #[error("sleep request")]
@@ -42,16 +43,14 @@ pub mod worker {
     pub enum FatalError {
         #[error("non-determinism detected: `{0}`")]
         NonDeterminismDetected(StrVariant),
-        #[error(transparent)]
+        #[error("parameters cannot be parsed: {0}")]
         ParamsParsingError(ParamsParsingError),
-        #[error(transparent)]
+        #[error("result cannot be parsed: {0}")]
         ResultParsingError(ResultParsingError),
     }
 
-    pub type WorkerResult = Result<(SupportedFunctionResult, Version), (WorkerError, Version)>;
+    pub type WorkerResult = Result<(SupportedFunctionResult, Version), WorkerError>;
 
-    // FIXME: Version should not always be returned. Either the worker does not
-    // write to db, or takes care of all its writes.
     #[async_trait]
     pub trait Worker: valuable::Valuable + Send + Sync + 'static {
         async fn run(

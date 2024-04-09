@@ -633,7 +633,7 @@ impl DbTask {
                     created_at,
                     row.execution_id,
                     row.run_id,
-                    row.version,
+                    row.version.clone(),
                     executor_id,
                     lock_expires_at,
                 )
@@ -884,7 +884,7 @@ impl DbTask {
             Some(journal.len())
         };
         for req in batch.into_iter().skip(begin_idx) {
-            match version {
+            match &version {
                 None => {
                     if !req.event.appendable_without_version() {
                         self.rollback(truncate_len_or_delete, execution_id);
@@ -892,7 +892,7 @@ impl DbTask {
                     }
                 }
                 Some(version) => {
-                    if version != journal.version() {
+                    if *version != journal.version() {
                         self.rollback(truncate_len_or_delete, execution_id);
                         return Err(SpecificError::VersionMismatch);
                     }
@@ -907,6 +907,7 @@ impl DbTask {
                 }
                 Ok((_, None)) => {
                     // Do not allow appending events that require version
+                    version = None;
                 }
                 Err(err) => {
                     self.rollback(truncate_len_or_delete, execution_id);
@@ -1198,7 +1199,7 @@ pub mod tests {
                     created_at,
                     execution_id,
                     RunId::generate(),
-                    version,
+                    version.clone(),
                     exec2,
                     created_at + lock_expiry,
                 )
@@ -1233,7 +1234,7 @@ pub mod tests {
                     created_at,
                     execution_id,
                     RunId::generate(),
-                    version,
+                    version.clone(),
                     exec2,
                     created_at + lock_expiry,
                 )
@@ -1268,7 +1269,7 @@ pub mod tests {
                     created_at,
                     execution_id,
                     RunId::generate(),
-                    version,
+                    version.clone(),
                     exec1,
                     created_at + lock_expiry,
                 )
@@ -1428,28 +1429,30 @@ pub mod tests {
         let execution_id = ExecutionId::generate();
         let mut version;
         // Create
-        {
-            version = db_connection
-                .create(
-                    now(),
-                    execution_id,
-                    SOME_FFQN,
-                    Params::default(),
-                    None,
-                    None,
-                    Duration::ZERO,
-                    0,
-                )
-                .await
-                .unwrap();
-        }
+        version = db_connection
+            .create(
+                now(),
+                execution_id,
+                SOME_FFQN,
+                Params::default(),
+                None,
+                None,
+                Duration::ZERO,
+                0,
+            )
+            .await
+            .unwrap();
+
         let events = unstructured.int_in_range(5..=10).unwrap();
         for _ in 0..events {
             let req = AppendRequest {
                 event: unstructured.arbitrary().unwrap(),
                 created_at: now(),
             };
-            match db_connection.append(execution_id, Some(version), req).await {
+            match db_connection
+                .append(execution_id, Some(version.clone()), req)
+                .await
+            {
                 Ok(new_version) => version = new_version,
                 Err(err) => debug!("Ignoring {err:?}"),
             }
@@ -1594,7 +1597,7 @@ pub mod tests {
             .unwrap();
         // this should be rolled back
         let err = db_connection
-            .append_batch(rest.to_vec(), execution_id, Some(version))
+            .append_batch(rest.to_vec(), execution_id, Some(version.clone()))
             .await
             .unwrap_err();
         assert_matches!(

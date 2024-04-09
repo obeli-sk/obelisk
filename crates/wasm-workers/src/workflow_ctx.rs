@@ -32,16 +32,15 @@ pub(crate) enum FunctionError {
     DbError(#[from] DbError),
 }
 
-impl From<FunctionError> for WorkerError {
-    fn from(value: FunctionError) -> Self {
-        match value {
-            FunctionError::NonDeterminismDetected(reason) => {
-                WorkerError::FatalError(FatalError::NonDeterminismDetected(reason.clone()))
+impl FunctionError {
+    pub(crate) fn into_worker_error(self, version: Version) -> WorkerError {
+        match self {
+            Self::NonDeterminismDetected(reason) => {
+                WorkerError::FatalError(FatalError::NonDeterminismDetected(reason), version)
             }
-
-            FunctionError::ChildExecutionRequest => WorkerError::ChildExecutionRequest,
-            FunctionError::DelayRequest => WorkerError::DelayRequest,
-            FunctionError::DbError(db_error) => WorkerError::DbError(db_error),
+            Self::ChildExecutionRequest => WorkerError::ChildExecutionRequest,
+            Self::DelayRequest => WorkerError::DelayRequest,
+            Self::DbError(db_error) => WorkerError::DbError(db_error),
         }
     }
 }
@@ -61,7 +60,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection> {
     pub(crate) clock_fn: C,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     db_connection: DB,
-    version: Version,
+    pub(crate) version: Version,
     execution_deadline: DateTime<Utc>,
     child_retry_exp_backoff: Duration,
     child_max_retries: u32,
@@ -207,7 +206,7 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
             .append_batch(
                 vec![join_set, child_exec_req, join_next],
                 self.execution_id,
-                Some(self.version),
+                Some(self.version.clone()),
             )
             .await?;
 
@@ -371,7 +370,7 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
             .append_batch(
                 vec![join_set, delayed_until, join_next],
                 self.execution_id,
-                Some(self.version),
+                Some(self.version.clone()),
             )
             .await?;
 
@@ -436,7 +435,7 @@ mod tests {
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
-        worker::{Worker, WorkerError, WorkerResult},
+        worker::{Worker, WorkerResult},
     };
     use std::{fmt::Debug, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
@@ -494,13 +493,15 @@ mod tests {
                 0,
             );
             for step in &self.steps {
-                match step {
+                let res = match step {
                     WorkflowStep::Sleep { millis } => ctx.sleep(*millis).await,
                     WorkflowStep::Call { ffqn } => {
                         ctx.call_imported_func(ffqn.clone(), &[], &mut []).await
                     }
+                };
+                if let Err(err) = res {
+                    return Err(err.into_worker_error(ctx.version));
                 }
-                .map_err(|err| (WorkerError::from(err), ctx.version))?;
             }
             Ok((SupportedFunctionResult::None, ctx.version))
         }

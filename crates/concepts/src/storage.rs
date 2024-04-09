@@ -19,7 +19,7 @@ use tracing::trace;
 
 /// Remote client representation of the execution journal.
 #[derive(Debug)]
-pub struct ExecutionHistory {
+pub struct ExecutionHistory {// TODO: rename to ExecutionLog
     pub execution_id: ExecutionId,
     pub events: Vec<ExecutionEvent>,
     pub version: Version,
@@ -136,7 +136,7 @@ impl ExecutionHistory {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display)]
 pub struct Version(usize);
 impl Version {
     #[must_use]

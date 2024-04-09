@@ -119,6 +119,11 @@ impl<C: ClockFn> ActivityWorker<C> {
 
 #[async_trait]
 impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
+    fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+        self.exported_ffqns_to_results_len.keys()
+    }
+
+    #[allow(clippy::too_many_lines)]
     async fn run(
         &self,
         _execution_id: ExecutionId,
@@ -127,27 +132,8 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         events: Vec<HistoryEvent>,
         version: Version,
         execution_deadline: DateTime<Utc>,
-    ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
+    ) -> Result<(SupportedFunctionResult, Version), WorkerError> {
         assert!(events.is_empty());
-        self.run(ffqn, params, execution_deadline)
-            .await
-            .map(|supported_result| (supported_result, version))
-            .map_err(|err| (err, version))
-    }
-
-    fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
-        self.exported_ffqns_to_results_len.keys()
-    }
-}
-
-impl<C: ClockFn + 'static> ActivityWorker<C> {
-    #[tracing::instrument(skip_all)]
-    async fn run(
-        &self,
-        ffqn: FunctionFqn,
-        params: Params,
-        execution_deadline: DateTime<Utc>,
-    ) -> Result<SupportedFunctionResult, WorkerError> {
         let results_len = *self
             .exported_ffqns_to_results_len
             .get(&ffqn)
@@ -162,22 +148,24 @@ impl<C: ClockFn + 'static> ActivityWorker<C> {
             (instance, store)
         } else {
             let mut store = utils::wasi_http::store(&self.engine);
-            let instance = self
+            match self
                 .linker
                 .instantiate_async(&mut store, &self.component)
                 .await
-                .map_err(|err| {
+            {
+                Ok(instance) => (instance, store),
+                Err(err) => {
                     let reason = err.to_string();
                     if reason.starts_with("maximum concurrent") {
-                        WorkerError::LimitReached(reason)
-                    } else {
-                        WorkerError::IntermittentError {
-                            reason: StrVariant::Static("cannot instantiate"),
-                            err: err.into(),
-                        }
+                        return Err(WorkerError::LimitReached(reason, version));
                     }
-                })?;
-            (instance, store)
+                    return Err(WorkerError::IntermittentError {
+                        reason: StrVariant::Static("cannot instantiate"),
+                        err: err.into(),
+                        version,
+                    });
+                }
+            }
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
         let call_function = async move {
@@ -192,38 +180,48 @@ impl<C: ClockFn + 'static> ActivityWorker<C> {
                     .expect("function must be found")
             };
             let param_types = func.params(&store);
+            let params = match params.as_vals(&param_types) {
+                Ok(params) => params,
+                Err(err) => {
+                    return Err(WorkerError::FatalError(
+                        FatalError::ParamsParsingError(err),
+                        version,
+                    ));
+                }
+            };
             let mut results = vec![Val::Bool(false); results_len];
-            func.call_async(
-                &mut store,
-                &params
-                    .as_vals(&param_types)
-                    .map_err(|err| WorkerError::FatalError(FatalError::ParamsParsingError(err)))?,
-                &mut results,
-            )
-            .await
-            .map_err(|err| {
+            if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
                 let err = err.into();
-                WorkerError::IntermittentError {
+                return Err(WorkerError::IntermittentError {
                     reason: StrVariant::Arc(Arc::from(format!(
                         "wasm function call error: `{err}`"
                     ))),
                     err,
+                    version,
+                });
+            }; // guest panic exits here
+            let result = match SupportedFunctionResult::new(results) {
+                Ok(result) => result,
+                Err(err) => {
+                    return Err(WorkerError::FatalError(
+                        FatalError::ResultParsingError(err),
+                        version,
+                    ))
                 }
-            })?; // guest panic exits here
-            let result = SupportedFunctionResult::new(results)
-                .map_err(|err| WorkerError::FatalError(FatalError::ResultParsingError(err)))?;
-            func.post_return_async(&mut store).await.map_err(|err| {
-                WorkerError::IntermittentError {
+            };
+            if let Err(err) = func.post_return_async(&mut store).await {
+                return Err(WorkerError::IntermittentError {
                     reason: StrVariant::Static("wasm post function call error"),
                     err: err.into(),
-                }
-            })?;
+                    version,
+                });
+            }
 
             if let Some(recycled_instances) = &self.recycled_instances {
                 recycled_instances.lock().unwrap().push((instance, store));
             }
 
-            Ok(result)
+            Ok((result, version))
         };
         let started_at = (self.config.clock_fn)();
         let deadline_duration = (execution_deadline - started_at)
@@ -558,8 +556,11 @@ pub(crate) mod tests {
                         vec.push(
                             fibo_worker
                                 .run(
+                                    ExecutionId::generate(),
                                     FIBO_ACTIVITY_FFQN,
                                     Params::from([Val::U8(fibo_input)]),
+                                    Vec::new(),
+                                    Version::new(0),
                                     execution_deadline,
                                 )
                                 .await,
@@ -577,7 +578,7 @@ pub(crate) mod tests {
                 // Check that the computation succeded.
                 assert_matches!(
                     res,
-                    Ok(SupportedFunctionResult::Infallible(WastVal::U64(_)))
+                    Ok((SupportedFunctionResult::Infallible(WastVal::U64(_)), _))
                 );
             }
         }
@@ -633,8 +634,11 @@ pub(crate) mod tests {
                 tokio::spawn(async move {
                     fibo_worker
                         .run(
+                            ExecutionId::generate(),
                             FIBO_ACTIVITY_FFQN,
                             Params::from([Val::U8(fibo_input)]),
+                            Vec::new(),
+                            Version::new(0),
                             execution_deadline,
                         )
                         .await
@@ -643,7 +647,7 @@ pub(crate) mod tests {
             .collect::<Vec<_>>();
         let mut limit_reached = 0;
         for jh in join_handles {
-            if matches!(jh.await.unwrap(), Err(WorkerError::LimitReached(_))) {
+            if matches!(jh.await.unwrap(), Err(WorkerError::LimitReached(..))) {
                 limit_reached += 1;
             }
         }
@@ -668,10 +672,17 @@ pub(crate) mod tests {
             #[values(false, true)] recycle: bool,
         ) {
             const LOCK_EXPIRY: Duration = Duration::from_millis(500);
+            const TICK_SLEEP: Duration = Duration::from_millis(10);
             test_utils::set_up();
             let mut db_task = DbTask::spawn_new(1);
             let db_connection = db_task.as_db_connection().expect("must be open");
-
+            let timers_watcher_task = executor::expired_timers_watcher::Task::spawn_new(
+                db_connection.clone(),
+                executor::expired_timers_watcher::Config {
+                    tick_sleep: TICK_SLEEP,
+                    clock_fn: now,
+                },
+            );
             let engine = activity_engine(EngineConfig::default());
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
@@ -700,7 +711,7 @@ pub(crate) mod tests {
                 ffqns: vec![SLEEP_LOOP_ACTIVITY_FFQN],
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
-                tick_sleep: Duration::from_millis(10),
+                tick_sleep: TICK_SLEEP,
                 clock_fn: now,
             };
             let exec_task = ExecTask::spawn_new(
@@ -744,6 +755,7 @@ pub(crate) mod tests {
             assert!(stopwatch < LOCK_EXPIRY * 2);
 
             drop(db_connection);
+            timers_watcher_task.close().await;
             exec_task.close().await;
             db_task.close().await;
         }
@@ -784,8 +796,11 @@ pub(crate) mod tests {
             let executed_at = now();
             let err = worker
                 .run(
+                    ExecutionId::generate(),
                     SLEEP_LOOP_ACTIVITY_FFQN,
                     Params::from([Val::U32(sleep_millis), Val::U32(sleep_iterations)]),
+                    Vec::new(),
+                    Version::new(0),
                     executed_at + TIMEOUT,
                 )
                 .await

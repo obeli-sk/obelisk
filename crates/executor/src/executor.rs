@@ -254,13 +254,14 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
             )
             .await;
         trace!(?worker_result, "Worker::run finished");
-        let execution_history = db_connection.get(execution_id).await?;
         match Self::worker_result_to_execution_event(
             execution_id,
             worker_result,
-            &execution_history,
+            &db_connection,
             clock_fn(),
-        ) {
+        )
+        .await
+        {
             Ok(Some(append)) => {
                 db_connection
                     .append_batch(
@@ -283,17 +284,31 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
         }
     }
 
+    async fn check_version(
+        db_connection: &DB,
+        execution_id: ExecutionId,
+        new_version: Version,
+    ) -> Result<(Version, ExecutionHistory), DbError> {
+        let execution_history = db_connection.get(execution_id).await?;
+        if execution_history.version == new_version {
+            Ok((new_version, execution_history))
+        } else {
+            Err(DbError::Specific(SpecificError::VersionMismatch))
+        }
+    }
+
     /// Map the `WorkerError` to an intermittent or a permanent failure.
     #[allow(clippy::too_many_lines)]
-    fn worker_result_to_execution_event(
+    async fn worker_result_to_execution_event(
         execution_id: ExecutionId,
         worker_result: WorkerResult,
-        execution_history: &ExecutionHistory,
+        db_connection: &DB,
         result_obtained_at: DateTime<Utc>,
     ) -> Result<Option<Append>, DbError> {
         Ok(match worker_result {
             Ok((result, new_version)) => {
                 let finished_res;
+                let execution_history = db_connection.get(execution_id).await?;
                 let event = if let Some(exec_err) = result.fallible_err() {
                     info!("Execution finished with an error result");
                     let reason = StrVariant::Arc(Arc::from(format!(
@@ -350,15 +365,30 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                     async_resp_to_other_execution: secondary,
                 })
             }
-            Err((err, new_version)) => {
-                if execution_history.version != new_version {
-                    return Err(DbError::Specific(SpecificError::VersionMismatch));
-                }
+            Err(err) => {
+                let new_version2;
                 let event = match err {
                     WorkerError::ChildExecutionRequest | WorkerError::DelayRequest => {
                         return Ok(None);
                     }
-                    WorkerError::IntermittentError { reason, err: _ } => {
+                    WorkerError::IntermittentTimeout => {
+                        info!("Intermittent timeout");
+                        // Will be updated by `expired_timers_watcher`.
+                        return Ok(None);
+                    }
+                    WorkerError::DbError(db_error) => {
+                        info!("Worker encountered db error: {db_error:?}");
+                        return Err(db_error);
+                    }
+                    WorkerError::IntermittentError {
+                        reason,
+                        err: _,
+                        version: new_version,
+                    } => {
+                        let version_and_history =
+                            Self::check_version(db_connection, execution_id, new_version).await?;
+                        new_version2 = version_and_history.0;
+                        let execution_history = version_and_history.1;
                         if let Some(duration) = execution_history.can_be_retried_after() {
                             let expires_at = result_obtained_at + duration;
                             debug!("Retrying failed execution after {duration:?} at {expires_at}");
@@ -370,37 +400,28 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                             }
                         }
                     }
-                    WorkerError::LimitReached(reason) => {
+                    WorkerError::LimitReached(reason, new_version) => {
+                        (new_version2, _) =
+                            Self::check_version(db_connection, execution_id, new_version).await?;
                         warn!("Limit reached: {reason}, yielding");
                         ExecutionEventInner::HistoryEvent {
                             event: HistoryEvent::Yield,
                         }
                     }
-                    WorkerError::IntermittentTimeout { .. } => {
-                        if let Some(duration) = execution_history.can_be_retried_after() {
-                            let expires_at = result_obtained_at + duration;
-                            debug!(
-                                "Retrying timed out execution after {duration:?} at {expires_at}"
-                            );
-                            ExecutionEventInner::IntermittentTimeout { expires_at }
-                        } else {
-                            info!("Permanently timed out");
-                            ExecutionEventInner::Finished {
-                                result: Err(FinishedExecutionError::PermanentTimeout),
-                            }
-                        }
-                    }
-                    WorkerError::DbError(db_error) => {
-                        info!("Worker encountered db error: {db_error:?}");
-                        return Err(db_error);
-                    }
-                    WorkerError::FatalError(FatalError::NonDeterminismDetected(reason)) => {
+                    WorkerError::FatalError(
+                        FatalError::NonDeterminismDetected(reason),
+                        new_version,
+                    ) => {
+                        (new_version2, _) =
+                            Self::check_version(db_connection, execution_id, new_version).await?;
                         info!("Non-determinism detected");
                         ExecutionEventInner::Finished {
                             result: Err(FinishedExecutionError::NonDeterminismDetected(reason)),
                         }
                     }
-                    WorkerError::FatalError(FatalError::ParamsParsingError(err)) => {
+                    WorkerError::FatalError(FatalError::ParamsParsingError(err), new_version) => {
+                        (new_version2, _) =
+                            Self::check_version(db_connection, execution_id, new_version).await?;
                         info!("Error parsing parameters");
                         ExecutionEventInner::Finished {
                             result: Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
@@ -408,7 +429,9 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                             ))),
                         }
                     }
-                    WorkerError::FatalError(FatalError::ResultParsingError(err)) => {
+                    WorkerError::FatalError(FatalError::ResultParsingError(err), new_version) => {
+                        (new_version2, _) =
+                            Self::check_version(db_connection, execution_id, new_version).await?;
                         info!("Error parsing result");
                         ExecutionEventInner::Finished {
                             result: Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
@@ -423,7 +446,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
                         event,
                     }],
                     execution_id,
-                    version: new_version,
+                    version: new_version2,
                     async_resp_to_other_execution: None,
                 })
             }
@@ -774,13 +797,11 @@ mod tests {
                 Version::new(2),
                 (
                     vec![],
-                    Err((
-                        WorkerError::IntermittentError {
-                            reason: StrVariant::Static("fail"),
-                            err: anyhow!("").into(),
-                        },
-                        Version::new(2),
-                    )),
+                    Err(WorkerError::IntermittentError {
+                        reason: StrVariant::Static("fail"),
+                        err: anyhow!("").into(),
+                        version: Version::new(2),
+                    }),
                 ),
             )]))),
         });

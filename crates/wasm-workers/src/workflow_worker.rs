@@ -161,35 +161,34 @@ impl<C: ClockFn + 'static, DB: DbConnection> Worker for WorkflowWorker<C, DB> {
         events: Vec<HistoryEvent>,
         version: Version,
         execution_deadline: DateTime<Utc>,
-    ) -> Result<(SupportedFunctionResult, Version), (WorkerError, Version)> {
-        self.run(
-            execution_id,
-            ffqn,
-            params,
-            events,
-            version,
-            execution_deadline,
-        )
-        .await
-        .map(|supported_result| (supported_result, version))
-        .map_err(|err| match err {
-            RunError::FunctionCall(err) => {
+    ) -> Result<(SupportedFunctionResult, Version), WorkerError> {
+        match self
+            .run(
+                execution_id,
+                ffqn,
+                params,
+                events,
+                version,
+                execution_deadline,
+            )
+            .await
+        {
+            Ok((supported_result, version)) => Ok((supported_result, version)),
+            Err(RunError::FunctionCall(err, version)) => {
                 match err
                     .source()
                     .and_then(|source| source.downcast_ref::<FunctionError>())
                 {
-                    Some(err) => (WorkerError::from(err.clone()), version),
-                    None => (
-                        WorkerError::IntermittentError {
-                            err,
-                            reason: StrVariant::Static("uncategorized error"),
-                        },
+                    Some(err) => Err(err.clone().into_worker_error(version)),
+                    None => Err(WorkerError::IntermittentError {
+                        err,
+                        reason: StrVariant::Static("uncategorized error"),
                         version,
-                    ),
+                    }),
                 }
             }
-            RunError::WorkerError(err) => (err, version),
-        })
+            Err(RunError::WorkerError(err)) => Err(err),
+        }
     }
 
     fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
@@ -202,7 +201,7 @@ enum RunError {
     #[error(transparent)]
     WorkerError(WorkerError),
     #[error("wasm function call error")]
-    FunctionCall(Box<dyn Error + Send + Sync>),
+    FunctionCall(Box<dyn Error + Send + Sync>, Version),
 }
 
 impl<C: ClockFn, DB: DbConnection> WorkflowWorker<C, DB> {
@@ -215,7 +214,7 @@ impl<C: ClockFn, DB: DbConnection> WorkflowWorker<C, DB> {
         events: Vec<HistoryEvent>,
         version: Version,
         execution_deadline: DateTime<Utc>,
-    ) -> Result<SupportedFunctionResult, RunError> {
+    ) -> Result<(SupportedFunctionResult, Version), RunError> {
         let results_len = *self
             .exported_ffqns_to_results_len
             .get(&ffqn)
@@ -236,16 +235,20 @@ impl<C: ClockFn, DB: DbConnection> WorkflowWorker<C, DB> {
                 self.config.child_max_retries,
             );
             let mut store = Store::new(&self.engine, ctx);
-            let instance = self
+            let instance = match self
                 .linker
                 .instantiate_async(&mut store, &self.component)
                 .await
-                .map_err(|err| {
-                    RunError::WorkerError(WorkerError::IntermittentError {
+            {
+                Ok(instance) => instance,
+                Err(err) => {
+                    return Err(RunError::WorkerError(WorkerError::IntermittentError {
                         reason: StrVariant::Static("cannot instantiate"),
                         err: err.into(),
-                    })
-                })?;
+                        version: store.into_data().version,
+                    }));
+                }
+            };
             (instance, store)
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
@@ -261,28 +264,40 @@ impl<C: ClockFn, DB: DbConnection> WorkflowWorker<C, DB> {
                     .expect("function must be found")
             };
             let param_types = func.params(&store);
+            let params = match params.as_vals(&param_types) {
+                Ok(params) => params,
+                Err(err) => {
+                    return Err(RunError::WorkerError(WorkerError::FatalError(
+                        FatalError::ParamsParsingError(err),
+                        store.into_data().version,
+                    )));
+                }
+            };
             let mut results = vec![Val::Bool(false); results_len];
-            func.call_async(
-                &mut store,
-                &params.as_vals(&param_types).map_err(|err| {
-                    RunError::WorkerError(WorkerError::FatalError(FatalError::ParamsParsingError(
-                        err,
-                    )))
-                })?,
-                &mut results,
-            )
-            .await
-            .map_err(|err| RunError::FunctionCall(err.into()))?; // guest panic exits here
-            let result = SupportedFunctionResult::new(results).map_err(|err| {
-                RunError::WorkerError(WorkerError::FatalError(FatalError::ResultParsingError(err)))
-            })?;
-            func.post_return_async(&mut store).await.map_err(|err| {
-                RunError::WorkerError(WorkerError::IntermittentError {
+            if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
+                return Err(RunError::FunctionCall(
+                    err.into(),
+                    store.into_data().version,
+                ));
+            } // guest panic exits here
+            let result = match SupportedFunctionResult::new(results) {
+                Ok(result) => result,
+                Err(err) => {
+                    return Err(RunError::WorkerError(WorkerError::FatalError(
+                        FatalError::ResultParsingError(err),
+                        store.into_data().version,
+                    )));
+                }
+            };
+            if let Err(err) = func.post_return_async(&mut store).await {
+                return Err(RunError::WorkerError(WorkerError::IntermittentError {
                     reason: StrVariant::Static("wasm post function call error"),
                     err: err.into(),
-                })
-            })?;
-            Ok(result)
+                    version: store.into_data().version,
+                }));
+            }
+
+            Ok((result, store.into_data().version))
         };
         let started_at = (self.config.clock_fn)();
         let deadline_duration = (execution_deadline - started_at)
