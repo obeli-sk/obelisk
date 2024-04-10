@@ -36,19 +36,6 @@ jobs:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
       - name: Load nix store
         run: nix develop --command echo
-      - name: Restore rust cache
-        id: target-cache-restore
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            target
-            /home/runner/.cargo
-          key: ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-${{ hashFiles('Cargo.lock') }}-${{ steps.git-info.outputs.sha }}
-          restore-keys: |
-            ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-${{ hashFiles('Cargo.lock') }}-
-            ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-
-            ${{ github.job }}-${{ runner.os }}-
-
       - name: Build tests
         run: nix develop --command cargo nextest run --no-run
         env:
@@ -65,14 +52,7 @@ jobs:
           check_name: Test results - nosim
           files: |
             target/nextest/${{ github.job }}/junit.xml
-      - name: Save rust cache
-        id: target-cache-save
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            target
-            /home/runner/.cargo
-          key: ${{ steps.target-cache-restore.outputs.cache-primary-key }}
+
   ci-test-madsim:
     runs-on: ubuntu-latest
     strategy:
