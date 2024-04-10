@@ -527,7 +527,7 @@ mod tests {
         journal::PendingState, DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
     };
     use concepts::{Params, SupportedFunctionResult};
-    use db::inmemory_dao::{tick::TickBasedDbConnection, DbTask};
+    use db::inmemory_dao::DbTask;
     use indexmap::IndexMap;
     use simple_worker::SOME_FFQN;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
@@ -562,51 +562,6 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-    }
-
-    #[tokio::test]
-    async fn execute_tick_based() {
-        set_up();
-        let created_at = now();
-        let clock_fn = move || created_at;
-        let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN],
-            batch_size: 1,
-            lock_expiry: Duration::from_secs(1),
-            tick_sleep: Duration::ZERO,
-            clock_fn,
-        };
-        let db_connection = TickBasedDbConnection {
-            db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
-        };
-        let worker_results_rev = {
-            let finished_result: WorkerResult =
-                Ok((SupportedFunctionResult::None, Version::new(2)));
-            let mut worker_results_rev =
-                IndexMap::from([(Version::new(2), (vec![], finished_result))]);
-            worker_results_rev.reverse();
-            Arc::new(std::sync::Mutex::new(worker_results_rev))
-        };
-        let execution_log = create_and_tick(
-            created_at,
-            db_connection,
-            exec_config,
-            Arc::new(SimpleWorker { worker_results_rev }),
-            0,
-            created_at,
-            Duration::ZERO,
-            tick_fn,
-        )
-        .await;
-        assert_matches!(
-            execution_log.events.get(2).unwrap(),
-            ExecutionEvent {
-                event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionResult::None),
-                },
-                created_at: finished_at,
-            } if created_at == *finished_at
-        );
     }
 
     #[tokio::test]
@@ -790,9 +745,9 @@ mod tests {
             tick_sleep: Duration::ZERO,
             clock_fn: sim_clock.clock_fn(),
         };
-        let db_connection = TickBasedDbConnection {
-            db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
-        };
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.as_db_connection().expect("must be open");
+
         let worker = Arc::new(SimpleWorker {
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(2),
@@ -867,6 +822,8 @@ mod tests {
                 created_at: finished_at,
             } if *finished_at == sim_clock.now()
         );
+        drop(db_connection);
+        db_task.close().await;
     }
 
     #[tokio::test]
@@ -881,9 +838,8 @@ mod tests {
             tick_sleep: Duration::ZERO,
             clock_fn,
         };
-        let db_connection = TickBasedDbConnection {
-            db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
-        };
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.as_db_connection().expect("must be open");
         let worker = Arc::new(SimpleWorker {
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(2),
@@ -963,6 +919,8 @@ mod tests {
                 created_at: finished_at,
             } if *finished_at == created_at
         );
+        drop(db_connection);
+        db_task.close().await;
     }
 
     #[derive(Clone, Debug)]
@@ -1011,10 +969,9 @@ mod tests {
             tick_sleep: Duration::ZERO,
             clock_fn: sim_clock.clock_fn(),
         };
-        let db_connection = TickBasedDbConnection {
-            db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
-        };
-        let lock_watcher = expired_timers_watcher::Task {
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.as_db_connection().expect("must be open");
+        let timer_watcher = expired_timers_watcher::Task {
             db_connection: db_connection.clone(),
         };
 
@@ -1058,7 +1015,7 @@ mod tests {
             assert!(cleanup_progress.executions.is_empty());
         }
         {
-            let expired_locks = lock_watcher
+            let expired_locks = timer_watcher
                 .tick(now_after_first_lock_expiry)
                 .await
                 .unwrap()
@@ -1102,7 +1059,7 @@ mod tests {
             assert!(cleanup_progress.executions.is_empty());
         }
         {
-            let expired_locks = lock_watcher
+            let expired_locks = timer_watcher
                 .tick(now_after_second_lock_expiry)
                 .await
                 .unwrap()
@@ -1115,5 +1072,10 @@ mod tests {
             .unwrap()
             .1
             .is_finished());
+
+        drop(db_connection);
+        drop(executor);
+        drop(timer_watcher);
+        db_task.close().await;
     }
 }

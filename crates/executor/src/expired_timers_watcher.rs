@@ -19,12 +19,12 @@ use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::ClockFn;
 
 #[derive(Debug, Clone)]
-pub struct Config<C: ClockFn> {
+pub struct Config<C: ClockFn> { // TODO: Rename to TimerWatcherConfig
     pub tick_sleep: Duration,
     pub clock_fn: C,
 }
 
-pub struct Task<DB: DbConnection> {
+pub struct Task<DB: DbConnection> { // TODO: Rename to TimerWatcherTask
     pub(crate) db_connection: DB,
 }
 

@@ -977,7 +977,7 @@ impl DbTask {
     }
 }
 
-#[cfg(any(test, feature = "test"))]
+#[cfg(test)]
 pub mod tick {
     use super::{
         async_trait, instrument, oneshot, AppendBatchResponse, AppendRequest, AppendResponse,

@@ -27,7 +27,6 @@ ulid.workspace = true
 valuable.workspace = true
 
 [dev-dependencies]
-db = { workspace = true, features = ["test"] }
 test-utils.workspace = true
 
 anyhow.workspace = true

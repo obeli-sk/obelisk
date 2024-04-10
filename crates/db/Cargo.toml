@@ -24,9 +24,5 @@ madsim.workspace = true
 test-utils.workspace = true
 utils.workspace = true
 
-
-[features]
-test = []
-
 [lints]
 workspace = true
