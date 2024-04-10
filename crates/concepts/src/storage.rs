@@ -358,7 +358,8 @@ pub struct LockedExecution {
     pub max_retries: u32,
 }
 pub type LockPendingResponse = Vec<LockedExecution>;
-pub type AppendBatchResponse = AppendResponse;
+pub type AppendBatchResponse = Version;
+pub type AppendTxResponse = Vec<Version>;
 
 #[derive(Debug, Clone, derive_more::Display)]
 #[display(fmt = "{event}")]
@@ -366,6 +367,8 @@ pub struct AppendRequest {
     pub created_at: DateTime<Utc>,
     pub event: ExecutionEventInner,
 }
+
+pub type AppendBatch = Vec<AppendRequest>;
 
 #[derive(Debug, Clone)]
 pub struct CreateRequest {
@@ -433,10 +436,15 @@ pub trait DbConnection: Send + Sync + Clone + 'static {
 
     async fn append_batch(
         &self,
-        batch: Vec<AppendRequest>,
+        batch: AppendBatch,
         execution_id: ExecutionId,
         version: Option<Version>,
     ) -> Result<AppendBatchResponse, DbError>;
+
+    async fn append_tx(
+        &self,
+        items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
+    ) -> Result<AppendTxResponse, DbError>;
 
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError>;
 

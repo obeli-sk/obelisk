@@ -10,9 +10,9 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::journal::{ExecutionJournal, PendingState};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
-    DbConnectionError, DbError, ExecutionEventInner, ExecutionLog, ExpiredTimer,
-    LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version,
+    AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, AppendTxResponse,
+    CreateRequest, DbConnection, DbConnectionError, DbError, ExecutionEventInner, ExecutionLog,
+    ExpiredTimer, LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version,
 };
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use derivative::Derivative;
@@ -23,8 +23,8 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::AbortHandle,
 };
-use tracing::info_span;
 use tracing::{debug, info, instrument, trace, warn, Instrument, Level};
+use tracing::{error, info_span};
 
 #[derive(Clone)]
 struct InMemoryDbConnection {
@@ -146,6 +146,23 @@ impl DbConnection for InMemoryDbConnection {
             version,
             resp_sender,
         });
+        self.client_to_store_req_sender
+            .send(request)
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
+        resp_receiver
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .map_err(DbError::Specific)
+    }
+
+    #[instrument(skip_all)]
+    async fn append_tx(
+        &self,
+        items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
+    ) -> Result<AppendTxResponse, DbError> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        let request = DbRequest::General(GeneralRequest::AppendTx { items, resp_sender });
         self.client_to_store_req_sender
             .send(request)
             .await
@@ -379,6 +396,12 @@ enum GeneralRequest {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Vec<ExpiredTimer>>,
     },
+    #[display(fmt = "AppendTx")]
+    AppendTx {
+        items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Result<AppendTxResponse, SpecificError>>,
+    },
 }
 
 pub struct DbTaskHandle {
@@ -466,6 +489,11 @@ pub(crate) enum DbTickResponse {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Vec<ExpiredTimer>>,
     },
+    AppendTxResult {
+        payload: Result<AppendTxResponse, SpecificError>,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Result<AppendTxResponse, SpecificError>>,
+    },
 }
 
 impl DbTickResponse {
@@ -492,6 +520,10 @@ impl DbTickResponse {
                 resp_sender,
             } => resp_sender.send(payload).map_err(|_| ()),
             Self::GetExpiredTimers {
+                payload,
+                resp_sender,
+            } => resp_sender.send(payload).map_err(|_| ()),
+            Self::AppendTxResult {
                 payload,
                 resp_sender,
             } => resp_sender.send(payload).map_err(|_| ()),
@@ -592,6 +624,10 @@ impl DbTask {
                 resp_sender,
             } => DbTickResponse::GetExpiredTimers {
                 payload: self.get_expired_timers(before),
+                resp_sender,
+            },
+            GeneralRequest::AppendTx { items, resp_sender } => DbTickResponse::AppendTxResult {
+                payload: self.append_tx(items),
                 resp_sender,
             },
         }
@@ -825,7 +861,7 @@ impl DbTask {
 
     fn append_batch(
         &mut self,
-        batch: Vec<AppendRequest>,
+        batch: AppendBatch,
         execution_id: ExecutionId,
         mut version: Option<Version>,
     ) -> Result<AppendBatchResponse, SpecificError> {
@@ -920,6 +956,25 @@ impl DbTask {
         }
         self.index.update(execution_id, &self.journals);
     }
+
+    fn append_tx(
+        &mut self,
+        items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
+    ) -> Result<AppendTxResponse, SpecificError> {
+        let mut versions = Vec::with_capacity(items.len());
+        for (idx, (batch, execution_id, version)) in items.into_iter().enumerate() {
+            match self.append_batch(batch, execution_id, version) {
+                Ok(version) => versions.push(version),
+                Err(err) if idx == 0 => return Err(err),
+                Err(err) => {
+                    // not needed (yet) for its use case - appending to parent and child executions
+                    error!("Cannot rollback, got error on index {idx}, {execution_id} - {err:?}");
+                    unimplemented!("transaction rollback is not implemented")
+                }
+            }
+        }
+        Ok(versions)
+    }
 }
 
 #[cfg(any(test, feature = "test"))]
@@ -931,6 +986,7 @@ pub mod tick {
         GeneralRequest, LockPendingResponse, LockResponse, RunId, Utc, Version,
     };
     use assert_matches::assert_matches;
+    use concepts::storage::AppendBatch;
     use std::sync::Arc;
 
     #[derive(Clone)]
@@ -977,6 +1033,19 @@ pub mod tick {
             Ok(
                 assert_matches!(response, DbTickResponse::GetExpiredTimers { payload, .. } => payload),
             )
+        }
+
+        async fn append_tx(
+            &self,
+            items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
+        ) -> Result<Vec<AppendBatchResponse>, DbError> {
+            let request = DbRequest::General(GeneralRequest::AppendTx {
+                items,
+                resp_sender: oneshot::channel().0,
+            });
+            let response = self.db_task.lock().unwrap().tick(request);
+            assert_matches!(response, DbTickResponse::AppendTxResult { payload, .. } => payload)
+                .map_err(DbError::Specific)
         }
 
         async fn lock(

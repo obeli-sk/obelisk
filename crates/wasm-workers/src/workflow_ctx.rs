@@ -2,8 +2,7 @@ use crate::workflow_worker::JoinNextBlockingStrategy;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{
-    AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse,
-    Version,
+    AppendRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
@@ -201,29 +200,30 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
         };
         debug!(child_execution_id = %new_child_execution_id, join_set_id = %new_join_set_id, "Interrupted, scheduling child execution");
 
-        // FIXME: Both writes should be in the same tx, otherwise if second one fails, the first one will keep failing on retries.
-        self.version = self
-            .db_connection
-            .append_batch(
-                vec![join_set, child_exec_req, join_next],
-                self.execution_id,
-                Some(self.version.clone()),
-            )
-            .await?;
-
-        // create the child execution
-        self.db_connection
-            .create(CreateRequest {
+        let parent = (
+            vec![join_set, child_exec_req, join_next],
+            self.execution_id,
+            Some(self.version.clone()),
+        );
+        let child = (
+            vec![AppendRequest {
                 created_at,
-                execution_id: new_child_execution_id,
-                ffqn,
-                params,
-                parent: Some((self.execution_id, new_join_set_id)),
-                scheduled_at: None,
-                retry_exp_backoff: self.child_retry_exp_backoff,
-                max_retries: self.child_max_retries,
-            })
-            .await?;
+                event: ExecutionEventInner::Created {
+                    ffqn,
+                    params,
+                    parent: Some((self.execution_id, new_join_set_id)),
+                    scheduled_at: None,
+                    retry_exp_backoff: self.child_retry_exp_backoff,
+                    max_retries: self.child_max_retries,
+                },
+            }],
+            new_child_execution_id,
+            None,
+        );
+        let versions = self.db_connection.append_tx(vec![parent, child]).await?;
+        assert_eq!(2, versions.len());
+        self.version = versions.first().unwrap().clone();
+
         if interrupt {
             Err(FunctionError::ChildExecutionRequest)
         } else {
@@ -637,11 +637,7 @@ mod tests {
                 }
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
                     assert!(child_execution_count > 0);
-                    let child_request = loop {
-                        if let Ok(res) = db_connection.get(*child_execution_id).await {
-                            break res;
-                        }
-                    };
+                    let child_request = db_connection.get(*child_execution_id).await.unwrap();
                     assert_eq!(Some((execution_id, join_set_id)), child_request.parent());
                     // execute
                     let child_exec_task = {
