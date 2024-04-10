@@ -971,7 +971,7 @@ mod tests {
         };
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.as_db_connection().expect("must be open");
-        let timer_watcher = expired_timers_watcher::Task {
+        let timers_watcher = expired_timers_watcher::TimersWatcherTask {
             db_connection: db_connection.clone(),
         };
 
@@ -1015,7 +1015,7 @@ mod tests {
             assert!(cleanup_progress.executions.is_empty());
         }
         {
-            let expired_locks = timer_watcher
+            let expired_locks = timers_watcher
                 .tick(now_after_first_lock_expiry)
                 .await
                 .unwrap()
@@ -1059,7 +1059,7 @@ mod tests {
             assert!(cleanup_progress.executions.is_empty());
         }
         {
-            let expired_locks = timer_watcher
+            let expired_locks = timers_watcher
                 .tick(now_after_second_lock_expiry)
                 .await
                 .unwrap()
@@ -1075,7 +1075,7 @@ mod tests {
 
         drop(db_connection);
         drop(executor);
-        drop(timer_watcher);
+        drop(timers_watcher);
         db_task.close().await;
     }
 }

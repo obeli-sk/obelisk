@@ -503,9 +503,9 @@ mod tests {
         let mut db_task = DbTask::spawn_new(10);
         let db_connection = db_task.as_db_connection().expect("must be open");
         let workflow_exec_task = spawn_workflow_sleep(db_connection.clone(), sim_clock.clock_fn());
-        let timers_watcher_task = expired_timers_watcher::Task::spawn_new(
+        let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
             db_connection.clone(),
-            expired_timers_watcher::Config {
+            expired_timers_watcher::TimersWatcherConfig {
                 tick_sleep: TICK_SLEEP,
                 clock_fn: sim_clock.clock_fn(),
             },

@@ -679,13 +679,14 @@ pub(crate) mod tests {
             test_utils::set_up();
             let mut db_task = DbTask::spawn_new(1);
             let db_connection = db_task.as_db_connection().expect("must be open");
-            let timers_watcher_task = executor::expired_timers_watcher::Task::spawn_new(
-                db_connection.clone(),
-                executor::expired_timers_watcher::Config {
-                    tick_sleep: TICK_SLEEP,
-                    clock_fn: now,
-                },
-            );
+            let timers_watcher_task =
+                executor::expired_timers_watcher::TimersWatcherTask::spawn_new(
+                    db_connection.clone(),
+                    executor::expired_timers_watcher::TimersWatcherConfig {
+                        tick_sleep: TICK_SLEEP,
+                        clock_fn: now,
+                    },
+                );
             let engine = activity_engine(EngineConfig::default());
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],

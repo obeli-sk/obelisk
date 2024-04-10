@@ -19,12 +19,12 @@ use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::ClockFn;
 
 #[derive(Debug, Clone)]
-pub struct Config<C: ClockFn> { // TODO: Rename to TimerWatcherConfig
+pub struct TimersWatcherConfig<C: ClockFn> {
     pub tick_sleep: Duration,
     pub clock_fn: C,
 }
 
-pub struct Task<DB: DbConnection> { // TODO: Rename to TimerWatcherTask
+pub struct TimersWatcherTask<DB: DbConnection> {
     pub(crate) db_connection: DB,
 }
 
@@ -64,8 +64,11 @@ impl Drop for TaskHandle {
     }
 }
 
-impl<DB: DbConnection> Task<DB> {
-    pub fn spawn_new<C: ClockFn + 'static>(db_connection: DB, config: Config<C>) -> TaskHandle {
+impl<DB: DbConnection> TimersWatcherTask<DB> {
+    pub fn spawn_new<C: ClockFn + 'static>(
+        db_connection: DB,
+        config: TimersWatcherConfig<C>,
+    ) -> TaskHandle {
         let executor_id = ExecutorId::generate();
         let span = info_span!("lock_watcher",
             executor = %executor_id,
