@@ -11,27 +11,30 @@ use crate::{
 };
 use async_trait::async_trait;
 use concepts::{prefixed_ulid::ConfigId, storage::DbConnection, FunctionFqn, StrVariant};
+use derivative::Derivative;
 use executor::worker::Worker;
 use itertools::Either;
 use std::{sync::Arc, time::Duration};
 use utils::time::ClockFn;
 use wasmtime::Engine;
 
-#[derive(Clone, Debug)]
-pub struct AutoConfig<C: ClockFn, DB: DbConnection> {
+#[derive(Clone, Derivative)]
+#[derivative(Debug)]
+pub struct AutoConfig<C: ClockFn> {
     pub config_id: ConfigId,
     pub wasm_path: StrVariant,
     pub activity_recycled_instances: RecycleInstancesSetting,
     pub clock_fn: C,
     pub workflow_join_next_blocking_strategy: JoinNextBlockingStrategy,
-    pub workflow_db_connection: DB,
+    #[derivative(Debug = "ignore")]
+    pub workflow_db_connection: Arc<dyn DbConnection>,
     pub workflow_child_retry_exp_backoff: Duration,
     pub workflow_child_max_retries: u32,
 }
 
-pub enum AutoWorker<C: ClockFn, DB: DbConnection> {
+pub enum AutoWorker<C: ClockFn> {
     ActivityWorker(ActivityWorker<C>),
-    WorkflowWorker(WorkflowWorker<C, DB>),
+    WorkflowWorker(WorkflowWorker<C>),
 }
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
@@ -40,10 +43,10 @@ pub enum Kind {
     Workflow,
 }
 
-impl<C: ClockFn, DB: DbConnection> AutoWorker<C, DB> {
+impl<C: ClockFn> AutoWorker<C> {
     #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
-        config: AutoConfig<C, DB>,
+        config: AutoConfig<C>,
         workflow_engine: Arc<Engine>,
         activity_engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
@@ -90,7 +93,7 @@ fn supported_wasi_imports<'a>(
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static, DB: DbConnection> Worker for AutoWorker<C, DB> {
+impl<C: ClockFn + 'static> Worker for AutoWorker<C> {
     async fn run(
         &self,
         execution_id: concepts::ExecutionId,
@@ -137,10 +140,9 @@ impl<C: ClockFn + 'static, DB: DbConnection> Worker for AutoWorker<C, DB> {
 
 mod valuable {
     use super::AutoWorker;
-    use concepts::storage::DbConnection;
     use utils::time::ClockFn;
 
-    impl<C: ClockFn, DB: DbConnection> ::valuable::Structable for AutoWorker<C, DB> {
+    impl<C: ClockFn> ::valuable::Structable for AutoWorker<C> {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             match self {
                 AutoWorker::WorkflowWorker(w) => w.definition(),
@@ -149,7 +151,7 @@ mod valuable {
         }
     }
 
-    impl<C: ClockFn, DB: DbConnection> ::valuable::Valuable for AutoWorker<C, DB> {
+    impl<C: ClockFn> ::valuable::Valuable for AutoWorker<C> {
         fn as_value(&self) -> ::valuable::Value<'_> {
             ::valuable::Value::Structable(self)
         }

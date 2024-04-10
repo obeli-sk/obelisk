@@ -30,8 +30,8 @@ pub struct ExecConfig<C: ClockFn> {
     pub clock_fn: C, // Used for obtaining current time when the execution finishes.
 }
 
-pub struct ExecTask<DB: DbConnection, W: Worker, C: ClockFn> {
-    db_connection: DB,
+pub struct ExecTask<W: Worker, C: ClockFn> {
+    db_connection: Arc<dyn DbConnection>,
     worker: Arc<W>,
     config: ExecConfig<C>,
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
@@ -75,9 +75,9 @@ impl Drop for ExecutorTaskHandle {
     }
 }
 
-impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
+impl<W: Worker, C: ClockFn + 'static> ExecTask<W, C> {
     pub fn spawn_new(
-        db_connection: DB,
+        db_connection: Arc<dyn DbConnection>,
         worker: Arc<W>,
         config: ExecConfig<C>,
         task_limiter: Option<Arc<tokio::sync::Semaphore>>,
@@ -233,7 +233,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
     #[allow(clippy::too_many_arguments)]
     async fn run_worker(
         worker: Arc<W>,
-        db_connection: DB,
+        db_connection: Arc<dyn DbConnection>,
         execution_id: ExecutionId,
         version: Version,
         ffqn: FunctionFqn,
@@ -257,7 +257,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
         match Self::worker_result_to_execution_event(
             execution_id,
             worker_result,
-            &db_connection,
+            db_connection.as_ref(),
             clock_fn(),
         )
         .await
@@ -285,7 +285,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
     }
 
     async fn check_version(
-        db_connection: &DB,
+        db_connection: &dyn DbConnection,
         execution_id: ExecutionId,
         new_version: Version,
     ) -> Result<(Version, ExecutionLog), DbError> {
@@ -302,7 +302,7 @@ impl<DB: DbConnection, W: Worker, C: ClockFn + 'static> ExecTask<DB, W, C> {
     async fn worker_result_to_execution_event(
         execution_id: ExecutionId,
         worker_result: WorkerResult,
-        db_connection: &DB,
+        db_connection: &dyn DbConnection,
         result_obtained_at: DateTime<Utc>,
     ) -> Result<Option<Append>, DbError> {
         Ok(match worker_result {
@@ -538,15 +538,15 @@ mod tests {
         test_utils::set_up();
     }
 
-    async fn tick_fn<DB: DbConnection, W: Worker + Debug, C: ClockFn + 'static>(
-        db_connection: DB,
+    async fn tick_fn<W: Worker + Debug, C: ClockFn + 'static>(
+        db_connection: Arc<dyn DbConnection>,
         config: ExecConfig<C>,
         worker: Arc<W>,
         executed_at: DateTime<Utc>,
     ) -> ExecutionProgress {
         trace!("Ticking with {worker:?}");
         let executor = ExecTask {
-            db_connection: db_connection.clone(),
+            db_connection,
             worker,
             config,
             task_limiter: None,
@@ -670,14 +670,13 @@ mod tests {
 
     #[allow(clippy::too_many_arguments)]
     async fn create_and_tick<
-        DB: DbConnection,
         W: Worker,
         C: ClockFn,
-        T: FnMut(DB, ExecConfig<C>, Arc<W>, DateTime<Utc>) -> F,
+        T: FnMut(Arc<dyn DbConnection>, ExecConfig<C>, Arc<W>, DateTime<Utc>) -> F,
         F: Future<Output = ExecutionProgress>,
     >(
         created_at: DateTime<Utc>,
-        db_connection: DB,
+        db_connection: Arc<dyn DbConnection>,
         exec_config: ExecConfig<C>,
         worker: Arc<W>,
         max_retries: u32,

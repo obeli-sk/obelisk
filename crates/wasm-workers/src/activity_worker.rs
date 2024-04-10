@@ -290,8 +290,8 @@ pub(crate) mod tests {
     pub const FIBO_10_INPUT: u8 = 10;
     pub const FIBO_10_OUTPUT: u64 = 55;
 
-    pub(crate) fn spawn_activity<DB: DbConnection>(
-        db_connection: DB,
+    pub(crate) fn spawn_activity(
+        db_connection: Arc<dyn DbConnection>,
         wasm_path: &'static str,
         ffqn: FunctionFqn,
     ) -> ExecutorTaskHandle {
@@ -318,7 +318,7 @@ pub(crate) mod tests {
         ExecTask::spawn_new(db_connection, worker, exec_config, None)
     }
 
-    pub(crate) fn spawn_activity_fibo<DB: DbConnection>(db_connection: DB) -> ExecutorTaskHandle {
+    pub(crate) fn spawn_activity_fibo(db_connection: Arc<dyn DbConnection>) -> ExecutorTaskHandle {
         spawn_activity(
             db_connection,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,

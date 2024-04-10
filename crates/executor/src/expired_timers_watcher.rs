@@ -24,8 +24,8 @@ pub struct TimersWatcherConfig<C: ClockFn> {
     pub clock_fn: C,
 }
 
-pub struct TimersWatcherTask<DB: DbConnection> {
-    pub(crate) db_connection: DB,
+pub struct TimersWatcherTask {
+    pub(crate) db_connection: Arc<dyn DbConnection>,
 }
 
 #[allow(dead_code)] // FIXME: add test
@@ -64,9 +64,9 @@ impl Drop for TaskHandle {
     }
 }
 
-impl<DB: DbConnection> TimersWatcherTask<DB> {
+impl TimersWatcherTask {
     pub fn spawn_new<C: ClockFn + 'static>(
-        db_connection: DB,
+        db_connection: Arc<dyn DbConnection>,
         config: TimersWatcherConfig<C>,
     ) -> TaskHandle {
         let executor_id = ExecutorId::generate();

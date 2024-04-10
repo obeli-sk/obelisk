@@ -52,21 +52,21 @@ wasmtime::component::bindgen!({
     interfaces: "import my-org:workflow-engine/host-activities;",
 });
 
-pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection> {
+pub(crate) struct WorkflowCtx<C: ClockFn> {
     execution_id: ExecutionId,
     events: Vec<HistoryEvent>,
     events_idx: usize,
     rng: StdRng,
     pub(crate) clock_fn: C,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
-    db_connection: DB,
+    db_connection: Arc<dyn DbConnection>,
     pub(crate) version: Version,
     execution_deadline: DateTime<Utc>,
     child_retry_exp_backoff: Duration,
     child_max_retries: u32,
 }
 
-impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
+impl<C: ClockFn> WorkflowCtx<C> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
@@ -74,7 +74,7 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
         seed: u64,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        db_connection: DB,
+        db_connection: Arc<dyn DbConnection>,
         version: Version,
         execution_deadline: DateTime<Utc>,
         retry_exp_backoff: Duration,
@@ -414,9 +414,7 @@ impl<C: ClockFn, DB: DbConnection> WorkflowCtx<C, DB> {
 }
 
 #[async_trait::async_trait]
-impl<C: ClockFn, DB: DbConnection> my_org::workflow_engine::host_activities::Host
-    for WorkflowCtx<C, DB>
-{
+impl<C: ClockFn> my_org::workflow_engine::host_activities::Host for WorkflowCtx<C> {
     async fn sleep(&mut self, millis: u32) -> wasmtime::Result<()> {
         Ok(self.sleep(millis).await?)
     }
@@ -429,13 +427,14 @@ mod tests {
     use chrono::{DateTime, Utc};
     use concepts::{
         storage::{
-            journal::PendingState, CreateRequest, DbConnection, HistoryEvent, JoinSetRequest,
-            Version,
+            journal::PendingState, wait_for_pending_state_fn, CreateRequest, DbConnection,
+            HistoryEvent, JoinSetRequest, Version,
         },
         FinishedExecutionResult,
     };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
     use db::inmemory_dao::DbTask;
+    use derivative::Derivative;
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
@@ -457,14 +456,16 @@ mod tests {
         Call { ffqn: FunctionFqn },
     }
 
-    #[derive(Clone, Debug)]
-    struct WorkflowWorkerMock<C: ClockFn, DB: DbConnection> {
+    #[derive(Clone, Derivative)]
+    #[derivative(Debug)]
+    struct WorkflowWorkerMock<C: ClockFn> {
         steps: Vec<WorkflowStep>,
         clock_fn: C,
-        db_connection: DB,
+        #[derivative(Debug = "ignore")]
+        db_connection: Arc<dyn DbConnection>,
     }
 
-    impl<C: ClockFn, DB: DbConnection> valuable::Valuable for WorkflowWorkerMock<C, DB> {
+    impl<C: ClockFn> valuable::Valuable for WorkflowWorkerMock<C> {
         fn as_value(&self) -> valuable::Value<'_> {
             "WorkflowWorkerMock".as_value()
         }
@@ -473,7 +474,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl<C: ClockFn + 'static, DB: DbConnection> Worker for WorkflowWorkerMock<C, DB> {
+    impl<C: ClockFn + 'static> Worker for WorkflowWorkerMock<C> {
         async fn run(
             &self,
             execution_id: ExecutionId,
@@ -603,24 +604,24 @@ mod tests {
 
         let mut processed = Vec::new();
         let mut spawned_child_executors = Vec::new();
-        while let Some((join_set_id, req)) = db_connection
-            .wait_for_pending_state_fn(
-                execution_id,
-                |execution_log| match &execution_log.pending_state {
-                    PendingState::BlockedByJoinSet { join_set_id } => Some(Some((
-                        *join_set_id,
-                        execution_log
-                            .join_set_requests(*join_set_id)
-                            .cloned()
-                            .collect::<Vec<_>>(),
-                    ))),
-                    PendingState::Finished => Some(None),
-                    _ => None,
-                },
-                None,
-            )
-            .await
-            .unwrap()
+        while let Some((join_set_id, req)) = wait_for_pending_state_fn(
+            db_connection.as_ref(),
+            execution_id,
+            |execution_log| match &execution_log.pending_state {
+                PendingState::BlockedByJoinSet { join_set_id } => Some(Some((
+                    *join_set_id,
+                    execution_log
+                        .join_set_requests(*join_set_id)
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                ))),
+                PendingState::Finished => Some(None),
+                _ => None,
+            },
+            None,
+        )
+        .await
+        .unwrap()
         {
             if processed.contains(&join_set_id) {
                 continue;

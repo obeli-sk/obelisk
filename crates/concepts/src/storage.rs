@@ -384,7 +384,7 @@ pub struct CreateRequest {
 
 // Must be cheap to clone
 #[async_trait]
-pub trait DbConnection: Send + Sync + Clone + 'static {
+pub trait DbConnection: Send + Sync {
     async fn lock_pending(
         &self,
         batch_size: usize,
@@ -490,39 +490,39 @@ pub trait DbConnection: Send + Sync + Clone + 'static {
         }
     }
 
-    async fn wait_for_pending_state_fn<T: Debug>(
-        &self,
-        execution_id: ExecutionId,
-        prdicate: impl Fn(ExecutionLog) -> Option<T> + Send,
-        timeout: Option<Duration>,
-    ) -> Result<T, DbError> {
-        trace!(%execution_id, "Waiting for predicate");
-        let fut = async move {
-            loop {
-                let execution_log = self.get(execution_id).await?;
-                if let Some(t) = prdicate(execution_log) {
-                    debug!(%execution_id, "Found: {t:?}");
-                    return Ok(t);
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        };
-
-        if let Some(timeout) = timeout {
-            tokio::select! {
-                res = fut => res,
-                () = tokio::time::sleep(timeout) => Err(DbError::Connection(DbConnectionError::Timeout))
-            }
-        } else {
-            fut.await
-        }
-    }
-
     /// Get currently expired locks and async timers (delay requests)
     async fn get_expired_timers(
         &self,
         at: DateTime<Utc>,
     ) -> Result<Vec<ExpiredTimer>, DbConnectionError>;
+}
+
+pub async fn wait_for_pending_state_fn<T: Debug>(
+    db_connection: &dyn DbConnection,
+    execution_id: ExecutionId,
+    prdicate: impl Fn(ExecutionLog) -> Option<T> + Send,
+    timeout: Option<Duration>,
+) -> Result<T, DbError> {
+    trace!(%execution_id, "Waiting for predicate");
+    let fut = async move {
+        loop {
+            let execution_log = db_connection.get(execution_id).await?;
+            if let Some(t) = prdicate(execution_log) {
+                debug!(%execution_id, "Found: {t:?}");
+                return Ok(t);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+
+    if let Some(timeout) = timeout {
+        tokio::select! {
+            res = fut => res,
+            () = tokio::time::sleep(timeout) => Err(DbError::Connection(DbConnectionError::Timeout))
+        }
+    } else {
+        fut.await
+    }
 }
 
 #[derive(Debug, Clone)]

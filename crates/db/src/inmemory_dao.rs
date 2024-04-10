@@ -18,6 +18,7 @@ use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use derivative::Derivative;
 use hashbrown::{HashMap, HashSet};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -411,12 +412,12 @@ pub struct DbTaskHandle {
 
 impl DbTaskHandle {
     #[must_use]
-    pub fn as_db_connection(&self) -> Option<impl DbConnection> {
-        self.client_to_store_req_sender
-            .as_ref()
-            .map(|sender| InMemoryDbConnection {
+    pub fn as_db_connection(&self) -> Option<Arc<impl DbConnection>> {
+        self.client_to_store_req_sender.as_ref().map(|sender| {
+            Arc::new(InMemoryDbConnection {
                 client_to_store_req_sender: sender.clone(),
             })
+        })
     }
 
     pub async fn close(&mut self) {
