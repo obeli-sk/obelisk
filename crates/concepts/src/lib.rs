@@ -8,7 +8,7 @@ use std::{
     ops::Deref,
     sync::Arc,
 };
-use val_json::{wast_val::WastVal, TypeWrapper, ValWrapper};
+use val_json::{wast_val::WastVal, TypeWrapper};
 
 pub mod storage;
 
@@ -189,16 +189,6 @@ pub struct FunctionMetadata {
     pub params: Vec<(String /*name*/, TypeWrapper)>,
 }
 
-impl FunctionMetadata {
-    pub fn deserialize_params<V: From<ValWrapper>>(
-        &self,
-        param_vals: &str,
-    ) -> Result<Vec<V>, serde_json::error::Error> {
-        let param_types = self.params.iter().map(|(_, type_w)| type_w);
-        val_json::deserialize_sequence(param_vals, param_types)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SupportedFunctionResult {
     None,
@@ -360,10 +350,11 @@ impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
 
 pub mod prefixed_ulid {
     use arbitrary::Arbitrary;
+    use serde::{Deserialize, Serialize};
     use std::marker::PhantomData;
     use ulid::Ulid;
 
-    #[derive(derive_more::Display)]
+    #[derive(derive_more::Display, Serialize, Deserialize)]
     #[display(fmt = "{prefix}_{ulid}")]
     pub struct PrefixedUlid<T: 'static> {
         prefix: &'static str,
@@ -482,7 +473,7 @@ pub mod prefixed_ulid {
     }
 
     pub mod prefix {
-        pub struct Exe;
+        pub struct E;
         pub struct Exr;
         pub struct Conf;
         pub struct JoinSet;
@@ -493,7 +484,7 @@ pub mod prefixed_ulid {
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
     pub type ConfigId = PrefixedUlid<prefix::Conf>;
     pub type JoinSetId = PrefixedUlid<prefix::JoinSet>;
-    pub type ExecutionId = PrefixedUlid<prefix::Exe>;
+    pub type ExecutionId = PrefixedUlid<prefix::E>;
     pub type RunId = PrefixedUlid<prefix::Run>;
     pub type DelayId = PrefixedUlid<prefix::Delay>;
 

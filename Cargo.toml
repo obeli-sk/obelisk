@@ -53,16 +53,16 @@ test-utils.path = "crates/testing/test-utils/"
 utils.path = "crates/utils/"
 val-json.path = "crates/val-json"
 
-
 anyhow = { version = "1.0", features = ["backtrace"] }
 arbitrary = { version = "1.3.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-channel = "2.1.1"
+async-sqlite = "0.2.2"
 async-trait = "0.1"
 bitflags = "2.4.2"
 cargo_metadata = "0.18"
 cfg-if = "1.0.0"
-chrono = { version = "0.4.34", features = ["arbitrary"] }
+chrono = { version = "0.4.34", features = ["arbitrary", "serde"] }
 criterion = "0.5"
 derivative = "2.2.0"
 derive_more = "0.99.17"
@@ -86,7 +86,7 @@ tokio = { version = "0.2", package = "madsim-tokio", features = ["sync", "rt", "
 tracing = { version = "0.1", features = ["log"] }
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
-ulid = "1.1.0"
+ulid = { version = "1.1.0", features = ["serde"] }
 valuable = { version = "0.1.0", features = ["derive"] }
 wasmtime = { version = "19.0", default-features = false, features = [
     # remove "parallel-compilation"

@@ -6,10 +6,10 @@ use serde::{
 };
 mod core;
 pub mod wast_val;
-pub use deser::deserialize_sequence;
+pub mod wast_val_ser;
 
 #[derive(Debug, Clone)]
-pub enum ValWrapper {
+enum ValWrapper {
     Bool(bool),
     S8(i8),
     U8(u8),

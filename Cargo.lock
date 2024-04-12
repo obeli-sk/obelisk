@@ -371,6 +371,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-targets 0.52.4",
 ]
@@ -387,6 +388,7 @@ dependencies = [
  "getrandom",
  "madsim",
  "madsim-tokio",
+ "serde",
  "serde_json",
  "thiserror",
  "tracing",
@@ -1875,9 +1877,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.114"
+version = "1.0.115"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5f09b1bd632ef549eaa9f60a1f8de742bdbc698e6cee2095fc84dde5f549ae0"
+checksum = "12dc5c46daa8e9fdf4f5e71b6cf9a53f2487da0e86e55808e2d35539666497dd"
 dependencies = [
  "itoa",
  "ryu",
@@ -2429,6 +2431,7 @@ checksum = "34778c17965aa2a08913b57e1f34db9b4a63f5de31768b55bf20d2795f921259"
 dependencies = [
  "getrandom",
  "rand",
+ "serde",
  "web-time",
 ]
 
@@ -3468,3 +3471,8 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
+
+[[patch.unused]]
+name = "async-sqlite"
+version = "0.2.2"
+source = "git+https://github.com/ryanfowler/async-sqlite/?rev=7f3c097d28bed5c2e4ae053dcdb29bd441c7dd7d#7f3c097d28bed5c2e4ae053dcdb29bd441c7dd7d"

@@ -382,7 +382,6 @@ pub struct CreateRequest {
     pub max_retries: u32,
 }
 
-// Must be cheap to clone
 #[async_trait]
 pub trait DbConnection: Send + Sync {
     async fn lock_pending(
@@ -394,27 +393,6 @@ pub trait DbConnection: Send + Sync {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbConnectionError>;
-
-    /// Specialized `append` which does not require a version.
-    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-        let event = ExecutionEventInner::Created {
-            ffqn: req.ffqn,
-            params: req.params,
-            parent: req.parent,
-            scheduled_at: req.scheduled_at,
-            retry_exp_backoff: req.retry_exp_backoff,
-            max_retries: req.max_retries,
-        };
-        self.append(
-            req.execution_id,
-            None,
-            AppendRequest {
-                created_at: req.created_at,
-                event,
-            },
-        )
-        .await
-    }
 
     /// Specialized `append` which returns the event history.
     async fn lock(
@@ -447,6 +425,33 @@ pub trait DbConnection: Send + Sync {
     ) -> Result<AppendTxResponse, DbError>;
 
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError>;
+
+    /// Get currently expired locks and async timers (delay requests)
+    async fn get_expired_timers(
+        &self,
+        at: DateTime<Utc>,
+    ) -> Result<Vec<ExpiredTimer>, DbConnectionError>;
+
+    /// Specialized `append` which does not require a version.
+    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
+        let event = ExecutionEventInner::Created {
+            ffqn: req.ffqn,
+            params: req.params,
+            parent: req.parent,
+            scheduled_at: req.scheduled_at,
+            retry_exp_backoff: req.retry_exp_backoff,
+            max_retries: req.max_retries,
+        };
+        self.append(
+            req.execution_id,
+            None,
+            AppendRequest {
+                created_at: req.created_at,
+                event,
+            },
+        )
+        .await
+    }
 
     async fn wait_for_finished_result(
         &self,
@@ -489,12 +494,6 @@ pub trait DbConnection: Send + Sync {
             fut.await
         }
     }
-
-    /// Get currently expired locks and async timers (delay requests)
-    async fn get_expired_timers(
-        &self,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<ExpiredTimer>, DbConnectionError>;
 }
 
 pub async fn wait_for_pending_state_fn<T: Debug>(

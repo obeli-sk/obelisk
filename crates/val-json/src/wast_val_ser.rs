@@ -1,12 +1,47 @@
-use serde::de::{DeserializeSeed, Deserializer, Expected, SeqAccess, Visitor};
 use std::{fmt, marker::PhantomData};
 
-use crate::{TypeWrapper, ValWrapper};
+use crate::{wast_val::WastVal, TypeWrapper};
+use serde::{
+    de::{DeserializeSeed, Deserializer, Expected, SeqAccess, Visitor},
+    Serialize, Serializer,
+};
+use wast::token::{Float32, Float64};
 
-struct ValDeserialize<'a>(&'a TypeWrapper);
+impl Serialize for WastVal {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            WastVal::Bool(v) => serializer.serialize_bool(*v),
+            WastVal::S8(v) => serializer.serialize_i8(*v),
+            WastVal::U8(v) => serializer.serialize_u8(*v),
+            WastVal::S16(v) => serializer.serialize_i16(*v),
+            WastVal::U16(v) => serializer.serialize_u16(*v),
+            WastVal::S32(v) => serializer.serialize_i32(*v),
+            WastVal::U32(v) => serializer.serialize_u32(*v),
+            WastVal::S64(v) => serializer.serialize_i64(*v),
+            WastVal::U64(v) => serializer.serialize_u64(*v),
+            WastVal::Float32(v) => serializer.serialize_f32(f32::from_bits(v.bits)),
+            WastVal::Float64(v) => serializer.serialize_f64(f64::from_bits(v.bits)),
+            WastVal::Char(v) => serializer.serialize_char(*v),
+            WastVal::String(v) => serializer.serialize_str(v),
+            WastVal::List(_) => todo!(),
+            WastVal::Record(_) => todo!(),
+            WastVal::Tuple(_) => todo!(),
+            WastVal::Variant(_, _) => todo!(),
+            WastVal::Enum(_) => todo!(),
+            WastVal::Option(_) => todo!(),
+            WastVal::Result(_) => todo!(),
+            WastVal::Flags(_) => todo!(),
+        }
+    }
+}
 
-impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
-    type Value = ValWrapper;
+struct WastValDeserialize<'a>(&'a TypeWrapper);
+
+impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
+    type Value = WastVal;
 
     #[allow(clippy::too_many_lines)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -18,7 +53,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
         struct ExtendVecVisitor<'a>(&'a TypeWrapper);
 
         impl<'de, 'a> Visitor<'de> for ExtendVecVisitor<'a> {
-            type Value = ValWrapper;
+            type Value = WastVal;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 write!(formatter, "value matching {type:?}", type = self.0)
@@ -29,7 +64,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if matches!(self.0, TypeWrapper::Bool) {
-                    Ok(ValWrapper::Bool(val))
+                    Ok(WastVal::Bool(val))
                 } else {
                     Err(Error::invalid_type(Unexpected::Bool(val), &self))
                 }
@@ -40,7 +75,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if matches!(self.0, TypeWrapper::U8) {
-                    Ok(ValWrapper::U8(val))
+                    Ok(WastVal::U8(val))
                 } else {
                     Err(Error::invalid_type(
                         Unexpected::Unsigned(u64::from(val)),
@@ -54,7 +89,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if matches!(self.0, TypeWrapper::U16) {
-                    Ok(ValWrapper::U16(val))
+                    Ok(WastVal::U16(val))
                 } else {
                     Err(Error::invalid_type(
                         Unexpected::Unsigned(u64::from(val)),
@@ -68,7 +103,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if matches!(self.0, TypeWrapper::U32) {
-                    Ok(ValWrapper::U32(val))
+                    Ok(WastVal::U32(val))
                 } else {
                     Err(Error::invalid_type(
                         Unexpected::Unsigned(u64::from(val)),
@@ -82,21 +117,21 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if *self.0 == TypeWrapper::U64 {
-                    Ok(ValWrapper::U64(val))
+                    Ok(WastVal::U64(val))
                 } else if *self.0 == TypeWrapper::U8 {
-                    u8::try_from(val).map(ValWrapper::U8).map_err(|_| ())
+                    u8::try_from(val).map(WastVal::U8).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::U16 {
-                    u16::try_from(val).map(ValWrapper::U16).map_err(|_| ())
+                    u16::try_from(val).map(WastVal::U16).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::U32 {
-                    u32::try_from(val).map(ValWrapper::U32).map_err(|_| ())
+                    u32::try_from(val).map(WastVal::U32).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::S8 {
-                    i8::try_from(val).map(ValWrapper::S8).map_err(|_| ())
+                    i8::try_from(val).map(WastVal::S8).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::S16 {
-                    i16::try_from(val).map(ValWrapper::S16).map_err(|_| ())
+                    i16::try_from(val).map(WastVal::S16).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::S32 {
-                    i32::try_from(val).map(ValWrapper::S32).map_err(|_| ())
+                    i32::try_from(val).map(WastVal::S32).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::S64 {
-                    i64::try_from(val).map(ValWrapper::S64).map_err(|_| ())
+                    i64::try_from(val).map(WastVal::S64).map_err(|_| ())
                 } else {
                     Err(())
                 }
@@ -108,7 +143,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if matches!(self.0, TypeWrapper::S8) {
-                    Ok(ValWrapper::S8(val))
+                    Ok(WastVal::S8(val))
                 } else {
                     Err(Error::invalid_type(
                         Unexpected::Signed(i64::from(val)),
@@ -122,7 +157,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if matches!(self.0, TypeWrapper::U16) {
-                    Ok(ValWrapper::S16(val))
+                    Ok(WastVal::S16(val))
                 } else {
                     Err(Error::invalid_type(
                         Unexpected::Signed(i64::from(val)),
@@ -136,7 +171,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if matches!(self.0, TypeWrapper::U32) {
-                    Ok(ValWrapper::S32(val))
+                    Ok(WastVal::S32(val))
                 } else {
                     Err(Error::invalid_type(
                         Unexpected::Signed(i64::from(val)),
@@ -150,21 +185,21 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if *self.0 == TypeWrapper::S64 {
-                    Ok(ValWrapper::S64(val))
+                    Ok(WastVal::S64(val))
                 } else if *self.0 == TypeWrapper::U8 {
-                    u8::try_from(val).map(ValWrapper::U8).map_err(|_| ())
+                    u8::try_from(val).map(WastVal::U8).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::U16 {
-                    u16::try_from(val).map(ValWrapper::U16).map_err(|_| ())
+                    u16::try_from(val).map(WastVal::U16).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::U32 {
-                    u32::try_from(val).map(ValWrapper::U32).map_err(|_| ())
+                    u32::try_from(val).map(WastVal::U32).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::S8 {
-                    i8::try_from(val).map(ValWrapper::S8).map_err(|_| ())
+                    i8::try_from(val).map(WastVal::S8).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::S16 {
-                    i16::try_from(val).map(ValWrapper::S16).map_err(|_| ())
+                    i16::try_from(val).map(WastVal::S16).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::S32 {
-                    i32::try_from(val).map(ValWrapper::S32).map_err(|_| ())
+                    i32::try_from(val).map(WastVal::S32).map_err(|_| ())
                 } else if *self.0 == TypeWrapper::U64 {
-                    u64::try_from(val).map(ValWrapper::U64).map_err(|_| ())
+                    u64::try_from(val).map(WastVal::U64).map_err(|_| ())
                 } else {
                     Err(())
                 }
@@ -176,7 +211,9 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if matches!(self.0, TypeWrapper::Float32) {
-                    Ok(ValWrapper::Float32(val))
+                    Ok(WastVal::Float32(Float32 {
+                        bits: val.to_bits(),
+                    }))
                 } else {
                     Err(Error::invalid_type(
                         Unexpected::Float(f64::from(val)),
@@ -190,14 +227,18 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if *self.0 == TypeWrapper::Float64 {
-                    Ok(ValWrapper::Float64(val))
+                    Ok(WastVal::Float64(Float64 {
+                        bits: val.to_bits(),
+                    }))
                 } else if *self.0 == TypeWrapper::Float32 {
                     // Warining: This might truncate the value.
                     #[allow(clippy::cast_possible_truncation)]
                     let f32 = val as f32;
                     // Fail on overflow.
                     if val.is_finite() == f32.is_finite() {
-                        return Ok(ValWrapper::Float32(f32));
+                        return Ok(WastVal::Float32(Float32 {
+                            bits: f32.to_bits(),
+                        }));
                     }
                     Err(())
                 } else {
@@ -211,7 +252,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if matches!(self.0, TypeWrapper::Char) {
-                    Ok(ValWrapper::Char(val))
+                    Ok(WastVal::Char(val))
                 } else {
                     Err(Error::invalid_type(Unexpected::Char(val), &self))
                 }
@@ -222,7 +263,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
                 E: Error,
             {
                 if matches!(self.0, TypeWrapper::String) {
-                    Ok(ValWrapper::String(val.into()))
+                    Ok(WastVal::String(val.into()))
                 } else {
                     Err(Error::invalid_type(Unexpected::Str(val), &self))
                 }
@@ -233,7 +274,7 @@ impl<'a, 'de> DeserializeSeed<'de> for ValDeserialize<'a> {
     }
 }
 
-// Visitor implementation that deserializes a JSON array into `Vec<V: From<ValWrapper>>`.
+// Visitor implementation that deserializes a JSON array into `Vec<WastVal>`.
 struct SequenceVisitor<'a, V, I: ExactSizeIterator<Item = &'a TypeWrapper>> {
     iterator: I,
     len: usize,
@@ -250,10 +291,10 @@ impl<'a, V, I: ExactSizeIterator<Item = &'a TypeWrapper>> SequenceVisitor<'a, V,
         }
     }
 }
-impl<'a, 'de, V: From<ValWrapper>, I: ExactSizeIterator<Item = &'a TypeWrapper>> Visitor<'de>
-    for SequenceVisitor<'a, V, I>
+impl<'a, 'de, I: ExactSizeIterator<Item = &'a TypeWrapper>> Visitor<'de>
+    for SequenceVisitor<'a, WastVal, I>
 {
-    type Value = Vec<V>;
+    type Value = Vec<WastVal>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(formatter, "an array of length {}", self.len)
@@ -266,8 +307,8 @@ impl<'a, 'de, V: From<ValWrapper>, I: ExactSizeIterator<Item = &'a TypeWrapper>>
         use serde::de::Error;
         let mut vec = Vec::new();
         while let Some(ty) = self.iterator.next() {
-            if let Some(val) = seq.next_element_seed(ValDeserialize(ty))? {
-                vec.push(V::from(val));
+            if let Some(val) = seq.next_element_seed(WastValDeserialize(ty))? {
+                vec.push(val);
             } else {
                 Err(Error::invalid_length(vec.len(), &self))?;
             }
@@ -283,13 +324,13 @@ impl<'a, 'de, V: From<ValWrapper>, I: ExactSizeIterator<Item = &'a TypeWrapper>>
     }
 }
 
-fn deserialize_sequence<'a, V: From<ValWrapper>>(
+pub fn deserialize_sequence<'a>(
     param_vals: &str,
     param_types: impl IntoIterator<
         Item = &'a TypeWrapper,
         IntoIter = impl ExactSizeIterator<Item = &'a TypeWrapper>,
     >,
-) -> Result<Vec<V>, serde_json::Error> {
+) -> Result<Vec<WastVal>, serde_json::Error> {
     let mut deserializer = serde_json::Deserializer::from_str(param_vals);
     let visitor = SequenceVisitor::new(param_types.into_iter());
     deserializer.deserialize_seq(visitor)
@@ -297,16 +338,20 @@ fn deserialize_sequence<'a, V: From<ValWrapper>>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{deser::ValDeserialize, TypeWrapper, ValWrapper};
+    use crate::{
+        wast_val::WastVal,
+        wast_val_ser::{deserialize_sequence, WastValDeserialize},
+        TypeWrapper,
+    };
     use serde::de::DeserializeSeed;
-    use wasmtime::component::Val;
+    use wast::token::{Float32, Float64};
 
     #[test]
     fn bool() {
-        let expected = ValWrapper::Bool(true);
+        let expected = WastVal::Bool(true);
         let input = "true";
         let ty = TypeWrapper::Bool;
-        let actual = ValDeserialize(&ty)
+        let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(input))
             .unwrap();
         assert_eq!(expected, actual);
@@ -314,10 +359,10 @@ mod tests {
 
     #[test]
     fn string() {
-        let expected = ValWrapper::String("test".into());
+        let expected = WastVal::String("test".into());
         let input = r#""test""#;
         let ty = TypeWrapper::String;
-        let actual = ValDeserialize(&ty)
+        let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(input))
             .unwrap();
         assert_eq!(expected, actual);
@@ -325,10 +370,10 @@ mod tests {
 
     #[test]
     fn u8() {
-        let expected = ValWrapper::U8(123);
+        let expected = WastVal::U8(123);
         let input = "123";
         let ty = TypeWrapper::U8;
-        let actual = ValDeserialize(&ty)
+        let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(input))
             .unwrap();
         assert_eq!(expected, actual);
@@ -336,10 +381,10 @@ mod tests {
 
     #[test]
     fn s8() {
-        let expected = ValWrapper::S8(-123);
+        let expected = WastVal::S8(-123);
         let input = "-123";
         let ty = TypeWrapper::S8;
-        let actual = ValDeserialize(&ty)
+        let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(input))
             .unwrap();
         assert_eq!(expected, actual);
@@ -347,10 +392,12 @@ mod tests {
 
     #[test]
     fn f32() {
-        let expected = ValWrapper::Float32(-123.1);
+        let expected = WastVal::Float32(Float32 {
+            bits: (-123.1_f32).to_bits(),
+        });
         let input = "-123.1";
         let ty = TypeWrapper::Float32;
-        let actual = ValDeserialize(&ty)
+        let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(input))
             .unwrap();
         assert_eq!(expected, actual);
@@ -358,10 +405,12 @@ mod tests {
 
     #[test]
     fn f32_max() {
-        let expected = ValWrapper::Float32(f32::MAX);
+        let expected = WastVal::Float32(Float32 {
+            bits: f32::MAX.to_bits(),
+        });
         let input = f32::MAX.to_string();
         let ty = TypeWrapper::Float32;
-        let actual = ValDeserialize(&ty)
+        let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(&input))
             .unwrap();
         assert_eq!(expected, actual);
@@ -370,10 +419,10 @@ mod tests {
     #[test]
     fn f64() {
         let f = f64::from(f32::MAX) + 1.0;
-        let expected = ValWrapper::Float64(f);
+        let expected = WastVal::Float64(Float64 { bits: f.to_bits() });
         let input = f.to_string();
         let ty = TypeWrapper::Float64;
-        let actual = ValDeserialize(&ty)
+        let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(&input))
             .unwrap();
         assert_eq!(expected, actual);
@@ -384,7 +433,7 @@ mod tests {
         let f = f64::from(f32::MAX) * 2.0;
         let input = f.to_string();
         let ty = TypeWrapper::Float32;
-        let err = ValDeserialize(&ty)
+        let err = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(&input))
             .unwrap_err();
         assert_starts_with(
@@ -397,7 +446,7 @@ mod tests {
     fn f64_out_of_range() {
         let input = f64::MAX.to_string();
         let ty = TypeWrapper::Float64;
-        let err = ValDeserialize(&ty)
+        let err = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(&input))
             .unwrap_err();
         assert_starts_with(&err, "number out of range");
@@ -405,15 +454,11 @@ mod tests {
 
     #[test]
     fn test_deserialize_sequence() {
-        let expected = vec![
-            ValWrapper::Bool(true),
-            ValWrapper::U8(8),
-            ValWrapper::S16(-16),
-        ];
+        let expected = vec![WastVal::Bool(true), WastVal::U8(8), WastVal::S16(-16)];
         let param_types = r#"["Bool", "U8", "S16"]"#;
         let param_vals = "[true, 8, -16]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-        let actual = super::deserialize_sequence(param_vals, param_types.iter()).unwrap();
+        let actual = deserialize_sequence(param_vals, param_types.iter()).unwrap();
         assert_eq!(expected, actual);
     }
 
@@ -422,7 +467,7 @@ mod tests {
         let param_types = r#"["Bool", "U8", "S16"]"#;
         let param_vals = "[true, 8]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-        let err = super::deserialize_sequence::<Val>(param_vals, &param_types).unwrap_err();
+        let err = deserialize_sequence(param_vals, &param_types).unwrap_err();
         assert_starts_with(&err, "invalid length 2, expected an array of length 3");
     }
 
@@ -431,7 +476,7 @@ mod tests {
         let param_types = r#"["Bool", "U8"]"#;
         let param_vals = "[true, 8, false]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-        let err = super::deserialize_sequence::<Val>(param_vals, &param_types).unwrap_err();
+        let err = deserialize_sequence(param_vals, &param_types).unwrap_err();
         assert_starts_with(
             &err,
             "invalid length that is too big, at element `Bool(false)`, expected an array of length 2",
