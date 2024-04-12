@@ -1,5 +1,6 @@
-use crate::core;
+use crate::{core, TypeWrapper};
 use anyhow::{anyhow, bail, Context};
+use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::ops::Deref;
@@ -32,6 +33,12 @@ pub enum WastVal {
     Option(Option<Box<WastVal>>),
     Result(Result<Option<Box<WastVal>>, Option<Box<WastVal>>>),
     Flags(Vec<Box<str>>),
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct WastValWithType {
+    pub(crate) r#type: TypeWrapper,
+    pub(crate) val: WastVal,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -1,9 +1,12 @@
 use std::{fmt, marker::PhantomData};
 
-use crate::{wast_val::WastVal, TypeWrapper};
+use crate::{
+    wast_val::{WastVal, WastValWithType},
+    TypeWrapper,
+};
 use serde::{
-    de::{DeserializeSeed, Deserializer, Expected, SeqAccess, Visitor},
-    Serialize, Serializer,
+    de::{self, DeserializeSeed, Deserializer, Expected, MapAccess, SeqAccess, Visitor},
+    Deserialize, Serialize, Serializer,
 };
 
 impl Serialize for WastVal {
@@ -34,6 +37,64 @@ impl Serialize for WastVal {
             WastVal::Result(_) => todo!(),
             WastVal::Flags(_) => todo!(),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for WastValWithType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &["type", "val"];
+        deserializer.deserialize_struct("WastValWithType", FIELDS, WastValWithTypeVisitor)
+    }
+}
+
+struct WastValWithTypeVisitor;
+
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "lowercase")]
+enum WastValWithTypeField {
+    Type,
+    Val,
+}
+
+impl<'de> Visitor<'de> for WastValWithTypeVisitor {
+    type Value = WastValWithType;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("struct WastValWithType")
+    }
+
+    fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
+    where
+        V: MapAccess<'de>,
+    {
+        let mut r#type = None;
+        let mut val = None;
+        while let Some(key) = map.next_key()? {
+            match key {
+                WastValWithTypeField::Type => {
+                    if r#type.is_some() {
+                        return Err(de::Error::duplicate_field("type"));
+                    }
+                    r#type = Some(map.next_value()?);
+                }
+                WastValWithTypeField::Val => {
+                    if val.is_some() {
+                        return Err(de::Error::duplicate_field("val"));
+                    }
+                    if let Some(t) = &r#type {
+                        val = Some(map.next_value_seed(WastValDeserialize(t))?);
+                    } else {
+                        return Err(de::Error::custom("`type` field must preceed `val` field"));
+                    }
+                }
+            }
+        }
+        let r#type = r#type.ok_or_else(|| de::Error::missing_field("type"))?;
+        let val = val.ok_or_else(|| de::Error::missing_field("val"))?;
+        Ok(Self::Value { r#type, val })
     }
 }
 
@@ -332,11 +393,12 @@ pub fn deserialize_sequence<'a>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        wast_val::WastVal,
+        wast_val::{WastVal, WastValWithType},
         wast_val_ser::{deserialize_sequence, WastValDeserialize},
         TypeWrapper,
     };
     use serde::de::DeserializeSeed;
+    use serde_json::json;
 
     #[test]
     fn bool() {
@@ -477,5 +539,16 @@ mod tests {
             actual.starts_with(starts_with),
             "assert_starts_with failed.Got:\n{actual}\nExpected to start with:\n{starts_with}"
         );
+    }
+
+    #[test]
+    fn test_deserialize_struct() {
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Bool,
+            val: WastVal::Bool(true),
+        };
+        let json = json!({"type": "Bool","val": true});
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
     }
 }

@@ -1,10 +1,10 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 mod core;
 pub mod wast_val;
 pub mod wast_val_ser;
 
-#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeWrapper {
     Bool,
     S8,
