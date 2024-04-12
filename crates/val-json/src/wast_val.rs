@@ -5,7 +5,6 @@ use std::fmt::Debug;
 use std::ops::Deref;
 use wasmtime::component::{Type, Val};
 use wast::core::NanPattern;
-use wast::token::{Float32, Float64};
 
 /// Expression that can be used inside of `invoke` expressions for core wasm
 /// functions.
@@ -21,8 +20,8 @@ pub enum WastVal {
     S32(i32),
     U64(u64),
     S64(i64),
-    Float32(Float32),
-    Float64(Float64),
+    Float32(f32),
+    Float64(f64),
     Char(char),
     String(Box<str>),
     List(Vec<WastVal>),
@@ -53,8 +52,8 @@ impl TryFrom<Val> for WastVal {
             Val::U32(v) => Self::U32(v),
             Val::S64(v) => Self::S64(v),
             Val::U64(v) => Self::U64(v),
-            Val::Float32(v) => Self::Float32(Float32 { bits: v.to_bits() }),
-            Val::Float64(v) => Self::Float64(Float64 { bits: v.to_bits() }),
+            Val::Float32(v) => Self::Float32(v),
+            Val::Float64(v) => Self::Float64(v),
             Val::Char(v) => Self::Char(v),
             Val::String(v) => Self::String(v),
             Val::List(v) => Self::List(
@@ -115,17 +114,15 @@ impl PartialEq for WastVal {
             // whether two values are semantically the same, rather than
             // numerically equal.
             (Self::Float32(l), Self::Float32(r)) => {
-                l.bits == r.bits // FIXME
-                                 // (*l != 0.0 && l == r)
-                                 //     || (*l == 0.0 && l.to_bits() == r.to_bits())
-                                 //     || (l.is_nan() && r.is_nan())
+                (*l != 0.0 && l == r)
+                    || (*l == 0.0 && l.to_bits() == r.to_bits())
+                    || (l.is_nan() && r.is_nan())
             }
             (Self::Float32(_), _) => false,
             (Self::Float64(l), Self::Float64(r)) => {
-                l.bits == r.bits // FIXME
-                                 //     (*l != 0.0 && l == r)
-                                 //         || (*l == 0.0 && l.to_bits() == r.to_bits())
-                                 //         || (l.is_nan() && r.is_nan())
+                (*l != 0.0 && l == r)
+                    || (*l == 0.0 && l.to_bits() == r.to_bits())
+                    || (l.is_nan() && r.is_nan())
             }
             (Self::Float64(_), _) => false,
 
@@ -186,8 +183,8 @@ pub fn val(v: &WastVal, ty: &Type) -> anyhow::Result<Val> {
         WastVal::S32(b) => Val::S32(*b),
         WastVal::U64(b) => Val::U64(*b),
         WastVal::S64(b) => Val::S64(*b),
-        WastVal::Float32(b) => Val::Float32(f32::from_bits(b.bits)),
-        WastVal::Float64(b) => Val::Float64(f64::from_bits(b.bits)),
+        WastVal::Float32(b) => Val::Float32(*b),
+        WastVal::Float64(b) => Val::Float64(*b),
         WastVal::Char(b) => Val::Char(*b),
         WastVal::String(s) => Val::String(s.to_string().into()),
         WastVal::List(vals) => match ty {
@@ -333,11 +330,17 @@ pub fn match_val(expected: &WastVal, actual: &Val) -> anyhow::Result<()> {
             _ => mismatch(expected, actual),
         },
         WastVal::Float32(e) => match actual {
-            Val::Float32(a) => core::match_f32(a.to_bits(), &NanPattern::Value(*e)),
+            Val::Float32(a) => core::match_f32(
+                a.to_bits(),
+                &NanPattern::Value(wast::token::Float32 { bits: e.to_bits() }),
+            ),
             _ => mismatch(expected, actual),
         },
         WastVal::Float64(e) => match actual {
-            Val::Float64(a) => core::match_f64(a.to_bits(), &NanPattern::Value(*e)),
+            Val::Float64(a) => core::match_f64(
+                a.to_bits(),
+                &NanPattern::Value(wast::token::Float64 { bits: e.to_bits() }),
+            ),
             _ => mismatch(expected, actual),
         },
         WastVal::Char(e) => match actual {

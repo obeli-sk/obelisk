@@ -5,7 +5,6 @@ use serde::{
     de::{DeserializeSeed, Deserializer, Expected, SeqAccess, Visitor},
     Serialize, Serializer,
 };
-use wast::token::{Float32, Float64};
 
 impl Serialize for WastVal {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -22,8 +21,8 @@ impl Serialize for WastVal {
             WastVal::U32(v) => serializer.serialize_u32(*v),
             WastVal::S64(v) => serializer.serialize_i64(*v),
             WastVal::U64(v) => serializer.serialize_u64(*v),
-            WastVal::Float32(v) => serializer.serialize_f32(f32::from_bits(v.bits)),
-            WastVal::Float64(v) => serializer.serialize_f64(f64::from_bits(v.bits)),
+            WastVal::Float32(v) => serializer.serialize_f32(*v),
+            WastVal::Float64(v) => serializer.serialize_f64(*v),
             WastVal::Char(v) => serializer.serialize_char(*v),
             WastVal::String(v) => serializer.serialize_str(v),
             WastVal::List(_) => todo!(),
@@ -211,9 +210,7 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                 E: Error,
             {
                 if matches!(self.0, TypeWrapper::Float32) {
-                    Ok(WastVal::Float32(Float32 {
-                        bits: val.to_bits(),
-                    }))
+                    Ok(WastVal::Float32(val))
                 } else {
                     Err(Error::invalid_type(
                         Unexpected::Float(f64::from(val)),
@@ -227,18 +224,14 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                 E: Error,
             {
                 if *self.0 == TypeWrapper::Float64 {
-                    Ok(WastVal::Float64(Float64 {
-                        bits: val.to_bits(),
-                    }))
+                    Ok(WastVal::Float64(val))
                 } else if *self.0 == TypeWrapper::Float32 {
                     // Warining: This might truncate the value.
                     #[allow(clippy::cast_possible_truncation)]
                     let f32 = val as f32;
                     // Fail on overflow.
                     if val.is_finite() == f32.is_finite() {
-                        return Ok(WastVal::Float32(Float32 {
-                            bits: f32.to_bits(),
-                        }));
+                        return Ok(WastVal::Float32(f32));
                     }
                     Err(())
                 } else {
@@ -344,7 +337,6 @@ mod tests {
         TypeWrapper,
     };
     use serde::de::DeserializeSeed;
-    use wast::token::{Float32, Float64};
 
     #[test]
     fn bool() {
@@ -392,9 +384,7 @@ mod tests {
 
     #[test]
     fn f32() {
-        let expected = WastVal::Float32(Float32 {
-            bits: (-123.1_f32).to_bits(),
-        });
+        let expected = WastVal::Float32(-123.1_f32);
         let input = "-123.1";
         let ty = TypeWrapper::Float32;
         let actual = WastValDeserialize(&ty)
@@ -405,9 +395,7 @@ mod tests {
 
     #[test]
     fn f32_max() {
-        let expected = WastVal::Float32(Float32 {
-            bits: f32::MAX.to_bits(),
-        });
+        let expected = WastVal::Float32(f32::MAX);
         let input = f32::MAX.to_string();
         let ty = TypeWrapper::Float32;
         let actual = WastValDeserialize(&ty)
@@ -419,7 +407,7 @@ mod tests {
     #[test]
     fn f64() {
         let f = f64::from(f32::MAX) + 1.0;
-        let expected = WastVal::Float64(Float64 { bits: f.to_bits() });
+        let expected = WastVal::Float64(f);
         let input = f.to_string();
         let ty = TypeWrapper::Float64;
         let actual = WastValDeserialize(&ty)
