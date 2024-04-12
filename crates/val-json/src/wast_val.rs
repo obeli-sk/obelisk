@@ -1,4 +1,5 @@
-use crate::{core, TypeWrapper};
+use crate::type_wrapper::TypeConversionError;
+use crate::{core, type_wrapper::TypeWrapper};
 use anyhow::{anyhow, bail, Context};
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
@@ -37,16 +38,34 @@ pub enum WastVal {
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct WastValWithType {
-    pub(crate) r#type: TypeWrapper,
-    pub(crate) val: WastVal,
+    pub r#type: TypeWrapper,
+    pub val: WastVal,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum WastValWithTypeConversionError {
+    #[error(transparent)]
+    WastValConversionError(#[from] WastValConversionError),
+    #[error(transparent)]
+    TypeConversionError(#[from] TypeConversionError),
+}
+
+impl TryFrom<Val> for WastValWithType {
+    type Error = WastValWithTypeConversionError;
+
+    fn try_from(value: Val) -> Result<Self, Self::Error> {
+        let r#type = TypeWrapper::try_from(&value)?;
+        let val = WastVal::try_from(value)?;
+        Ok(Self { r#type, val })
+    }
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
 #[error("conversion of the resource type is not supported")]
-pub struct ConversionError;
+pub struct WastValConversionError;
 
 impl TryFrom<Val> for WastVal {
-    type Error = ConversionError;
+    type Error = WastValConversionError;
 
     fn try_from(value: Val) -> Result<Self, Self::Error> {
         Ok(match value {
@@ -106,7 +125,7 @@ impl TryFrom<Val> for WastVal {
                 Self::Result(res)
             }
             Val::Flags(v) => Self::Flags(v.flags().map(Box::from).collect()),
-            Val::Resource(_) => return Err(ConversionError),
+            Val::Resource(_) => return Err(WastValConversionError),
         })
     }
 }

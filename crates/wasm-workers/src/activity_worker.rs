@@ -281,7 +281,10 @@ pub(crate) mod tests {
     use test_utils::env_or_default;
     use tracing::warn;
     use utils::time::now;
-    use val_json::wast_val::WastVal;
+    use val_json::{
+        type_wrapper::TypeWrapper,
+        wast_val::{WastVal, WastValWithType},
+    };
     use wasmtime::component::Val;
 
     pub const EPOCH_MILLIS: u64 = 10;
@@ -350,7 +353,7 @@ pub(crate) mod tests {
             .unwrap();
         // Check the result.
         let fibo = assert_matches!(db_connection.wait_for_finished_result(execution_id, None).await.unwrap(),
-            Ok(SupportedFunctionResult::Infallible(WastVal::U64(val))) => val);
+            Ok(SupportedFunctionResult::Infallible(WastValWithType {val: WastVal::U64(val), r#type: TypeWrapper::U64 })) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
         exec_task.close().await;
@@ -490,7 +493,10 @@ pub(crate) mod tests {
                     .wait_for_finished_result(execution_id, Some(Duration::from_secs(2)))
                     .await
                     .unwrap(),
-                Ok(SupportedFunctionResult::Infallible(WastVal::U64(_)))
+                Ok(SupportedFunctionResult::Infallible(WastValWithType {
+                    val: WastVal::U64(_),
+                    r#type: TypeWrapper::U64
+                }))
             );
             counter += 1;
         }
@@ -581,7 +587,13 @@ pub(crate) mod tests {
                 // Check that the computation succeded.
                 assert_matches!(
                     res,
-                    Ok((SupportedFunctionResult::Infallible(WastVal::U64(_)), _))
+                    Ok((
+                        SupportedFunctionResult::Infallible(WastValWithType {
+                            val: WastVal::U64(_),
+                            r#type: TypeWrapper::U64
+                        }),
+                        _
+                    ))
                 );
             }
         }
@@ -866,8 +878,11 @@ pub(crate) mod tests {
                 db_connection.wait_for_finished_result(execution_id, Some(Duration::from_secs(1))).await.unwrap(),
                 Ok(SupportedFunctionResult::Fallible(val, res)) => (val, res));
             res.unwrap();
-            let val = assert_matches!(val, WastVal::Result(Ok(Some(val))) => val);
+            let (val, ok, err) = assert_matches!(val, WastValWithType{val: WastVal::Result(Ok(Some(val))),
+                r#type: TypeWrapper::Result{ok, err}} => (val, ok, err));
             let val = assert_matches!(val.deref(), WastVal::String(val) => val);
+            assert_eq!(Some(Box::new(TypeWrapper::String)), ok);
+            assert_eq!(Some(Box::new(TypeWrapper::String)), err);
             assert_eq!(BODY, val.deref());
             drop(db_connection);
             exec_task.close().await;

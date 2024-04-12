@@ -1,6 +1,6 @@
 use concepts::{FnName, FunctionFqn, FunctionMetadata, IfcFqnName};
 use std::{collections::HashMap, error::Error, sync::Arc};
-use val_json::{TypeWrapper, UnsupportedTypeError};
+use val_json::{type_wrapper::TypeConversionError, type_wrapper::TypeWrapper};
 use wit_component::DecodedWasm;
 use wit_parser::{Resolve, WorldId, WorldItem, WorldKey};
 
@@ -78,7 +78,7 @@ fn ifc_fns<'a>(
 #[derive(thiserror::Error, Debug)]
 pub enum FunctionMetadataError {
     #[error("{0}")]
-    UnsupportedType(#[from] UnsupportedTypeError),
+    UnsupportedType(#[from] TypeConversionError),
 
     #[error("unsupported return type in {ffqn}, got type `{ty}`")]
     UnsupportedReturnType { ffqn: String, ty: String },
@@ -152,7 +152,7 @@ pub fn functions_to_metadata(
                 .params
                 .iter()
                 .map(|(name, ty)| TypeWrapper::try_from(*ty).map(|ty| (name.clone(), ty)))
-                .collect::<Result<_, UnsupportedTypeError>>()?;
+                .collect::<Result<_, TypeConversionError>>()?;
             match &function.results {
                 wit_parser::Results::Anon(_) => Ok(()),
                 wit_parser::Results::Named(named) if named.is_empty() => Ok(()),

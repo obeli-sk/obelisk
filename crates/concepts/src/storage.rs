@@ -12,6 +12,8 @@ use crate::SupportedFunctionResult;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
+use serde::Serialize;
 use std::fmt::Debug;
 use std::time::Duration;
 use tracing::debug;
@@ -70,14 +72,6 @@ impl ExecutionLog {
             event: ExecutionEventInner::Created { ffqn, .. },
             ..
         }) => ffqn)
-    }
-
-    #[must_use]
-    pub fn params(&self) -> Params {
-        assert_matches!(self.events.first(), Some(ExecutionEvent {
-            event: ExecutionEventInner::Created { params, .. },
-            ..
-        }) => params.clone())
     }
 
     #[must_use]
@@ -152,7 +146,9 @@ pub struct ExecutionEvent {
     pub event: ExecutionEventInner,
 }
 
-#[derive(Clone, Debug, derive_more::Display, PartialEq, Eq, arbitrary::Arbitrary)]
+#[derive(
+    Clone, Debug, derive_more::Display, PartialEq, Eq, arbitrary::Arbitrary, Serialize, Deserialize,
+)]
 pub enum ExecutionEventInner {
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
@@ -243,7 +239,9 @@ impl ExecutionEventInner {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
+)]
 pub enum HistoryEvent {
     // Must be created by the executor in `PendingState::Locked`.
     // Returns execution to `PendingState::PendingNow` state.
@@ -281,7 +279,9 @@ pub enum HistoryEvent {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
+)]
 pub enum JoinSetRequest {
     // Must be created by the executor in `PendingState::Locked`.
     #[display(fmt = "DelayRequest({delay_id})")]
@@ -300,7 +300,9 @@ impl HistoryEvent {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
+)]
 pub enum JoinSetResponse {
     DelayFinished {
         delay_id: DelayId,
@@ -361,7 +363,7 @@ pub type LockPendingResponse = Vec<LockedExecution>;
 pub type AppendBatchResponse = Version;
 pub type AppendTxResponse = Vec<Version>;
 
-#[derive(Debug, Clone, derive_more::Display)]
+#[derive(Debug, Clone, derive_more::Display, Serialize, Deserialize)]
 #[display(fmt = "{event}")]
 pub struct AppendRequest {
     pub created_at: DateTime<Utc>,

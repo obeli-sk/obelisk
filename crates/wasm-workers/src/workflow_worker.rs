@@ -367,7 +367,10 @@ mod tests {
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use utils::time::now;
-    use val_json::wast_val::WastVal;
+    use val_json::{
+        type_wrapper::TypeWrapper,
+        wast_val::{WastVal, WastValWithType},
+    };
     use wasmtime::component::Val;
 
     pub const FIBO_WORKFLOW_FFQN: FunctionFqn =
@@ -458,7 +461,7 @@ mod tests {
         let res = assert_matches!(res, SupportedFunctionResult::Infallible(val) => val);
         assert_eq!(
             FIBO_10_OUTPUT,
-            assert_matches!(res, WastVal::U64(actual) => actual),
+            assert_matches!(res, WastValWithType{ val: WastVal::U64(actual), r#type: TypeWrapper::U64} => actual),
         );
 
         drop(db_connection);

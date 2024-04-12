@@ -1,3 +1,4 @@
+use ::serde::{Deserialize, Serialize};
 pub use prefixed_ulid::ExecutionId;
 use std::{
     borrow::Borrow,
@@ -8,13 +9,16 @@ use std::{
     ops::Deref,
     sync::Arc,
 };
-use val_json::{wast_val::WastVal, TypeWrapper};
+use val_json::{
+    type_wrapper::TypeWrapper,
+    wast_val::{WastVal, WastValWithType},
+};
 
 pub mod storage;
 
 pub type FinishedExecutionResult = Result<SupportedFunctionResult, FinishedExecutionError>;
 
-#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
+#[derive(thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FinishedExecutionError {
     #[error("permanent timeout")]
     PermanentTimeout,
@@ -72,8 +76,51 @@ impl Deref for StrVariant {
         }
     }
 }
+mod serde_strvariant {
+    use crate::StrVariant;
+    use serde::{
+        de::{self, Visitor},
+        Deserialize, Deserializer, Serialize, Serializer,
+    };
+    use std::{ops::Deref, sync::Arc};
 
-#[derive(Hash, Clone, PartialEq, Eq, derive_more::Display)]
+    impl Serialize for StrVariant {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serializer.serialize_str(self.deref())
+        }
+    }
+
+    impl<'de> Deserialize<'de> for StrVariant {
+        fn deserialize<D>(deserializer: D) -> Result<StrVariant, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_str(StrVariantVisitor)
+        }
+    }
+
+    struct StrVariantVisitor;
+
+    impl<'de> Visitor<'de> for StrVariantVisitor {
+        type Value = StrVariant;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(StrVariant::Arc(Arc::from(v)))
+        }
+    }
+}
+
+#[derive(Hash, Clone, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
 #[display(fmt = "{value}")]
 pub struct Name<T> {
     value: StrVariant,
@@ -128,7 +175,7 @@ pub struct FnMarker;
 
 pub type FnName = Name<FnMarker>;
 
-#[derive(Hash, Clone, PartialEq, Eq)]
+#[derive(Hash, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionFqn {
     pub ifc_fqn: IfcFqnName,
     pub function_name: FnName,
@@ -189,19 +236,21 @@ pub struct FunctionMetadata {
     pub params: Vec<(String /*name*/, TypeWrapper)>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SupportedFunctionResult {
     None,
-    Fallible(WastVal, Result<(), ()>),
-    Infallible(WastVal),
+    Fallible(WastValWithType, Result<(), ()>), // FIXME: Remove the second parameter, use type instead
+    Infallible(WastValWithType),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResultParsingError {
     #[error("multi-value results are not supported")]
     MultiValue,
-    #[error("conversion error: {0:?}")]
-    ConversionError(#[from] val_json::wast_val::ConversionError),
+    #[error(transparent)]
+    TypeConversionError(#[from] val_json::type_wrapper::TypeConversionError),
+    #[error(transparent)]
+    ValueConversionError(#[from] val_json::wast_val::WastValConversionError),
 }
 
 impl SupportedFunctionResult {
@@ -210,13 +259,14 @@ impl SupportedFunctionResult {
             Ok(Self::None)
         } else if vec.len() == 1 {
             let res = vec.pop().unwrap();
-            let wast_val = WastVal::try_from(res)?;
-            match &wast_val {
+            let r#type = TypeWrapper::try_from(&res)?;
+            let val = WastVal::try_from(res)?;
+            match &val {
                 WastVal::Result(res) => {
                     let res = res.as_ref().map(|_| ()).map_err(|_| ());
-                    Ok(Self::Fallible(wast_val, res))
+                    Ok(Self::Fallible(WastValWithType { r#type, val }, res))
                 }
-                _ => Ok(Self::Infallible(wast_val)),
+                _ => Ok(Self::Infallible(WastValWithType { r#type, val })),
             }
         } else {
             Err(ResultParsingError::MultiValue)
@@ -231,9 +281,13 @@ impl SupportedFunctionResult {
     #[must_use]
     pub fn fallible_err(&self) -> Option<Option<&WastVal>> {
         match self {
-            SupportedFunctionResult::Fallible(WastVal::Result(Err(err)), Err(())) => {
-                Some(err.as_deref())
-            }
+            SupportedFunctionResult::Fallible(
+                WastValWithType {
+                    val: WastVal::Result(Err(err)),
+                    ..
+                },
+                Err(()),
+            ) => Some(err.as_deref()),
             _ => None,
         }
     }
@@ -243,7 +297,7 @@ impl SupportedFunctionResult {
         match self {
             SupportedFunctionResult::None => None,
             SupportedFunctionResult::Fallible(v, _) | SupportedFunctionResult::Infallible(v) => {
-                Some(v)
+                Some(&v.val)
             }
         }
     }
@@ -264,15 +318,88 @@ impl SupportedFunctionResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Params {
-    Empty,
-    // TODO Serialized(Arc<Vec<String>>),
-    WastVals(Arc<Vec<WastVal>>),
+    WastValParams(Arc<Vec<WastValWithType>>),
     Vals(Arc<Vec<wasmtime::component::Val>>),
 }
 
 impl Default for Params {
     fn default() -> Self {
-        Self::Empty
+        Self::Vals(Arc::default())
+    }
+}
+
+mod serde_params {
+    use std::marker::PhantomData;
+    use std::ops::Deref;
+    use std::sync::Arc;
+
+    use crate::Params;
+    use serde::de::{SeqAccess, Visitor};
+    use serde::ser::SerializeSeq;
+    use serde::{Deserialize, Serialize};
+    use val_json::wast_val::WastValWithType;
+
+    impl Serialize for Params {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: ::serde::Serializer,
+        {
+            let _holder;
+            let wast_val_params: &[WastValWithType] = match self {
+                Self::WastValParams(params) => params.deref(),
+                Self::Vals(vals) => {
+                    _holder = vals
+                        .iter()
+                        .map(|val| WastValWithType::try_from(val.clone()))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|err| serde::ser::Error::custom(err.to_string()))?;
+                    _holder.deref()
+                }
+            };
+            let mut seq = serializer.serialize_seq(Some(wast_val_params.len()))?;
+            for element in wast_val_params.iter() {
+                seq.serialize_element(element)?;
+            }
+            seq.end()
+        }
+    }
+
+    struct VecVisitor<T>(PhantomData<T>);
+    impl<T> Default for VecVisitor<T> {
+        fn default() -> Self {
+            Self(PhantomData::default())
+        }
+    }
+
+    impl<'de, T: Deserialize<'de>> Visitor<'de> for VecVisitor<T> {
+        type Value = Vec<T>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a sequence of `WastValWithType` structs")
+        }
+
+        #[inline]
+        fn visit_seq<V>(self, mut visitor: V) -> Result<Self::Value, V::Error>
+        where
+            V: SeqAccess<'de>,
+        {
+            let mut vec = Vec::new();
+            while let Some(elem) = visitor.next_element()? {
+                vec.push(elem);
+            }
+            Ok(vec)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Params {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            let vec: Vec<WastValWithType> = deserializer.deserialize_seq(VecVisitor::default())?;
+
+            Ok(Self::WastValParams(Arc::new(vec)))
+        }
     }
 }
 
@@ -300,14 +427,23 @@ impl Params {
         types: &[wasmtime::component::Type],
     ) -> Result<Arc<Vec<wasmtime::component::Val>>, ParamsParsingError> {
         match self {
-            Self::Empty => Ok(Arc::default()),
             Self::Vals(vals) => Ok(vals.clone()),
-            Self::WastVals(wast_vals) => {
+            Self::WastValParams(wast_vals) => {
                 if types.len() != wast_vals.len() {
                     return Err(ParamsParsingError::ArityMismatch);
                 }
                 let mut vec = Vec::with_capacity(types.len());
-                for (idx, (ty, wast_val)) in types.iter().zip(wast_vals.iter()).enumerate() {
+                for (
+                    idx,
+                    (
+                        ty,
+                        WastValWithType {
+                            r#type: _,
+                            val: wast_val,
+                        },
+                    ),
+                ) in types.iter().zip(wast_vals.iter()).enumerate()
+                {
                     let val = val_json::wast_val::val(wast_val, ty).map_err(|err| {
                         ParamsParsingError::ParameterError {
                             idx,
@@ -324,15 +460,17 @@ impl Params {
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
-            Self::Empty => 0,
             Self::Vals(vals) => vals.len(),
-            Self::WastVals(vals) => vals.len(),
+            Self::WastValParams(vals) => vals.len(),
         }
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        matches!(self, Self::Empty)
+        match self {
+            Self::Vals(vals) => vals.is_empty(),
+            Self::WastValParams(vals) => vals.is_empty(),
+        }
     }
 }
 
@@ -355,18 +493,15 @@ pub mod prefixed_ulid {
     use ulid::Ulid;
 
     #[derive(derive_more::Display, Serialize, Deserialize)]
-    #[display(fmt = "{prefix}_{ulid}")]
+    #[display(fmt = "{}_{ulid}", "Self::prefix()")]
     pub struct PrefixedUlid<T: 'static> {
-        prefix: &'static str,
         ulid: Ulid,
         phantom_data: PhantomData<fn(T) -> T>,
     }
 
     impl<T> PrefixedUlid<T> {
         fn new(ulid: Ulid) -> Self {
-            let prefix = Self::prefix();
             Self {
-                prefix,
                 ulid,
                 phantom_data: PhantomData,
             }
@@ -422,7 +557,6 @@ pub mod prefixed_ulid {
                     return Err("wrong suffix");
                 };
                 Ok(Self {
-                    prefix,
                     ulid,
                     phantom_data: PhantomData,
                 })
@@ -445,7 +579,7 @@ pub mod prefixed_ulid {
 
         impl<T> Hash for PrefixedUlid<T> {
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                self.prefix.hash(state);
+                Self::prefix().hash(state);
                 self.ulid.hash(state);
                 self.phantom_data.hash(state);
             }

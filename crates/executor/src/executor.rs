@@ -533,6 +533,8 @@ mod tests {
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::sim_clock::SimClock;
     use utils::time::now;
+    use val_json::type_wrapper::TypeWrapper;
+    use val_json::wast_val::WastValWithType;
 
     fn set_up() {
         test_utils::set_up();
@@ -846,7 +848,13 @@ mod tests {
                     vec![],
                     Ok((
                         SupportedFunctionResult::Fallible(
-                            val_json::wast_val::WastVal::Result(Err(None)),
+                            WastValWithType {
+                                r#type: TypeWrapper::Result {
+                                    ok: None,
+                                    err: None,
+                                },
+                                val: val_json::wast_val::WastVal::Result(Err(None)),
+                            },
                             Err(()),
                         ),
                         Version::new(2),
@@ -886,7 +894,13 @@ mod tests {
                     vec![],
                     Ok((
                         SupportedFunctionResult::Fallible(
-                            val_json::wast_val::WastVal::Result(Ok(None)),
+                            WastValWithType {
+                                r#type: TypeWrapper::Result {
+                                    ok: None,
+                                    err: None,
+                                },
+                                val: val_json::wast_val::WastVal::Result(Ok(None)),
+                            },
                             Ok(()),
                         ),
                         Version::new(4),
@@ -906,18 +920,28 @@ mod tests {
                 created_at: locked_at
             }  if *locked_at == created_at
         );
-        assert_matches!(
+        let (ok, err) = assert_matches!(
             execution_log.events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
                     result: Ok(SupportedFunctionResult::Fallible(
-                        val_json::wast_val::WastVal::Result(Ok(None)),
+                        WastValWithType {
+                            r#type: TypeWrapper::Result {
+                                ok,
+                                err,
+                            },
+                            val:val_json::wast_val::WastVal::Result(Ok(None)),
+                        },
                         Ok(())
                     )),
                 },
                 created_at: finished_at,
             } if *finished_at == created_at
+            => (ok, err)
         );
+        assert_eq!(None, *ok);
+        assert_eq!(None, *err);
+
         drop(db_connection);
         db_task.close().await;
     }

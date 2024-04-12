@@ -1,11 +1,9 @@
-use std::{fmt, marker::PhantomData};
-
 use crate::{
+    type_wrapper::TypeWrapper,
     wast_val::{WastVal, WastValWithType},
-    TypeWrapper,
 };
 use serde::{
-    de::{self, DeserializeSeed, Deserializer, Expected, MapAccess, SeqAccess, Visitor},
+    de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor},
     Deserialize, Serialize, Serializer,
 };
 
@@ -62,7 +60,7 @@ enum WastValWithTypeField {
 impl<'de> Visitor<'de> for WastValWithTypeVisitor {
     type Value = WastValWithType;
 
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter.write_str("struct WastValWithType")
     }
 
@@ -115,7 +113,7 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
         impl<'de, 'a> Visitor<'de> for ExtendVecVisitor<'a> {
             type Value = WastVal;
 
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 write!(formatter, "value matching {type:?}", type = self.0)
             }
 
@@ -328,77 +326,81 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
     }
 }
 
-// Visitor implementation that deserializes a JSON array into `Vec<WastVal>`.
-struct SequenceVisitor<'a, V, I: ExactSizeIterator<Item = &'a TypeWrapper>> {
-    iterator: I,
-    len: usize,
-    phantom_data: PhantomData<V>,
-}
-
-impl<'a, V, I: ExactSizeIterator<Item = &'a TypeWrapper>> SequenceVisitor<'a, V, I> {
-    fn new(iterator: I) -> Self {
-        let len = iterator.len();
-        Self {
-            iterator,
-            len,
-            phantom_data: PhantomData,
-        }
-    }
-}
-impl<'a, 'de, I: ExactSizeIterator<Item = &'a TypeWrapper>> Visitor<'de>
-    for SequenceVisitor<'a, WastVal, I>
-{
-    type Value = Vec<WastVal>;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "an array of length {}", self.len)
-    }
-
-    fn visit_seq<A>(mut self, mut seq: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        use serde::de::Error;
-        let mut vec = Vec::new();
-        while let Some(ty) = self.iterator.next() {
-            if let Some(val) = seq.next_element_seed(WastValDeserialize(ty))? {
-                vec.push(val);
-            } else {
-                Err(Error::invalid_length(vec.len(), &self))?;
-            }
-        }
-        // Check if there are more values available than the number of types provided.
-        if let Ok(Some(unexpected)) = seq.next_element::<serde_json::Value>() {
-            Err(Error::custom(format_args!(
-                "invalid length that is too big, at element `{unexpected:?}`, expected {}",
-                &self as &dyn Expected
-            )))?;
-        }
-        Ok(vec)
-    }
-}
-
-pub fn deserialize_sequence<'a>(
-    param_vals: &str,
-    param_types: impl IntoIterator<
-        Item = &'a TypeWrapper,
-        IntoIter = impl ExactSizeIterator<Item = &'a TypeWrapper>,
-    >,
-) -> Result<Vec<WastVal>, serde_json::Error> {
-    let mut deserializer = serde_json::Deserializer::from_str(param_vals);
-    let visitor = SequenceVisitor::new(param_types.into_iter());
-    deserializer.deserialize_seq(visitor)
-}
-
 #[cfg(test)]
 mod tests {
+    use core::fmt;
+    use std::marker::PhantomData;
+
     use crate::{
+        type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
-        wast_val_ser::{deserialize_sequence, WastValDeserialize},
-        TypeWrapper,
+        wast_val_ser::WastValDeserialize,
     };
-    use serde::de::DeserializeSeed;
+    use serde::de::{DeserializeSeed, Expected, SeqAccess, Visitor};
     use serde_json::json;
+
+    // Visitor implementation that deserializes a JSON array into `Vec<WastVal>`.
+    struct SequenceVisitor<'a, V, I: ExactSizeIterator<Item = &'a TypeWrapper>> {
+        iterator: I,
+        len: usize,
+        phantom_data: PhantomData<V>,
+    }
+
+    impl<'a, V, I: ExactSizeIterator<Item = &'a TypeWrapper>> SequenceVisitor<'a, V, I> {
+        fn new(iterator: I) -> Self {
+            let len = iterator.len();
+            Self {
+                iterator,
+                len,
+                phantom_data: PhantomData,
+            }
+        }
+    }
+    impl<'a, 'de, I: ExactSizeIterator<Item = &'a TypeWrapper>> Visitor<'de>
+        for SequenceVisitor<'a, WastVal, I>
+    {
+        type Value = Vec<WastVal>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            write!(formatter, "an array of length {}", self.len)
+        }
+
+        fn visit_seq<A>(mut self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            use serde::de::Error;
+            let mut vec = Vec::new();
+            while let Some(ty) = self.iterator.next() {
+                if let Some(val) = seq.next_element_seed(WastValDeserialize(ty))? {
+                    vec.push(val);
+                } else {
+                    Err(Error::invalid_length(vec.len(), &self))?;
+                }
+            }
+            // Check if there are more values available than the number of types provided.
+            if let Ok(Some(unexpected)) = seq.next_element::<serde_json::Value>() {
+                Err(Error::custom(format_args!(
+                    "invalid length that is too big, at element `{unexpected:?}`, expected {}",
+                    &self as &dyn Expected
+                )))?;
+            }
+            Ok(vec)
+        }
+    }
+
+    pub fn deserialize_sequence<'a>(
+        param_vals: &str,
+        param_types: impl IntoIterator<
+            Item = &'a TypeWrapper,
+            IntoIter = impl ExactSizeIterator<Item = &'a TypeWrapper>,
+        >,
+    ) -> Result<Vec<WastVal>, serde_json::Error> {
+        use serde::Deserializer;
+        let mut deserializer = serde_json::Deserializer::from_str(param_vals);
+        let visitor = SequenceVisitor::new(param_types.into_iter());
+        deserializer.deserialize_seq(visitor)
+    }
 
     #[test]
     fn bool() {
