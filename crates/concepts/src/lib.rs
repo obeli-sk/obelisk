@@ -344,20 +344,20 @@ mod serde_params {
         where
             S: ::serde::Serializer,
         {
-            let _holder;
+            let holder;
             let wast_val_params: &[WastValWithType] = match self {
                 Self::WastValParams(params) => params.deref(),
                 Self::Vals(vals) => {
-                    _holder = vals
+                    holder = vals
                         .iter()
                         .map(|val| WastValWithType::try_from(val.clone()))
                         .collect::<Result<Vec<_>, _>>()
                         .map_err(|err| serde::ser::Error::custom(err.to_string()))?;
-                    _holder.deref()
+                    holder.deref()
                 }
             };
             let mut seq = serializer.serialize_seq(Some(wast_val_params.len()))?;
-            for element in wast_val_params.iter() {
+            for element in wast_val_params {
                 seq.serialize_element(element)?;
             }
             seq.end()
@@ -367,7 +367,7 @@ mod serde_params {
     struct VecVisitor<T>(PhantomData<T>);
     impl<T> Default for VecVisitor<T> {
         fn default() -> Self {
-            Self(PhantomData::default())
+            Self(PhantomData)
         }
     }
 

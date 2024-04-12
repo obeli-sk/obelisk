@@ -827,6 +827,7 @@ mod tests {
         db_task.close().await;
     }
 
+    #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn execution_returning_err_should_be_retried() {
         set_up();
