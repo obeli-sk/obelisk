@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/concepts",
     "crates/db",
+    "crates/db-sqlite",
     "crates/executor",
     "crates/testing/cargo-component-builder",
     "crates/testing/test-programs/fibo/activity",
@@ -39,6 +40,7 @@ rust-version = "1.77.0"
 cargo-component-builder.path = "crates/testing/cargo-component-builder"
 concepts.path = "crates/concepts"
 db.path = "crates/db"
+db-sqlite.path = "crates/db-sqlite"
 executor.path = "crates/executor/"
 test-programs-fibo-activity-builder.path = "crates/testing/test-programs/fibo/activity/builder"
 test-programs-fibo-workflow-builder.path = "crates/testing/test-programs/fibo/workflow/builder"
@@ -81,8 +83,14 @@ rstest = "0.18.2"
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
 strum = { version = "0.26.0", features = ["derive"] }
+tempfile = "3.10.1"
 thiserror = "1.0"
-tokio = { version = "0.2", package = "madsim-tokio", features = ["sync", "rt", "time", "macros"] }
+tokio = { version = "0.2", package = "madsim-tokio", features = [
+    "sync",
+    "rt",
+    "time",
+    "macros",
+] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
@@ -113,7 +121,8 @@ wit-component = "0.201.0"
 wit-parser = "0.201.0"
 
 [patch.crates-io]
-getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" } # madsim
+async-sqlite = { git = "https://github.com/ryanfowler/async-sqlite/", rev = "7f3c097d28bed5c2e4ae053dcdb29bd441c7dd7d" } # rusqlite 0.31.0, sqlite 3.45
+getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" }     # madsim
 
 [workspace.lints]
 # lower the priority to allow overriding later

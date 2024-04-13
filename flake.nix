@@ -25,13 +25,14 @@
             nativeBuildInputs = with pkgs; [
               cargo-component
               cargo-expand
-              cargo-nextest
               cargo-insta
+              cargo-nextest
+              litecli
+              lldb
               nixpkgs-fmt
               pkg-config
               rustToolchain
               wasm-tools
-              lldb
             ];
           };
         }
