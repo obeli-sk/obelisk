@@ -96,7 +96,7 @@ tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 ulid = { version = "1.1.0", features = ["serde"] }
 valuable = { version = "0.1.0", features = ["derive"] }
-wasmtime = { version = "19.0", default-features = false, features = [
+wasmtime = { version = "19.0.1", default-features = false, features = [
     # remove "parallel-compilation"
     "component-model",
     "addr2line",
