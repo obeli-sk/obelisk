@@ -577,7 +577,7 @@ mod tests {
             .filter(|step| matches!(step, WorkflowStep::Sleep { .. }))
             .count();
         let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
-            db_pool.clone(),
+            &db_pool,
             expired_timers_watcher::TimersWatcherConfig {
                 tick_sleep: TICK_SLEEP,
                 clock_fn: sim_clock.clock_fn(),

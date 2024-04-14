@@ -412,16 +412,12 @@ impl DbTaskHandle {
     #[must_use]
     pub fn connection(&self) -> Option<impl DbConnection> {
         self.client_to_store_req_sender
-            .as_ref()
-            .cloned()
+            .clone()
             .map(InMemoryDbConnection)
     }
 
     pub fn pool(&self) -> Option<InMemoryPool> {
-        self.client_to_store_req_sender
-            .as_ref()
-            .cloned()
-            .map(InMemoryPool)
+        self.client_to_store_req_sender.clone().map(InMemoryPool)
     }
 
     pub async fn close(&mut self) {
