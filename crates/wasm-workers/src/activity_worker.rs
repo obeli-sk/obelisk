@@ -272,7 +272,7 @@ pub(crate) mod tests {
     use crate::EngineConfig;
     use assert_matches::assert_matches;
     use concepts::{
-        storage::{CreateRequest, DbConnection},
+        storage::{CreateRequest, DbConnection, DbPool},
         ExecutionId, Params, SupportedFunctionResult,
     };
     use db::inmemory_dao::DbTask;
@@ -293,8 +293,8 @@ pub(crate) mod tests {
     pub const FIBO_10_INPUT: u8 = 10;
     pub const FIBO_10_OUTPUT: u64 = 55;
 
-    pub(crate) fn spawn_activity(
-        db_connection: Arc<dyn DbConnection>,
+    pub(crate) fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+        db_pool: P,
         wasm_path: &'static str,
         ffqn: FunctionFqn,
     ) -> ExecutorTaskHandle {
@@ -318,12 +318,14 @@ pub(crate) mod tests {
             tick_sleep: Duration::ZERO,
             clock_fn: now,
         };
-        ExecTask::spawn_new(db_connection, worker, exec_config, None)
+        ExecTask::spawn_new(worker, exec_config, db_pool, None)
     }
 
-    pub(crate) fn spawn_activity_fibo(db_connection: Arc<dyn DbConnection>) -> ExecutorTaskHandle {
+    pub(crate) fn spawn_activity_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+        db_pool: P,
+    ) -> ExecutorTaskHandle {
         spawn_activity(
-            db_connection,
+            db_pool,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             FIBO_ACTIVITY_FFQN,
         )
@@ -333,8 +335,9 @@ pub(crate) mod tests {
     async fn fibo_once() {
         test_utils::set_up();
         let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.as_db_connection().expect("must be open");
-        let exec_task = spawn_activity_fibo(db_connection.clone());
+        let db_pool = db_task.pool().unwrap();
+        let db_connection = db_pool.connection().expect("must be open");
+        let exec_task = spawn_activity_fibo(db_pool);
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = now();
@@ -410,7 +413,7 @@ pub(crate) mod tests {
 
         // Spawn db
         let mut db_task = DbTask::spawn_new(db_rpc_capacity);
-        let db_connection = db_task.as_db_connection().expect("must be open");
+        let db_pool = db_task.pool().unwrap();
 
         let fibo_worker = Arc::new(
             ActivityWorker::new_with_config(
@@ -432,9 +435,9 @@ pub(crate) mod tests {
         let stopwatch = Instant::now();
         let fibo_ffqn = FIBO_ACTIVITY_FFQN;
         let params = Params::from([Val::U8(fibo_input)]);
-
         let created_at = now();
         let mut execution_ids = Vec::with_capacity(executions);
+        let db_connection = db_pool.connection().expect("must be open");
         for _ in 0..executions {
             let execution_id = ExecutionId::generate();
             let req = AppendRequest {
@@ -477,9 +480,9 @@ pub(crate) mod tests {
                     clock_fn: now,
                 };
                 ExecTask::spawn_new(
-                    db_task.as_db_connection().unwrap(),
                     fibo_worker.clone(),
                     exec_config.clone(),
+                    db_pool.clone(),
                     task_limiter.clone(),
                 )
             })
@@ -505,6 +508,7 @@ pub(crate) mod tests {
             stopwatch.elapsed().as_millis()
         );
         drop(db_connection);
+        drop(db_pool);
         for exec_task in exec_tasks {
             exec_task.close().await;
         }
@@ -555,7 +559,6 @@ pub(crate) mod tests {
         let stopwatch = Instant::now();
         let execution_deadline = now() + lock_expiry;
         // create executions
-
         let join_handles = (0..tasks)
             .map(|_| {
                 let fibo_worker = fibo_worker.clone();
@@ -690,15 +693,16 @@ pub(crate) mod tests {
             const TICK_SLEEP: Duration = Duration::from_millis(10);
             test_utils::set_up();
             let mut db_task = DbTask::spawn_new(1);
-            let db_connection = db_task.as_db_connection().expect("must be open");
+            let db_pool = db_task.pool().expect("must be open");
             let timers_watcher_task =
                 executor::expired_timers_watcher::TimersWatcherTask::spawn_new(
-                    db_connection.clone(),
+                    db_pool.clone(),
                     executor::expired_timers_watcher::TimersWatcherConfig {
                         tick_sleep: TICK_SLEEP,
                         clock_fn: now,
                     },
-                );
+                )
+                .unwrap();
             let engine = activity_engine(EngineConfig::default());
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
@@ -730,18 +734,14 @@ pub(crate) mod tests {
                 tick_sleep: TICK_SLEEP,
                 clock_fn: now,
             };
-            let exec_task = ExecTask::spawn_new(
-                db_task.as_db_connection().unwrap(),
-                worker,
-                exec_config,
-                None,
-            );
+            let exec_task = ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None);
 
             // Create an execution.
             let stopwatch = Instant::now();
             let execution_id = ExecutionId::generate();
             warn!("Testing {execution_id}");
             let created_at = now();
+            let db_connection = db_pool.connection().unwrap();
             db_connection
                 .create(CreateRequest {
                     created_at,
@@ -771,6 +771,7 @@ pub(crate) mod tests {
             assert!(stopwatch < LOCK_EXPIRY * 2);
 
             drop(db_connection);
+            drop(db_pool);
             timers_watcher_task.close().await;
             exec_task.close().await;
             db_task.close().await;
@@ -838,10 +839,10 @@ pub(crate) mod tests {
             const BODY: &str = "ok";
             test_utils::set_up();
             let mut db_task = DbTask::spawn_new(1);
-            let db_connection = db_task.as_db_connection().expect("must be open");
+            let db_pool = db_task.pool().unwrap();
 
             let exec_task = spawn_activity(
-                db_connection.clone(),
+                db_pool.clone(),
                 test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                 HTTP_GET_ACTIVITY_FFQN,
             );
@@ -860,6 +861,7 @@ pub(crate) mod tests {
             // Create an execution.
             let execution_id = ExecutionId::generate();
             let created_at = now();
+            let db_connection = db_pool.connection().unwrap();
             db_connection
                 .create(CreateRequest {
                     created_at,
@@ -885,6 +887,7 @@ pub(crate) mod tests {
             assert_eq!(Some(Box::new(TypeWrapper::String)), err);
             assert_eq!(BODY, val.deref());
             drop(db_connection);
+            drop(db_pool);
             exec_task.close().await;
             db_task.close().await;
         }

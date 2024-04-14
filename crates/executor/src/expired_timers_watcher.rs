@@ -1,9 +1,11 @@
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutorId;
+use concepts::storage::DbConnection;
+use concepts::storage::DbPool;
 use concepts::{
     storage::{
-        AppendRequest, DbConnection, DbConnectionError, ExecutionEventInner, ExpiredTimer,
-        HistoryEvent, JoinSetResponse,
+        AppendRequest, DbConnectionError, ExecutionEventInner, ExpiredTimer, HistoryEvent,
+        JoinSetResponse,
     },
     FinishedExecutionError,
 };
@@ -24,8 +26,8 @@ pub struct TimersWatcherConfig<C: ClockFn> {
     pub clock_fn: C,
 }
 
-pub struct TimersWatcherTask {
-    pub(crate) db_connection: Arc<dyn DbConnection>,
+pub struct TimersWatcherTask<DB: DbConnection> {
+    pub(crate) db_connection: DB,
 }
 
 #[allow(dead_code)] // FIXME: add test
@@ -64,11 +66,11 @@ impl Drop for TaskHandle {
     }
 }
 
-impl TimersWatcherTask {
-    pub fn spawn_new<C: ClockFn + 'static>(
-        db_connection: Arc<dyn DbConnection>,
+impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
+    pub fn spawn_new<C: ClockFn + 'static, P: DbPool<DB>>(
+        db_pool: P,
         config: TimersWatcherConfig<C>,
-    ) -> TaskHandle {
+    ) -> Result<TaskHandle, DbConnectionError> {
         let executor_id = ExecutorId::generate();
         let span = info_span!("lock_watcher",
             executor = %executor_id,
@@ -76,6 +78,7 @@ impl TimersWatcherTask {
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let tick_sleep = config.tick_sleep;
+        let db_connection = db_pool.connection()?;
         let abort_handle = tokio::spawn(
             async move {
                 info!("Spawned expired lock watcher");
@@ -94,11 +97,11 @@ impl TimersWatcherTask {
             .instrument(span),
         )
         .abort_handle();
-        TaskHandle {
+        Ok(TaskHandle {
             executor_id,
             is_closing,
             abort_handle,
-        }
+        })
     }
 
     fn log_err_if_new(

@@ -3,7 +3,7 @@ use crate::{EngineConfig, WasmComponent, WasmFileError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
-use concepts::storage::{DbConnection, HistoryEvent, Version};
+use concepts::storage::{DbConnection, DbPool, HistoryEvent, Version};
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use concepts::{Params, SupportedFunctionResult};
 use derivative::Derivative;
@@ -11,6 +11,7 @@ use executor::worker::FatalError;
 use executor::worker::{Worker, WorkerError};
 use std::collections::HashMap;
 use std::error::Error;
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
@@ -50,30 +51,32 @@ impl Default for JoinNextBlockingStrategy {
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 
-pub struct WorkflowConfig<C: ClockFn> {
+pub struct WorkflowConfig<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     pub config_id: ConfigId,
     pub clock_fn: C,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     #[derivative(Debug = "ignore")]
-    pub db_connection: Arc<dyn DbConnection>,
+    pub db_pool: P,
     pub child_retry_exp_backoff: Duration,
     pub child_max_retries: u32,
+    #[derivative(Debug = "ignore")]
+    pub phantom_data: PhantomData<DB>,
 }
 
 #[derive(Clone)]
-pub struct WorkflowWorker<C: ClockFn> {
-    config: WorkflowConfig<C>,
+pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+    config: WorkflowConfig<C, DB, P>,
     engine: Arc<Engine>,
     exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
-    linker: wasmtime::component::Linker<WorkflowCtx<C>>,
+    linker: wasmtime::component::Linker<WorkflowCtx<C, DB, P>>,
     component: wasmtime::component::Component,
 }
 
-impl<C: ClockFn> WorkflowWorker<C> {
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
     #[tracing::instrument(skip_all, fields(wasm_path = %wasm_component.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
         wasm_component: WasmComponent,
-        config: WorkflowConfig<C>,
+        config: WorkflowConfig<C, DB, P>,
         engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
         const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
@@ -110,7 +113,10 @@ impl<C: ClockFn> WorkflowWorker<C> {
                     trace!("Adding mock for imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(&component, function_name, {
                         let ffqn = ffqn.clone();
-                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WorkflowCtx<C>>,
+                        move |mut store_ctx: wasmtime::StoreContextMut<
+                            '_,
+                            WorkflowCtx<C, DB, P>,
+                        >,
                               params: &[Val],
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
@@ -156,7 +162,9 @@ impl<C: ClockFn> WorkflowWorker<C> {
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static> Worker for WorkflowWorker<C> {
+impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
+    for WorkflowWorker<C, DB, P>
+{
     async fn run(
         &self,
         execution_id: ExecutionId,
@@ -208,7 +216,7 @@ enum RunError {
     FunctionCall(Box<dyn Error + Send + Sync>, Version),
 }
 
-impl<C: ClockFn> WorkflowWorker<C> {
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
     #[tracing::instrument(skip_all)]
     async fn run(
         &self,
@@ -232,7 +240,7 @@ impl<C: ClockFn> WorkflowWorker<C> {
                 seed,
                 self.config.clock_fn.clone(),
                 self.config.join_next_blocking_strategy,
-                self.config.db_connection.clone(),
+                self.config.db_pool.clone(),
                 version,
                 execution_deadline,
                 self.config.child_retry_exp_backoff,
@@ -323,15 +331,20 @@ impl<C: ClockFn> WorkflowWorker<C> {
 
 mod valuable {
     use super::WorkflowWorker;
+    use concepts::storage::{DbConnection, DbPool};
     use utils::time::ClockFn;
 
     static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
-    impl<C: ClockFn> ::valuable::Structable for WorkflowWorker<C> {
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ::valuable::Structable
+        for WorkflowWorker<C, DB, P>
+    {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             ::valuable::StructDef::new_static("WorkflowWorker", ::valuable::Fields::Named(FIELDS))
         }
     }
-    impl<C: ClockFn> ::valuable::Valuable for WorkflowWorker<C> {
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ::valuable::Valuable
+        for WorkflowWorker<C, DB, P>
+    {
         fn as_value(&self) -> ::valuable::Value<'_> {
             ::valuable::Value::Structable(self)
         }
@@ -380,7 +393,9 @@ mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
-    pub(crate) fn spawn_workflow_fibo(db_connection: Arc<dyn DbConnection>) -> ExecutorTaskHandle {
+    pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+        db_pool: P,
+    ) -> ExecutorTaskHandle {
         let fibo_worker = Arc::new(
             WorkflowWorker::new_with_config(
                 WasmComponent::new(StrVariant::Static(
@@ -388,12 +403,13 @@ mod tests {
                 ))
                 .unwrap(),
                 WorkflowConfig {
+                    db_pool: db_pool.clone(),
                     config_id: ConfigId::generate(),
                     clock_fn: now,
                     join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
-                    db_connection: db_connection.clone(),
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
+                    phantom_data: PhantomData,
                 },
                 workflow_engine(EngineConfig::default()),
             )
@@ -407,7 +423,7 @@ mod tests {
             tick_sleep: TICK_SLEEP,
             clock_fn: now,
         };
-        ExecTask::spawn_new(db_connection, fibo_worker, exec_config, None)
+        ExecTask::spawn_new(fibo_worker, exec_config, db_pool, None)
     }
 
     #[tokio::test]
@@ -416,11 +432,12 @@ mod tests {
 
         let _guard = test_utils::set_up();
         let mut db_task = DbTask::spawn_new(10);
-        let db_connection = db_task.as_db_connection().expect("must be open");
-        let workflow_exec_task = spawn_workflow_fibo(db_connection.clone());
+        let db_pool = db_task.pool().expect("must be open");
+        let workflow_exec_task = spawn_workflow_fibo(db_pool.clone());
         // Create an execution.
         let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = now();
+        let db_connection = db_pool.connection().unwrap();
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -436,7 +453,7 @@ mod tests {
             .unwrap();
         // Should end as BlockedByJoinSet
         wait_for_pending_state_fn(
-            db_connection.as_ref(),
+            &db_connection,
             execution_id,
             |exe_history| {
                 matches!(
@@ -451,7 +468,7 @@ mod tests {
         .unwrap();
 
         // Execution should call the activity and finish
-        let activity_exec_task = spawn_activity_fibo(db_connection.clone());
+        let activity_exec_task = spawn_activity_fibo(db_pool.clone());
 
         let res = db_connection
             .wait_for_finished_result(execution_id, None)
@@ -465,13 +482,14 @@ mod tests {
         );
 
         drop(db_connection);
+        drop(db_pool);
         workflow_exec_task.close().await;
         activity_exec_task.close().await;
         db_task.close().await;
     }
 
-    pub(crate) fn spawn_workflow_sleep(
-        db_connection: Arc<dyn DbConnection>,
+    pub(crate) fn spawn_workflow_sleep<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+        db_pool: P,
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
         let worker = Arc::new(
@@ -481,12 +499,13 @@ mod tests {
                 ))
                 .unwrap(),
                 WorkflowConfig {
+                    db_pool: db_pool.clone(),
                     config_id: ConfigId::generate(),
                     clock_fn: clock_fn.clone(),
                     join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
-                    db_connection: db_connection.clone(),
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
+                    phantom_data: PhantomData,
                 },
                 workflow_engine(EngineConfig::default()),
             )
@@ -500,7 +519,7 @@ mod tests {
             tick_sleep: TICK_SLEEP,
             clock_fn,
         };
-        ExecTask::spawn_new(db_connection, worker, exec_config, None)
+        ExecTask::spawn_new(worker, exec_config, db_pool, None)
     }
 
     #[tokio::test]
@@ -509,16 +528,19 @@ mod tests {
         let _guard = test_utils::set_up();
         let sim_clock = SimClock::new(now());
         let mut db_task = DbTask::spawn_new(10);
-        let db_connection = db_task.as_db_connection().expect("must be open");
-        let workflow_exec_task = spawn_workflow_sleep(db_connection.clone(), sim_clock.clock_fn());
+        let db_pool = db_task.pool().unwrap();
+
+        let workflow_exec_task = spawn_workflow_sleep(db_pool.clone(), sim_clock.clock_fn());
         let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
-            db_connection.clone(),
+            db_pool.clone(),
             expired_timers_watcher::TimersWatcherConfig {
                 tick_sleep: TICK_SLEEP,
                 clock_fn: sim_clock.clock_fn(),
             },
-        );
+        )
+        .unwrap();
         let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection().expect("must be open");
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -534,7 +556,7 @@ mod tests {
             .unwrap();
 
         wait_for_pending_state_fn(
-            db_connection.as_ref(),
+            &db_connection,
             execution_id,
             |exe_history| {
                 matches!(
@@ -551,7 +573,7 @@ mod tests {
         workflow_exec_task.close().await;
         sim_clock.sleep(Duration::from_millis(u64::from(SLEEP_MILLIS)));
         // Restart worker
-        let workflow_exec_task = spawn_workflow_sleep(db_connection.clone(), sim_clock.clock_fn());
+        let workflow_exec_task = spawn_workflow_sleep(db_pool, sim_clock.clock_fn());
         let res = db_connection
             .wait_for_finished_result(execution_id, None)
             .await

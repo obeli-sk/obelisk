@@ -10,31 +10,37 @@ use crate::{
     WasmComponent, WasmFileError,
 };
 use async_trait::async_trait;
-use concepts::{prefixed_ulid::ConfigId, storage::DbConnection, FunctionFqn, StrVariant};
+use concepts::{
+    prefixed_ulid::ConfigId,
+    storage::{DbConnection, DbPool},
+    FunctionFqn, StrVariant,
+};
 use derivative::Derivative;
 use executor::worker::Worker;
 use itertools::Either;
-use std::{sync::Arc, time::Duration};
+use std::{marker::PhantomData, sync::Arc, time::Duration};
 use utils::time::ClockFn;
 use wasmtime::Engine;
 
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-pub struct AutoConfig<C: ClockFn> {
+pub struct AutoConfig<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     pub config_id: ConfigId,
     pub wasm_path: StrVariant,
     pub activity_recycled_instances: RecycleInstancesSetting,
     pub clock_fn: C,
     pub workflow_join_next_blocking_strategy: JoinNextBlockingStrategy,
     #[derivative(Debug = "ignore")]
-    pub workflow_db_connection: Arc<dyn DbConnection>,
+    pub workflow_db_pool: P,
     pub workflow_child_retry_exp_backoff: Duration,
     pub workflow_child_max_retries: u32,
+    #[derivative(Debug = "ignore")]
+    pub phantom_data: PhantomData<DB>,
 }
 
-pub enum AutoWorker<C: ClockFn> {
+pub enum AutoWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     ActivityWorker(ActivityWorker<C>),
-    WorkflowWorker(WorkflowWorker<C>),
+    WorkflowWorker(WorkflowWorker<C, DB, P>),
 }
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
@@ -43,10 +49,10 @@ pub enum Kind {
     Workflow,
 }
 
-impl<C: ClockFn> AutoWorker<C> {
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> AutoWorker<C, DB, P> {
     #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
-        config: AutoConfig<C>,
+        config: AutoConfig<C, DB, P>,
         workflow_engine: Arc<Engine>,
         activity_engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
@@ -69,9 +75,10 @@ impl<C: ClockFn> AutoWorker<C> {
                 config_id: config.config_id,
                 clock_fn: config.clock_fn,
                 join_next_blocking_strategy: config.workflow_join_next_blocking_strategy,
-                db_connection: config.workflow_db_connection,
+                db_pool: config.workflow_db_pool,
                 child_retry_exp_backoff: config.workflow_child_retry_exp_backoff,
                 child_max_retries: config.workflow_child_max_retries,
+                phantom_data: PhantomData,
             };
             WorkflowWorker::new_with_config(wasm_component, config, workflow_engine)
                 .map(Self::WorkflowWorker)
@@ -93,7 +100,9 @@ fn supported_wasi_imports<'a>(
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static> Worker for AutoWorker<C> {
+impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
+    for AutoWorker<C, DB, P>
+{
     async fn run(
         &self,
         execution_id: concepts::ExecutionId,
@@ -140,9 +149,10 @@ impl<C: ClockFn + 'static> Worker for AutoWorker<C> {
 
 mod valuable {
     use super::AutoWorker;
+    use concepts::storage::{DbConnection, DbPool};
     use utils::time::ClockFn;
 
-    impl<C: ClockFn> ::valuable::Structable for AutoWorker<C> {
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ::valuable::Structable for AutoWorker<C, DB, P> {
         fn definition(&self) -> ::valuable::StructDef<'_> {
             match self {
                 AutoWorker::WorkflowWorker(w) => w.definition(),
@@ -151,7 +161,7 @@ mod valuable {
         }
     }
 
-    impl<C: ClockFn> ::valuable::Valuable for AutoWorker<C> {
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ::valuable::Valuable for AutoWorker<C, DB, P> {
         fn as_value(&self) -> ::valuable::Value<'_> {
             ::valuable::Value::Structable(self)
         }
@@ -167,7 +177,7 @@ mod valuable {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{marker::PhantomData, time::Duration};
 
     use super::{AutoConfig, AutoWorker};
     use crate::{
@@ -194,16 +204,16 @@ mod tests {
     async fn detection(#[case] file: &'static str, #[case] expected: Kind) {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.as_db_connection().expect("must be open");
         let config = AutoConfig {
             wasm_path: StrVariant::Static(file),
             config_id: ConfigId::generate(),
             activity_recycled_instances: RecycleInstancesSetting::Disable,
             clock_fn: now,
             workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
-            workflow_db_connection: db_connection,
+            workflow_db_pool: db_task.pool().unwrap(),
             workflow_child_retry_exp_backoff: Duration::ZERO,
             workflow_child_max_retries: 0,
+            phantom_data: PhantomData,
         };
         let worker = AutoWorker::new_with_config(
             config,

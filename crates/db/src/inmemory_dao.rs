@@ -11,14 +11,14 @@ use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::journal::{ExecutionJournal, PendingState};
 use concepts::storage::{
     AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, AppendTxResponse,
-    CreateRequest, DbConnection, DbConnectionError, DbError, ExecutionEventInner, ExecutionLog,
-    ExpiredTimer, LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version,
+    CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEventInner,
+    ExecutionLog, ExpiredTimer, LockPendingResponse, LockResponse, LockedExecution, SpecificError,
+    Version,
 };
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use derivative::Derivative;
 use hashbrown::{HashMap, HashSet};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -27,10 +27,7 @@ use tokio::{
 use tracing::{debug, info, instrument, trace, warn, Instrument, Level};
 use tracing::{error, info_span};
 
-#[derive(Clone)]
-struct InMemoryDbConnection {
-    client_to_store_req_sender: mpsc::Sender<DbRequest>,
-}
+pub struct InMemoryDbConnection(mpsc::Sender<DbRequest>);
 
 #[async_trait]
 impl DbConnection for InMemoryDbConnection {
@@ -54,7 +51,7 @@ impl DbConnection for InMemoryDbConnection {
             lock_expires_at,
             resp_sender,
         });
-        self.client_to_store_req_sender
+        self.0
             .send(request)
             .await
             .map_err(|_| DbConnectionError::SendError)?;
@@ -70,7 +67,7 @@ impl DbConnection for InMemoryDbConnection {
     ) -> Result<Vec<ExpiredTimer>, DbConnectionError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::General(GeneralRequest::GetExpiredTimers { at, resp_sender });
-        self.client_to_store_req_sender
+        self.0
             .send(request)
             .await
             .map_err(|_| DbConnectionError::SendError)?;
@@ -99,7 +96,7 @@ impl DbConnection for InMemoryDbConnection {
             lock_expires_at,
             resp_sender,
         });
-        self.client_to_store_req_sender
+        self.0
             .send(request)
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
@@ -123,7 +120,7 @@ impl DbConnection for InMemoryDbConnection {
             req,
             resp_sender,
         });
-        self.client_to_store_req_sender
+        self.0
             .send(request)
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
@@ -147,7 +144,7 @@ impl DbConnection for InMemoryDbConnection {
             version,
             resp_sender,
         });
-        self.client_to_store_req_sender
+        self.0
             .send(request)
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
@@ -164,7 +161,7 @@ impl DbConnection for InMemoryDbConnection {
     ) -> Result<AppendTxResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::General(GeneralRequest::AppendTx { items, resp_sender });
-        self.client_to_store_req_sender
+        self.0
             .send(request)
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
@@ -181,7 +178,7 @@ impl DbConnection for InMemoryDbConnection {
             execution_id,
             resp_sender,
         });
-        self.client_to_store_req_sender
+        self.0
             .send(request)
             .await
             .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
@@ -411,13 +408,20 @@ pub struct DbTaskHandle {
 }
 
 impl DbTaskHandle {
+    #[deprecated]
     #[must_use]
-    pub fn as_db_connection(&self) -> Option<Arc<impl DbConnection>> {
-        self.client_to_store_req_sender.as_ref().map(|sender| {
-            Arc::new(InMemoryDbConnection {
-                client_to_store_req_sender: sender.clone(),
-            })
-        })
+    pub fn connection(&self) -> Option<impl DbConnection> {
+        self.client_to_store_req_sender
+            .as_ref()
+            .cloned()
+            .map(InMemoryDbConnection)
+    }
+
+    pub fn pool(&self) -> Option<InMemoryPool> {
+        self.client_to_store_req_sender
+            .as_ref()
+            .cloned()
+            .map(InMemoryPool)
     }
 
     pub async fn close(&mut self) {
@@ -437,6 +441,16 @@ impl Drop for DbTaskHandle {
         }
         warn!("Aborting the task");
         self.abort_handle.abort();
+    }
+}
+
+#[derive(Clone)]
+pub struct InMemoryPool(mpsc::Sender<DbRequest>);
+
+impl DbPool<InMemoryDbConnection> for InMemoryPool {
+    #[allow(refining_impl_trait)]
+    fn connection(&self) -> Result<InMemoryDbConnection, DbConnectionError> {
+        Ok(InMemoryDbConnection(self.0.clone()))
     }
 }
 
@@ -1163,10 +1177,7 @@ pub mod tests {
     async fn lifecycle_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
-        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap();
-        let db_connection = InMemoryDbConnection {
-            client_to_store_req_sender,
-        };
+        let db_connection = db_task.pool().unwrap().connection().unwrap();
         lifecycle(db_connection).await;
         db_task.close().await;
     }
@@ -1402,10 +1413,7 @@ pub mod tests {
     async fn expired_lock_should_be_found_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
-        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap();
-        let db_connection = InMemoryDbConnection {
-            client_to_store_req_sender,
-        };
+        let db_connection = db_task.pool().unwrap().connection().unwrap();
         expired_lock_should_be_found(db_connection).await;
         db_task.close().await;
     }
@@ -1531,10 +1539,7 @@ pub mod tests {
         let tasks = env_or_default("TASKS", TASKS);
 
         let mut db_task = DbTask::spawn_new(1);
-        let client_to_store_req_sender = db_task.client_to_store_req_sender.clone().unwrap();
-        let db_connection = InMemoryDbConnection {
-            client_to_store_req_sender,
-        };
+        let db_pool = db_task.pool().unwrap();
 
         let stopwatch = Instant::now();
         let created_at = now();
@@ -1555,6 +1560,7 @@ pub mod tests {
             stopwatch.elapsed()
         );
         let stopwatch = Instant::now();
+        let db_connection = db_pool.connection().unwrap();
         for _ in 0..executions {
             db_connection
                 .append_batch(vec![append_req.clone()], ExecutionId::generate(), None)
@@ -1568,36 +1574,37 @@ pub mod tests {
 
         // spawn executors
         let exec_id = ExecutorId::generate();
-        let exec_tasks = (0..tasks)
-            .map(|_| {
-                let db_connection = db_connection.clone();
-                tokio::spawn(async move {
-                    let target = executions / tasks;
-                    let mut locked = Vec::with_capacity(target);
-                    while locked.len() < target {
-                        let now = now();
-                        let locked_now = db_connection
-                            .lock_pending(
-                                batch_size,
-                                now,
-                                vec![SOME_FFQN],
-                                now,
-                                exec_id,
-                                now + Duration::from_secs(1),
-                            )
-                            .await
-                            .unwrap();
-                        locked.extend(locked_now.into_iter());
-                    }
-                    locked
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut exec_tasks = Vec::with_capacity(tasks);
+        for _ in 0..tasks {
+            let db_connection = db_pool.connection().unwrap();
+            let task = tokio::spawn(async move {
+                let target = executions / tasks;
+                let mut locked = Vec::with_capacity(target);
+                while locked.len() < target {
+                    let now = now();
+                    let locked_now = db_connection
+                        .lock_pending(
+                            batch_size,
+                            now,
+                            vec![SOME_FFQN],
+                            now,
+                            exec_id,
+                            now + Duration::from_secs(1),
+                        )
+                        .await
+                        .unwrap();
+                    locked.extend(locked_now.into_iter());
+                }
+                locked
+            });
+            exec_tasks.push(task);
+        }
         for task_handle in exec_tasks {
             let _locked_vec = task_handle.await.unwrap();
         }
         warn!("Finished in {} ms", stopwatch.elapsed().as_millis());
         drop(db_connection);
+        drop(db_pool);
         db_task.close().await;
     }
 

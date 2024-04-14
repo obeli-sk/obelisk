@@ -338,7 +338,7 @@ pub enum SpecificError {
 #[derive(thiserror::Error, Debug, PartialEq, Eq, Clone)]
 pub enum DbError {
     #[error(transparent)]
-    Connection(DbConnectionError),
+    Connection(#[from] DbConnectionError),
     #[error(transparent)]
     Specific(SpecificError),
 }
@@ -382,6 +382,10 @@ pub struct CreateRequest {
     pub scheduled_at: Option<DateTime<Utc>>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
+}
+
+pub trait DbPool<DB: DbConnection>: Send + Sync + Clone {
+    fn connection(&self) -> Result<DB, DbConnectionError>;
 }
 
 #[async_trait]

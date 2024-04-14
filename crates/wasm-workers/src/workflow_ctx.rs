@@ -2,7 +2,7 @@ use crate::workflow_worker::JoinNextBlockingStrategy;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{
-    AppendRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version,
+    AppendRequest, DbConnection, DbError, DbPool, ExecutionEventInner, JoinSetResponse, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
@@ -11,6 +11,7 @@ use executor::worker::{FatalError, WorkerError};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, trace};
@@ -52,21 +53,22 @@ wasmtime::component::bindgen!({
     interfaces: "import my-org:workflow-engine/host-activities;",
 });
 
-pub(crate) struct WorkflowCtx<C: ClockFn> {
+pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     execution_id: ExecutionId,
     events: Vec<HistoryEvent>,
     events_idx: usize,
     rng: StdRng,
     pub(crate) clock_fn: C,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
-    db_connection: Arc<dyn DbConnection>,
+    db_pool: P,
     pub(crate) version: Version,
     execution_deadline: DateTime<Utc>,
     child_retry_exp_backoff: Duration,
     child_max_retries: u32,
+    phantom_data: PhantomData<DB>,
 }
 
-impl<C: ClockFn> WorkflowCtx<C> {
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
@@ -74,7 +76,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
         seed: u64,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        db_connection: Arc<dyn DbConnection>,
+        db_pool: P,
         version: Version,
         execution_deadline: DateTime<Utc>,
         retry_exp_backoff: Duration,
@@ -87,11 +89,12 @@ impl<C: ClockFn> WorkflowCtx<C> {
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
             join_next_blocking_strategy,
-            db_connection,
+            db_pool,
             version,
             execution_deadline,
             child_retry_exp_backoff: retry_exp_backoff,
             child_max_retries: max_retries,
+            phantom_data: PhantomData,
         }
     }
 
@@ -220,7 +223,8 @@ impl<C: ClockFn> WorkflowCtx<C> {
             new_child_execution_id,
             None,
         );
-        let versions = self.db_connection.append_tx(vec![parent, child]).await?;
+        let db_connection = self.db_pool.connection().map_err(DbError::Connection)?;
+        let versions = db_connection.append_tx(vec![parent, child]).await?;
         assert_eq!(2, versions.len());
         self.version = versions.first().unwrap().clone();
 
@@ -230,7 +234,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             debug!(child_execution_id = %new_child_execution_id, join_set_id = %new_join_set_id,  "Waiting for child execution result");
             loop {
                 // fetch
-                let eh = self.db_connection.get(self.execution_id).await?; // TODO: fetch since the current version
+                let eh = db_connection.get(self.execution_id).await?; // TODO: fetch since the current version
 
                 if let Some(res) = eh.event_history().find_map(|e| match e {
                     HistoryEvent::JoinSetResponse {
@@ -366,8 +370,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
             },
         };
 
-        self.version = self
-            .db_connection
+        let db_connection = self.db_pool.connection().map_err(DbError::Connection)?;
+
+        self.version = db_connection
             .append_batch(
                 vec![join_set, delayed_until, join_next],
                 self.execution_id,
@@ -385,7 +390,7 @@ impl<C: ClockFn> WorkflowCtx<C> {
             tokio::time::sleep(delay).await;
             loop {
                 // fetch
-                let eh = self.db_connection.get(self.execution_id).await?; // TODO: fetch since the current version
+                let eh = db_connection.get(self.execution_id).await?; // TODO: fetch since the current version
                 let expected = HistoryEvent::JoinSetResponse {
                     response: JoinSetResponse::DelayFinished {
                         delay_id: new_delay_id,
@@ -414,7 +419,9 @@ impl<C: ClockFn> WorkflowCtx<C> {
 }
 
 #[async_trait::async_trait]
-impl<C: ClockFn> my_org::workflow_engine::host_activities::Host for WorkflowCtx<C> {
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> my_org::workflow_engine::host_activities::Host
+    for WorkflowCtx<C, DB, P>
+{
     async fn sleep(&mut self, millis: u32) -> wasmtime::Result<()> {
         Ok(self.sleep(millis).await?)
     }
@@ -427,7 +434,7 @@ mod tests {
     use chrono::{DateTime, Utc};
     use concepts::{
         storage::{
-            journal::PendingState, wait_for_pending_state_fn, CreateRequest, DbConnection,
+            journal::PendingState, wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool,
             HistoryEvent, JoinSetRequest, Version,
         },
         FinishedExecutionResult,
@@ -440,7 +447,7 @@ mod tests {
         expired_timers_watcher,
         worker::{Worker, WorkerResult},
     };
-    use std::{fmt::Debug, sync::Arc, time::Duration};
+    use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{debug, info};
     use utils::time::{now, ClockFn};
@@ -458,14 +465,17 @@ mod tests {
 
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
-    struct WorkflowWorkerMock<C: ClockFn> {
+    struct WorkflowWorkerMock<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
         steps: Vec<WorkflowStep>,
         clock_fn: C,
         #[derivative(Debug = "ignore")]
-        db_connection: Arc<dyn DbConnection>,
+        db_pool: P,
+        phantom_data: PhantomData<DB>,
     }
 
-    impl<C: ClockFn> valuable::Valuable for WorkflowWorkerMock<C> {
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> valuable::Valuable
+        for WorkflowWorkerMock<C, DB, P>
+    {
         fn as_value(&self) -> valuable::Value<'_> {
             "WorkflowWorkerMock".as_value()
         }
@@ -474,7 +484,9 @@ mod tests {
     }
 
     #[async_trait]
-    impl<C: ClockFn + 'static> Worker for WorkflowWorkerMock<C> {
+    impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
+        for WorkflowWorkerMock<C, DB, P>
+    {
         async fn run(
             &self,
             execution_id: ExecutionId,
@@ -491,7 +503,7 @@ mod tests {
                 seed,
                 self.clock_fn.clone(),
                 JoinNextBlockingStrategy::default(),
-                self.db_connection.clone(),
+                self.db_pool.clone(),
                 version,
                 execution_deadline,
                 Duration::ZERO,
@@ -555,7 +567,7 @@ mod tests {
         sim_clock: SimClock,
     ) -> (Vec<HistoryEvent>, FinishedExecutionResult) {
         let mut db_task = DbTask::spawn_new(10);
-        let db_connection = db_task.as_db_connection().expect("must be open");
+        let db_pool = db_task.pool().expect("must be open");
         let mut child_execution_count = steps
             .iter()
             .filter(|step| matches!(step, WorkflowStep::Call { .. }))
@@ -565,17 +577,19 @@ mod tests {
             .filter(|step| matches!(step, WorkflowStep::Sleep { .. }))
             .count();
         let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
-            db_connection.clone(),
+            db_pool.clone(),
             expired_timers_watcher::TimersWatcherConfig {
                 tick_sleep: TICK_SLEEP,
                 clock_fn: sim_clock.clock_fn(),
             },
-        );
+        )
+        .unwrap();
         let workflow_exec_task = {
             let worker = Arc::new(WorkflowWorkerMock {
                 steps,
                 clock_fn: sim_clock.clock_fn(),
-                db_connection: db_connection.clone(),
+                db_pool: db_pool.clone(),
+                phantom_data: PhantomData,
             });
             let exec_config = ExecConfig {
                 ffqns: vec![MOCK_FFQN],
@@ -584,10 +598,11 @@ mod tests {
                 tick_sleep: TICK_SLEEP,
                 clock_fn: sim_clock.clock_fn(),
             };
-            ExecTask::spawn_new(db_connection.clone(), worker, exec_config, None)
+            ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None)
         };
         // Create an execution.
         let created_at = sim_clock.now();
+        let db_connection = db_pool.connection().unwrap();
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -605,7 +620,7 @@ mod tests {
         let mut processed = Vec::new();
         let mut spawned_child_executors = Vec::new();
         while let Some((join_set_id, req)) = wait_for_pending_state_fn(
-            db_connection.as_ref(),
+            &db_connection,
             execution_id,
             |execution_log| match &execution_log.pending_state {
                 PendingState::BlockedByJoinSet { join_set_id } => Some(Some((
@@ -645,7 +660,8 @@ mod tests {
                         let worker = Arc::new(WorkflowWorkerMock {
                             steps: vec![],
                             clock_fn: sim_clock.clock_fn(),
-                            db_connection: db_connection.clone(),
+                            db_pool: db_pool.clone(),
+                            phantom_data: PhantomData,
                         });
                         let exec_config = ExecConfig {
                             ffqns: vec![child_request.ffqn().clone()],
@@ -654,7 +670,7 @@ mod tests {
                             tick_sleep: TICK_SLEEP,
                             clock_fn: sim_clock.clock_fn(),
                         };
-                        ExecTask::spawn_new(db_connection.clone(), worker, exec_config, None)
+                        ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None)
                     };
                     spawned_child_executors.push(child_exec_task);
                     child_execution_count -= 1;
@@ -666,6 +682,7 @@ mod tests {
         let execution_log = db_connection.get(execution_id).await.unwrap();
         assert_eq!(PendingState::Finished, execution_log.pending_state);
         drop(db_connection);
+        drop(db_pool);
         for child_task in spawned_child_executors {
             child_task.close().await;
         }
