@@ -1,5 +1,5 @@
 [package]
-name = "db"
+name = "db-tests"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -7,6 +7,8 @@ rust-version.workspace = true
 
 [dependencies]
 concepts.workspace = true
+test-utils.workspace = true
+utils.workspace = true
 
 arbitrary.workspace = true
 assert_matches.workspace = true
@@ -15,16 +17,10 @@ chrono.workspace = true
 derivative.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
+madsim.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
-db-tests.workspace = true
-test-utils.workspace = true
-utils.workspace = true
-
-madsim.workspace = true
 
 [lints]
 workspace = true

@@ -629,6 +629,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "concepts",
+ "db-tests",
  "derivative",
  "derive_more",
  "hashbrown 0.14.3",
@@ -650,12 +651,33 @@ dependencies = [
  "async-trait",
  "chrono",
  "concepts",
+ "db-tests",
+ "derivative",
+ "derive_more",
+ "madsim",
+ "madsim-tokio",
+ "serde_json",
+ "tempfile",
+ "test-utils",
+ "thiserror",
+ "tracing",
+ "utils",
+]
+
+[[package]]
+name = "db-tests"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "assert_matches",
+ "async-trait",
+ "chrono",
+ "concepts",
  "derivative",
  "derive_more",
  "hashbrown 0.14.3",
  "madsim",
  "madsim-tokio",
- "tempfile",
  "test-utils",
  "thiserror",
  "tracing",
@@ -1825,10 +1847,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b838eba278d213a8beaf485bd313fd580ca4505a00d5871caeb1457c55322cae"
 dependencies = [
  "bitflags",
+ "chrono",
  "fallible-iterator",
  "fallible-streaming-iterator",
  "hashlink",
  "libsqlite3-sys",
+ "serde_json",
  "smallvec",
 ]
 

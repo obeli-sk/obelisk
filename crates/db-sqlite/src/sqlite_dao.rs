@@ -1,6 +1,6 @@
 #![allow(clippy::all, dead_code)]
 
-use async_sqlite::{ClientBuilder, JournalMode, Pool, PoolBuilder};
+use async_sqlite::{rusqlite::named_params, ClientBuilder, JournalMode, Pool, PoolBuilder};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -8,11 +8,11 @@ use concepts::{
     storage::{
         AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, AppendTxResponse,
         DbConnection, DbConnectionError, DbError, ExecutionLog, ExpiredTimer, LockPendingResponse,
-        LockResponse, Version,
+        LockResponse, SpecificError, Version,
     },
-    ExecutionId, FunctionFqn,
+    ExecutionId, FunctionFqn, StrVariant,
 };
-use std::{ops::Deref, path::Path};
+use std::{ops::Deref, path::Path, sync::Arc};
 use tracing::{debug, trace};
 
 const PRAGMA: &str = r"
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS execution_log (
     json_value JSONB NOT NULL,
     version INTEGER,
     pending_at INTEGER,
-    PRIMARY KEY (execution_id)
+    PRIMARY KEY (execution_id, version)
 );
 ";
 
@@ -102,11 +102,28 @@ impl DbConnection for SqlitePool {
 
     async fn append(
         &self,
-        _execution_id: ExecutionId,
-        _version: Option<Version>,
-        _req: AppendRequest,
+        execution_id: ExecutionId,
+        version: Option<Version>,
+        req: AppendRequest,
     ) -> Result<AppendResponse, DbError> {
-        todo!()
+        self.pool
+            .conn_mut(move |conn| {
+                let mut stmt = conn.prepare(
+                    "INSERT INTO execution_log (execution_id, created_at, json_value, version, pending_at) VALUES (:execution_id, :created_at, :json_value, :version, :pending_at)")?;
+                stmt.execute(named_params!{":execution_id": execution_id.to_string(),
+                    ":created_at": req.created_at,
+                    ":json_value": serde_json::to_value(&req.event).unwrap(), // TODO: unwrap_or_log?
+                    ":version": version.map(|v|v.0),
+                    ":pending_at": None::<DateTime<Utc>> })?;
+
+                Ok(Version::new(1))
+            })
+            .await
+            .map_err(|err| {
+                DbError::Specific(SpecificError::ValidationFailed(StrVariant::Arc(Arc::from(
+                    err.to_string(),
+                ))))
+            })
     }
 
     async fn append_batch(
@@ -149,26 +166,53 @@ impl Deref for SqlitePool {
 #[cfg(all(test, not(madsim)))] // attempt to spawn a system thread in simulation
 mod tests {
     use super::SqlitePool;
+    use concepts::{
+        storage::{CreateRequest, DbConnection},
+        ExecutionId, Params,
+    };
+    use db_tests::SOME_FFQN;
+    use std::time::Duration;
     use tempfile::NamedTempFile;
+    use utils::time::now;
+
+    async fn pool() -> (SqlitePool, Option<NamedTempFile>) {
+        if let Ok(path) = std::env::var("SQLITE_FILE") {
+            (SqlitePool::new(path).await.unwrap(), None)
+        } else {
+            let file = NamedTempFile::new().unwrap();
+            let path = file.path();
+            (SqlitePool::new(path).await.unwrap(), Some(file))
+        }
+    }
 
     #[tokio::test]
     async fn check_sqlite_version() {
         test_utils::set_up();
-        let file;
-        let pool = {
-            if let Ok(path) = std::env::var("SQLITE_FILE") {
-                SqlitePool::new(path).await.unwrap()
-            } else {
-                file = NamedTempFile::new().unwrap();
-                let path = file.path();
-                SqlitePool::new(path).await.unwrap()
-            }
-        };
+        let (pool, _guard) = pool().await;
         let version = pool
             .conn(|conn| conn.query_row("SELECT SQLITE_VERSION()", [], |row| row.get(0)))
             .await;
         let version: String = version.unwrap();
         assert_eq!("3.45.0", version);
+        pool.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn append() {
+        test_utils::set_up();
+        let (pool, _guard) = pool().await;
+        pool.create(CreateRequest {
+            created_at: now(),
+            execution_id: ExecutionId::generate(),
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            scheduled_at: None,
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+        })
+        .await
+        .unwrap();
         pool.close().await.unwrap();
     }
 }

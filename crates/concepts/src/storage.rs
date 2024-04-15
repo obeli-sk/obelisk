@@ -131,7 +131,7 @@ impl ExecutionLog {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display)]
-pub struct Version(usize);
+pub struct Version(pub usize);
 impl Version {
     #[must_use]
     pub fn new(arg: usize) -> Self {

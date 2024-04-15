@@ -15,16 +15,18 @@ async-trait.workspace = true
 chrono.workspace = true
 derivative.workspace = true
 derive_more.workspace = true
-hashbrown.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-madsim.workspace = true
-tempfile.workspace = true
+db-tests.workspace = true
 test-utils.workspace = true
 utils.workspace = true
+
+madsim.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

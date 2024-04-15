@@ -122,8 +122,10 @@ mod serde_strvariant {
 
 #[derive(Hash, Clone, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
 #[display(fmt = "{value}")]
+#[serde(transparent)]
 pub struct Name<T> {
     value: StrVariant,
+    #[serde(skip)]
     phantom_data: PhantomData<fn(T) -> T>,
 }
 
