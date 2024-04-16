@@ -1,9 +1,6 @@
 #![allow(clippy::all, dead_code)]
 
-use async_sqlite::{
-    rusqlite::{named_params, TransactionBehavior},
-    ClientBuilder, JournalMode, Pool, PoolBuilder,
-};
+use async_sqlite::{rusqlite::named_params, ClientBuilder, JournalMode, Pool, PoolBuilder};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -18,7 +15,7 @@ use concepts::{
 };
 use rusqlite::Transaction;
 use std::{collections::VecDeque, path::Path, sync::Arc};
-use tracing::{debug, error, info, instrument, trace};
+use tracing::{debug, error, info, info_span, instrument, trace};
 
 const PRAGMA: &str = r"
 PRAGMA synchronous = NORMAL;
@@ -309,58 +306,60 @@ impl DbConnection for SqlitePool {
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError> {
         trace!("lock_pending");
+        let span = info_span!("tx");
         Ok(self
             .pool
-            .conn_mut_with_err::<_, _, SqliteError>(move |conn| {
-                let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                trace!("tx started");
-                let mut execution_ids_versions = Vec::with_capacity(batch_size);
-                // TODO: The locked executions should be sorted by pending date, otherwise ffqns later in the list might get starved.
-                for ffqn in ffqns {
-                    let mut stmt = tx.prepare(
-                        "SELECT execution_id, expected_next_version FROM pending WHERE \
+            .transaction_write::<_, _, SqliteError>(move |tx| {
+                span.in_scope(|| {
+                    trace!("tx started");
+                    let mut execution_ids_versions = Vec::with_capacity(batch_size);
+                    // TODO: The locked executions should be sorted by pending date, otherwise ffqns later in the list might get starved.
+                    for ffqn in ffqns {
+                        let mut stmt = tx.prepare(
+                            "SELECT execution_id, expected_next_version FROM pending WHERE \
                     pending_at <= :pending_at AND ffqn = :ffqn \
                     ORDER BY pending_at LIMIT :batch_size",
-                    )?;
-                    let execs_and_versions = stmt
-                        .query_map(
-                            named_params! {
-                                ":pending_at": pending_at_or_sooner,
-                                ":ffqn": ffqn.to_string(),
-                                ":batch_size": batch_size - execution_ids_versions.len(),
-                            },
-                            |row| {
-                                let execution_id = row.get::<_, String>(0)?.parse::<ExecutionId>();
-                                let version = Version::new(row.get::<_, usize>(1)?);
-                                Ok(execution_id.map(|e| (e, version)))
-                            },
-                        )?
-                        .collect::<Result<Vec<_>, _>>()?
-                        .into_iter()
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|str| SqliteError::Parsing(StrVariant::Static(str)))?;
-                    execution_ids_versions.extend(execs_and_versions);
-                    if execution_ids_versions.len() == batch_size {
-                        break;
+                        )?;
+                        let execs_and_versions = stmt
+                            .query_map(
+                                named_params! {
+                                    ":pending_at": pending_at_or_sooner,
+                                    ":ffqn": ffqn.to_string(),
+                                    ":batch_size": batch_size - execution_ids_versions.len(),
+                                },
+                                |row| {
+                                    let execution_id =
+                                        row.get::<_, String>(0)?.parse::<ExecutionId>();
+                                    let version = Version::new(row.get::<_, usize>(1)?);
+                                    Ok(execution_id.map(|e| (e, version)))
+                                },
+                            )?
+                            .collect::<Result<Vec<_>, _>>()?
+                            .into_iter()
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|str| SqliteError::Parsing(StrVariant::Static(str)))?;
+                        execution_ids_versions.extend(execs_and_versions);
+                        if execution_ids_versions.len() == batch_size {
+                            break;
+                        }
                     }
-                }
-                let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
-                // Append lock
-                for (execution_id, version) in execution_ids_versions {
-                    let locked = Self::lock(
-                        &tx,
-                        created_at,
-                        execution_id,
-                        RunId::generate(),
-                        version,
-                        executor_id,
-                        lock_expires_at,
-                    )?;
-                    locked_execs.push(locked);
-                }
-                tx.commit()?;
-                trace!("tx committed");
-                Ok(locked_execs)
+                    let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
+                    // Append lock
+                    for (execution_id, version) in execution_ids_versions {
+                        let locked = Self::lock(
+                            &tx,
+                            created_at,
+                            execution_id,
+                            RunId::generate(),
+                            version,
+                            executor_id,
+                            lock_expires_at,
+                        )?;
+                        locked_execs.push(locked);
+                    }
+                    trace!("tx committed");
+                    Ok(locked_execs)
+                })
             })
             .await?)
     }
@@ -377,8 +376,7 @@ impl DbConnection for SqlitePool {
     ) -> Result<LockResponse, DbError> {
         Ok(self
             .pool
-            .conn_mut_with_err::<_, _, SqliteError>(move |conn| {
-                let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            .transaction_write::<_, _, SqliteError>(move |tx| {
                 let locked = Self::lock(
                     &tx,
                     created_at,
@@ -388,7 +386,6 @@ impl DbConnection for SqlitePool {
                     executor_id,
                     lock_expires_at,
                 )?;
-                tx.commit()?;
                 Ok((locked.event_history, locked.version))
             })
             .await?)
@@ -411,35 +408,30 @@ impl DbConnection for SqlitePool {
             if appending_version.is_none() {
                 return Ok(self
                     .pool
-                    .conn_mut_with_err::<_,_,SqliteError>(move |conn| {
-                        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                        let next_expected_version = {
-                            let version = Version::new(0);
-                            let execution_id = execution_id.to_string();
-                            let mut stmt = tx.prepare(
-                                "INSERT INTO execution_log (execution_id, created_at, version, json_value, variant ) \
-                                VALUES (:execution_id, :created_at, :version, :json_value, :variant)")?;
-                            stmt.execute(named_params!{
-                                ":execution_id": &execution_id,
-                                ":created_at": req.created_at,
-                                ":version": version.0,
-                                ":json_value": serde_json::to_value(&req.event).unwrap(),
-                                ":variant": req.event.variant(),
-                            })?;
-                            let version = Version::new(version.0 + 1);
-                            let mut stmt = tx.prepare(
-                                "INSERT INTO pending (execution_id, expected_next_version, pending_at, ffqn) \
-                                VALUES (:execution_id, :expected_next_version, :pending_at, :ffqn)")?;
-                            stmt.execute(named_params!{
-                                ":execution_id": &execution_id,
-                                ":expected_next_version": version.0,
-                                ":pending_at": scheduled_at.unwrap_or_default(),
-                                ":ffqn": ffqn.to_string()
-                            })?;
-                            version
-                        };
-                        tx.commit()?;
-                        return Ok(next_expected_version);
+                    .transaction_write::<_,_,SqliteError>(move |tx| {
+                        let version = Version::new(0);
+                        let execution_id = execution_id.to_string();
+                        let mut stmt = tx.prepare(
+                            "INSERT INTO execution_log (execution_id, created_at, version, json_value, variant ) \
+                            VALUES (:execution_id, :created_at, :version, :json_value, :variant)")?;
+                        stmt.execute(named_params!{
+                            ":execution_id": &execution_id,
+                            ":created_at": req.created_at,
+                            ":version": version.0,
+                            ":json_value": serde_json::to_value(&req.event).unwrap(),
+                            ":variant": req.event.variant(),
+                        })?;
+                        let next_expected_version = Version::new(version.0 + 1);
+                        let mut stmt = tx.prepare(
+                            "INSERT INTO pending (execution_id, expected_next_version, pending_at, ffqn) \
+                            VALUES (:execution_id, :expected_next_version, :pending_at, :ffqn)")?;
+                        stmt.execute(named_params!{
+                            ":execution_id": &execution_id,
+                            ":expected_next_version": next_expected_version.0,
+                            ":pending_at": scheduled_at.unwrap_or_default(),
+                            ":ffqn": ffqn.to_string()
+                        })?;
+                        Ok(next_expected_version)
                     })
                     .await?);
             } else {
@@ -449,29 +441,24 @@ impl DbConnection for SqlitePool {
         }
         Ok(self
             .pool
-            .conn_mut_with_err::<_,_,SqliteError>(move |conn| {
-                let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                let appending_version = {
-                    let appending_version = if let Some(appending_version) = appending_version {
-                        Self::check_expected_next_version(&tx, execution_id, &appending_version)?;
-                        appending_version
-                    } else {
-                        // TODO: can this event be appended without version?
-                        Self::current_version(&tx, execution_id)?
-                    };
-                    let mut stmt = tx.prepare(
-                        "INSERT INTO execution_log (execution_id, created_at, json_value, version, variant) \
-                        VALUES (:execution_id, :created_at, :json_value, :version, :variant)")?;
-                    stmt.execute(named_params!{
-                        ":execution_id": execution_id.to_string(),
-                        ":created_at": req.created_at,
-                        ":json_value": serde_json::to_value(&req.event).unwrap(),
-                        ":version": appending_version.0,
-                        ":variant": req.event.variant(),
-                    })?;
+            .transaction_write::<_,_,SqliteError>(move |tx| {
+                let appending_version = if let Some(appending_version) = appending_version {
+                    Self::check_expected_next_version(&tx, execution_id, &appending_version)?;
                     appending_version
+                } else {
+                    // TODO: can this event be appended without version?
+                    Self::current_version(&tx, execution_id)?
                 };
-                tx.commit()?;
+                let mut stmt = tx.prepare(
+                    "INSERT INTO execution_log (execution_id, created_at, json_value, version, variant) \
+                    VALUES (:execution_id, :created_at, :json_value, :version, :variant)")?;
+                stmt.execute(named_params!{
+                    ":execution_id": execution_id.to_string(),
+                    ":created_at": req.created_at,
+                    ":json_value": serde_json::to_value(&req.event).unwrap(),
+                    ":version": appending_version.0,
+                    ":variant": req.event.variant(),
+                })?;
                 Ok(Version::new(appending_version.0 + 1))
             }).await?)
     }
