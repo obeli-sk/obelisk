@@ -368,9 +368,7 @@ mod tests {
         EngineConfig,
     };
     use assert_matches::assert_matches;
-    use concepts::storage::{
-        journal::PendingState, wait_for_pending_state_fn, CreateRequest, DbConnection,
-    };
+    use concepts::storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState};
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
     use db::inmemory_dao::DbTask;
     use executor::{

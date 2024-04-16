@@ -5,10 +5,11 @@
 //! When inserting, the row in the journal must contain a version that must be equal
 //! to the current number of events in the journal. First change with the expected version wins.
 use self::index::JournalsIndex;
+use crate::journal::ExecutionJournal;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
-use concepts::storage::journal::{ExecutionJournal, PendingState};
+use concepts::storage::PendingState;
 use concepts::storage::{
     AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, AppendTxResponse,
     CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEventInner,
@@ -193,8 +194,8 @@ mod index {
     use super::{
         BTreeMap, BTreeSet, DateTime, ExecutionId, HashMap, HashSet, JoinSetId, PendingState, Utc,
     };
+    use crate::journal::ExecutionJournal;
     use concepts::prefixed_ulid::DelayId;
-    use concepts::storage::journal::ExecutionJournal;
     use concepts::storage::{HistoryEvent, JoinSetRequest, JoinSetResponse};
     use tracing::trace;
 

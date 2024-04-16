@@ -434,8 +434,8 @@ mod tests {
     use chrono::{DateTime, Utc};
     use concepts::{
         storage::{
-            journal::PendingState, wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool,
-            HistoryEvent, JoinSetRequest, Version,
+            wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
+            JoinSetRequest, PendingState, Version,
         },
         FinishedExecutionResult,
     };

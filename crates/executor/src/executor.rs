@@ -529,7 +529,7 @@ mod tests {
     use async_trait::async_trait;
     use concepts::storage::CreateRequest;
     use concepts::storage::{
-        journal::PendingState, DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent,
+        DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
     use concepts::{Params, SupportedFunctionResult};
     use db::inmemory_dao::DbTask;
