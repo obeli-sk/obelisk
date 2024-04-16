@@ -413,6 +413,19 @@ pub struct CreateRequest {
     pub max_retries: u32,
 }
 
+impl From<CreateRequest> for ExecutionEventInner {
+    fn from(value: CreateRequest) -> Self {
+        Self::Created {
+            ffqn: value.ffqn,
+            params: value.params,
+            parent: value.parent,
+            scheduled_at: value.scheduled_at,
+            retry_exp_backoff: value.retry_exp_backoff,
+            max_retries: value.max_retries,
+        }
+    }
+}
+
 pub trait DbPool<DB: DbConnection>: Send + Sync + Clone {
     fn connection(&self) -> Result<DB, DbConnectionError>;
 }
