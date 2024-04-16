@@ -322,11 +322,12 @@ impl SupportedFunctionResult {
 pub enum Params {
     WastValParams(Arc<Vec<WastValWithType>>),
     Vals(Arc<Vec<wasmtime::component::Val>>),
+    Empty,
 }
 
 impl Default for Params {
     fn default() -> Self {
-        Self::Vals(Arc::default())
+        Self::Empty
     }
 }
 
@@ -357,6 +358,7 @@ mod serde_params {
                         .map_err(|err| serde::ser::Error::custom(err.to_string()))?;
                     holder.deref()
                 }
+                Self::Empty => &[],
             };
             let mut seq = serializer.serialize_seq(Some(wast_val_params.len()))?;
             for element in wast_val_params {
@@ -456,6 +458,7 @@ impl Params {
                 }
                 Ok(Arc::new(vec))
             }
+            Self::Empty => Ok(Arc::new(Vec::new())), // FIXME: Arc<[T]>
         }
     }
 
@@ -464,6 +467,7 @@ impl Params {
         match self {
             Self::Vals(vals) => vals.len(),
             Self::WastValParams(vals) => vals.len(),
+            Self::Empty => 0,
         }
     }
 
@@ -472,6 +476,7 @@ impl Params {
         match self {
             Self::Vals(vals) => vals.is_empty(),
             Self::WastValParams(vals) => vals.is_empty(),
+            Self::Empty => true,
         }
     }
 }

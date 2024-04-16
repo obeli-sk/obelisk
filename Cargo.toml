@@ -81,6 +81,7 @@ itertools = "0.12.1"
 lazy_static = "1.4"
 madsim = "0.2.27"
 rand = "0.8.5"
+rusqlite = { version = "0.31.0" }
 rstest = "0.18.2"
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
@@ -123,7 +124,7 @@ wit-component = "0.201.0"
 wit-parser = "0.201.0"
 
 [patch.crates-io]
-async-sqlite = { git = "https://github.com/ryanfowler/async-sqlite/", rev = "7f3c097d28bed5c2e4ae053dcdb29bd441c7dd7d" } # rusqlite 0.31.0, sqlite 3.45
+async-sqlite = { path = "../async-sqlite" } # rusqlite 0.31.0, sqlite 3.45
 getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" }     # madsim
 
 [workspace.lints]

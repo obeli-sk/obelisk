@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fmt::Debug;
 use std::time::Duration;
+use strum::IntoStaticStr;
 use tracing::debug;
 use tracing::trace;
 
@@ -142,14 +143,36 @@ impl Version {
 #[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
 #[display(fmt = "{event}")]
 pub struct ExecutionEvent {
+    // TODO: Rename to ExecutionEventRow
     pub created_at: DateTime<Utc>,
     pub event: ExecutionEventInner,
 }
 
+pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
+    ffqn: FunctionFqn::new_static("", ""),
+    params: Params::Empty,
+    parent: None,
+    scheduled_at: None,
+    retry_exp_backoff: Duration::ZERO,
+    max_retries: 0,
+};
+pub const DUMMPY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
+    event: HistoryEvent::Yield,
+};
+
 #[derive(
-    Clone, Debug, derive_more::Display, PartialEq, Eq, arbitrary::Arbitrary, Serialize, Deserialize,
+    Clone,
+    Debug,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    arbitrary::Arbitrary,
+    Serialize,
+    Deserialize,
+    IntoStaticStr,
 )]
 pub enum ExecutionEventInner {
+    // TODO: Rename to ExecutionEvent
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
     // After optional expiry(`scheduled_at`) interpreted as pending.
@@ -236,6 +259,10 @@ impl ExecutionEventInner {
                 }
             } | Self::Created { .. }
         )
+    }
+
+    pub fn variant(&self) -> &'static str {
+        Into::<&'static str>::into(self)
     }
 }
 
@@ -333,6 +360,8 @@ pub enum SpecificError {
     VersionMismatch,
     #[error("not found")]
     NotFound,
+    #[error("consistency error: `{0}`")]
+    ConsistencyError(StrVariant),
 }
 
 #[derive(thiserror::Error, Debug, PartialEq, Eq, Clone)]
@@ -398,7 +427,7 @@ pub trait DbConnection: Send + Sync {
         created_at: DateTime<Utc>,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockPendingResponse, DbConnectionError>;
+    ) -> Result<LockPendingResponse, DbError>;
 
     /// Specialized `append` which returns the event history.
     async fn lock(

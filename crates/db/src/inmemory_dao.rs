@@ -40,7 +40,7 @@ impl DbConnection for InMemoryDbConnection {
         created_at: DateTime<Utc>,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
-    ) -> Result<LockPendingResponse, DbConnectionError> {
+    ) -> Result<LockPendingResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::General(GeneralRequest::LockPending {
             batch_size,
@@ -55,9 +55,9 @@ impl DbConnection for InMemoryDbConnection {
             .send(request)
             .await
             .map_err(|_| DbConnectionError::SendError)?;
-        resp_receiver
+        Ok(resp_receiver
             .await
-            .map_err(|_| DbConnectionError::RecvError)
+            .map_err(|_| DbConnectionError::RecvError)?)
     }
 
     #[instrument(skip_all)]
@@ -807,8 +807,8 @@ impl DbTask {
             max_retries,
         } = event
         {
-            return if version.is_none() {
-                self.create(CreateRequest {
+            if version.is_none() {
+                return self.create(CreateRequest {
                     created_at,
                     execution_id,
                     ffqn,
@@ -817,10 +817,10 @@ impl DbTask {
                     scheduled_at,
                     retry_exp_backoff,
                     max_retries,
-                })
+                });
             } else {
                 info!("Wrong version");
-                Err(SpecificError::VersionMismatch)
+                return Err(SpecificError::VersionMismatch);
             };
         }
         // Check version
@@ -1017,7 +1017,7 @@ pub mod tick {
             created_at: DateTime<Utc>,
             executor_id: ExecutorId,
             lock_expires_at: DateTime<Utc>,
-        ) -> Result<LockPendingResponse, DbConnectionError> {
+        ) -> Result<LockPendingResponse, DbError> {
             let request = DbRequest::General(GeneralRequest::LockPending {
                 batch_size,
                 pending_at_or_sooner,
@@ -1137,20 +1137,17 @@ pub mod tests {
     use concepts::FinishedExecutionError;
     use concepts::Params;
     use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
-    use db_tests::lifecycle;
-    use db_tests::SOME_FFQN;
+    use db_tests::db_test_stubs::lifecycle;
+    use db_tests::db_test_stubs::SOME_FFQN;
     use std::{
         ops::Deref,
         sync::Arc,
         time::{Duration, Instant},
     };
     use test_utils::arbitrary::UnstructuredHolder;
+    use test_utils::set_up;
     use test_utils::{env_or_default, sim_clock::SimClock};
     use utils::time::now;
-
-    fn set_up() {
-        test_utils::set_up();
-    }
 
     #[tokio::test]
     async fn close() {
@@ -1165,7 +1162,7 @@ pub mod tests {
         let db_connection = TickBasedDbConnection {
             db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
         };
-        lifecycle(db_connection).await;
+        lifecycle(&db_connection).await;
     }
 
     #[tokio::test]
@@ -1173,7 +1170,8 @@ pub mod tests {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.pool().unwrap().connection().unwrap();
-        lifecycle(db_connection).await;
+        lifecycle(&db_connection).await;
+        drop(db_connection);
         db_task.close().await;
     }
 

@@ -4,8 +4,8 @@ use concepts::storage::{DbPool, ExecutionLog};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params, StrVariant};
 use concepts::{
     storage::{
-        AppendRequest, DbConnection, DbConnectionError, DbError, ExecutionEventInner, HistoryEvent,
-        JoinSetResponse, SpecificError, Version,
+        AppendRequest, DbConnection, DbError, ExecutionEventInner, HistoryEvent, JoinSetResponse,
+        SpecificError, Version,
     },
     FinishedExecutionError,
 };
@@ -126,10 +126,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         }
     }
 
-    fn log_err_if_new(
-        res: Result<ExecutionProgress, DbConnectionError>,
-        old_err: &mut Option<DbConnectionError>,
-    ) {
+    fn log_err_if_new(res: Result<ExecutionProgress, DbError>, old_err: &mut Option<DbError>) {
         match (res, &old_err) {
             (Ok(_), _) => {
                 *old_err = None;
@@ -166,10 +163,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
     }
 
     #[instrument(skip_all)]
-    async fn tick(
-        &self,
-        executed_at: DateTime<Utc>,
-    ) -> Result<ExecutionProgress, DbConnectionError> {
+    async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, DbError> {
         let locked_executions = {
             let db_connection = self.db_pool.connection()?;
             let mut permits = self.acquire_task_permits();
