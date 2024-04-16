@@ -116,11 +116,13 @@ dependencies = [
 [[package]]
 name = "async-sqlite"
 version = "0.2.2"
+source = "git+https://github.com/tomasol/async-sqlite?rev=11d12d46159cdc36dbda12a5efa381c0d2bf85a8#11d12d46159cdc36dbda12a5efa381c0d2bf85a8"
 dependencies = [
  "crossbeam-channel",
  "futures-channel",
  "futures-util",
  "rusqlite",
+ "tracing",
 ]
 
 [[package]]
