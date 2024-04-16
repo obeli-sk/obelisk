@@ -257,7 +257,7 @@ impl ExecutionEventInner {
                     response: JoinSetResponse::ChildExecutionFinished { .. },
                     ..
                 }
-            } | Self::Created { .. }
+            }
         )
     }
 
