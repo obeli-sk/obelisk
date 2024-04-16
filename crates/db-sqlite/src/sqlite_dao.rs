@@ -15,7 +15,7 @@ use concepts::{
 };
 use rusqlite::Transaction;
 use std::{collections::VecDeque, path::Path, sync::Arc};
-use tracing::{debug, error, info, info_span, instrument, trace};
+use tracing::{debug, error, info, instrument, trace, Span};
 
 const PRAGMA: &str = r"
 PRAGMA synchronous = NORMAL;
@@ -89,24 +89,28 @@ pub struct SqlitePool {
 }
 
 impl SqlitePool {
-    async fn init(pool: &Pool) -> Result<(), async_sqlite::Error> {
-        pool.conn(|conn| {
-            trace!("Executing `PRAGMA`");
-            conn.execute(PRAGMA, [])?;
-            trace!("Executing `CREATE_TABLE_EXECUTION_LOG`");
-            conn.execute(CREATE_TABLE_EXECUTION_LOG, [])?;
-            trace!("Executing `CREATE_TABLE_PENDING`");
-            conn.execute(CREATE_TABLE_PENDING, [])?;
-            trace!("Executing `CREATE_TABLE_LOCKED`");
-            conn.execute(CREATE_TABLE_LOCKED, [])?;
-            debug!("Done setting up sqlite");
-            Ok(())
-        })
+    #[instrument(skip_all)]
+    async fn init(pool: &Pool) -> Result<(), SqliteError> {
+        pool.conn_with_err_and_span(
+            |conn| {
+                trace!("Executing `PRAGMA`");
+                conn.execute(PRAGMA, [])?;
+                trace!("Executing `CREATE_TABLE_EXECUTION_LOG`");
+                conn.execute(CREATE_TABLE_EXECUTION_LOG, [])?;
+                trace!("Executing `CREATE_TABLE_PENDING`");
+                conn.execute(CREATE_TABLE_PENDING, [])?;
+                trace!("Executing `CREATE_TABLE_LOCKED`");
+                conn.execute(CREATE_TABLE_LOCKED, [])?;
+                debug!("Done setting up sqlite");
+                Ok::<_, SqliteError>(())
+            },
+            Span::current(),
+        )
         .await?;
         Ok(())
     }
 
-    pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, async_sqlite::Error> {
+    pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, SqliteError> {
         // Work around a race condition when creating a new database file returns "Database Busy" on one of the threads.
         // https://github.com/ryanfowler/async-sqlite/issues/10
         let client = ClientBuilder::new()
@@ -306,19 +310,18 @@ impl DbConnection for SqlitePool {
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError> {
         trace!("lock_pending");
-        let span = info_span!("tx");
         Ok(self
             .pool
-            .transaction_write::<_, _, SqliteError>(move |tx| {
-                span.in_scope(|| {
+            .transaction_write_with_span::<_, _, SqliteError>(
+                move |tx| {
                     trace!("tx started");
                     let mut execution_ids_versions = Vec::with_capacity(batch_size);
                     // TODO: The locked executions should be sorted by pending date, otherwise ffqns later in the list might get starved.
                     for ffqn in ffqns {
                         let mut stmt = tx.prepare(
                             "SELECT execution_id, expected_next_version FROM pending WHERE \
-                    pending_at <= :pending_at AND ffqn = :ffqn \
-                    ORDER BY pending_at LIMIT :batch_size",
+                pending_at <= :pending_at AND ffqn = :ffqn \
+                ORDER BY pending_at LIMIT :batch_size",
                         )?;
                         let execs_and_versions = stmt
                             .query_map(
@@ -359,12 +362,14 @@ impl DbConnection for SqlitePool {
                     }
                     trace!("tx committed");
                     Ok(locked_execs)
-                })
-            })
+                },
+                Span::current(),
+            )
             .await?)
     }
 
     /// Specialized `append` which returns the event history.
+    #[instrument(skip_all, fields(%execution_id, %run_id, %executor_id))]
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
@@ -376,18 +381,21 @@ impl DbConnection for SqlitePool {
     ) -> Result<LockResponse, DbError> {
         Ok(self
             .pool
-            .transaction_write::<_, _, SqliteError>(move |tx| {
-                let locked = Self::lock(
-                    &tx,
-                    created_at,
-                    execution_id,
-                    run_id,
-                    version,
-                    executor_id,
-                    lock_expires_at,
-                )?;
-                Ok((locked.event_history, locked.version))
-            })
+            .transaction_write_with_span::<_, _, SqliteError>(
+                move |tx| {
+                    let locked = Self::lock(
+                        &tx,
+                        created_at,
+                        execution_id,
+                        run_id,
+                        version,
+                        executor_id,
+                        lock_expires_at,
+                    )?;
+                    Ok((locked.event_history, locked.version))
+                },
+                Span::current(),
+            )
             .await?)
     }
 
@@ -408,7 +416,7 @@ impl DbConnection for SqlitePool {
             if appending_version.is_none() {
                 return Ok(self
                     .pool
-                    .transaction_write::<_,_,SqliteError>(move |tx| {
+                    .transaction_write_with_span::<_,_,SqliteError>(move |tx| {
                         let version = Version::new(0);
                         let execution_id = execution_id.to_string();
                         let mut stmt = tx.prepare(
@@ -432,7 +440,7 @@ impl DbConnection for SqlitePool {
                             ":ffqn": ffqn.to_string()
                         })?;
                         Ok(next_expected_version)
-                    })
+                    }, Span::current(),)
                     .await?);
             } else {
                 info!("Wrong version");
@@ -441,7 +449,7 @@ impl DbConnection for SqlitePool {
         }
         Ok(self
             .pool
-            .transaction_write::<_,_,SqliteError>(move |tx| {
+            .transaction_write_with_span::<_,_,SqliteError>(move |tx| {
                 let appending_version = if let Some(appending_version) = appending_version {
                     Self::check_expected_next_version(&tx, execution_id, &appending_version)?;
                     appending_version
@@ -460,7 +468,7 @@ impl DbConnection for SqlitePool {
                     ":variant": req.event.variant(),
                 })?;
                 Ok(Version::new(appending_version.0 + 1))
-            }).await?)
+            }, Span::current(),).await?)
     }
 
     async fn append_batch(
