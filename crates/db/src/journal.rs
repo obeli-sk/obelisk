@@ -105,13 +105,11 @@ impl ExecutionJournal {
                 }
                 PendingState::Locked {
                     executor_id: currently_locked_by,
-                    lock_expires_at,
                     run_id: current_run_id,
+                    ..
                 } => {
                     if executor_id == currently_locked_by && run_id == current_run_id {
                         // we allow extending the lock
-                    } else if *lock_expires_at <= created_at {
-                        // we allow locking after the old lock expired
                     } else {
                         return Err(SpecificError::ValidationFailed(StrVariant::Arc(Arc::from(
                             format!("cannot append {event}, already in {}", self.pending_state),
