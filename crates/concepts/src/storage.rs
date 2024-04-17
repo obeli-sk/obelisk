@@ -580,6 +580,7 @@ pub enum ExpiredTimer {
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum PendingState {
     PendingNow,
     #[display(fmt = "Locked(`{lock_expires_at}`)")]
