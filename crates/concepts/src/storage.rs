@@ -588,8 +588,10 @@ pub enum PendingState {
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
     },
-    #[display(fmt = "PendingAt(`{_0}`)")]
-    PendingAt(DateTime<Utc>), // e.g. created with a schedule, intermittent timeout/failure
+    #[display(fmt = "PendingAt(`{scheduled_at}`)")]
+    PendingAt {
+        scheduled_at: DateTime<Utc>,
+    }, // e.g. created with a schedule, intermittent timeout/failure
     #[display(fmt = "BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
     /// Caused by [`HistoryEvent::JoinNext`]
     BlockedByJoinSet {
@@ -615,8 +617,8 @@ impl PendingState {
         }
         match self {
             PendingState::PendingNow => Ok(LockKind::CreatingNewLock), // ok to lock
-            PendingState::PendingAt(pending_start) => {
-                if *pending_start <= created_at {
+            PendingState::PendingAt { scheduled_at } => {
+                if *scheduled_at <= created_at {
                     // pending now, ok to lock
                     Ok(LockKind::CreatingNewLock)
                 } else {

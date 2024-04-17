@@ -18,7 +18,7 @@ impl ExecutionJournal {
     #[must_use]
     pub fn new(req: CreateRequest) -> Self {
         let pending_state = match req.scheduled_at {
-            Some(pending_at) => PendingState::PendingAt(pending_at),
+            Some(scheduled_at) => PendingState::PendingAt { scheduled_at },
             None => PendingState::PendingNow,
         };
         let event = ExecutionEvent {
@@ -141,7 +141,9 @@ impl ExecutionJournal {
                         scheduled_at: Some(scheduled_at),
                         ..
                     },
-                ) => Some(PendingState::PendingAt(*scheduled_at)),
+                ) => Some(PendingState::PendingAt {
+                    scheduled_at: *scheduled_at,
+                }),
 
                 (_, ExecutionEventInner::Finished { .. }) => Some(PendingState::Finished),
 
@@ -162,7 +164,9 @@ impl ExecutionJournal {
                     _,
                     ExecutionEventInner::IntermittentFailure { expires_at, .. }
                     | ExecutionEventInner::IntermittentTimeout { expires_at, .. },
-                ) => Some(PendingState::PendingAt(*expires_at)),
+                ) => Some(PendingState::PendingAt {
+                    scheduled_at: *expires_at,
+                }),
 
                 (
                     idx,
@@ -187,8 +191,8 @@ impl ExecutionJournal {
                     });
                     if let Some(resp) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
-                        let bigger = max(*lock_expires_at, resp.created_at);
-                        Some(PendingState::PendingAt(bigger))
+                        let scheduled_at = max(*lock_expires_at, resp.created_at);
+                        Some(PendingState::PendingAt { scheduled_at })
                     } else {
                         Some(PendingState::BlockedByJoinSet {
                             join_set_id: *expected_join_set_id,

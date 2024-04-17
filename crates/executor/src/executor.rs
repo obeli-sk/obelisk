@@ -1076,7 +1076,9 @@ mod tests {
             } if *at == now_after_first_lock_expiry && *expires_at == expected_first_timeout_expiry
         );
         assert_eq!(
-            PendingState::PendingAt(expected_first_timeout_expiry),
+            PendingState::PendingAt {
+                scheduled_at: expected_first_timeout_expiry
+            },
             execution_log.pending_state
         );
         sim_clock.sleep(timeout_duration);

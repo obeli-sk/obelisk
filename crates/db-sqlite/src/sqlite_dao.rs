@@ -182,7 +182,7 @@ impl SqlitePool {
             let ffqn = req.ffqn.clone();
             let created_at = req.created_at;
             let scheduled_at = req.scheduled_at;
-            let pending_state = scheduled_at.map_or(PendingState::PendingNow, |scheduled_at| PendingState::PendingAt(scheduled_at));
+            let pending_state = scheduled_at.map_or(PendingState::PendingNow, |scheduled_at| PendingState::PendingAt{scheduled_at});
             let event = ExecutionEventInner::from(req);
             stmt.execute(named_params!{
                 ":execution_id": &execution_id_str,
@@ -222,8 +222,8 @@ impl SqlitePool {
             })?;
         }
         match pending_state {
-            PendingState::PendingNow | PendingState::PendingAt(..) => {
-                let scheduled_at = if let PendingState::PendingAt(scheduled_at) = pending_state {
+            PendingState::PendingNow | PendingState::PendingAt { .. } => {
+                let scheduled_at = if let PendingState::PendingAt { scheduled_at } = pending_state {
                     Some(*scheduled_at)
                 } else {
                     None
@@ -627,7 +627,7 @@ impl DbConnection for SqlitePool {
                     match event {
                         ExecutionEventInner::IntermittentFailure { expires_at , ..} |
                         ExecutionEventInner::IntermittentTimeout { expires_at } =>
-                            (Some(PendingState::PendingAt(expires_at)), None),
+                            (Some(PendingState::PendingAt{scheduled_at: expires_at}), None),
                         ExecutionEventInner::Finished { .. } =>
                             (Some(PendingState::Finished), None),
                         ExecutionEventInner::HistoryEvent { event: HistoryEvent::Yield } =>
@@ -647,9 +647,9 @@ impl DbConnection for SqlitePool {
                             let pending_state = match found_pending_state {
                                 PendingState::BlockedByJoinSet { join_set_id: found_join_set_id, lock_expires_at } if found_join_set_id == join_set_id => {
                                     // Unblocking the execution
-                                    let bigger = max(created_at, lock_expires_at);
+                                    let scheduled_at = max(created_at, lock_expires_at);
                                     // The original executor can continue until the lock expires, but the execution is not marked as timed out
-                                    Some(PendingState::PendingAt(bigger))
+                                    Some(PendingState::PendingAt{scheduled_at})
                                 }
                                 _ => None,
                             };

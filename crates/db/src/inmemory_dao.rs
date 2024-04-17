@@ -269,12 +269,13 @@ mod index {
                     PendingState::PendingNow => {
                         self.pending.insert(execution_id);
                     }
-                    PendingState::PendingAt(expires_at) => {
+                    PendingState::PendingAt { scheduled_at } => {
                         self.pending_scheduled
-                            .entry(expires_at)
+                            .entry(scheduled_at)
                             .or_default()
                             .insert(execution_id);
-                        self.pending_scheduled_rev.insert(execution_id, expires_at);
+                        self.pending_scheduled_rev
+                            .insert(execution_id, scheduled_at);
                     }
                     PendingState::Locked {
                         lock_expires_at, ..
