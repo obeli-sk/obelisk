@@ -155,7 +155,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     retry_exp_backoff: Duration::ZERO,
     max_retries: 0,
 };
-pub const DUMMPY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
+pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
     event: HistoryEvent::Yield,
 };
 

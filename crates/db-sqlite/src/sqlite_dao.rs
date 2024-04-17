@@ -9,7 +9,7 @@ use concepts::{
         AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, AppendTxResponse,
         CreateRequest, DbConnection, DbConnectionError, DbError, ExecutionEventInner, ExecutionLog,
         ExpiredTimer, HistoryEvent, LockKind, LockPendingResponse, LockResponse, LockedExecution,
-        PendingState, SpecificError, Version, DUMMPY_HISTORY_EVENT, DUMMY_CREATED,
+        PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
     },
     ExecutionId, FunctionFqn, StrVariant,
 };
@@ -383,7 +383,7 @@ impl SqlitePool {
                 named_params! {
                     ":execution_id": execution_id.to_string(),
                     ":v1": DUMMY_CREATED.variant(),
-                    ":v2": DUMMPY_HISTORY_EVENT.variant(),
+                    ":v2": DUMMY_HISTORY_EVENT.variant(),
                 },
                 |row| {
                     let event = serde_json::from_value::<ExecutionEventInner>(
