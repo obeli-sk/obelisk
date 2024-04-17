@@ -248,6 +248,7 @@ impl ExecutionEventInner {
         )
     }
 
+    #[must_use]
     pub fn variant(&self) -> &'static str {
         Into::<&'static str>::into(self)
     }
@@ -310,6 +311,7 @@ pub enum JoinSetRequest {
 }
 
 impl HistoryEvent {
+    #[must_use]
     pub fn appendable_only_in_lock(&self) -> bool {
         !matches!(self, Self::JoinSetResponse { .. })
     }

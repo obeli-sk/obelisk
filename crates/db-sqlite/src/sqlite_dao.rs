@@ -182,8 +182,7 @@ impl SqlitePool {
             let ffqn = req.ffqn.clone();
             let created_at = req.created_at;
             let scheduled_at = req.scheduled_at;
-            let pending_state = scheduled_at.map(|scheduled_at| PendingState::PendingAt(scheduled_at))
-                .unwrap_or(PendingState::PendingNow);
+            let pending_state = scheduled_at.map_or(PendingState::PendingNow, |scheduled_at| PendingState::PendingAt(scheduled_at));
             let event = ExecutionEventInner::from(req);
             stmt.execute(named_params!{
                 ":execution_id": &execution_id_str,
@@ -194,7 +193,7 @@ impl SqlitePool {
                 ":pending_state": serde_json::to_value(&pending_state).unwrap(),
             })?;
             let next_version = Version::new(version.0 + 1);
-            Self::update_index(tx, execution_id, &pending_state, next_version.clone(), false, Some(ffqn))?;
+            Self::update_index(tx, execution_id, &pending_state, &next_version, false, Some(ffqn))?;
             Ok(next_version)
         }, Span::current(),)
         .await
@@ -204,7 +203,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: ExecutionId,
         pending_state: &PendingState,
-        next_version: Version,
+        next_version: &Version,
         purge: bool, // should the execution be deleted from `pending` and `locked`
         ffqn: Option<FunctionFqn>, // will be fetched from `Created` if required
     ) -> Result<(), SqliteError> {
@@ -417,9 +416,10 @@ impl SqlitePool {
         };
         let event_history = events
             .into_iter()
-            .map(|event| match event {
-                ExecutionEventInner::HistoryEvent { event } => Ok(event),
-                _ => {
+            .map(|event| {
+                if let ExecutionEventInner::HistoryEvent { event } = event {
+                    Ok(event)
+                } else {
                     error!("Rows can only contain `Created` and `HistoryEvent` event kinds");
                     Err(SqliteError::DbError(DbError::Specific(
                         SpecificError::ConsistencyError(StrVariant::Static(
@@ -455,14 +455,7 @@ impl SqlitePool {
             ":pending_state": serde_json::to_value(&pending_state).unwrap(),
         })?;
         let next_version = Version::new(appending_version.0 + 1);
-        Self::update_index(
-            tx,
-            execution_id,
-            &pending_state,
-            next_version.clone(),
-            false,
-            None,
-        )?;
+        Self::update_index(tx, execution_id, &pending_state, &next_version, false, None)?;
         Ok(LockedExecution {
             execution_id,
             run_id,
@@ -639,8 +632,8 @@ impl DbConnection for SqlitePool {
                             (Some(PendingState::Finished), None),
                         ExecutionEventInner::HistoryEvent { event: HistoryEvent::Yield } =>
                             (Some(PendingState::PendingNow), None),
-                            ExecutionEventInner::HistoryEvent { event: HistoryEvent::JoinSet { join_set_id } } |
-                            ExecutionEventInner::HistoryEvent { event: HistoryEvent::JoinSetRequest { join_set_id, .. } } =>
+                            ExecutionEventInner::HistoryEvent {
+                                event: HistoryEvent::JoinSet { join_set_id } | HistoryEvent::JoinSetRequest { join_set_id, .. } } =>
                             (None, Some(join_set_id)),
                             ExecutionEventInner::HistoryEvent { event: HistoryEvent::Persist{ .. } } =>
                             (None, None),
@@ -664,8 +657,7 @@ impl DbConnection for SqlitePool {
                         },
                         ExecutionEventInner::CancelRequest =>
                             todo!(),
-                        ExecutionEventInner::Locked { .. } =>
-                            unreachable!("handled above"),
+                        ExecutionEventInner::Locked { .. } |
                         ExecutionEventInner::Created { .. } =>
                             unreachable!("handled above")
 
@@ -685,7 +677,7 @@ impl DbConnection for SqlitePool {
                 })?;
                 let next_version = Version::new(appending_version.0 + 1);
                 if let Some(pending_state) = pending_state {
-                    Self::update_index(&tx, execution_id, &pending_state, next_version.clone(), true, None)?;
+                    Self::update_index(&tx, execution_id, &pending_state, &next_version, true, None)?;
                 }
                 Ok(next_version)
             }, Span::current(),).await?)

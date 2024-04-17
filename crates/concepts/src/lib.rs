@@ -123,7 +123,8 @@ mod serde_strvariant {
 #[derive(Hash, Clone, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
 #[display(fmt = "{value}")]
 #[serde(transparent)]
-pub struct Name<T> { // FIXME: serialize using display & deserialize using parse
+pub struct Name<T> {
+    // FIXME: serialize using display & deserialize using parse
     value: StrVariant,
     #[serde(skip)]
     phantom_data: PhantomData<fn(T) -> T>,

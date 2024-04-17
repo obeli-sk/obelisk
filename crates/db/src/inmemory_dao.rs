@@ -808,21 +808,20 @@ impl DbTask {
             max_retries,
         } = event
         {
-            if version.is_none() {
-                return self.create(CreateRequest {
-                    created_at,
-                    execution_id,
-                    ffqn,
-                    params,
-                    parent,
-                    scheduled_at,
-                    retry_exp_backoff,
-                    max_retries,
-                });
-            } else {
-                info!("Wrong version");
+            if version.is_some() {
+                info!("Ignoring `Created` with version specified");
                 return Err(SpecificError::VersionMismatch);
-            };
+            }
+            return self.create(CreateRequest {
+                created_at,
+                execution_id,
+                ffqn,
+                params,
+                parent,
+                scheduled_at,
+                retry_exp_backoff,
+                max_retries,
+            });
         }
         // Check version
         let Some(journal) = self.journals.get_mut(&execution_id) else {
