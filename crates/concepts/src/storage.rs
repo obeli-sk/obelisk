@@ -228,18 +228,6 @@ pub enum ExecutionEventInner {
 
 impl ExecutionEventInner {
     #[must_use]
-    pub fn appendable_only_in_lock(&self) -> bool {
-        match self {
-            Self::Locked { .. } // only if the lock is being extended by the same executor
-            | Self::IntermittentFailure { .. }
-            | Self::IntermittentTimeout { .. }
-            | Self::Finished { .. } => true,
-            Self::HistoryEvent { event } => event.appendable_only_in_lock(),
-            _ => false,
-        }
-    }
-
-    #[must_use]
     pub fn is_retry(&self) -> bool {
         matches!(
             self,
@@ -269,15 +257,13 @@ impl ExecutionEventInner {
     Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
 )]
 pub enum HistoryEvent {
-    // Must be created by the executor in `PendingState::Locked`.
-    // Returns execution to `PendingState::PendingNow` state.
+    /// Must be created by the executor in [`PendingState::Locked`].
+    /// Returns execution to [`PendingState::PendingNow`] state.
     Yield,
     #[display(fmt = "Persist")]
-    // Must be created by the executor in `PendingState::Locked`.
-    Persist {
-        value: Vec<u8>,
-    },
-    // Must be created by the executor in `PendingState::Locked`.
+    /// Must be created by the executor in [`PendingState::Locked`].
+    Persist { value: Vec<u8> },
+    /// Must be created by the executor in [`PendingState::Locked`].
     #[display(fmt = "JoinSet({join_set_id})")]
     JoinSet {
         join_set_id: JoinSetId,
@@ -288,19 +274,22 @@ pub enum HistoryEvent {
         join_set_id: JoinSetId,
         request: JoinSetRequest,
     },
-    // Moves the execution to `PendingState::PendingNow` if it is currently blocked on `JoinNextBlocking`.
+    /// Moves the execution to [`PendingState::PendingNow`] if it is currently blocked on `JoinNextBlocking`.
     #[display(fmt = "AsyncResponse({join_set_id}, {response})")]
     JoinSetResponse {
         join_set_id: JoinSetId,
         response: JoinSetResponse,
     },
-    // Must be created by the executor in `PendingState::Locked`.
-    // Execution remains locked until `lock_expires_at`, after which it
-    // becomes `PendingState::BlockedByJoinSet` until the next response of the JoinSet arrives.
-    // After that, an executor can obtain the lock and continue.
+    /// Must be created by the executor in [`PendingState::Locked`].
+    /// Pending state is set to [`PendingState::BlockedByJoinSet`].
+    /// When the response arrives at `resp_time`:
+    /// The execution is [`PendingState::PendingAt`]`(max(resp_time, lock_expires_at)`, so that the
+    /// original executor can continue. After the expiry any executor can continue without
+    /// marking the execution as timed out.
     #[display(fmt = "JoinNext({join_set_id})")]
     JoinNext {
         join_set_id: JoinSetId,
+        /// Set to a future time if the executor is keeping the execution warm waiting for the result.
         lock_expires_at: DateTime<Utc>,
     },
 }
@@ -321,7 +310,7 @@ pub enum JoinSetRequest {
 }
 
 impl HistoryEvent {
-    fn appendable_only_in_lock(&self) -> bool {
+    pub fn appendable_only_in_lock(&self) -> bool {
         !matches!(self, Self::JoinSetResponse { .. })
     }
 }
@@ -588,10 +577,10 @@ pub enum ExpiredTimer {
     },
 }
 
-#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PendingState {
     PendingNow,
-    #[display(fmt = "Locked(`{lock_expires_at}`,{executor_id})")]
+    #[display(fmt = "Locked(`{lock_expires_at}`)")]
     Locked {
         executor_id: ExecutorId,
         run_id: RunId,
@@ -599,8 +588,69 @@ pub enum PendingState {
     },
     #[display(fmt = "PendingAt(`{_0}`)")]
     PendingAt(DateTime<Utc>), // e.g. created with a schedule, intermittent timeout/failure
+    #[display(fmt = "BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
+    /// Caused by [`HistoryEvent::JoinNext`]
     BlockedByJoinSet {
         join_set_id: JoinSetId,
+        /// See [`HistoryEvent::JoinNext::lock_expires_at`].
+        lock_expires_at: DateTime<Utc>,
     },
     Finished,
+}
+
+impl PendingState {
+    pub fn can_append_lock(
+        &self,
+        created_at: DateTime<Utc>,
+        executor_id: ExecutorId,
+        run_id: RunId,
+        lock_expires_at: DateTime<Utc>,
+    ) -> Result<LockKind, SpecificError> {
+        if lock_expires_at <= created_at {
+            return Err(SpecificError::ValidationFailed(StrVariant::Static(
+                "invalid expiry date",
+            )));
+        }
+        match self {
+            PendingState::PendingNow => Ok(LockKind::CreatingNewLock), // ok to lock
+            PendingState::PendingAt(pending_start) => {
+                if *pending_start <= created_at {
+                    // pending now, ok to lock
+                    Ok(LockKind::CreatingNewLock)
+                } else {
+                    Err(SpecificError::ValidationFailed(StrVariant::Static(
+                        "cannot lock, not yet pending",
+                    )))
+                }
+            }
+            PendingState::Locked {
+                executor_id: current_pending_state_executor_id,
+                run_id: current_pending_state_run_id,
+                ..
+            } => {
+                if executor_id == *current_pending_state_executor_id
+                    && run_id == *current_pending_state_run_id
+                {
+                    // Original executor is extending the lock.
+                    Ok(LockKind::Extending)
+                } else {
+                    Err(SpecificError::ValidationFailed(StrVariant::Static(
+                        "cannot lock, already locked",
+                    )))
+                }
+            }
+            PendingState::BlockedByJoinSet { .. } => Err(SpecificError::ValidationFailed(
+                StrVariant::Static("cannot append Locked event when in BlockedByJoinSet state"),
+            )),
+            PendingState::Finished => Err(SpecificError::ValidationFailed(StrVariant::Static(
+                "already finished",
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockKind {
+    Extending,
+    CreatingNewLock,
 }

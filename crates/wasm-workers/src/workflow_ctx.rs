@@ -623,7 +623,7 @@ mod tests {
             &db_connection,
             execution_id,
             |execution_log| match &execution_log.pending_state {
-                PendingState::BlockedByJoinSet { join_set_id } => Some(Some((
+                PendingState::BlockedByJoinSet { join_set_id, .. } => Some(Some((
                     *join_set_id,
                     execution_log
                         .join_set_requests(*join_set_id)

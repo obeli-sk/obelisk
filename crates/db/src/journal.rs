@@ -4,6 +4,7 @@ use concepts::storage::{CreateRequest, ExecutionEvent, ExecutionEventInner, Hist
 use concepts::storage::{ExecutionLog, PendingState, SpecificError, Version};
 use concepts::ExecutionId;
 use concepts::{FunctionFqn, Params, StrVariant};
+use std::cmp::max;
 use std::{collections::VecDeque, sync::Arc, time::Duration};
 
 #[derive(Debug)]
@@ -87,47 +88,25 @@ impl ExecutionJournal {
             run_id,
         } = &event
         {
-            if *lock_expires_at <= created_at {
-                return Err(SpecificError::ValidationFailed(StrVariant::Static(
-                    "invalid expiry date",
-                )));
-            }
-            match &self.pending_state {
-                PendingState::PendingNow => {} // ok to lock
-                PendingState::PendingAt(pending_start) => {
-                    if *pending_start <= created_at {
-                        // pending now, ok to lock
-                    } else {
-                        return Err(SpecificError::ValidationFailed(StrVariant::Arc(Arc::from(
-                            format!("cannot append {event} event, not yet pending"),
-                        ))));
-                    }
-                }
-                PendingState::Locked {
-                    executor_id: currently_locked_by,
-                    run_id: current_run_id,
-                    ..
-                } => {
-                    if executor_id == currently_locked_by && run_id == current_run_id {
-                        // we allow extending the lock
-                    } else {
-                        return Err(SpecificError::ValidationFailed(StrVariant::Arc(Arc::from(
-                            format!("cannot append {event}, already in {}", self.pending_state),
-                        ))));
-                    }
-                }
-                PendingState::BlockedByJoinSet { .. } => {
-                    return Err(SpecificError::ValidationFailed(StrVariant::Static(
-                        "cannot append Locked event when in BlockedByJoinSet state",
-                    )));
-                }
-                PendingState::Finished => {
-                    unreachable!() // handled at the beginning of the function
-                }
-            }
+            self.pending_state.can_append_lock(
+                created_at,
+                *executor_id,
+                *run_id,
+                *lock_expires_at,
+            )?;
         }
         let locked_now = matches!(self.pending_state, PendingState::Locked { lock_expires_at,.. } if lock_expires_at > created_at);
-        if locked_now && !event.appendable_only_in_lock() {
+
+        let appendable_only_in_lock = match &event {
+            ExecutionEventInner::Locked { .. } // checked above, only if the lock is being extended by the same executor
+            | ExecutionEventInner::IntermittentFailure { .. }
+            | ExecutionEventInner::IntermittentTimeout { .. }
+            | ExecutionEventInner::Finished { .. } => true,
+            ExecutionEventInner::HistoryEvent { event } => event.appendable_only_in_lock(),
+            _ => false,
+        };
+
+        if locked_now && !appendable_only_in_lock {
             return Err(SpecificError::ValidationFailed(StrVariant::Arc(Arc::from(
                 format!("cannot append {event} event in {}", self.pending_state),
             ))));
@@ -197,22 +176,23 @@ impl ExecutionJournal {
                     },
                 ) => {
                     // Did the async response arrive?
-                    let flollowed_by_resp =
-                        self.execution_events.iter().skip(idx + 1).any(|event| {
-                            matches!(event, ExecutionEvent {
+                    let resp = self.execution_events.iter().skip(idx + 1).find(|event| {
+                        matches!(event, ExecutionEvent {
                                 event:
                                     ExecutionEventInner::HistoryEvent { event:
                                         HistoryEvent::JoinSetResponse { join_set_id, .. },
                                     .. },
                                 .. }
                                 if expected_join_set_id == join_set_id)
-                        });
-                    if flollowed_by_resp {
+                    });
+                    if let Some(resp) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
-                        Some(PendingState::PendingAt(*lock_expires_at))
+                        let bigger = max(*lock_expires_at, resp.created_at);
+                        Some(PendingState::PendingAt(bigger))
                     } else {
                         Some(PendingState::BlockedByJoinSet {
                             join_set_id: *expected_join_set_id,
+                            lock_expires_at: *lock_expires_at,
                         })
                     }
                 }

@@ -123,7 +123,7 @@ mod serde_strvariant {
 #[derive(Hash, Clone, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
 #[display(fmt = "{value}")]
 #[serde(transparent)]
-pub struct Name<T> {
+pub struct Name<T> { // FIXME: serialize using display & deserialize using parse
     value: StrVariant,
     #[serde(skip)]
     phantom_data: PhantomData<fn(T) -> T>,
@@ -503,6 +503,7 @@ pub mod prefixed_ulid {
     #[display(fmt = "{}_{ulid}", "Self::prefix()")]
     pub struct PrefixedUlid<T: 'static> {
         ulid: Ulid,
+        #[serde(skip)]
         phantom_data: PhantomData<fn(T) -> T>,
     }
 

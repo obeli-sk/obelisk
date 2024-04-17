@@ -1,8 +1,11 @@
 use concepts::prefixed_ulid::RunId;
-use concepts::storage::{AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, Version};
+use concepts::storage::{
+    AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, SpecificError,
+    Version,
+};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
 use concepts::{storage::HistoryEvent, FinishedExecutionResult};
-use concepts::{FunctionFqn, Params};
+use concepts::{FunctionFqn, Params, StrVariant};
 use std::time::Duration;
 use test_utils::sim_clock::SimClock;
 use tracing::{debug, info};
@@ -109,7 +112,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock using exec2");
-        assert!(db_connection
+        let not_yet_pending = db_connection
             .lock(
                 created_at,
                 execution_id,
@@ -119,15 +122,20 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
                 created_at + lock_expiry,
             )
             .await
-            .is_err());
-        // Version is not changed
+            .unwrap_err();
+        assert_eq!(
+            DbError::Specific(SpecificError::ValidationFailed(StrVariant::Static(
+                "cannot lock, not yet pending"
+            ))),
+            not_yet_pending
+        );
     }
     // TODO: attempt to append an event requiring version without it.
-    
+
     sim_clock.sleep(Duration::from_millis(100));
     {
         let created_at = sim_clock.now();
-        info!(now = %created_at, "Extend lock using exec1");
+        info!(now = %created_at, "Lock again using exec1");
         let (event_history, current_version) = db_connection
             .lock(
                 created_at,
