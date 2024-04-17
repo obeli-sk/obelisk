@@ -124,7 +124,6 @@ mod serde_strvariant {
 #[display(fmt = "{value}")]
 #[serde(transparent)]
 pub struct Name<T> {
-    // FIXME: serialize using display & deserialize using parse
     value: StrVariant,
     #[serde(skip)]
     phantom_data: PhantomData<fn(T) -> T>,
@@ -496,15 +495,14 @@ impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
 
 pub mod prefixed_ulid {
     use arbitrary::Arbitrary;
-    use serde::{Deserialize, Serialize};
+    use serde_with::{DeserializeFromStr, SerializeDisplay};
     use std::marker::PhantomData;
     use ulid::Ulid;
 
-    #[derive(derive_more::Display, Serialize, Deserialize)]
+    #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr)]
     #[display(fmt = "{}_{ulid}", "Self::prefix()")]
     pub struct PrefixedUlid<T: 'static> {
         ulid: Ulid,
-        #[serde(skip)]
         phantom_data: PhantomData<fn(T) -> T>,
     }
 
