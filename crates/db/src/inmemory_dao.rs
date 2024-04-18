@@ -901,45 +901,12 @@ impl DbTask {
                 "Cannot append `Created` event - use `create` instead",
             )));
         }
-        let mut begin_idx = 0;
-        if let Some((
-            ExecutionEventInner::Created {
-                ffqn,
-                params,
-                parent,
-                scheduled_at,
-                retry_exp_backoff,
-                max_retries,
-            },
-            created_at,
-        )) = batch.first().map(|req| (&req.event, req.created_at))
-        {
-            if version.is_none() {
-                version = Some(self.create(CreateRequest {
-                    created_at,
-                    execution_id,
-                    ffqn: ffqn.clone(),
-                    params: params.clone(),
-                    parent: *parent,
-                    scheduled_at: *scheduled_at,
-                    retry_exp_backoff: *retry_exp_backoff,
-                    max_retries: *max_retries,
-                })?);
-                begin_idx = 1;
-            } else {
-                warn!("Version should not be passed to `Created` event");
-                return Err(SpecificError::VersionMismatch);
-            };
-        }
+
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             return Err(SpecificError::NotFound);
         };
-        let truncate_len_or_delete = if begin_idx == 1 {
-            None
-        } else {
-            Some(journal.len())
-        };
-        for req in batch.into_iter().skip(begin_idx) {
+        let truncate_len_or_delete = journal.len();
+        for req in batch.into_iter() {
             match &version {
                 None => {
                     if !req.event.appendable_without_version() {
@@ -976,15 +943,11 @@ impl DbTask {
         Ok(version)
     }
 
-    fn rollback(&mut self, truncate_len_or_delete: Option<usize>, execution_id: ExecutionId) {
-        if let Some(truncate_len) = truncate_len_or_delete {
-            self.journals
-                .get_mut(&execution_id)
-                .unwrap()
-                .truncate(truncate_len);
-        } else {
-            self.journals.remove(&execution_id).unwrap();
-        }
+    fn rollback(&mut self, truncate_len: usize, execution_id: ExecutionId) {
+        self.journals
+            .get_mut(&execution_id)
+            .unwrap()
+            .truncate(truncate_len);
         self.index.update(execution_id, &self.journals);
     }
 
