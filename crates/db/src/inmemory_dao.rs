@@ -916,7 +916,7 @@ impl DbTask {
             return Err(SpecificError::NotFound);
         };
         let truncate_len_or_delete = journal.len();
-        for req in batch.into_iter() {
+        for req in batch {
             if version != journal.version() {
                 self.rollback(truncate_len_or_delete, execution_id);
                 return Err(SpecificError::VersionMismatch);

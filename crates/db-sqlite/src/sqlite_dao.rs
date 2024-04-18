@@ -478,12 +478,11 @@ impl SqlitePool {
     #[allow(clippy::too_many_lines)]
     fn append(
         tx: &Transaction,
-        created_at: DateTime<Utc>,
         execution_id: ExecutionId,
+        req: AppendRequest,
         appending_version: Option<Version>,
-        event: ExecutionEventInner,
     ) -> Result<AppendResponse, SqliteError> {
-        match (event, appending_version) {
+        match (req.event, appending_version) {
             (ExecutionEventInner::Created { .. }, _) => {
                 unreachable!("handled in the caller")
             }
@@ -497,7 +496,7 @@ impl SqlitePool {
             ) => {
                 let locked = Self::lock(
                     &tx,
-                    created_at,
+                    req.created_at,
                     execution_id,
                     run_id,
                     version,
@@ -567,7 +566,7 @@ impl SqlitePool {
                                     lock_expires_at,
                                 } if found_join_set_id == join_set_id => {
                                     // Unblocking the execution
-                                    let scheduled_at = max(created_at, lock_expires_at);
+                                    let scheduled_at = max(req.created_at, lock_expires_at);
                                     // The original executor can continue until the lock expires, but the execution is not marked as timed out
                                     Some(PendingState::PendingAt { scheduled_at })
                                 }
@@ -585,7 +584,7 @@ impl SqlitePool {
                     VALUES (:execution_id, :created_at, :json_value, :version, :variant, :join_set_id, :pending_state)")?;
                 stmt.execute(named_params!{
                     ":execution_id": execution_id.to_string(),
-                    ":created_at": created_at,
+                    ":created_at": req.created_at,
                     ":json_value": serde_json::to_value(&event).unwrap(),
                     ":version": appending_version.0,
                     ":variant": event.variant(),
@@ -735,15 +734,7 @@ impl DbConnection for SqlitePool {
         }
         self.pool
             .transaction_write_with_span(
-                move |tx| {
-                    Self::append(
-                        tx,
-                        req.created_at,
-                        execution_id,
-                        appending_version,
-                        req.event,
-                    )
-                },
+                move |tx| Self::append(tx, execution_id, req, appending_version),
                 Span::current(),
             )
             .await
@@ -753,8 +744,8 @@ impl DbConnection for SqlitePool {
     async fn append_batch(
         &self,
         batch: AppendBatch,
-        _execution_id: ExecutionId,
-        _version: Version,
+        execution_id: ExecutionId,
+        version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
         if batch.is_empty() {
             error!("Empty batch request");
@@ -771,15 +762,56 @@ impl DbConnection for SqlitePool {
                 StrVariant::Static("Cannot append `Created` event - use `create` instead"),
             )));
         }
-        todo!()
+        self.pool
+            .transaction_write_with_span::<_, _, SqliteError>(
+                move |tx| {
+                    let mut version = version;
+                    for req in batch {
+                        version = Self::append(tx, execution_id, req, Some(version))?;
+                    }
+                    Ok(version)
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
     }
 
     async fn append_tx(
         &self,
-        _parent_req: (AppendBatch, ExecutionId, Version),
-        _child_req: CreateRequest,
+        parent_req: (AppendBatch, ExecutionId, Version),
+        child_req: CreateRequest,
     ) -> Result<AppendTxResponse, DbError> {
-        todo!()
+        if parent_req.0.is_empty() {
+            error!("Empty batch request");
+            return Err(DbError::Specific(SpecificError::ValidationFailed(
+                StrVariant::Static("empty batch request"),
+            )));
+        }
+        if parent_req
+            .0
+            .iter()
+            .any(|event| matches!(event.event, ExecutionEventInner::Created { .. }))
+        {
+            error!("Cannot append `Created` event - use `create` instead");
+            return Err(DbError::Specific(SpecificError::ValidationFailed(
+                StrVariant::Static("Cannot append `Created` event - use `create` instead"),
+            )));
+        }
+        self.pool
+            .transaction_write_with_span::<_, _, SqliteError>(
+                move |tx| {
+                    let mut parent_version = parent_req.2;
+                    for req in parent_req.0 {
+                        parent_version = Self::append(tx, parent_req.1, req, Some(parent_version))?;
+                    }
+                    let child_version = Self::create(tx, child_req)?;
+                    Ok((parent_version, child_version))
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
     }
 
     #[instrument(skip_all, fields(%execution_id))]
