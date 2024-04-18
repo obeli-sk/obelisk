@@ -381,7 +381,7 @@ pub struct LockedExecution {
 }
 pub type LockPendingResponse = Vec<LockedExecution>;
 pub type AppendBatchResponse = Version;
-pub type AppendTxResponse = (Version, Version);
+pub type AppendBatchCreateChildResponse = (Version, Version);
 
 #[derive(Debug, Clone, derive_more::Display, Serialize, Deserialize)]
 #[display(fmt = "{event}")]
@@ -460,12 +460,14 @@ pub trait DbConnection: Send + Sync {
         version: Version,
     ) -> Result<AppendBatchResponse, DbError>;
 
-    async fn append_tx(
+    /// Append one or more events to the parent execution log, and create new child execution log.
+    async fn append_batch_create_child(
         &self,
         parent_req: (AppendBatch, ExecutionId, Version),
         child_req: CreateRequest,
-    ) -> Result<AppendTxResponse, DbError>;
+    ) -> Result<AppendBatchCreateChildResponse, DbError>;
 
+    /// Get execution log.
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError>;
 
     /// Get currently expired locks and async timers (delay requests)

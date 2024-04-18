@@ -220,7 +220,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             max_retries: self.child_max_retries,
         };
         let db_connection = self.db_pool.connection().map_err(DbError::Connection)?;
-        let (parent_version, _) = db_connection.append_tx(parent, child).await?;
+        let (parent_version, _) = db_connection
+            .append_batch_create_child(parent, child)
+            .await?;
         self.version = parent_version;
 
         if interrupt {

@@ -266,6 +266,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                 db_connection
                     .append_batch(append.primary_events, append.execution_id, append.version)
                     .await?;
+                // FIXME: Failure here makes the parent hang.
                 if let Some((secondary_id, secondary_append_request)) =
                     append.async_resp_to_other_execution
                 {

@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
-        AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, AppendTxResponse,
-        CreateRequest, DbConnection, DbConnectionError, DbError, ExecutionEvent,
+        AppendBatch, AppendBatchCreateChildResponse, AppendBatchResponse, AppendRequest,
+        AppendResponse, CreateRequest, DbConnection, DbConnectionError, DbError, ExecutionEvent,
         ExecutionEventInner, ExecutionLog, ExpiredTimer, HistoryEvent, LockKind,
         LockPendingResponse, LockResponse, LockedExecution, PendingState, SpecificError, Version,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT,
@@ -777,11 +777,11 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
-    async fn append_tx(
+    async fn append_batch_create_child(
         &self,
         parent_req: (AppendBatch, ExecutionId, Version),
         child_req: CreateRequest,
-    ) -> Result<AppendTxResponse, DbError> {
+    ) -> Result<AppendBatchCreateChildResponse, DbError> {
         if parent_req.0.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
