@@ -7,9 +7,10 @@ use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
         AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, AppendTxResponse,
-        CreateRequest, DbConnection, DbConnectionError, DbError, ExecutionEventInner, ExecutionLog,
-        ExpiredTimer, HistoryEvent, LockKind, LockPendingResponse, LockResponse, LockedExecution,
-        PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        CreateRequest, DbConnection, DbConnectionError, DbError, ExecutionEvent,
+        ExecutionEventInner, ExecutionLog, ExpiredTimer, HistoryEvent, LockKind,
+        LockPendingResponse, LockResponse, LockedExecution, PendingState, SpecificError, Version,
+        DUMMY_CREATED, DUMMY_HISTORY_EVENT,
     },
     ExecutionId, FunctionFqn, StrVariant,
 };
@@ -237,8 +238,7 @@ impl SqlitePool {
                 } else {
                     let mut stmt = tx.prepare(
                         "SELECT json_value FROM execution_log WHERE \
-                        execution_id = :execution_id AND (variant = :variant) \
-                        ORDER BY created_at",
+                        execution_id = :execution_id AND (variant = :variant)",
                     )?;
                     let created = stmt.query_row(
                         named_params! {
@@ -376,7 +376,7 @@ impl SqlitePool {
         let mut stmt = tx.prepare(
             "SELECT json_value FROM execution_log WHERE \
             execution_id = :execution_id AND (variant = :v1 OR variant = :v2) \
-            ORDER BY created_at",
+            ORDER BY version",
         )?;
         let mut events = stmt
             .query_map(
@@ -700,8 +700,50 @@ impl DbConnection for SqlitePool {
         todo!()
     }
 
-    async fn get(&self, _execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
-        todo!()
+    #[instrument(skip_all, fields(%execution_id))]
+    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
+        self.pool
+            .transaction_write_with_span::<_, _, SqliteError>(
+                move |tx| {
+                    let mut stmt = tx.prepare(
+                        "SELECT created_at, json_value FROM execution_log WHERE \
+                        execution_id = :execution_id ORDER BY version",
+                    )?;
+                    let events = stmt
+                        .query_map(
+                            named_params! {
+                                ":execution_id": execution_id.to_string(),
+                            },
+                            |row| {
+                                let created_at = row.get(0)?;
+                                let event = serde_json::from_value::<ExecutionEventInner>(
+                                    row.get::<_, serde_json::Value>(1)?,
+                                )
+                                .map(|event| ExecutionEvent { created_at, event })
+                                .map_err(|serde| {
+                                    SqliteError::Parsing(StrVariant::Arc(Arc::from(
+                                        serde.to_string(),
+                                    )))
+                                });
+                                Ok(event)
+                            },
+                        )?
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let version = Version::new(events.len());
+                    let pending_state = Self::current_pending_state(tx, execution_id)?;
+                    Ok(ExecutionLog {
+                        execution_id,
+                        events,
+                        version,
+                        pending_state,
+                    })
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
     }
 
     /// Get currently expired locks and async timers (delay requests)
@@ -713,7 +755,7 @@ impl DbConnection for SqlitePool {
     }
 }
 
-#[cfg(all(test, not(madsim)))] // attempt to spawn a system thread in simulation
+#[cfg(all(test, not(madsim)))] // async-sqlite attempts to spawn a system thread in simulation
 mod tests {
     use super::SqlitePool;
     use concepts::{storage::CreateRequest, ExecutionId, Params};
