@@ -11,10 +11,9 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::PendingState;
 use concepts::storage::{
-    AppendBatch, AppendBatchCreateChildResponse, AppendBatchResponse, AppendRequest,
-    AppendResponse, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool,
-    ExecutionEventInner, ExecutionLog, ExpiredTimer, LockPendingResponse, LockResponse,
-    LockedExecution, SpecificError, Version,
+    AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
+    DbConnectionError, DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer,
+    LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version,
 };
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use derivative::Derivative;
@@ -170,15 +169,19 @@ impl DbConnection for InMemoryDbConnection {
             .map_err(DbError::Specific)
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, %execution_id)]
     async fn append_batch_create_child(
         &self,
-        parent_req: (AppendBatch, ExecutionId, Version),
+        batch: AppendBatch,
+        execution_id: ExecutionId,
+        version: Version,
         child_req: CreateRequest,
-    ) -> Result<AppendBatchCreateChildResponse, DbError> {
+    ) -> Result<AppendBatchResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::General(GeneralRequest::AppendBatchCreateChild {
-            parent_req,
+            batch,
+            execution_id,
+            version,
             child_req,
             resp_sender,
         });
@@ -450,10 +453,12 @@ enum GeneralRequest {
     },
     #[display(fmt = "AppendBatchCreateChild")]
     AppendBatchCreateChild {
-        parent_req: (AppendBatch, ExecutionId, Version),
+        batch: AppendBatch,
+        execution_id: ExecutionId,
+        version: Version,
         child_req: CreateRequest,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendBatchCreateChildResponse, SpecificError>>,
+        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
     },
     #[display(fmt = "AppendBatchRespondToParent")]
     AppendBatchRespondToParent {
@@ -566,9 +571,9 @@ pub(crate) enum DbTickResponse {
         resp_sender: oneshot::Sender<Vec<ExpiredTimer>>,
     },
     AppendBatchCreateChildResult {
-        payload: Result<AppendBatchCreateChildResponse, SpecificError>,
+        payload: Result<AppendBatchResponse, SpecificError>,
         #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendBatchCreateChildResponse, SpecificError>>,
+        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
     },
 }
 
@@ -703,11 +708,13 @@ impl DbTask {
                 resp_sender,
             },
             GeneralRequest::AppendBatchCreateChild {
-                parent_req,
+                batch,
+                execution_id,
+                version,
                 child_req,
                 resp_sender,
             } => DbTickResponse::AppendBatchCreateChildResult {
-                payload: self.append_batch_create_child(parent_req, child_req),
+                payload: self.append_batch_create_child(batch, execution_id, version, child_req),
                 resp_sender,
             },
             GeneralRequest::AppendBatchRespondToParent {
@@ -991,12 +998,14 @@ impl DbTask {
 
     fn append_batch_create_child(
         &mut self,
-        parent_req: (AppendBatch, ExecutionId, Version),
+        batch: AppendBatch,
+        execution_id: ExecutionId,
+        version: Version,
         child_req: CreateRequest,
-    ) -> Result<AppendBatchCreateChildResponse, SpecificError> {
-        let parent_version = self.append_batch(parent_req.0, parent_req.1, parent_req.2)?;
-        let child_version = self.create(child_req)?;
-        Ok((parent_version, child_version))
+    ) -> Result<AppendBatchResponse, SpecificError> {
+        let parent_version = self.append_batch(batch, execution_id, version)?;
+        self.create(child_req)?;
+        Ok(parent_version)
     }
 
     fn append_batch_respond_to_parent(
@@ -1021,7 +1030,7 @@ pub mod tick {
         GeneralRequest, LockPendingResponse, LockResponse, RunId, Utc, Version,
     };
     use assert_matches::assert_matches;
-    use concepts::storage::{AppendBatch, AppendBatchCreateChildResponse, CreateRequest};
+    use concepts::storage::{AppendBatch, CreateRequest};
     use std::sync::Arc;
 
     #[derive(Clone)]
@@ -1081,13 +1090,18 @@ pub mod tick {
             )
         }
 
+        #[instrument(skip_all, %execution_id)]
         async fn append_batch_create_child(
             &self,
-            parent_req: (AppendBatch, ExecutionId, Version),
+            batch: AppendBatch,
+            execution_id: ExecutionId,
+            version: Version,
             child_req: CreateRequest,
-        ) -> Result<AppendBatchCreateChildResponse, DbError> {
+        ) -> Result<AppendBatchResponse, DbError> {
             let request = DbRequest::General(GeneralRequest::AppendBatchCreateChild {
-                parent_req,
+                batch,
+                execution_id,
+                version,
                 child_req,
                 resp_sender: oneshot::channel().0,
             });

@@ -204,11 +204,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         };
         debug!(child_execution_id = %new_child_execution_id, join_set_id = %new_join_set_id, "Interrupted, scheduling child execution");
 
-        let parent = (
-            vec![join_set, child_exec_req, join_next],
-            self.execution_id,
-            self.version.clone(),
-        );
         let child = CreateRequest {
             created_at,
             execution_id: new_child_execution_id,
@@ -220,8 +215,13 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             max_retries: self.child_max_retries,
         };
         let db_connection = self.db_pool.connection().map_err(DbError::Connection)?;
-        let (parent_version, _) = db_connection
-            .append_batch_create_child(parent, child)
+        let parent_version = db_connection
+            .append_batch_create_child(
+                vec![join_set, child_exec_req, join_next],
+                self.execution_id,
+                self.version.clone(),
+                child,
+            )
             .await?;
         self.version = parent_version;
 

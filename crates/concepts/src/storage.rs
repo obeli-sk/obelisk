@@ -381,7 +381,6 @@ pub struct LockedExecution {
 }
 pub type LockPendingResponse = Vec<LockedExecution>;
 pub type AppendBatchResponse = Version;
-pub type AppendBatchCreateChildResponse = (Version, Version);
 
 #[derive(Debug, Clone, derive_more::Display, Serialize, Deserialize)]
 #[display(fmt = "{event}")]
@@ -463,9 +462,11 @@ pub trait DbConnection: Send + Sync {
     /// Append one or more events to the parent execution log, and create new child execution log.
     async fn append_batch_create_child(
         &self,
-        parent_req: (AppendBatch, ExecutionId, Version),
+        batch: AppendBatch,
+        execution_id: ExecutionId,
+        version: Version,
         child_req: CreateRequest,
-    ) -> Result<AppendBatchCreateChildResponse, DbError>;
+    ) -> Result<AppendBatchResponse, DbError>;
 
     async fn append_batch_respond_to_parent(
         &self,

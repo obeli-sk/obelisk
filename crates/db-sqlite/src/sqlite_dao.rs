@@ -6,11 +6,10 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
-        AppendBatch, AppendBatchCreateChildResponse, AppendBatchResponse, AppendRequest,
-        AppendResponse, CreateRequest, DbConnection, DbConnectionError, DbError, ExecutionEvent,
-        ExecutionEventInner, ExecutionLog, ExpiredTimer, HistoryEvent, LockKind,
-        LockPendingResponse, LockResponse, LockedExecution, PendingState, SpecificError, Version,
-        DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest,
+        DbConnection, DbConnectionError, DbError, ExecutionEvent, ExecutionEventInner,
+        ExecutionLog, ExpiredTimer, HistoryEvent, LockKind, LockPendingResponse, LockResponse,
+        LockedExecution, PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
     },
     ExecutionId, FunctionFqn, StrVariant,
 };
@@ -777,19 +776,21 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
+    #[instrument(skip_all, fields(%execution_id))]
     async fn append_batch_create_child(
         &self,
-        parent_req: (AppendBatch, ExecutionId, Version),
+        batch: AppendBatch,
+        execution_id: ExecutionId,
+        mut version: Version,
         child_req: CreateRequest,
-    ) -> Result<AppendBatchCreateChildResponse, DbError> {
-        if parent_req.0.is_empty() {
+    ) -> Result<AppendBatchResponse, DbError> {
+        if batch.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
                 StrVariant::Static("empty batch request"),
             )));
         }
-        if parent_req
-            .0
+        if batch
             .iter()
             .any(|event| matches!(event.event, ExecutionEventInner::Created { .. }))
         {
@@ -801,12 +802,11 @@ impl DbConnection for SqlitePool {
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
-                    let mut parent_version = parent_req.2;
-                    for req in parent_req.0 {
-                        parent_version = Self::append(tx, parent_req.1, req, Some(parent_version))?;
+                    for req in batch {
+                        version = Self::append(tx, execution_id, req, Some(version))?;
                     }
-                    let child_version = Self::create(tx, child_req)?;
-                    Ok((parent_version, child_version))
+                    Self::create(tx, child_req)?;
+                    Ok(version)
                 },
                 Span::current(),
             )
