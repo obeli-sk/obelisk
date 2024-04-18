@@ -1,7 +1,8 @@
+use assert_matches::assert_matches;
 use concepts::prefixed_ulid::RunId;
 use concepts::storage::{
-    AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, SpecificError,
-    Version,
+    AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
+    SpecificError, Version,
 };
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
 use concepts::{storage::HistoryEvent, FinishedExecutionResult};
@@ -251,4 +252,64 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             .unwrap();
     }
     // TODO attempt to append an event after finish
+}
+
+pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection) {
+    const MAX_RETRIES: u32 = 1;
+    const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(100);
+    let sim_clock = SimClock::new(now());
+    let execution_id = ExecutionId::generate();
+    let exec1 = ExecutorId::generate();
+    // Create
+    {
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id,
+                ffqn: SOME_FFQN,
+                params: Params::default(),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: RETRY_EXP_BACKOFF,
+                max_retries: MAX_RETRIES,
+            })
+            .await
+            .unwrap();
+    }
+    // Lock pending
+    let lock_duration = Duration::from_millis(500);
+    {
+        let mut locked_executions = db_connection
+            .lock_pending(
+                1,
+                sim_clock.now(),
+                vec![SOME_FFQN],
+                sim_clock.now(),
+                exec1,
+                sim_clock.now() + lock_duration,
+            )
+            .await
+            .unwrap();
+        assert_eq!(1, locked_executions.len());
+        let locked_execution = locked_executions.pop().unwrap();
+        assert_eq!(execution_id, locked_execution.execution_id);
+        assert_eq!(SOME_FFQN, locked_execution.ffqn);
+        assert_eq!(Version::new(2), locked_execution.version);
+    }
+    // Calling `get_expired_timers` after lock expiry should return the expired execution.
+    sim_clock.sleep(lock_duration);
+    {
+        let expired_at = sim_clock.now();
+        let expired = db_connection.get_expired_timers(expired_at).await.unwrap();
+        assert_eq!(1, expired.len());
+        let expired = &expired[0];
+        let (found_execution_id, version, already_retried_count, max_retries, retry_exp_backoff) = assert_matches!(expired,
+            ExpiredTimer::Lock { execution_id, version, already_retried_count, max_retries, retry_exp_backoff } =>
+            (execution_id, version, already_retried_count, max_retries, retry_exp_backoff));
+        assert_eq!(execution_id, *found_execution_id);
+        assert_eq!(Version::new(2), *version);
+        assert_eq!(0, *already_retried_count);
+        assert_eq!(MAX_RETRIES, *max_retries);
+        assert_eq!(RETRY_EXP_BACKOFF, *retry_exp_backoff);
+    }
 }

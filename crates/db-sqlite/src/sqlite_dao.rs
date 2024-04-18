@@ -980,7 +980,7 @@ impl DbConnection for SqlitePool {
 #[cfg(all(test, not(madsim)))] // async-sqlite attempts to spawn a system thread in simulation
 mod tests {
     use super::SqlitePool;
-    use db_tests::db_test_stubs::lifecycle;
+    use db_tests::db_test_stubs;
     use tempfile::NamedTempFile;
     use test_utils::set_up;
 
@@ -1008,11 +1008,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lifecycle() {
+    async fn lifecycle() {
         set_up();
         let (pool, _guard) = pool().await;
+        db_test_stubs::lifecycle(&pool).await;
+        pool.close().await.unwrap();
+    }
 
-        lifecycle(&pool).await;
+    #[tokio::test]
+    async fn expired_lock_should_be_found() {
+        set_up();
+        let (pool, _guard) = pool().await;
+        db_test_stubs::expired_lock_should_be_found(&pool).await;
         pool.close().await.unwrap();
     }
 }
