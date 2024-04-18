@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::DbConnection;
+use concepts::storage::DbError;
 use concepts::storage::DbPool;
 use concepts::{
     storage::{
@@ -104,10 +105,7 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
         })
     }
 
-    fn log_err_if_new(
-        res: Result<TickProgress, DbConnectionError>,
-        old_err: &mut Option<DbConnectionError>,
-    ) {
+    fn log_err_if_new(res: Result<TickProgress, DbError>, old_err: &mut Option<DbError>) {
         match (res, &old_err) {
             (Ok(_), _) => {
                 *old_err = None;
@@ -121,10 +119,7 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
     }
 
     #[instrument(skip_all)]
-    pub(crate) async fn tick(
-        &self,
-        executed_at: DateTime<Utc>,
-    ) -> Result<TickProgress, DbConnectionError> {
+    pub(crate) async fn tick(&self, executed_at: DateTime<Utc>) -> Result<TickProgress, DbError> {
         let mut expired_locks = 0;
         let mut expired_async_timers = 0;
         for expired_timer in self.db_connection.get_expired_timers(executed_at).await? {

@@ -76,19 +76,16 @@ impl DbConnection for InMemoryDbConnection {
     }
 
     #[instrument(skip_all)]
-    async fn get_expired_timers(
-        &self,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<ExpiredTimer>, DbConnectionError> {
+    async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::General(GeneralRequest::GetExpiredTimers { at, resp_sender });
         self.0
             .send(request)
             .await
             .map_err(|_| DbConnectionError::SendError)?;
-        resp_receiver
+        Ok(resp_receiver
             .await
-            .map_err(|_| DbConnectionError::RecvError)
+            .map_err(|_| DbConnectionError::RecvError)?)
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -1025,8 +1022,8 @@ impl DbTask {
 pub mod tick {
     use super::{
         async_trait, instrument, oneshot, AppendBatchResponse, AppendRequest, AppendResponse,
-        DateTime, DbConnection, DbConnectionError, DbError, DbRequest, DbTask, DbTickResponse,
-        ExecutionId, ExecutionLog, ExecutionSpecificRequest, ExecutorId, ExpiredTimer, FunctionFqn,
+        DateTime, DbConnection, DbError, DbRequest, DbTask, DbTickResponse, ExecutionId,
+        ExecutionLog, ExecutionSpecificRequest, ExecutorId, ExpiredTimer, FunctionFqn,
         GeneralRequest, LockPendingResponse, LockResponse, RunId, Utc, Version,
     };
     use assert_matches::assert_matches;
@@ -1079,7 +1076,7 @@ pub mod tick {
         async fn get_expired_timers(
             &self,
             at: DateTime<Utc>,
-        ) -> Result<Vec<ExpiredTimer>, DbConnectionError> {
+        ) -> Result<Vec<ExpiredTimer>, DbError> {
             let request = DbRequest::General(GeneralRequest::GetExpiredTimers {
                 at,
                 resp_sender: oneshot::channel().0,

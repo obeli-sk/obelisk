@@ -480,10 +480,7 @@ pub trait DbConnection: Send + Sync {
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError>;
 
     /// Get currently expired locks and async timers (delay requests)
-    async fn get_expired_timers(
-        &self,
-        at: DateTime<Utc>,
-    ) -> Result<Vec<ExpiredTimer>, DbConnectionError>;
+    async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError>;
 
     /// Create a new execution log
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError>;

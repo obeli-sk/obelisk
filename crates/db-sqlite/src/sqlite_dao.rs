@@ -1,20 +1,20 @@
 #![allow(clippy::all, dead_code)]
-
+//TODO: Replace get(usize) with get(&str)
 use async_sqlite::{rusqlite::named_params, ClientBuilder, JournalMode, Pool, PoolBuilder};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    prefixed_ulid::{ExecutorId, RunId},
+    prefixed_ulid::{DelayId, ExecutorId, JoinSetId, RunId},
     storage::{
         AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest,
-        DbConnection, DbConnectionError, DbError, ExecutionEvent, ExecutionEventInner,
-        ExecutionLog, ExpiredTimer, HistoryEvent, LockKind, LockPendingResponse, LockResponse,
-        LockedExecution, PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        DbConnection, DbError, ExecutionEvent, ExecutionEventInner, ExecutionLog, ExpiredTimer,
+        HistoryEvent, LockKind, LockPendingResponse, LockResponse, LockedExecution, PendingState,
+        SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
     },
     ExecutionId, FunctionFqn, StrVariant,
 };
 use rusqlite::{OptionalExtension, Transaction};
-use std::{cmp::max, collections::VecDeque, path::Path, sync::Arc};
+use std::{cmp::max, collections::VecDeque, path::Path, sync::Arc, time::Duration};
 use tracing::{debug, error, info, instrument, trace, warn, Span};
 
 const PRAGMA: &str = r"
@@ -856,13 +856,13 @@ impl DbConnection for SqlitePool {
     #[instrument(skip_all, fields(%execution_id))]
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
         self.pool
-            .transaction_write_with_span::<_, _, SqliteError>(
+            .conn_with_err_and_span::<_, _, SqliteError>(
                 move |tx| {
                     let mut stmt = tx.prepare(
-                        "SELECT created_at, json_value FROM execution_log WHERE \
+                        "SELECT created_at, json_value, pending_state FROM execution_log WHERE \
                         execution_id = :execution_id ORDER BY version",
                     )?;
-                    let events = stmt
+                    let events_and_pending_state = stmt
                         .query_map(
                             named_params! {
                                 ":execution_id": execution_id.to_string(),
@@ -878,14 +878,42 @@ impl DbConnection for SqlitePool {
                                         serde.to_string(),
                                     )))
                                 });
-                                Ok(event)
+                                let pending_state = row.get::<_, Option<serde_json::Value>>(2)?;
+
+                                Ok(event.map(|event| (event, pending_state)))
                             },
                         )?
                         .collect::<Result<Vec<_>, _>>()?
                         .into_iter()
                         .collect::<Result<Vec<_>, _>>()?;
+                    let mut pending_state = None;
+                    let mut events = Vec::with_capacity(events_and_pending_state.len());
+                    for (event, pending) in events_and_pending_state {
+                        events.push(event);
+                        if let Some(pending) = pending {
+                            pending_state = Some(pending);
+                        }
+                    }
+                    let pending_state = match pending_state
+                        .map(|pending_state| serde_json::from_value::<PendingState>(pending_state))
+                    {
+                        Some(Ok(pending_state)) => Ok(pending_state),
+                        None => {
+                            error!("Execution log must have at least one pending state");
+                            Err(SqliteError::DbError(DbError::Specific(
+                                SpecificError::ConsistencyError(StrVariant::Static(
+                                    "execution log must have at least one pending state",
+                                )),
+                            )))
+                        }
+                        Some(Err(serde)) => {
+                            error!("Cannot parse pending state: `{serde:?}` - {events:?}");
+                            Err(SqliteError::Parsing(StrVariant::Static(
+                                "cannot parse pending state",
+                            )))
+                        }
+                    }?;
                     let version = Version::new(events.len());
-                    let pending_state = Self::current_pending_state(tx, execution_id)?;
                     Ok(ExecutionLog {
                         execution_id,
                         events,
@@ -900,11 +928,52 @@ impl DbConnection for SqlitePool {
     }
 
     /// Get currently expired locks and async timers (delay requests)
-    async fn get_expired_timers(
-        &self,
-        _at: DateTime<Utc>,
-    ) -> Result<Vec<ExpiredTimer>, DbConnectionError> {
-        todo!()
+    async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
+        self.pool.conn_with_err_and_span::<_, _, SqliteError>(
+            move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT execution_id, expected_next_version, join_set_id, delay_id FROM locked WHERE lock_expires_at >= :at",
+                )?;
+                let query_res = stmt
+                    .query_map(
+                        named_params! {
+                            ":at": at,
+                        },
+                        |row| {
+                            let execution_id = row.get::<_, String>(0)?.parse::<ExecutionId>();
+                            let version = Version::new(row.get::<_, usize>(1)?);
+                            let join_set_id = row.get::<_, Option<String>>(2)?.map(|str| str.parse::<JoinSetId>());
+                            let delay_id = row.get::<_, Option<String>>(3)?.map(|str| str.parse::<DelayId>());
+                            Ok((execution_id, version, join_set_id, delay_id))
+                        },
+                    )?
+                    .collect::<Result<Vec<_>, _>>()?
+                    ;
+                let mut expired_timers: Vec<ExpiredTimer> = Vec::new();
+                for(execution_id, version, join_set_id, delay_id) in query_res {
+                    let execution_id = execution_id.map_err(|str| SqliteError::Parsing(StrVariant::Static(str)))?;
+                    let expired_timer = match (join_set_id, delay_id) {
+                        (Some(join_set_id), Some(delay_id)) => {
+                            let join_set_id = join_set_id.map_err(|str| SqliteError::Parsing(StrVariant::Static(str)))?;
+                            let delay_id = delay_id.map_err(|str| SqliteError::Parsing(StrVariant::Static(str)))?;
+                            ExpiredTimer::AsyncTimer { execution_id, version, join_set_id, delay_id }
+                        }
+                        (None, None) => {
+                            ExpiredTimer::Lock { execution_id, version, already_retried_count: 0, max_retries: 0, retry_exp_backoff: Duration::ZERO }
+                        }
+                        _ => {
+                            error!("invalid combination of `join_set_id`, `delay_id`");
+                            return Err(SqliteError::DbError(DbError::Specific(SpecificError::ConsistencyError(StrVariant::Static("invalid combination of `join_set_id`, `delay_id`")))));
+                        }
+                    };
+                    expired_timers.push(expired_timer);
+                }
+                Ok(expired_timers)
+            },
+            Span::current(),
+        )
+        .await
+        .map_err(DbError::from)
     }
 }
 
