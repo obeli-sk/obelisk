@@ -1019,200 +1019,14 @@ impl DbTask {
 }
 
 #[cfg(test)]
-pub mod tick {
-    use super::{
-        async_trait, instrument, oneshot, AppendBatchResponse, AppendRequest, AppendResponse,
-        DateTime, DbConnection, DbError, DbRequest, DbTask, DbTickResponse, ExecutionId,
-        ExecutionLog, ExecutionSpecificRequest, ExecutorId, ExpiredTimer, FunctionFqn,
-        GeneralRequest, LockPendingResponse, LockResponse, RunId, Utc, Version,
-    };
-    use assert_matches::assert_matches;
-    use concepts::storage::{AppendBatch, CreateRequest};
-    use std::sync::Arc;
-
-    #[derive(Clone)]
-    // FIXME: pub(crate)
-    pub struct TickBasedDbConnection {
-        pub db_task: Arc<std::sync::Mutex<DbTask>>,
-    }
-
-    #[async_trait]
-    impl DbConnection for TickBasedDbConnection {
-        #[instrument(skip_all, fields(execution_id = %req.execution_id))]
-        async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Create {
-                req,
-                resp_sender: oneshot::channel().0,
-            });
-            let response = self.db_task.lock().unwrap().tick(request);
-            assert_matches!(response, DbTickResponse::AppendResult { payload, .. } => payload)
-                .map_err(DbError::Specific)
-        }
-
-        #[instrument(skip_all)]
-        async fn lock_pending(
-            &self,
-            batch_size: usize,
-            pending_at_or_sooner: DateTime<Utc>,
-            ffqns: Vec<FunctionFqn>,
-            created_at: DateTime<Utc>,
-            executor_id: ExecutorId,
-            lock_expires_at: DateTime<Utc>,
-        ) -> Result<LockPendingResponse, DbError> {
-            let request = DbRequest::General(GeneralRequest::LockPending {
-                batch_size,
-                pending_at_or_sooner,
-                ffqns,
-                created_at,
-                executor_id,
-                lock_expires_at,
-                resp_sender: oneshot::channel().0,
-            });
-            let response = self.db_task.lock().unwrap().tick(request);
-            Ok(assert_matches!(response, DbTickResponse::LockPending {  payload, .. } => payload))
-        }
-
-        #[instrument(skip_all)]
-        async fn get_expired_timers(
-            &self,
-            at: DateTime<Utc>,
-        ) -> Result<Vec<ExpiredTimer>, DbError> {
-            let request = DbRequest::General(GeneralRequest::GetExpiredTimers {
-                at,
-                resp_sender: oneshot::channel().0,
-            });
-            let response = self.db_task.lock().unwrap().tick(request);
-            Ok(
-                assert_matches!(response, DbTickResponse::GetExpiredTimers { payload, .. } => payload),
-            )
-        }
-
-        #[instrument(skip_all, %execution_id)]
-        async fn append_batch_create_child(
-            &self,
-            batch: AppendBatch,
-            execution_id: ExecutionId,
-            version: Version,
-            child_req: CreateRequest,
-        ) -> Result<AppendBatchResponse, DbError> {
-            let request = DbRequest::General(GeneralRequest::AppendBatchCreateChild {
-                batch,
-                execution_id,
-                version,
-                child_req,
-                resp_sender: oneshot::channel().0,
-            });
-            let response = self.db_task.lock().unwrap().tick(request);
-            assert_matches!(response, DbTickResponse::AppendBatchCreateChildResult { payload, .. } => payload)
-                .map_err(DbError::Specific)
-        }
-
-        #[instrument(skip_all, %execution_id)]
-        async fn append_batch_respond_to_parent(
-            &self,
-            batch: AppendBatch,
-            execution_id: ExecutionId,
-            version: Version,
-            parent: (ExecutionId, AppendRequest),
-        ) -> Result<AppendBatchResponse, DbError> {
-            let request = DbRequest::General(GeneralRequest::AppendBatchRespondToParent {
-                batch,
-                execution_id,
-                version,
-                parent,
-                resp_sender: oneshot::channel().0,
-            });
-            let response = self.db_task.lock().unwrap().tick(request);
-            assert_matches!(response, DbTickResponse::AppendBatchResult { payload, .. } => payload)
-                .map_err(DbError::Specific)
-        }
-
-        #[instrument(skip_all, %execution_id)]
-        async fn lock(
-            &self,
-            created_at: DateTime<Utc>,
-            execution_id: ExecutionId,
-            run_id: RunId,
-            version: Version,
-            executor_id: ExecutorId,
-            lock_expires_at: DateTime<Utc>,
-        ) -> Result<LockResponse, DbError> {
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
-                created_at,
-                execution_id,
-                run_id,
-                version,
-                executor_id,
-                lock_expires_at,
-                resp_sender: oneshot::channel().0,
-            });
-            let response = self.db_task.lock().unwrap().tick(request);
-            assert_matches!(response, DbTickResponse::Lock { payload, .. } => payload)
-                .map_err(DbError::Specific)
-        }
-
-        #[instrument(skip_all, %execution_id)]
-        async fn append(
-            &self,
-            execution_id: ExecutionId,
-            version: Option<Version>,
-            req: AppendRequest,
-        ) -> Result<AppendResponse, DbError> {
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Append {
-                execution_id,
-                version,
-                req,
-                resp_sender: oneshot::channel().0,
-            });
-            let response = self.db_task.lock().unwrap().tick(request);
-            assert_matches!(response, DbTickResponse::AppendResult { payload, .. } => payload)
-                .map_err(DbError::Specific)
-        }
-
-        #[instrument(skip_all, %execution_id)]
-        async fn append_batch(
-            &self,
-            batch: Vec<AppendRequest>,
-            execution_id: ExecutionId,
-            version: Version,
-        ) -> Result<AppendBatchResponse, DbError> {
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::AppendBatch {
-                batch,
-                execution_id,
-                version,
-                resp_sender: oneshot::channel().0,
-            });
-
-            let response = self.db_task.lock().unwrap().tick(request);
-            assert_matches!(response, DbTickResponse::AppendBatchResult { payload, .. } => payload)
-                .map_err(DbError::Specific)
-        }
-
-        async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
-            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Get {
-                execution_id,
-                resp_sender: oneshot::channel().0,
-            });
-            let response = self.db_task.lock().unwrap().tick(request);
-            assert_matches!(response, DbTickResponse::Get { payload, .. } => payload)
-                .map_err(DbError::Specific)
-        }
-    }
-}
-
-#[cfg(test)]
 pub mod tests {
-    use self::tick::TickBasedDbConnection;
     use super::*;
     use assert_matches::assert_matches;
     use concepts::Params;
     use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
     use db_tests::db_test_stubs::lifecycle;
     use db_tests::db_test_stubs::SOME_FFQN;
-    use std::{
-        sync::Arc,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
     use test_utils::arbitrary::UnstructuredHolder;
     use test_utils::set_up;
     use test_utils::{env_or_default, sim_clock::SimClock};
@@ -1226,15 +1040,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn lifecycle_tick_based() {
-        set_up();
-        let db_connection = TickBasedDbConnection {
-            db_task: Arc::new(std::sync::Mutex::new(DbTask::new())),
-        };
-        lifecycle(&db_connection).await;
-    }
-
-    #[tokio::test]
     async fn lifecycle_task_based() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
@@ -1242,17 +1047,6 @@ pub mod tests {
         lifecycle(&db_connection).await;
         drop(db_connection);
         db_task.close().await;
-    }
-
-    #[tokio::test]
-    async fn expired_lock_should_be_found_tick_based() {
-        set_up();
-        let db_task = DbTask::new();
-        let db_task = Arc::new(std::sync::Mutex::new(db_task));
-        let db_connection = TickBasedDbConnection {
-            db_task: db_task.clone(),
-        };
-        expired_lock_should_be_found(db_connection).await;
     }
 
     #[tokio::test]
@@ -1335,11 +1129,9 @@ pub mod tests {
         set_up();
         let unstructured_holder = UnstructuredHolder::new();
         let mut unstructured = unstructured_holder.unstructured();
-        let db_task = DbTask::new();
-        let db_task = Arc::new(std::sync::Mutex::new(db_task));
-        let db_connection = TickBasedDbConnection {
-            db_task: db_task.clone(),
-        };
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.pool().unwrap().connection().unwrap();
+
         let execution_id = ExecutionId::generate();
         let mut version;
         // Create
@@ -1371,6 +1163,8 @@ pub mod tests {
                 Err(err) => debug!("Ignoring {err:?}"),
             }
         }
+        drop(db_connection);
+        db_task.close().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
