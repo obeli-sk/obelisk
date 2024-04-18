@@ -158,6 +158,15 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
 pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
     event: HistoryEvent::Yield,
 };
+pub const DUMMY_INTERMITTENT_TIMEOUT: ExecutionEventInner =
+    ExecutionEventInner::IntermittentTimeout {
+        expires_at: DateTime::from_timestamp_nanos(0),
+    };
+pub const DUMMY_INTERMITTENT_FAILURE: ExecutionEventInner =
+    ExecutionEventInner::IntermittentFailure {
+        expires_at: DateTime::from_timestamp_nanos(0),
+        reason: StrVariant::Static(""),
+    };
 
 #[derive(
     Clone,
@@ -229,6 +238,7 @@ pub enum ExecutionEventInner {
 impl ExecutionEventInner {
     #[must_use]
     pub fn is_retry(&self) -> bool {
+        // FIXME: Rename to `is_intermittent_event`
         matches!(
             self,
             Self::IntermittentFailure { .. } | Self::IntermittentTimeout { .. }

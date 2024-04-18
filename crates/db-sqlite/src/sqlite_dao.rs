@@ -9,12 +9,13 @@ use concepts::{
         AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest,
         DbConnection, DbError, ExecutionEvent, ExecutionEventInner, ExecutionLog, ExpiredTimer,
         HistoryEvent, LockKind, LockPendingResponse, LockResponse, LockedExecution, PendingState,
-        SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE,
+        DUMMY_INTERMITTENT_TIMEOUT,
     },
     ExecutionId, FunctionFqn, StrVariant,
 };
-use rusqlite::{OptionalExtension, Transaction};
-use std::{cmp::max, collections::VecDeque, path::Path, sync::Arc, time::Duration};
+use rusqlite::{Connection, OptionalExtension, Transaction};
+use std::{cmp::max, collections::VecDeque, path::Path, sync::Arc};
 use tracing::{debug, error, info, instrument, trace, warn, Span};
 
 const PRAGMA: &str = r"
@@ -134,6 +135,78 @@ impl SqlitePool {
         Ok(self.pool.close().await?)
     }
 
+    fn fetch_created_event(
+        conn: &Connection,
+        execution_id: ExecutionId,
+    ) -> Result<CreateRequest, SqliteError> {
+        let mut stmt = conn.prepare(
+            "SELECT created_at, json_value FROM execution_log WHERE \
+            execution_id = :execution_id AND (variant = :variant)",
+        )?;
+        let (created_at, event) = stmt.query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":variant": DUMMY_CREATED.variant(),
+            },
+            |row| {
+                let created_at = row.get(0)?;
+                let event = serde_json::from_value::<ExecutionEventInner>(
+                    row.get::<_, serde_json::Value>(1)?,
+                )
+                .map(|event| (created_at, event))
+                .map_err(|serde| {
+                    error!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
+                    SqliteError::Parsing(StrVariant::Static("cannot deserialize"))
+                });
+                Ok(event)
+            },
+        )??;
+        if let ExecutionEventInner::Created {
+            ffqn,
+            params,
+            parent,
+            scheduled_at,
+            retry_exp_backoff,
+            max_retries,
+        } = event
+        {
+            Ok(CreateRequest {
+                created_at,
+                execution_id,
+                ffqn,
+                params,
+                parent,
+                scheduled_at,
+                retry_exp_backoff,
+                max_retries,
+            })
+        } else {
+            error!("Cannt match `Created` event - {event:?}");
+            Err(SqliteError::Parsing(StrVariant::Static(
+                "Cannot deserialize `Created` event",
+            )))
+        }
+    }
+
+    fn count_intermittent_events(
+        conn: &Connection,
+        execution_id: ExecutionId,
+    ) -> Result<u32, SqliteError> {
+        let mut stmt = conn.prepare(
+            "SELECT COUNT(*) FROM execution_log WHERE execution_id = :execution_id AND (variant = :v1 OR variant = :v2)",
+        )?;
+        Ok(stmt
+            .query_row(
+                named_params! {
+                    ":execution_id": execution_id.to_string(),
+                    ":v1": DUMMY_INTERMITTENT_TIMEOUT.variant(),
+                    ":v2": DUMMY_INTERMITTENT_FAILURE.variant(),
+                },
+                |row| row.get(0),
+            )
+            .map_err(async_sqlite::Error::Rusqlite)?)
+    }
+
     fn current_version(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -154,14 +227,19 @@ impl SqlitePool {
             .map_err(async_sqlite::Error::Rusqlite)?)
     }
 
+    fn get_expected_next_version(
+        tx: &Transaction,
+        execution_id: ExecutionId,
+    ) -> Result<Version, SqliteError> {
+        Self::current_version(tx, execution_id).map(|ver| Version::new(ver.0 + 1))
+    }
+
     fn check_expected_next_version(
         tx: &Transaction,
         execution_id: ExecutionId,
         expected_next_version: &Version,
     ) -> Result<(), SqliteError> {
-        if Self::current_version(tx, execution_id).map(|ver| Version::new(ver.0 + 1))?
-            != *expected_next_version
-        {
+        if Self::get_expected_next_version(tx, execution_id)? != *expected_next_version {
             return Err(SqliteError::DbError(DbError::Specific(
                 SpecificError::VersionMismatch,
             )));
@@ -239,37 +317,10 @@ impl SqlitePool {
                     VALUES (:execution_id, :expected_next_version, :pending_at, :ffqn)",
                 )?;
                 let ffqn = if let Some(ffqn) = ffqn {
-                    Ok(ffqn)
+                    ffqn
                 } else {
-                    let mut stmt = tx.prepare(
-                        "SELECT json_value FROM execution_log WHERE \
-                        execution_id = :execution_id AND (variant = :variant)",
-                    )?;
-                    let created = stmt.query_row(
-                        named_params! {
-                            ":execution_id": execution_id.to_string(),
-                            ":variant": DUMMY_CREATED.variant(),
-                        },
-                        |row| {
-                            let event = serde_json::from_value::<ExecutionEventInner>(
-                                row.get::<_, serde_json::Value>(0)?,
-                            )
-                            .map_err(|serde| {
-                                error!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
-                                SqliteError::Parsing(StrVariant::Static("cannot deserialize"))
-                            });
-                            Ok(event)
-                        },
-                    )??;
-                    if let ExecutionEventInner::Created { ffqn, .. } = created {
-                        Ok(ffqn)
-                    } else {
-                        error!("Cannt match `Created` event - {created:?}");
-                        Err(SqliteError::Parsing(StrVariant::Static(
-                            "Cannot deserialize `Created` event",
-                        )))
-                    }
-                }?;
+                    Self::fetch_created_event(tx, execution_id)?.ffqn
+                };
 
                 stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
@@ -959,7 +1010,9 @@ impl DbConnection for SqlitePool {
                             ExpiredTimer::AsyncTimer { execution_id, version, join_set_id, delay_id }
                         }
                         (None, None) => {
-                            ExpiredTimer::Lock { execution_id, version, already_retried_count: 0, max_retries: 0, retry_exp_backoff: Duration::ZERO }
+                            let created = Self::fetch_created_event(conn, execution_id)?;
+                            let already_retried_count = Self::count_intermittent_events(conn, execution_id)?;
+                            ExpiredTimer::Lock { execution_id, version, already_retried_count, max_retries: created.max_retries, retry_exp_backoff: created.retry_exp_backoff }
                         }
                         _ => {
                             error!("invalid combination of `join_set_id`, `delay_id`");
