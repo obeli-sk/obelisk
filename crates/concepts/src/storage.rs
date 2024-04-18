@@ -29,11 +29,11 @@ pub struct ExecutionLog {
 }
 
 impl ExecutionLog {
-    fn already_retried_count(&self) -> u32 {
+    fn already_tried_count(&self) -> u32 {
         u32::try_from(
             self.events
                 .iter()
-                .filter(|event| event.event.is_retry())
+                .filter(|event| event.event.is_intermittent_event())
                 .count(),
         )
         .unwrap()
@@ -41,9 +41,10 @@ impl ExecutionLog {
 
     #[must_use]
     pub fn can_be_retried_after(&self) -> Option<Duration> {
-        let already_retried_count = self.already_retried_count();
-        if already_retried_count < self.max_retries() {
-            let duration = self.retry_exp_backoff() * 2_u32.saturating_pow(already_retried_count);
+        let already_tried_count = self.already_tried_count();
+        if already_tried_count < self.max_retries() + 1 {
+            // FIXME: Add test for number of retries
+            let duration = self.retry_exp_backoff() * 2_u32.saturating_pow(already_tried_count);
             Some(duration)
         } else {
             None
@@ -237,8 +238,7 @@ pub enum ExecutionEventInner {
 
 impl ExecutionEventInner {
     #[must_use]
-    pub fn is_retry(&self) -> bool {
-        // FIXME: Rename to `is_intermittent_event`
+    pub fn is_intermittent_event(&self) -> bool {
         matches!(
             self,
             Self::IntermittentFailure { .. } | Self::IntermittentTimeout { .. }

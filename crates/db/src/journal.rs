@@ -237,7 +237,7 @@ impl ExecutionJournal {
         u32::try_from(
             self.execution_events
                 .iter()
-                .filter(|event| event.event.is_retry())
+                .filter(|event| event.event.is_intermittent_event())
                 .count(),
         )
         .unwrap()
