@@ -635,6 +635,27 @@ impl SqlitePool {
 
 #[async_trait]
 impl DbConnection for SqlitePool {
+    #[instrument(skip_all, fields(execution_id = %req.execution_id))]
+    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
+        let event = ExecutionEventInner::Created {
+            ffqn: req.ffqn,
+            params: req.params,
+            parent: req.parent,
+            scheduled_at: req.scheduled_at,
+            retry_exp_backoff: req.retry_exp_backoff,
+            max_retries: req.max_retries,
+        };
+        self.append(
+            req.execution_id,
+            None,
+            AppendRequest {
+                created_at: req.created_at,
+                event,
+            },
+        )
+        .await
+    }
+
     #[instrument(skip_all, fields(%executor_id))]
     async fn lock_pending(
         &self,

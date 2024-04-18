@@ -367,7 +367,6 @@ pub(crate) mod tests {
     #[allow(clippy::too_many_lines)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_fibo_parallel() {
-        use concepts::storage::{AppendRequest, ExecutionEventInner};
         use std::sync::Arc;
 
         const EXECUTIONS: usize = 20_000; // release: 70_000
@@ -440,19 +439,17 @@ pub(crate) mod tests {
         let db_connection = db_pool.connection().expect("must be open");
         for _ in 0..executions {
             let execution_id = ExecutionId::generate();
-            let req = AppendRequest {
-                created_at,
-                event: ExecutionEventInner::Created {
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id,
                     ffqn: fibo_ffqn.clone(),
                     params: params.clone(),
                     parent: None,
                     scheduled_at: None,
                     retry_exp_backoff: Duration::ZERO,
                     max_retries: 0,
-                },
-            };
-            db_connection
-                .append_batch(vec![req], execution_id, None)
+                })
                 .await
                 .unwrap();
             execution_ids.push(execution_id);

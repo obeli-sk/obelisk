@@ -32,6 +32,27 @@ pub struct InMemoryDbConnection(mpsc::Sender<DbRequest>);
 
 #[async_trait]
 impl DbConnection for InMemoryDbConnection {
+    #[instrument(skip_all, fields(execution_id = %req.execution_id))]
+    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
+        let event = ExecutionEventInner::Created {
+            ffqn: req.ffqn,
+            params: req.params,
+            parent: req.parent,
+            scheduled_at: req.scheduled_at,
+            retry_exp_backoff: req.retry_exp_backoff,
+            max_retries: req.max_retries,
+        };
+        self.append(
+            req.execution_id,
+            None,
+            AppendRequest {
+                created_at: req.created_at,
+                event,
+            },
+        )
+        .await
+    }
+
     #[instrument(skip_all)]
     async fn lock_pending(
         &self,
@@ -998,7 +1019,7 @@ pub mod tick {
         GeneralRequest, LockPendingResponse, LockResponse, RunId, Utc, Version,
     };
     use assert_matches::assert_matches;
-    use concepts::storage::AppendBatch;
+    use concepts::storage::{AppendBatch, CreateRequest, ExecutionEventInner};
     use std::sync::Arc;
 
     #[derive(Clone)]
@@ -1009,6 +1030,27 @@ pub mod tick {
 
     #[async_trait]
     impl DbConnection for TickBasedDbConnection {
+        #[instrument(skip_all, fields(execution_id = %req.execution_id))]
+        async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
+            let event = ExecutionEventInner::Created {
+                ffqn: req.ffqn,
+                params: req.params,
+                parent: req.parent,
+                scheduled_at: req.scheduled_at,
+                retry_exp_backoff: req.retry_exp_backoff,
+                max_retries: req.max_retries,
+            };
+            self.append(
+                req.execution_id,
+                None,
+                AppendRequest {
+                    created_at: req.created_at,
+                    event,
+                },
+            )
+            .await
+        }
+
         #[instrument(skip_all)]
         async fn lock_pending(
             &self,

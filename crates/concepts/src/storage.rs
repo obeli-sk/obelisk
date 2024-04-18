@@ -236,6 +236,7 @@ impl ExecutionEventInner {
     }
 
     #[must_use]
+    // FIXME: Remove
     pub fn appendable_without_version(&self) -> bool {
         matches!(
             self,
@@ -443,6 +444,7 @@ pub trait DbConnection: Send + Sync {
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse, DbError>;
 
+    /// Append a single event to an existing execution log
     async fn append(
         &self,
         execution_id: ExecutionId,
@@ -450,6 +452,7 @@ pub trait DbConnection: Send + Sync {
         req: AppendRequest,
     ) -> Result<AppendResponse, DbError>;
 
+    /// Append one or more events to an existing execution log
     async fn append_batch(
         &self,
         batch: AppendBatch,
@@ -470,26 +473,8 @@ pub trait DbConnection: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<Vec<ExpiredTimer>, DbConnectionError>;
 
-    /// Specialized `append` which does not require a version.
-    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-        let event = ExecutionEventInner::Created {
-            ffqn: req.ffqn,
-            params: req.params,
-            parent: req.parent,
-            scheduled_at: req.scheduled_at,
-            retry_exp_backoff: req.retry_exp_backoff,
-            max_retries: req.max_retries,
-        };
-        self.append(
-            req.execution_id,
-            None,
-            AppendRequest {
-                created_at: req.created_at,
-                event,
-            },
-        )
-        .await
-    }
+    /// Create a new execution log
+    async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError>;
 
     async fn wait_for_finished_result(
         &self,
