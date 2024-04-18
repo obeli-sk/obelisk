@@ -733,10 +733,17 @@ impl DbConnection for SqlitePool {
                 StrVariant::Static("Cannot append `Created` event - use `create` instead"),
             )));
         }
-        let created_at = req.created_at;
         self.pool
             .transaction_write_with_span(
-                move |tx| Self::append(tx, created_at, execution_id, appending_version, req.event),
+                move |tx| {
+                    Self::append(
+                        tx,
+                        req.created_at,
+                        execution_id,
+                        appending_version,
+                        req.event,
+                    )
+                },
                 Span::current(),
             )
             .await

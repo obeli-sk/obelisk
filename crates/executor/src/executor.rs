@@ -264,11 +264,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             Ok(Some(append)) => {
                 let db_connection = db_pool.connection()?;
                 db_connection
-                    .append_batch(
-                        append.primary_events,
-                        append.execution_id,
-                        Some(append.version),
-                    )
+                    .append_batch(append.primary_events, append.execution_id, append.version)
                     .await?;
                 if let Some((secondary_id, secondary_append_request)) =
                     append.async_resp_to_other_execution

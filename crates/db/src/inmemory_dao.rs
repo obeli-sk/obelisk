@@ -151,7 +151,7 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        version: Option<Version>,
+        version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
         let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::AppendBatch {
@@ -385,7 +385,7 @@ enum ExecutionSpecificRequest {
     AppendBatch {
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        version: Option<Version>,
+        version: Version,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
     },
@@ -884,7 +884,7 @@ impl DbTask {
         &mut self,
         batch: AppendBatch,
         execution_id: ExecutionId,
-        mut version: Option<Version>,
+        mut version: Version,
     ) -> Result<AppendBatchResponse, SpecificError> {
         if batch.is_empty() {
             error!("Empty batch request");
@@ -907,30 +907,13 @@ impl DbTask {
         };
         let truncate_len_or_delete = journal.len();
         for req in batch.into_iter() {
-            match &version {
-                None => {
-                    if !req.event.appendable_without_version() {
-                        self.rollback(truncate_len_or_delete, execution_id);
-                        return Err(SpecificError::VersionMismatch);
-                    }
-                }
-                Some(version) => {
-                    if *version != journal.version() {
-                        self.rollback(truncate_len_or_delete, execution_id);
-                        return Err(SpecificError::VersionMismatch);
-                    }
-                }
+            if version != journal.version() {
+                self.rollback(truncate_len_or_delete, execution_id);
+                return Err(SpecificError::VersionMismatch);
             }
-            match journal
-                .append(req.created_at, req.event)
-                .map(|ok| (ok, version))
-            {
-                Ok((new_version, Some(_))) => {
-                    version = Some(new_version);
-                }
-                Ok((_, None)) => {
-                    // Do not allow appending events that require version
-                    version = None;
+            match journal.append(req.created_at, req.event) {
+                Ok(new_version) => {
+                    version = new_version;
                 }
                 Err(err) => {
                     self.rollback(truncate_len_or_delete, execution_id);
@@ -988,7 +971,11 @@ impl DbTask {
                     })?);
                 }
                 _ => {
-                    match self.append_batch(batch, execution_id, version) {
+                    match self.append_batch(
+                        batch,
+                        execution_id,
+                        version.expect("append_tx does not support None version"),
+                    ) {
                         Ok(version) => versions.push(version),
                         Err(err) if idx == 0 => return Err(err),
                         Err(err) => {
@@ -1132,7 +1119,7 @@ pub mod tick {
             &self,
             batch: Vec<AppendRequest>,
             execution_id: ExecutionId,
-            version: Option<Version>,
+            version: Version,
         ) -> Result<AppendBatchResponse, DbError> {
             let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::AppendBatch {
                 batch,

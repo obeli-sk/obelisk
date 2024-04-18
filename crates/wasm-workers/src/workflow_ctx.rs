@@ -376,7 +376,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             .append_batch(
                 vec![join_set, delayed_until, join_next],
                 self.execution_id,
-                Some(self.version.clone()),
+                self.version.clone(),
             )
             .await?;
 

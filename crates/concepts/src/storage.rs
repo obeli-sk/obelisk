@@ -457,7 +457,7 @@ pub trait DbConnection: Send + Sync {
         &self,
         batch: AppendBatch,
         execution_id: ExecutionId,
-        version: Option<Version>,
+        version: Version,
     ) -> Result<AppendBatchResponse, DbError>;
 
     async fn append_tx(
