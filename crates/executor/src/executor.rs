@@ -263,15 +263,18 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         {
             Ok(Some(append)) => {
                 let db_connection = db_pool.connection()?;
-                db_connection
-                    .append_batch(append.primary_events, append.execution_id, append.version)
-                    .await?;
-                // FIXME: Failure here makes the parent hang.
-                if let Some((secondary_id, secondary_append_request)) =
-                    append.async_resp_to_other_execution
-                {
+                if let Some((parent_id, parent_append_request)) = append.parent_response {
                     db_connection
-                        .append(secondary_id, None, secondary_append_request)
+                        .append_batch_respond_to_parent(
+                            append.primary_events,
+                            append.execution_id,
+                            append.version,
+                            (parent_id, parent_append_request),
+                        )
+                        .await?;
+                } else {
+                    db_connection
+                        .append_batch(append.primary_events, append.execution_id, append.version)
                         .await?;
                 }
                 Ok(())
@@ -334,7 +337,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     created_at: result_obtained_at,
                     event,
                 };
-                let secondary = if let (Some(finished_res), Some((parent_id, join_set_id))) =
+                let parent_response = if let (Some(finished_res), Some((parent_id, join_set_id))) =
                     (finished_res, execution_log.parent())
                 {
                     Some((
@@ -359,7 +362,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     primary_events: vec![finished_event],
                     execution_id,
                     version: new_version,
-                    async_resp_to_other_execution: secondary,
+                    parent_response,
                 })
             }
             Err(err) => {
@@ -449,7 +452,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     }],
                     execution_id,
                     version: new_version2,
-                    async_resp_to_other_execution: None,
+                    parent_response: None,
                 })
             }
         })
@@ -460,7 +463,7 @@ struct Append {
     primary_events: Vec<AppendRequest>,
     execution_id: ExecutionId,
     version: Version,
-    async_resp_to_other_execution: Option<(ExecutionId, AppendRequest)>,
+    parent_response: Option<(ExecutionId, AppendRequest)>,
 }
 
 #[cfg(any(test, feature = "test"))]

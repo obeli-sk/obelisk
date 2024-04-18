@@ -146,7 +146,7 @@ impl DbConnection for InMemoryDbConnection {
             .map_err(DbError::Specific)
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, %execution_id)]
     async fn append_batch(
         &self,
         batch: Vec<AppendRequest>,
@@ -180,6 +180,32 @@ impl DbConnection for InMemoryDbConnection {
         let request = DbRequest::General(GeneralRequest::AppendBatchCreateChild {
             parent_req,
             child_req,
+            resp_sender,
+        });
+        self.0
+            .send(request)
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
+        resp_receiver
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .map_err(DbError::Specific)
+    }
+
+    #[instrument(skip_all, %execution_id)]
+    async fn append_batch_respond_to_parent(
+        &self,
+        batch: AppendBatch,
+        execution_id: ExecutionId,
+        version: Version,
+        parent: (ExecutionId, AppendRequest),
+    ) -> Result<AppendBatchResponse, DbError> {
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        let request = DbRequest::General(GeneralRequest::AppendBatchRespondToParent {
+            batch,
+            execution_id,
+            version,
+            parent,
             resp_sender,
         });
         self.0
@@ -422,12 +448,21 @@ enum GeneralRequest {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Vec<ExpiredTimer>>,
     },
-    #[display(fmt = "AppendTx")]
+    #[display(fmt = "AppendBatchCreateChild")]
     AppendBatchCreateChild {
         parent_req: (AppendBatch, ExecutionId, Version),
         child_req: CreateRequest,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<AppendBatchCreateChildResponse, SpecificError>>,
+    },
+    #[display(fmt = "AppendBatchRespondToParent")]
+    AppendBatchRespondToParent {
+        batch: AppendBatch,
+        execution_id: ExecutionId,
+        version: Version,
+        parent: (ExecutionId, AppendRequest),
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
     },
 }
 
@@ -672,7 +707,17 @@ impl DbTask {
                 child_req,
                 resp_sender,
             } => DbTickResponse::AppendBatchCreateChildResult {
-                payload: self.append_tx(parent_req, child_req),
+                payload: self.append_batch_create_child(parent_req, child_req),
+                resp_sender,
+            },
+            GeneralRequest::AppendBatchRespondToParent {
+                batch,
+                execution_id,
+                version,
+                parent,
+                resp_sender,
+            } => DbTickResponse::AppendBatchResult {
+                payload: self.append_batch_respond_to_parent(batch, execution_id, version, parent),
                 resp_sender,
             },
         }
@@ -944,7 +989,7 @@ impl DbTask {
         self.index.update(execution_id, &self.journals);
     }
 
-    fn append_tx(
+    fn append_batch_create_child(
         &mut self,
         parent_req: (AppendBatch, ExecutionId, Version),
         child_req: CreateRequest,
@@ -952,6 +997,18 @@ impl DbTask {
         let parent_version = self.append_batch(parent_req.0, parent_req.1, parent_req.2)?;
         let child_version = self.create(child_req)?;
         Ok((parent_version, child_version))
+    }
+
+    fn append_batch_respond_to_parent(
+        &mut self,
+        batch: Vec<AppendRequest>,
+        execution_id: ExecutionId,
+        version: Version,
+        (parent_exe, parent_req): (ExecutionId, AppendRequest),
+    ) -> Result<Version, SpecificError> {
+        let child_version = self.append_batch(batch, execution_id, version)?;
+        self.append(parent_req.created_at, parent_exe, None, parent_req.event)?;
+        Ok(child_version)
     }
 }
 
@@ -1039,6 +1096,27 @@ pub mod tick {
                 .map_err(DbError::Specific)
         }
 
+        #[instrument(skip_all, %execution_id)]
+        async fn append_batch_respond_to_parent(
+            &self,
+            batch: AppendBatch,
+            execution_id: ExecutionId,
+            version: Version,
+            parent: (ExecutionId, AppendRequest),
+        ) -> Result<AppendBatchResponse, DbError> {
+            let request = DbRequest::General(GeneralRequest::AppendBatchRespondToParent {
+                batch,
+                execution_id,
+                version,
+                parent,
+                resp_sender: oneshot::channel().0,
+            });
+            let response = self.db_task.lock().unwrap().tick(request);
+            assert_matches!(response, DbTickResponse::AppendBatchResult { payload, .. } => payload)
+                .map_err(DbError::Specific)
+        }
+
+        #[instrument(skip_all, %execution_id)]
         async fn lock(
             &self,
             created_at: DateTime<Utc>,
@@ -1062,6 +1140,7 @@ pub mod tick {
                 .map_err(DbError::Specific)
         }
 
+        #[instrument(skip_all, %execution_id)]
         async fn append(
             &self,
             execution_id: ExecutionId,
@@ -1079,6 +1158,7 @@ pub mod tick {
                 .map_err(DbError::Specific)
         }
 
+        #[instrument(skip_all, %execution_id)]
         async fn append_batch(
             &self,
             batch: Vec<AppendRequest>,

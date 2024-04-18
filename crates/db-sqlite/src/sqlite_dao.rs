@@ -815,6 +815,45 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip_all, fields(%execution_id))]
+    async fn append_batch_respond_to_parent(
+        &self,
+        batch: AppendBatch,
+        execution_id: ExecutionId,
+        version: Version,
+        parent: (ExecutionId, AppendRequest),
+    ) -> Result<AppendBatchResponse, DbError> {
+        if batch.is_empty() {
+            error!("Empty batch request");
+            return Err(DbError::Specific(SpecificError::ValidationFailed(
+                StrVariant::Static("empty batch request"),
+            )));
+        }
+        if batch
+            .iter()
+            .any(|event| matches!(event.event, ExecutionEventInner::Created { .. }))
+        {
+            error!("Cannot append `Created` event - use `create` instead");
+            return Err(DbError::Specific(SpecificError::ValidationFailed(
+                StrVariant::Static("Cannot append `Created` event - use `create` instead"),
+            )));
+        }
+        self.pool
+            .transaction_write_with_span::<_, _, SqliteError>(
+                move |tx| {
+                    let mut version = version;
+                    for req in batch {
+                        version = Self::append(tx, execution_id, req, Some(version))?;
+                    }
+                    Self::append(tx, parent.0, parent.1, None)?;
+                    Ok(version)
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
+    }
+
+    #[instrument(skip_all, fields(%execution_id))]
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(

@@ -467,6 +467,14 @@ pub trait DbConnection: Send + Sync {
         child_req: CreateRequest,
     ) -> Result<AppendBatchCreateChildResponse, DbError>;
 
+    async fn append_batch_respond_to_parent(
+        &self,
+        batch: AppendBatch,
+        execution_id: ExecutionId,
+        version: Version,
+        parent: (ExecutionId, AppendRequest),
+    ) -> Result<AppendBatchResponse, DbError>;
+
     /// Get execution log.
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError>;
 
