@@ -449,7 +449,7 @@ mod tests {
     };
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
-    use tracing::{debug, info};
+    use tracing::info;
     use utils::time::{now, ClockFn};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
@@ -551,7 +551,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let created_at = now();
-        debug!(now = %created_at, "Generated steps: {steps:?}");
+        info!(now = %created_at, "Generated steps: {steps:?}");
         let execution_id = ExecutionId::generate();
         info!("first execution");
         let first = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;

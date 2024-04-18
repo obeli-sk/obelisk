@@ -34,23 +34,17 @@ pub struct InMemoryDbConnection(mpsc::Sender<DbRequest>);
 impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-        let event = ExecutionEventInner::Created {
-            ffqn: req.ffqn,
-            params: req.params,
-            parent: req.parent,
-            scheduled_at: req.scheduled_at,
-            retry_exp_backoff: req.retry_exp_backoff,
-            max_retries: req.max_retries,
-        };
-        self.append(
-            req.execution_id,
-            None,
-            AppendRequest {
-                created_at: req.created_at,
-                event,
-            },
-        )
-        .await
+        let (resp_sender, resp_receiver) = oneshot::channel();
+        let request =
+            DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Create { req, resp_sender });
+        self.0
+            .send(request)
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
+        resp_receiver
+            .await
+            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all)]
@@ -362,6 +356,12 @@ enum DbRequest {
 #[derivative(Debug)]
 #[derive(derive_more::Display)]
 enum ExecutionSpecificRequest {
+    #[display(fmt = "Create")]
+    Create {
+        req: CreateRequest,
+        #[derivative(Debug = "ignore")]
+        resp_sender: oneshot::Sender<Result<AppendResponse, SpecificError>>,
+    },
     #[display(fmt = "Lock(`{executor_id}`)")]
     Lock {
         created_at: DateTime<Utc>,
@@ -373,7 +373,7 @@ enum ExecutionSpecificRequest {
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<LockResponse, SpecificError>>,
     },
-    #[display(fmt = "Insert({req})")]
+    #[display(fmt = "Append({req})")]
     Append {
         execution_id: ExecutionId,
         version: Option<Version>,
@@ -486,6 +486,7 @@ impl ExecutionSpecificRequest {
             | Self::Append { execution_id, .. }
             | Self::AppendBatch { execution_id, .. }
             | Self::Get { execution_id, .. } => *execution_id,
+            Self::Create { req, .. } => req.execution_id,
         }
     }
 }
@@ -720,6 +721,10 @@ impl DbTask {
     #[instrument(skip_all, fields(execution_id = %request.execution_id()))]
     fn handle_specific(&mut self, request: ExecutionSpecificRequest) -> DbTickResponse {
         match request {
+            ExecutionSpecificRequest::Create { req, resp_sender } => DbTickResponse::AppendResult {
+                resp_sender,
+                payload: self.create(req),
+            },
             ExecutionSpecificRequest::Append {
                 execution_id,
                 version,
@@ -821,29 +826,12 @@ impl DbTask {
         version: Option<Version>,
         event: ExecutionEventInner,
     ) -> Result<AppendResponse, SpecificError> {
-        if let ExecutionEventInner::Created {
-            ffqn,
-            params,
-            parent,
-            scheduled_at,
-            retry_exp_backoff,
-            max_retries,
-        } = event
-        {
-            if version.is_some() {
-                info!("Ignoring `Created` with version specified");
-                return Err(SpecificError::VersionMismatch);
-            }
-            return self.create(CreateRequest {
-                created_at,
-                execution_id,
-                ffqn,
-                params,
-                parent,
-                scheduled_at,
-                retry_exp_backoff,
-                max_retries,
-            });
+        // Disallow `Created` event
+        if let ExecutionEventInner::Created { .. } = event {
+            error!("Cannot append `Created` event - use `create` instead");
+            return Err(SpecificError::ValidationFailed(StrVariant::Static(
+                "Cannot append `Created` event - use `create` instead",
+            )));
         }
         // Check version
         let Some(journal) = self.journals.get_mut(&execution_id) else {
@@ -899,8 +887,18 @@ impl DbTask {
         mut version: Option<Version>,
     ) -> Result<AppendBatchResponse, SpecificError> {
         if batch.is_empty() {
+            error!("Empty batch request");
             return Err(SpecificError::ValidationFailed(StrVariant::Static(
                 "empty batch request",
+            )));
+        }
+        if batch
+            .iter()
+            .any(|event| matches!(event.event, ExecutionEventInner::Created { .. }))
+        {
+            error!("Cannot append `Created` event - use `create` instead");
+            return Err(SpecificError::ValidationFailed(StrVariant::Static(
+                "Cannot append `Created` event - use `create` instead",
             )));
         }
         let mut begin_idx = 0;
@@ -994,15 +992,50 @@ impl DbTask {
         &mut self,
         items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
     ) -> Result<AppendTxResponse, SpecificError> {
+        if items.is_empty() {
+            error!("Empty tx request");
+            return Err(SpecificError::ValidationFailed(StrVariant::Static(
+                "empty tx request",
+            )));
+        }
         let mut versions = Vec::with_capacity(items.len());
         for (idx, (batch, execution_id, version)) in items.into_iter().enumerate() {
-            match self.append_batch(batch, execution_id, version) {
-                Ok(version) => versions.push(version),
-                Err(err) if idx == 0 => return Err(err),
-                Err(err) => {
-                    // not needed (yet) for its use case - appending to parent and child executions
-                    error!("Cannot rollback, got error on index {idx}, {execution_id} - {err:?}");
-                    unimplemented!("transaction rollback is not implemented")
+            match batch.as_slice() {
+                [AppendRequest {
+                    event:
+                        ExecutionEventInner::Created {
+                            ffqn,
+                            params,
+                            parent,
+                            scheduled_at,
+                            retry_exp_backoff,
+                            max_retries,
+                        },
+                    created_at,
+                }] => {
+                    versions.push(self.create(CreateRequest {
+                        created_at: *created_at,
+                        execution_id,
+                        ffqn: ffqn.clone(),
+                        params: params.clone(),
+                        parent: parent.clone(),
+                        scheduled_at: scheduled_at.clone(),
+                        retry_exp_backoff: *retry_exp_backoff,
+                        max_retries: *max_retries,
+                    })?);
+                }
+                _ => {
+                    match self.append_batch(batch, execution_id, version) {
+                        Ok(version) => versions.push(version),
+                        Err(err) if idx == 0 => return Err(err),
+                        Err(err) => {
+                            // not needed (yet) for its use case - appending to parent and child executions
+                            error!(
+                            "Cannot rollback, got error on index {idx}, {execution_id} - {err:?}"
+                        );
+                            unimplemented!("transaction rollback is not implemented")
+                        }
+                    }
                 }
             }
         }
@@ -1019,7 +1052,7 @@ pub mod tick {
         GeneralRequest, LockPendingResponse, LockResponse, RunId, Utc, Version,
     };
     use assert_matches::assert_matches;
-    use concepts::storage::{AppendBatch, CreateRequest, ExecutionEventInner};
+    use concepts::storage::{AppendBatch, CreateRequest};
     use std::sync::Arc;
 
     #[derive(Clone)]
@@ -1032,23 +1065,13 @@ pub mod tick {
     impl DbConnection for TickBasedDbConnection {
         #[instrument(skip_all, fields(execution_id = %req.execution_id))]
         async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-            let event = ExecutionEventInner::Created {
-                ffqn: req.ffqn,
-                params: req.params,
-                parent: req.parent,
-                scheduled_at: req.scheduled_at,
-                retry_exp_backoff: req.retry_exp_backoff,
-                max_retries: req.max_retries,
-            };
-            self.append(
-                req.execution_id,
-                None,
-                AppendRequest {
-                    created_at: req.created_at,
-                    event,
-                },
-            )
-            .await
+            let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Create {
+                req,
+                resp_sender: oneshot::channel().0,
+            });
+            let response = self.db_task.lock().unwrap().tick(request);
+            assert_matches!(response, DbTickResponse::AppendResult { payload, .. } => payload)
+                .map_err(DbError::Specific)
         }
 
         #[instrument(skip_all)]
@@ -1177,13 +1200,11 @@ pub mod tests {
     use self::tick::TickBasedDbConnection;
     use super::*;
     use assert_matches::assert_matches;
-    use concepts::FinishedExecutionError;
     use concepts::Params;
     use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
     use db_tests::db_test_stubs::lifecycle;
     use db_tests::db_test_stubs::SOME_FFQN;
     use std::{
-        ops::Deref,
         sync::Arc,
         time::{Duration, Instant},
     };
@@ -1361,34 +1382,25 @@ pub mod tests {
         let mut db_task = DbTask::spawn_new(1);
         let db_pool = db_task.pool().unwrap();
 
-        let stopwatch = Instant::now();
         let created_at = now();
         let ffqn = SOME_FFQN;
-        let append_req = AppendRequest {
-            created_at,
-            event: ExecutionEventInner::Created {
+        let stopwatch = Instant::now();
+        let db_connection = db_pool.connection().unwrap();
+        for _ in 0..executions {
+            let req = CreateRequest {
+                created_at,
+                execution_id: ExecutionId::generate(),
                 ffqn: ffqn.clone(),
                 params: Params::default(),
                 parent: None,
                 scheduled_at: None,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-            },
-        };
-        warn!(
-            "Created {executions} append entries in {:?}",
-            stopwatch.elapsed()
-        );
-        let stopwatch = Instant::now();
-        let db_connection = db_pool.connection().unwrap();
-        for _ in 0..executions {
-            db_connection
-                .append_batch(vec![append_req.clone()], ExecutionId::generate(), None)
-                .await
-                .unwrap();
+            };
+            db_connection.create(req).await.unwrap();
         }
         warn!(
-            "Appended {executions} executions in {:?}",
+            "Created {executions} executions in {:?}",
             stopwatch.elapsed()
         );
 
@@ -1426,74 +1438,5 @@ pub mod tests {
         drop(db_connection);
         drop(db_pool);
         db_task.close().await;
-    }
-
-    #[tokio::test]
-    async fn append_batch_should_rollback_creation() {
-        set_up();
-        let db_task = DbTask::new();
-        let db_task = Arc::new(std::sync::Mutex::new(db_task));
-        let db_connection = TickBasedDbConnection {
-            db_task: db_task.clone(),
-        };
-
-        let execution_id = ExecutionId::generate();
-        let created_at = now();
-        let batch = vec![
-            AppendRequest {
-                created_at,
-                event: ExecutionEventInner::Created {
-                    ffqn: SOME_FFQN,
-                    params: Params::default(),
-                    parent: None,
-                    scheduled_at: None,
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
-                },
-            },
-            AppendRequest {
-                created_at,
-                event: ExecutionEventInner::Finished {
-                    result: Err(FinishedExecutionError::PermanentTimeout),
-                },
-            },
-            AppendRequest {
-                created_at,
-                event: ExecutionEventInner::Finished {
-                    result: Err(FinishedExecutionError::PermanentTimeout),
-                },
-            },
-        ];
-        // invalid creation
-        let err = db_connection
-            .append_batch(batch.clone(), execution_id, None)
-            .await
-            .unwrap_err();
-        assert_matches!(
-            err,
-            DbError::Specific(SpecificError::ValidationFailed(reason))
-            if reason.deref() == "already finished"
-        );
-        let err = db_connection.get(execution_id).await.unwrap_err();
-        assert_eq!(DbError::Specific(SpecificError::NotFound), err);
-        // Split into [created], [finished,finished]
-        let (first, rest) = batch.split_first().unwrap();
-        let version = db_connection
-            .append_batch(vec![first.clone()], execution_id, None)
-            .await
-            .unwrap();
-        // this should be rolled back
-        let err = db_connection
-            .append_batch(rest.to_vec(), execution_id, Some(version.clone()))
-            .await
-            .unwrap_err();
-        assert_matches!(
-            err,
-            DbError::Specific(SpecificError::ValidationFailed(reason))
-            if reason.deref() == "already finished"
-        );
-        let created = db_connection.get(execution_id).await.unwrap();
-        assert_eq!(version, created.version);
-        assert_eq!(PendingState::PendingNow, created.pending_state);
     }
 }

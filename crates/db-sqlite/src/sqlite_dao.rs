@@ -484,32 +484,8 @@ impl SqlitePool {
         event: ExecutionEventInner,
     ) -> Result<AppendResponse, SqliteError> {
         match (event, appending_version) {
-            (
-                ExecutionEventInner::Created {
-                    ffqn,
-                    params,
-                    parent,
-                    scheduled_at,
-                    retry_exp_backoff,
-                    max_retries,
-                },
-                None,
-            ) => {
-                let req = CreateRequest {
-                    created_at,
-                    execution_id,
-                    ffqn,
-                    params,
-                    parent,
-                    scheduled_at,
-                    retry_exp_backoff,
-                    max_retries,
-                };
-                Self::create(tx, req)
-            }
-            (ExecutionEventInner::Created { .. }, Some(_)) => {
-                error!("Attempted to append `Created` with version");
-                Err(DbError::Specific(SpecificError::VersionMismatch))?
+            (ExecutionEventInner::Created { .. }, _) => {
+                unreachable!("handled in the caller")
             }
             (
                 ExecutionEventInner::Locked {
@@ -637,23 +613,10 @@ impl SqlitePool {
 impl DbConnection for SqlitePool {
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-        let event = ExecutionEventInner::Created {
-            ffqn: req.ffqn,
-            params: req.params,
-            parent: req.parent,
-            scheduled_at: req.scheduled_at,
-            retry_exp_backoff: req.retry_exp_backoff,
-            max_retries: req.max_retries,
-        };
-        self.append(
-            req.execution_id,
-            None,
-            AppendRequest {
-                created_at: req.created_at,
-                event,
-            },
-        )
-        .await
+        self.pool
+            .transaction_write_with_span(move |tx| Self::create(tx, req), Span::current())
+            .await
+            .map_err(DbError::from)
     }
 
     #[instrument(skip_all, fields(%executor_id))]
@@ -763,6 +726,13 @@ impl DbConnection for SqlitePool {
         appending_version: Option<Version>,
         req: AppendRequest,
     ) -> Result<AppendResponse, DbError> {
+        // Disallow `Created` event
+        if let ExecutionEventInner::Created { .. } = req.event {
+            error!("Cannot append `Created` event - use `create` instead");
+            return Err(DbError::Specific(SpecificError::ValidationFailed(
+                StrVariant::Static("Cannot append `Created` event - use `create` instead"),
+            )));
+        }
         let created_at = req.created_at;
         self.pool
             .transaction_write_with_span(
@@ -775,17 +745,50 @@ impl DbConnection for SqlitePool {
 
     async fn append_batch(
         &self,
-        _batch: AppendBatch,
+        batch: AppendBatch,
         _execution_id: ExecutionId,
         _version: Option<Version>,
     ) -> Result<AppendBatchResponse, DbError> {
+        if batch.is_empty() {
+            error!("Empty batch request");
+            return Err(DbError::Specific(SpecificError::ValidationFailed(
+                StrVariant::Static("empty batch request"),
+            )));
+        }
+        if batch
+            .iter()
+            .any(|event| matches!(event.event, ExecutionEventInner::Created { .. }))
+        {
+            error!("Cannot append `Created` event - use `create` instead");
+            return Err(DbError::Specific(SpecificError::ValidationFailed(
+                StrVariant::Static("Cannot append `Created` event - use `create` instead"),
+            )));
+        }
         todo!()
     }
 
     async fn append_tx(
         &self,
-        _items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
+        items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
     ) -> Result<AppendTxResponse, DbError> {
+        if items.is_empty() {
+            error!("Empty tx request");
+            return Err(DbError::Specific(SpecificError::ValidationFailed(
+                StrVariant::Static("empty tx request"),
+            )));
+        }
+        for batch in &items {
+            if batch
+                .0
+                .iter()
+                .any(|event| matches!(event.event, ExecutionEventInner::Created { .. }))
+            {
+                error!("Cannot append `Created` event - use `create` instead");
+                return Err(DbError::Specific(SpecificError::ValidationFailed(
+                    StrVariant::Static("Cannot append `Created` event - use `create` instead"),
+                )));
+            }
+        }
         todo!()
     }
 
