@@ -754,7 +754,7 @@ impl DbConnection for SqlitePool {
         &self,
         batch: AppendBatch,
         _execution_id: ExecutionId,
-        _version: Option<Version>,
+        _version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
         if batch.is_empty() {
             error!("Empty batch request");
@@ -776,26 +776,9 @@ impl DbConnection for SqlitePool {
 
     async fn append_tx(
         &self,
-        items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
+        _parent_req: (AppendBatch, ExecutionId, Version),
+        _child_req: CreateRequest,
     ) -> Result<AppendTxResponse, DbError> {
-        if items.is_empty() {
-            error!("Empty tx request");
-            return Err(DbError::Specific(SpecificError::ValidationFailed(
-                StrVariant::Static("empty tx request"),
-            )));
-        }
-        for batch in &items {
-            if batch
-                .0
-                .iter()
-                .any(|event| matches!(event.event, ExecutionEventInner::Created { .. }))
-            {
-                error!("Cannot append `Created` event - use `create` instead");
-                return Err(DbError::Specific(SpecificError::ValidationFailed(
-                    StrVariant::Static("Cannot append `Created` event - use `create` instead"),
-                )));
-            }
-        }
         todo!()
     }
 

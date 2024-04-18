@@ -173,10 +173,15 @@ impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all)]
     async fn append_tx(
         &self,
-        items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
+        parent_req: (AppendBatch, ExecutionId, Version),
+        child_req: CreateRequest,
     ) -> Result<AppendTxResponse, DbError> {
         let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::General(GeneralRequest::AppendTx { items, resp_sender });
+        let request = DbRequest::General(GeneralRequest::AppendTx {
+            parent_req,
+            child_req,
+            resp_sender,
+        });
         self.0
             .send(request)
             .await
@@ -419,7 +424,8 @@ enum GeneralRequest {
     },
     #[display(fmt = "AppendTx")]
     AppendTx {
-        items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
+        parent_req: (AppendBatch, ExecutionId, Version),
+        child_req: CreateRequest,
         #[derivative(Debug = "ignore")]
         resp_sender: oneshot::Sender<Result<AppendTxResponse, SpecificError>>,
     },
@@ -661,8 +667,12 @@ impl DbTask {
                 payload: self.get_expired_timers(before),
                 resp_sender,
             },
-            GeneralRequest::AppendTx { items, resp_sender } => DbTickResponse::AppendTxResult {
-                payload: self.append_tx(items),
+            GeneralRequest::AppendTx {
+                parent_req,
+                child_req,
+                resp_sender,
+            } => DbTickResponse::AppendTxResult {
+                payload: self.append_tx(parent_req, child_req),
                 resp_sender,
             },
         }
@@ -936,60 +946,12 @@ impl DbTask {
 
     fn append_tx(
         &mut self,
-        items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
+        parent_req: (AppendBatch, ExecutionId, Version),
+        child_req: CreateRequest,
     ) -> Result<AppendTxResponse, SpecificError> {
-        if items.is_empty() {
-            error!("Empty tx request");
-            return Err(SpecificError::ValidationFailed(StrVariant::Static(
-                "empty tx request",
-            )));
-        }
-        let mut versions = Vec::with_capacity(items.len());
-        for (idx, (batch, execution_id, version)) in items.into_iter().enumerate() {
-            match batch.as_slice() {
-                [AppendRequest {
-                    event:
-                        ExecutionEventInner::Created {
-                            ffqn,
-                            params,
-                            parent,
-                            scheduled_at,
-                            retry_exp_backoff,
-                            max_retries,
-                        },
-                    created_at,
-                }] => {
-                    versions.push(self.create(CreateRequest {
-                        created_at: *created_at,
-                        execution_id,
-                        ffqn: ffqn.clone(),
-                        params: params.clone(),
-                        parent: parent.clone(),
-                        scheduled_at: scheduled_at.clone(),
-                        retry_exp_backoff: *retry_exp_backoff,
-                        max_retries: *max_retries,
-                    })?);
-                }
-                _ => {
-                    match self.append_batch(
-                        batch,
-                        execution_id,
-                        version.expect("append_tx does not support None version"),
-                    ) {
-                        Ok(version) => versions.push(version),
-                        Err(err) if idx == 0 => return Err(err),
-                        Err(err) => {
-                            // not needed (yet) for its use case - appending to parent and child executions
-                            error!(
-                            "Cannot rollback, got error on index {idx}, {execution_id} - {err:?}"
-                        );
-                            unimplemented!("transaction rollback is not implemented")
-                        }
-                    }
-                }
-            }
-        }
-        Ok(versions)
+        let parent_version = self.append_batch(parent_req.0, parent_req.1, parent_req.2)?;
+        let child_version = self.create(child_req)?;
+        Ok((parent_version, child_version))
     }
 }
 
@@ -1002,7 +964,7 @@ pub mod tick {
         GeneralRequest, LockPendingResponse, LockResponse, RunId, Utc, Version,
     };
     use assert_matches::assert_matches;
-    use concepts::storage::{AppendBatch, CreateRequest};
+    use concepts::storage::{AppendBatch, AppendTxResponse, CreateRequest};
     use std::sync::Arc;
 
     #[derive(Clone)]
@@ -1064,10 +1026,12 @@ pub mod tick {
 
         async fn append_tx(
             &self,
-            items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
-        ) -> Result<Vec<AppendBatchResponse>, DbError> {
+            parent_req: (AppendBatch, ExecutionId, Version),
+            child_req: CreateRequest,
+        ) -> Result<AppendTxResponse, DbError> {
             let request = DbRequest::General(GeneralRequest::AppendTx {
-                items,
+                parent_req,
+                child_req,
                 resp_sender: oneshot::channel().0,
             });
             let response = self.db_task.lock().unwrap().tick(request);

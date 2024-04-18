@@ -2,7 +2,8 @@ use crate::workflow_worker::JoinNextBlockingStrategy;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{
-    AppendRequest, DbConnection, DbError, DbPool, ExecutionEventInner, JoinSetResponse, Version,
+    AppendRequest, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
+    JoinSetResponse, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
@@ -206,27 +207,21 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         let parent = (
             vec![join_set, child_exec_req, join_next],
             self.execution_id,
-            Some(self.version.clone()),
+            self.version.clone(),
         );
-        let child = (
-            vec![AppendRequest {
-                created_at,
-                event: ExecutionEventInner::Created {
-                    ffqn,
-                    params,
-                    parent: Some((self.execution_id, new_join_set_id)),
-                    scheduled_at: None,
-                    retry_exp_backoff: self.child_retry_exp_backoff,
-                    max_retries: self.child_max_retries,
-                },
-            }],
-            new_child_execution_id,
-            None,
-        );
+        let child = CreateRequest {
+            created_at,
+            execution_id: new_child_execution_id,
+            ffqn,
+            params,
+            parent: Some((self.execution_id, new_join_set_id)),
+            scheduled_at: None,
+            retry_exp_backoff: self.child_retry_exp_backoff,
+            max_retries: self.child_max_retries,
+        };
         let db_connection = self.db_pool.connection().map_err(DbError::Connection)?;
-        let versions = db_connection.append_tx(vec![parent, child]).await?;
-        assert_eq!(2, versions.len());
-        self.version = versions.first().unwrap().clone();
+        let (parent_version, _) = db_connection.append_tx(parent, child).await?;
+        self.version = parent_version;
 
         if interrupt {
             Err(FunctionError::ChildExecutionRequest)

@@ -381,7 +381,7 @@ pub struct LockedExecution {
 }
 pub type LockPendingResponse = Vec<LockedExecution>;
 pub type AppendBatchResponse = Version;
-pub type AppendTxResponse = Vec<Version>;
+pub type AppendTxResponse = (Version, Version);
 
 #[derive(Debug, Clone, derive_more::Display, Serialize, Deserialize)]
 #[display(fmt = "{event}")]
@@ -462,7 +462,8 @@ pub trait DbConnection: Send + Sync {
 
     async fn append_tx(
         &self,
-        items: Vec<(AppendBatch, ExecutionId, Option<Version>)>,
+        parent_req: (AppendBatch, ExecutionId, Version),
+        child_req: CreateRequest,
     ) -> Result<AppendTxResponse, DbError>;
 
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError>;
