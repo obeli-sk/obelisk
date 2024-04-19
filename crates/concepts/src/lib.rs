@@ -241,7 +241,7 @@ pub struct FunctionMetadata {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SupportedFunctionResult {
     None,
-    Fallible(WastValWithType, Result<(), ()>), // FIXME: Remove the second parameter, use type instead
+    Fallible(WastValWithType),
     Infallible(WastValWithType),
 }
 
@@ -264,10 +264,7 @@ impl SupportedFunctionResult {
             let r#type = TypeWrapper::try_from(&res)?;
             let val = WastVal::try_from(res)?;
             match &val {
-                WastVal::Result(res) => {
-                    let res = res.as_ref().map(|_| ()).map_err(|_| ());
-                    Ok(Self::Fallible(WastValWithType { r#type, val }, res))
-                }
+                WastVal::Result(_) => Ok(Self::Fallible(WastValWithType { r#type, val })),
                 _ => Ok(Self::Infallible(WastValWithType { r#type, val })),
             }
         } else {
@@ -276,20 +273,23 @@ impl SupportedFunctionResult {
     }
 
     #[must_use]
-    pub fn is_fallible_err(&self) -> bool {
-        matches!(self, Self::Fallible(_, Err(())))
+    pub fn fallible_err(&self) -> Option<Option<&WastVal>> {
+        match self {
+            SupportedFunctionResult::Fallible(WastValWithType {
+                val: WastVal::Result(Err(err)),
+                ..
+            }) => Some(err.as_deref()),
+            _ => None,
+        }
     }
 
     #[must_use]
-    pub fn fallible_err(&self) -> Option<Option<&WastVal>> {
+    pub fn fallible_ok(&self) -> Option<Option<&WastVal>> {
         match self {
-            SupportedFunctionResult::Fallible(
-                WastValWithType {
-                    val: WastVal::Result(Err(err)),
-                    ..
-                },
-                Err(()),
-            ) => Some(err.as_deref()),
+            SupportedFunctionResult::Fallible(WastValWithType {
+                val: WastVal::Result(Ok(ok)),
+                ..
+            }) => Some(ok.as_deref()),
             _ => None,
         }
     }
@@ -298,7 +298,7 @@ impl SupportedFunctionResult {
     pub fn value(&self) -> Option<&WastVal> {
         match self {
             SupportedFunctionResult::None => None,
-            SupportedFunctionResult::Fallible(v, _) | SupportedFunctionResult::Infallible(v) => {
+            SupportedFunctionResult::Fallible(v) | SupportedFunctionResult::Infallible(v) => {
                 Some(&v.val)
             }
         }
@@ -461,7 +461,7 @@ impl Params {
                 }
                 Ok(Arc::new(vec))
             }
-            Self::Empty => Ok(Arc::new(Vec::new())), // FIXME: Arc<[T]>
+            Self::Empty => Ok(Arc::new(Vec::new())), // TODO: Arc<[T]>
         }
     }
 

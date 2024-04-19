@@ -1,3 +1,4 @@
+// TODO: add test
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::DbConnection;
@@ -31,7 +32,7 @@ pub struct TimersWatcherTask<DB: DbConnection> {
     pub(crate) db_connection: DB,
 }
 
-#[allow(dead_code)] // FIXME: add test
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct TickProgress {
     pub(crate) expired_locks: usize,

@@ -43,7 +43,7 @@ impl ExecutionLog {
     pub fn can_be_retried_after(&self) -> Option<Duration> {
         let already_tried_count = self.already_tried_count();
         if already_tried_count < self.max_retries() + 1 {
-            // FIXME: Add test for number of retries
+            // TODO: Add test for number of retries
             let duration = self.retry_exp_backoff() * 2_u32.saturating_pow(already_tried_count);
             Some(duration)
         } else {

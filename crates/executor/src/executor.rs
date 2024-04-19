@@ -875,16 +875,13 @@ mod tests {
                 (
                     vec![],
                     Ok((
-                        SupportedFunctionResult::Fallible(
-                            WastValWithType {
-                                r#type: TypeWrapper::Result {
-                                    ok: None,
-                                    err: None,
-                                },
-                                val: val_json::wast_val::WastVal::Result(Err(None)),
+                        SupportedFunctionResult::Fallible(WastValWithType {
+                            r#type: TypeWrapper::Result {
+                                ok: None,
+                                err: None,
                             },
-                            Err(()),
-                        ),
+                            val: val_json::wast_val::WastVal::Result(Err(None)),
+                        }),
                         Version::new(2),
                     )),
                 ),
@@ -921,16 +918,13 @@ mod tests {
                 (
                     vec![],
                     Ok((
-                        SupportedFunctionResult::Fallible(
-                            WastValWithType {
-                                r#type: TypeWrapper::Result {
-                                    ok: None,
-                                    err: None,
-                                },
-                                val: val_json::wast_val::WastVal::Result(Ok(None)),
+                        SupportedFunctionResult::Fallible(WastValWithType {
+                            r#type: TypeWrapper::Result {
+                                ok: None,
+                                err: None,
                             },
-                            Ok(()),
-                        ),
+                            val: val_json::wast_val::WastVal::Result(Ok(None)),
+                        }),
                         Version::new(4),
                     )),
                 ),
@@ -962,8 +956,7 @@ mod tests {
                                 err,
                             },
                             val:val_json::wast_val::WastVal::Result(Ok(None)),
-                        },
-                        Ok(())
+                        }
                     )),
                 },
                 created_at: finished_at,

@@ -525,7 +525,7 @@ mod tests {
         }
     }
 
-    // FIXME: verify non-determinism detection:
+    // TODO: verify non-determinism detection:
     // Start WorkflowWorkerMock, wait until it completes.
     // Copy its execution history to a new database
     // A. Swap two event history items

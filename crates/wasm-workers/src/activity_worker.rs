@@ -873,16 +873,21 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             // Check the result.
-            let (val, res) = assert_matches!(
-                db_connection.wait_for_finished_result(execution_id, Some(Duration::from_secs(1))).await.unwrap(),
-                Ok(SupportedFunctionResult::Fallible(val, res)) => (val, res));
-            res.unwrap();
-            let (val, ok, err) = assert_matches!(val, WastValWithType{val: WastVal::Result(Ok(Some(val))),
-                r#type: TypeWrapper::Result{ok, err}} => (val, ok, err));
-            let val = assert_matches!(val.deref(), WastVal::String(val) => val);
+            let res = assert_matches!(
+                db_connection
+                    .wait_for_finished_result(execution_id, Some(Duration::from_secs(1)))
+                    .await
+                    .unwrap(),
+                Ok(res) => res
+            );
+            let wast_val = assert_matches!(res.fallible_ok(), Some(Some(wast_val)) => wast_val);
+            let val = assert_matches!(wast_val, WastVal::String(val) => val);
+            assert_eq!(BODY, val.deref());
+            // check types
+            let (ok, err) = assert_matches!(res, SupportedFunctionResult::Fallible(WastValWithType{val: _,
+                r#type: TypeWrapper::Result{ok, err}}) => (ok, err));
             assert_eq!(Some(Box::new(TypeWrapper::String)), ok);
             assert_eq!(Some(Box::new(TypeWrapper::String)), err);
-            assert_eq!(BODY, val.deref());
             drop(db_connection);
             drop(db_pool);
             exec_task.close().await;
