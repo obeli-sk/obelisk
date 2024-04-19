@@ -15,7 +15,7 @@ use concepts::{
 };
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use std::{cmp::max, collections::VecDeque, path::Path, sync::Arc};
-use tracing::{debug, error, instrument, trace, warn, Span};
+use tracing::{debug, error, info, instrument, trace, warn, Span};
 
 const PRAGMA: &str = r"
 PRAGMA synchronous = NORMAL;
@@ -103,15 +103,15 @@ impl SqlitePool {
     async fn init(pool: &Pool) -> Result<(), SqliteError> {
         pool.conn_with_err_and_span(
             |conn| {
-                trace!("Executing `PRAGMA`");
+                debug!("Executing `PRAGMA`");
                 conn.execute(PRAGMA, [])?;
-                trace!("Executing `CREATE_TABLE_EXECUTION_LOG`");
+                debug!("Executing `CREATE_TABLE_EXECUTION_LOG`");
                 conn.execute(CREATE_TABLE_EXECUTION_LOG, [])?;
-                trace!("Executing `CREATE_TABLE_PENDING`");
+                debug!("Executing `CREATE_TABLE_PENDING`");
                 conn.execute(CREATE_TABLE_PENDING, [])?;
-                trace!("Executing `CREATE_TABLE_LOCKED`");
+                debug!("Executing `CREATE_TABLE_LOCKED`");
                 conn.execute(CREATE_TABLE_LOCKED, [])?;
-                debug!("Done setting up sqlite");
+                info!("Done setting up sqlite");
                 Ok::<_, SqliteError>(())
             },
             Span::current(),
@@ -214,7 +214,7 @@ impl SqlitePool {
             .map_err(async_sqlite::Error::Rusqlite)?)
     }
 
-    fn current_version(
+    fn get_current_version(
         tx: &Transaction,
         execution_id: ExecutionId,
     ) -> Result<Version, SqliteError> {
@@ -238,7 +238,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: ExecutionId,
     ) -> Result<Version, SqliteError> {
-        Self::current_version(tx, execution_id).map(|ver| Version::new(ver.0 + 1))
+        Self::get_current_version(tx, execution_id).map(|ver| Version::new(ver.0 + 1))
     }
 
     fn check_next_version(
@@ -256,7 +256,7 @@ impl SqlitePool {
 
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
     fn create_inner(tx: &Transaction, req: CreateRequest) -> Result<AppendResponse, SqliteError> {
-        trace!("create_inner");
+        debug!("create_inner");
         let version = Version::new(0);
         let execution_id = req.execution_id;
         let execution_id_str = execution_id.to_string();
@@ -299,7 +299,7 @@ impl SqlitePool {
         purge: bool, // should the execution be deleted from `pending` and `locked`
         ffqn: Option<FunctionFqn>, // will be fetched from `Created` if required
     ) -> Result<(), SqliteError> {
-        trace!("update_index");
+        debug!("update_index");
         let execution_id_str = execution_id.to_string();
         if purge {
             let mut stmt =
@@ -321,7 +321,7 @@ impl SqlitePool {
                 } else {
                     None
                 };
-                trace!("Inserting to `pending` with schedule: `{scheduled_at:?}`");
+                debug!("Inserting to `pending` with schedule: `{scheduled_at:?}`");
                 let mut stmt = tx.prepare(
                     "INSERT INTO pending (execution_id, next_version, pending_at, ffqn) \
                     VALUES (:execution_id, :next_version, :pending_at, :ffqn)",
@@ -342,7 +342,7 @@ impl SqlitePool {
             PendingState::Locked {
                 lock_expires_at, ..
             } => {
-                trace!("Inserting to `locked`");
+                debug!("Inserting to `locked`");
                 let mut stmt = tx.prepare_cached(
                     "INSERT INTO locked (execution_id, next_version, lock_expires_at) \
                 VALUES \
@@ -365,7 +365,7 @@ impl SqlitePool {
         execution_id: ExecutionId,
         next_version: &Version,
     ) -> Result<(), SqliteError> {
-        trace!("update_index_version");
+        debug!("update_index_version");
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx.prepare_cached(
             "UPDATE pending SET next_version = :next_version WHERE execution_id = :execution_id AND next_version = :current_version",
@@ -422,7 +422,7 @@ impl SqlitePool {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockedExecution, SqliteError> {
-        trace!("lock_inner");
+        debug!("lock_inner");
         Self::check_next_version(tx, execution_id, &appending_version)?;
         let pending_state = Self::current_pending_state(tx, execution_id)?;
         let lock_kind = pending_state
@@ -713,7 +713,7 @@ impl SqlitePool {
 impl DbConnection for SqlitePool {
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-        trace!("create");
+        debug!("create");
         self.pool
             .transaction_write_with_span(move |tx| Self::create_inner(tx, req), Span::current())
             .await
@@ -734,8 +734,8 @@ impl DbConnection for SqlitePool {
         Ok(self
             .pool
             .transaction_write_with_span::<_, _, SqliteError>(
+                //FIXME: Split into a read and write transaction not to block the single writer
                 move |tx| {
-                    trace!("tx started");
                     let mut execution_ids_versions = Vec::with_capacity(batch_size);
                     // TODO: The locked executions should be sorted by pending date, otherwise ffqns later in the list might get starved.
                     for ffqn in ffqns {
@@ -769,6 +769,10 @@ impl DbConnection for SqlitePool {
                             break;
                         }
                     }
+                    if execution_ids_versions.is_empty() {
+                        return Ok(Vec::new());
+                    }
+                    debug!("Locking {execution_ids_versions:?}");
                     let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
                     // Append lock
                     for (execution_id, version) in execution_ids_versions {
@@ -783,7 +787,6 @@ impl DbConnection for SqlitePool {
                         )?;
                         locked_execs.push(locked);
                     }
-                    trace!("tx committed");
                     Ok(locked_execs)
                 },
                 Span::current(),
@@ -802,7 +805,7 @@ impl DbConnection for SqlitePool {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse, DbError> {
-        trace!("lock");
+        debug!("lock");
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
@@ -830,7 +833,7 @@ impl DbConnection for SqlitePool {
         version: Option<Version>,
         req: AppendRequest,
     ) -> Result<AppendResponse, DbError> {
-        trace!("append");
+        debug!("append");
         // Disallow `Created` event
         if let ExecutionEventInner::Created { .. } = req.event {
             error!("Cannot append `Created` event - use `create` instead");
@@ -854,7 +857,7 @@ impl DbConnection for SqlitePool {
         execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
-        trace!("append_batch");
+        debug!("append_batch");
         if batch.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -893,7 +896,7 @@ impl DbConnection for SqlitePool {
         mut version: Version,
         child_req: CreateRequest,
     ) -> Result<AppendBatchResponse, DbError> {
-        trace!("append_batch_create_child");
+        debug!("append_batch_create_child");
         if batch.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -932,7 +935,7 @@ impl DbConnection for SqlitePool {
         version: Version,
         parent: (ExecutionId, AppendRequest),
     ) -> Result<AppendBatchResponse, DbError> {
-        trace!("append_batch_respond_to_parent");
+        debug!("append_batch_respond_to_parent");
         if batch.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -1042,7 +1045,7 @@ impl DbConnection for SqlitePool {
 
     /// Get currently expired locks and async timers (delay requests)
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
-        trace!("get_expired_timers");
+        debug!("get_expired_timers");
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
             move |conn| {
                 let mut stmt = conn.prepare(

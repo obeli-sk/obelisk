@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 use tokio::task::AbortHandle;
-use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::ClockFn;
 
 #[derive(Debug, Clone)]
@@ -216,7 +216,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         )
                         .await;
                         if let Err(err) = res {
-                            info!("Execution failed: {err:?}");
+                            error!("Updating execution failed: {err:?}");
                         }
                         drop(permit);
                     }
@@ -262,6 +262,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         .await
         {
             Ok(Some(append)) => {
+                debug!("Appending {append:?}");
                 let db_connection = db_pool.connection();
                 if let Some((parent_id, parent_append_request)) = append.parent_response {
                     db_connection
@@ -459,6 +460,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
     }
 }
 
+#[derive(Debug)]
 struct Append {
     primary_events: Vec<AppendRequest>,
     execution_id: ExecutionId,
@@ -533,7 +535,6 @@ mod tests {
     };
     use concepts::{Params, SupportedFunctionResult};
     use db_mem::inmemory_dao::DbTask;
-    use db_tests::sqlite_pool;
     use indexmap::IndexMap;
     use simple_worker::SOME_FFQN;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
@@ -586,9 +587,10 @@ mod tests {
         db_task.close().await;
     }
 
+    #[cfg(not(madsim))]
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based_sqlite() {
-        let (pool, _guard) = sqlite_pool().await;
+        let (pool, _guard) = db_tests::sqlite_pool().await;
         execute_simple_lifecycle_tick_based(pool.clone()).await;
         pool.close().await.unwrap();
     }

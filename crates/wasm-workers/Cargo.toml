@@ -7,7 +7,6 @@ rust-version.workspace = true
 
 [dependencies]
 concepts.workspace = true
-db-mem.workspace = true
 executor.workspace = true
 utils.workspace = true
 val-json.workspace = true
@@ -34,6 +33,9 @@ wasmtime.workspace = true
 wit-parser.workspace = true
 
 [dev-dependencies]
+db-mem.workspace = true
+db-sqlite.workspace = true
+db-tests.workspace = true
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-programs-sleep-activity-builder.workspace = true

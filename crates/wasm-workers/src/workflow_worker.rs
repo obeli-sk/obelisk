@@ -361,7 +361,7 @@ mod valuable {
 
 #[cfg(test)]
 mod tests {
-    // TODO: test epoch and select-based timeouts
+    // TODO: test timeouts, retries
     use super::*;
     use crate::{
         activity_worker::tests::{spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT},
@@ -425,12 +425,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fibo_workflow_should_schedule_fibo_activity() {
-        const INPUT_ITERATIONS: u32 = 1;
-
-        let _guard = test_utils::set_up();
+    async fn fibo_workflow_should_schedule_fibo_activity_mem() {
         let mut db_task = DbTask::spawn_new(10);
         let db_pool = db_task.pool().expect("must be open");
+        fibo_workflow_should_schedule_fibo_activity(db_pool).await;
+        db_task.close().await;
+    }
+
+    #[cfg(not(madsim))]
+    #[tokio::test]
+    async fn fibo_workflow_should_schedule_fibo_activity_sqlite() {
+        let (db_pool, _guard) = db_tests::sqlite_pool().await;
+        fibo_workflow_should_schedule_fibo_activity(db_pool.clone()).await;
+        db_pool.close().await.unwrap();
+    }
+
+    async fn fibo_workflow_should_schedule_fibo_activity<
+        DB: DbConnection + 'static,
+        P: DbPool<DB> + 'static,
+    >(
+        db_pool: P,
+    ) {
+        const INPUT_ITERATIONS: u32 = 1;
+        let _guard = test_utils::set_up();
         let workflow_exec_task = spawn_workflow_fibo(db_pool.clone());
         // Create an execution.
         let execution_id = ExecutionId::from_parts(0, 0);
@@ -478,12 +495,8 @@ mod tests {
             FIBO_10_OUTPUT,
             assert_matches!(res, WastValWithType{ val: WastVal::U64(actual), r#type: TypeWrapper::U64} => actual),
         );
-
-        drop(db_connection);
-        drop(db_pool);
         workflow_exec_task.close().await;
         activity_exec_task.close().await;
-        db_task.close().await;
     }
 
     pub(crate) fn spawn_workflow_sleep<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
