@@ -826,7 +826,7 @@ mod tests {
         .executions
         .is_empty());
         // tick again to finish the execution
-        sim_clock.sleep(retry_exp_backoff);
+        sim_clock.move_time_forward(retry_exp_backoff);
         tick_fn(exec_config, db_pool.clone(), worker, sim_clock.now()).await;
         let execution_log = {
             let db_connection = db_pool.connection();
@@ -1063,7 +1063,7 @@ mod tests {
         let mut first_execution_progress = executor.tick(sim_clock.now()).await.unwrap();
         assert_eq!(1, first_execution_progress.executions.len());
         // Started hanging, wait for lock expiry.
-        sim_clock.sleep(lock_expiry);
+        sim_clock.move_time_forward(lock_expiry);
         // cleanup should be called
         let now_after_first_lock_expiry = sim_clock.now();
         {
@@ -1101,7 +1101,7 @@ mod tests {
             },
             execution_log.pending_state
         );
-        sim_clock.sleep(timeout_duration);
+        sim_clock.move_time_forward(timeout_duration);
         let now_after_first_timeout = sim_clock.now();
         debug!(now = %now_after_first_timeout, "Second execution should hang again and result in a permanent timeout");
 
@@ -1109,7 +1109,7 @@ mod tests {
         assert_eq!(1, second_execution_progress.executions.len());
 
         // Started hanging, wait for lock expiry.
-        sim_clock.sleep(lock_expiry);
+        sim_clock.move_time_forward(lock_expiry);
         // cleanup should be called
         let now_after_second_lock_expiry = sim_clock.now();
         debug!(now = %now_after_second_lock_expiry, "Expecting the second lock to be expired");

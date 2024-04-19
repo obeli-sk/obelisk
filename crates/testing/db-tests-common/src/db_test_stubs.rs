@@ -91,7 +91,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
         version = locked_execution.version;
         locked_execution.run_id
     };
-    sim_clock.sleep(Duration::from_millis(499));
+    sim_clock.move_time_forward(Duration::from_millis(499));
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Intermittent timeout");
@@ -107,7 +107,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             .await
             .unwrap();
     }
-    sim_clock.sleep(lock_expiry - Duration::from_millis(100));
+    sim_clock.move_time_forward(lock_expiry - Duration::from_millis(100));
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock using exec2");
@@ -131,7 +131,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
     }
     // TODO: attempt to append an event requiring version without it.
 
-    sim_clock.sleep(Duration::from_millis(100));
+    sim_clock.move_time_forward(Duration::from_millis(100));
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Lock again using exec1");
@@ -149,7 +149,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
         assert!(event_history.is_empty());
         version = current_version;
     }
-    sim_clock.sleep(Duration::from_millis(700));
+    sim_clock.move_time_forward(Duration::from_millis(700));
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock using exec2  while in a lock");
@@ -184,7 +184,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
         assert!(event_history.is_empty());
         version = current_version;
     }
-    sim_clock.sleep(Duration::from_millis(200));
+    sim_clock.move_time_forward(Duration::from_millis(200));
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Extend lock using exec1 and wrong run id should fail");
@@ -214,7 +214,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             .await
             .unwrap();
     }
-    sim_clock.sleep(Duration::from_millis(200));
+    sim_clock.move_time_forward(Duration::from_millis(200));
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Lock again");
@@ -245,7 +245,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             .await
             .unwrap();
     }
-    sim_clock.sleep(Duration::from_millis(300));
+    sim_clock.move_time_forward(Duration::from_millis(300));
     {
         let created_at = sim_clock.now();
         debug!(now = %created_at, "Finish execution");
@@ -326,7 +326,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection) {
         assert_eq!(Version::new(2), locked_execution.version);
     }
     // Calling `get_expired_timers` after lock expiry should return the expired execution.
-    sim_clock.sleep(lock_duration);
+    sim_clock.move_time_forward(lock_duration);
     {
         let expired_at = sim_clock.now();
         let expired = db_connection.get_expired_timers(expired_at).await.unwrap();

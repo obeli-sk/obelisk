@@ -645,7 +645,7 @@ mod tests {
                     expires_at,
                 } => {
                     assert!(delay_request_count > 0);
-                    sim_clock.sleep_until(*expires_at);
+                    sim_clock.move_time_to(*expires_at);
                     delay_request_count -= 1;
                 }
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {

@@ -251,7 +251,7 @@ impl ExecutionEventInner {
     }
 
     #[must_use]
-    // FIXME: Remove
+    // TODO: Remove if finished_child_watcher is implemented
     pub fn appendable_without_version(&self) -> bool {
         matches!(
             self,
