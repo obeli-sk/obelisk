@@ -326,13 +326,6 @@ pub enum JoinSetRequest {
     ChildExecutionRequest { child_execution_id: ExecutionId },
 }
 
-impl HistoryEvent {
-    #[must_use]
-    pub fn appendable_only_in_lock(&self) -> bool {
-        !matches!(self, Self::JoinSetResponse { .. })
-    }
-}
-
 #[derive(
     Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
 )]

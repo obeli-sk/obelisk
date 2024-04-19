@@ -95,22 +95,7 @@ impl ExecutionJournal {
                 *lock_expires_at,
             )?;
         }
-        let locked_now = matches!(self.pending_state, PendingState::Locked { lock_expires_at,.. } if lock_expires_at > created_at);
 
-        let appendable_only_in_lock = match &event {
-            ExecutionEventInner::Locked { .. } // checked above, only if the lock is being extended by the same executor
-            | ExecutionEventInner::IntermittentFailure { .. }
-            | ExecutionEventInner::IntermittentTimeout { .. }
-            | ExecutionEventInner::Finished { .. } => true,
-            ExecutionEventInner::HistoryEvent { event } => event.appendable_only_in_lock(),
-            _ => false,
-        };
-
-        if locked_now && !appendable_only_in_lock {
-            return Err(SpecificError::ValidationFailed(StrVariant::Arc(Arc::from(
-                format!("cannot append {event} event in {}", self.pending_state),
-            ))));
-        }
         self.execution_events
             .push_back(ExecutionEvent { created_at, event });
         // update the state

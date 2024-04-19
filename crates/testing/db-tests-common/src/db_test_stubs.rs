@@ -235,6 +235,18 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
         assert_eq!(vec![HistoryEvent::Yield], event_history);
         version = current_version;
     }
+    {
+        let created_at = sim_clock.now();
+        debug!(now = %created_at, "Cancel request");
+        let req = AppendRequest {
+            event: ExecutionEventInner::CancelRequest,
+            created_at,
+        };
+        version = db_connection
+            .append(execution_id, Some(version), req)
+            .await
+            .unwrap();
+    }
     sim_clock.sleep(Duration::from_millis(300));
     {
         let created_at = sim_clock.now();
