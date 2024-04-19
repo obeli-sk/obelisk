@@ -731,15 +731,14 @@ impl DbConnection for SqlitePool {
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError> {
         trace!("lock_pending");
-        Ok(self
+        let execution_ids_versions = self
             .pool
-            .transaction_write_with_span::<_, _, SqliteError>(
-                //FIXME: Split into a read and write transaction not to block the single writer
-                move |tx| {
+            .conn_with_err_and_span::<_, _, SqliteError>(
+                move |conn| {
                     let mut execution_ids_versions = Vec::with_capacity(batch_size);
                     // TODO: The locked executions should be sorted by pending date, otherwise ffqns later in the list might get starved.
                     for ffqn in ffqns {
-                        let mut stmt = tx.prepare(
+                        let mut stmt = conn.prepare(
                             "SELECT execution_id, next_version FROM pending WHERE \
                             pending_at <= :pending_at AND ffqn = :ffqn \
                             ORDER BY pending_at LIMIT :batch_size",
@@ -769,29 +768,39 @@ impl DbConnection for SqlitePool {
                             break;
                         }
                     }
-                    if execution_ids_versions.is_empty() {
-                        return Ok(Vec::new());
-                    }
-                    debug!("Locking {execution_ids_versions:?}");
-                    let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
-                    // Append lock
-                    for (execution_id, version) in execution_ids_versions {
-                        let locked = Self::lock_inner(
-                            &tx,
-                            created_at,
-                            execution_id,
-                            RunId::generate(),
-                            version,
-                            executor_id,
-                            lock_expires_at,
-                        )?;
-                        locked_execs.push(locked);
-                    }
-                    Ok(locked_execs)
+                    Ok(execution_ids_versions)
                 },
                 Span::current(),
             )
-            .await?)
+            .await?;
+        if execution_ids_versions.is_empty() {
+            Ok(vec![])
+        } else {
+            debug!("Locking {execution_ids_versions:?}");
+            self.pool
+                .transaction_write_with_span::<_, _, SqliteError>(
+                    move |tx| {
+                        let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
+                        // Append lock
+                        for (execution_id, version) in execution_ids_versions {
+                            let locked = Self::lock_inner(
+                                &tx,
+                                created_at,
+                                execution_id,
+                                RunId::generate(),
+                                version,
+                                executor_id,
+                                lock_expires_at,
+                            )?;
+                            locked_execs.push(locked);
+                        }
+                        Ok(locked_execs)
+                    },
+                    Span::current(),
+                )
+                .await
+                .map_err(DbError::from)
+        }
     }
 
     /// Specialized `append` which returns the event history.
