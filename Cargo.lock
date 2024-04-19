@@ -704,6 +704,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "db-tests"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "assert_matches",
+ "chrono",
+ "concepts",
+ "db-mem",
+ "db-sqlite",
+ "db-tests-common",
+ "madsim",
+ "madsim-tokio",
+ "serde_json",
+ "tempfile",
+ "test-utils",
+ "tracing",
+ "utils",
+]
+
+[[package]]
 name = "db-tests-common"
 version = "0.1.0"
 dependencies = [

@@ -20,7 +20,7 @@ use tracing::debug;
 use tracing::trace;
 
 /// Remote client representation of the execution journal.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionLog {
     pub execution_id: ExecutionId,
     pub events: Vec<ExecutionEvent>,
@@ -131,7 +131,10 @@ impl ExecutionLog {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
 pub struct Version(pub usize);
 impl Version {
     #[must_use]
@@ -140,7 +143,9 @@ impl Version {
     }
 }
 
-#[derive(Clone, Debug, derive_more::Display, PartialEq, Eq)]
+#[derive(
+    Clone, Debug, derive_more::Display, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
 #[display(fmt = "{event}")]
 pub struct ExecutionEvent {
     // TODO: Rename to ExecutionEventRow

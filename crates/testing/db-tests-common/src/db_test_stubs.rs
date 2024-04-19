@@ -245,13 +245,32 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             },
             created_at,
         };
-
-        db_connection
+        version = db_connection
             .append(execution_id, Some(version), req)
             .await
             .unwrap();
     }
-    // TODO attempt to append an event after finish
+    {
+        let created_at = sim_clock.now();
+        debug!(now = %created_at, "Append after finish should fail");
+        let req = AppendRequest {
+            event: ExecutionEventInner::Finished {
+                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
+            },
+            created_at,
+        };
+        let err = db_connection
+            .append(execution_id, Some(version), req)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            DbError::Specific(SpecificError::ValidationFailed(StrVariant::Static(
+                "already finished"
+            ))),
+            err
+        );
+    }
 }
 
 pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection) {

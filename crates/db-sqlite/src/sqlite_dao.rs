@@ -21,6 +21,7 @@ const PRAGMA: &str = r"
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = true;
 PRAGMA busy_timeout = 1000;
+PRAGMA cache_size = 1000000000;
 ";
 
 // TODO metadata table with current app version
@@ -531,6 +532,16 @@ impl SqlitePool {
         req: AppendRequest,
         appending_version: Option<Version>,
     ) -> Result<AppendResponse, SqliteError> {
+        // TODO: this check would go away if empty version was disallowed:
+        // Appending after `Finished` would be an application concern.
+        let found_pending_state = Self::current_pending_state(&tx, execution_id)?;
+        if found_pending_state == PendingState::Finished {
+            warn!("Ignoring append request received in Finished state: {req:?}");
+            Err(DbError::Specific(SpecificError::ValidationFailed(
+                StrVariant::Static("already finished"),
+            )))?
+        }
+
         match (req.event, appending_version) {
             (ExecutionEventInner::Created { .. }, _) => {
                 unreachable!("handled in the caller")
@@ -605,10 +616,7 @@ impl SqlitePool {
                             event: HistoryEvent::JoinSetResponse { join_set_id, .. },
                         } => {
                             // Was the previous event with `pending_state` a JoinNext with this join set?
-                            // FIXME: Get rid of this db call: Do not allow appending child responses without version,
-                            // have a watcher that notifies unprocessed child responses, send next pending state inside of JoinSetResponse
-                            let found_pending_state =
-                                Self::current_pending_state(&tx, execution_id)?;
+                            // TODO: If `watcher`s would send responses together with new pending state, the select would not be needed.
                             let pending_state = match found_pending_state {
                                 PendingState::BlockedByJoinSet {
                                     join_set_id: found_join_set_id,
@@ -623,7 +631,10 @@ impl SqlitePool {
                             };
                             (pending_state, Some(join_set_id))
                         }
-                        ExecutionEventInner::CancelRequest => todo!(),
+                        ExecutionEventInner::CancelRequest => {
+                            //TODO
+                            (None, None)
+                        }
                         ExecutionEventInner::Locked { .. }
                         | ExecutionEventInner::Created { .. } => unreachable!("handled above"),
                     }

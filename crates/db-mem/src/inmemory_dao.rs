@@ -1026,7 +1026,6 @@ pub mod tests {
     use db_tests_common::db_test_stubs;
     use db_tests_common::db_test_stubs::SOME_FFQN;
     use std::time::{Duration, Instant};
-    use test_utils::arbitrary::UnstructuredHolder;
     use test_utils::env_or_default;
     use test_utils::set_up;
     use utils::time::now;
@@ -1047,49 +1046,6 @@ pub mod tests {
         let mut db_task = DbTask::spawn_new(1);
         let db_connection = db_task.pool().unwrap().connection().unwrap();
         db_test_stubs::expired_lock_should_be_found(&db_connection).await;
-        drop(db_connection);
-        db_task.close().await;
-    }
-
-    #[tokio::test]
-    async fn stochastic_proptest() {
-        set_up();
-        let unstructured_holder = UnstructuredHolder::new();
-        let mut unstructured = unstructured_holder.unstructured();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.pool().unwrap().connection().unwrap();
-
-        let execution_id = ExecutionId::generate();
-        let mut version;
-        // Create
-        version = db_connection
-            .create(CreateRequest {
-                created_at: now(),
-                execution_id,
-                ffqn: SOME_FFQN,
-                params: Params::default(),
-                parent: None,
-                scheduled_at: None,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-            })
-            .await
-            .unwrap();
-
-        let events = unstructured.int_in_range(5..=10).unwrap();
-        for _ in 0..events {
-            let req = AppendRequest {
-                event: unstructured.arbitrary().unwrap(),
-                created_at: now(),
-            };
-            match db_connection
-                .append(execution_id, Some(version.clone()), req)
-                .await
-            {
-                Ok(new_version) => version = new_version,
-                Err(err) => debug!("Ignoring {err:?}"),
-            }
-        }
         drop(db_connection);
         db_task.close().await;
     }

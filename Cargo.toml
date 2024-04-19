@@ -7,6 +7,7 @@ members = [
     "crates/executor",
     "crates/testing/cargo-component-builder",
     "crates/testing/db-tests-common",
+    "crates/testing/db-tests",
     "crates/testing/test-programs/fibo/activity",
     "crates/testing/test-programs/fibo/activity/builder",
     "crates/testing/test-programs/fibo/workflow",
