@@ -165,7 +165,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
     #[instrument(skip_all)]
     async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, DbError> {
         let locked_executions = {
-            let db_connection = self.db_pool.connection()?;
+            let db_connection = self.db_pool.connection();
             let mut permits = self.acquire_task_permits();
             if permits.is_empty() {
                 return Ok(ExecutionProgress::default());
@@ -262,7 +262,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         .await
         {
             Ok(Some(append)) => {
-                let db_connection = db_pool.connection()?;
+                let db_connection = db_pool.connection();
                 if let Some((parent_id, parent_append_request)) = append.parent_response {
                     db_connection
                         .append_batch_respond_to_parent(
@@ -308,7 +308,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         Ok(match worker_result {
             Ok((result, new_version)) => {
                 let finished_res;
-                let execution_log = db_pool.connection()?.get(execution_id).await?;
+                let execution_log = db_pool.connection().get(execution_id).await?;
                 let event = if let Some(exec_err) = result.fallible_err() {
                     info!("Execution finished with an error result");
                     let reason = StrVariant::Arc(Arc::from(format!(
@@ -386,7 +386,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         version: new_version,
                     } => {
                         let version_and_exec_log =
-                            Self::check_version(&db_pool.connection()?, execution_id, new_version)
+                            Self::check_version(&db_pool.connection(), execution_id, new_version)
                                 .await?;
                         new_version2 = version_and_exec_log.0;
                         let execution_log = version_and_exec_log.1;
@@ -403,7 +403,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     }
                     WorkerError::LimitReached(reason, new_version) => {
                         (new_version2, _) =
-                            Self::check_version(&db_pool.connection()?, execution_id, new_version)
+                            Self::check_version(&db_pool.connection(), execution_id, new_version)
                                 .await?;
                         warn!("Limit reached: {reason}, yielding");
                         ExecutionEventInner::HistoryEvent {
@@ -415,7 +415,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         new_version,
                     ) => {
                         (new_version2, _) =
-                            Self::check_version(&db_pool.connection()?, execution_id, new_version)
+                            Self::check_version(&db_pool.connection(), execution_id, new_version)
                                 .await?;
                         info!("Non-determinism detected");
                         ExecutionEventInner::Finished {
@@ -424,7 +424,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     }
                     WorkerError::FatalError(FatalError::ParamsParsingError(err), new_version) => {
                         (new_version2, _) =
-                            Self::check_version(&db_pool.connection()?, execution_id, new_version)
+                            Self::check_version(&db_pool.connection(), execution_id, new_version)
                                 .await?;
                         info!("Error parsing parameters");
                         ExecutionEventInner::Finished {
@@ -435,7 +435,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     }
                     WorkerError::FatalError(FatalError::ResultParsingError(err), new_version) => {
                         (new_version2, _) =
-                            Self::check_version(&db_pool.connection()?, execution_id, new_version)
+                            Self::check_version(&db_pool.connection(), execution_id, new_version)
                                 .await?;
                         info!("Error parsing result");
                         ExecutionEventInner::Finished {
@@ -578,11 +578,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_executor_tick_based_db_task_based() {
+    async fn execute_simple_lifecycle_tick_based_mem() {
+        let mut db_task = DbTask::spawn_new(1);
+        let pool = db_task.pool().unwrap();
+        execute_simple_lifecycle_tick_based(pool).await;
+        db_task.close().await;
+    }
+
+    async fn execute_simple_lifecycle_tick_based<
+        DB: DbConnection + 'static,
+        P: DbPool<DB> + 'static,
+    >(
+        pool: P,
+    ) {
         set_up();
         let created_at = now();
         let clock_fn = move || created_at;
-        let mut db_task = DbTask::spawn_new(1);
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN],
             batch_size: 1,
@@ -600,7 +611,7 @@ mod tests {
         };
         let execution_log = create_and_tick(
             created_at,
-            db_task.pool().unwrap(),
+            pool,
             exec_config,
             Arc::new(SimpleWorker { worker_results_rev }),
             0,
@@ -609,7 +620,6 @@ mod tests {
             tick_fn,
         )
         .await;
-        db_task.close().await;
         assert_matches!(
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
@@ -622,7 +632,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stochastic_execute_task_based() {
+    async fn stochastic_execute_simple_lifecycle_task_based_mem() {
         set_up();
         let created_at = now();
         let clock_fn = move || created_at;
@@ -697,7 +707,7 @@ mod tests {
     ) -> ExecutionLog {
         // Create an execution
         let execution_id = ExecutionId::generate();
-        let db_connection = db_pool.connection().unwrap();
+        let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -809,7 +819,7 @@ mod tests {
         sim_clock.sleep(retry_exp_backoff);
         tick_fn(exec_config, db_pool.clone(), worker, sim_clock.now()).await;
         let execution_log = {
-            let db_connection = db_pool.connection().expect("must be open");
+            let db_connection = db_pool.connection();
             db_connection.get(execution_log.execution_id).await.unwrap()
         };
         debug!(now = %sim_clock.now(), "Execution history after second tick: {execution_log:?}");
@@ -918,7 +928,7 @@ mod tests {
         });
         tick_fn(exec_config, db_pool.clone(), worker, created_at).await;
         let execution_log = {
-            let db_connection = db_pool.connection().expect("must be open");
+            let db_connection = db_pool.connection();
             db_connection.get(execution_log.execution_id).await.unwrap()
         };
         debug!("Execution history after second tick: {execution_log:?}");
@@ -1007,7 +1017,7 @@ mod tests {
         };
 
         let timers_watcher = expired_timers_watcher::TimersWatcherTask {
-            db_connection: db_pool.connection().unwrap(),
+            db_connection: db_pool.connection(),
         };
 
         let worker = Arc::new(SleepyWorker {
@@ -1017,7 +1027,7 @@ mod tests {
         // Create an execution
         let execution_id = ExecutionId::generate();
         let timeout_duration = Duration::from_millis(300);
-        let db_connection = db_pool.connection().unwrap();
+        let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),

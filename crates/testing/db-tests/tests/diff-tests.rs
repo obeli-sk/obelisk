@@ -17,7 +17,7 @@ use tracing::info;
 use utils::time::now;
 
 #[tokio::test]
-async fn stochastic_proptest() {
+async fn diff_proptest() {
     set_up();
     let unstructured_holder = UnstructuredHolder::new();
     let mut unstructured = unstructured_holder.unstructured();
@@ -43,7 +43,7 @@ async fn stochastic_proptest() {
         info!("{idx}: {step:?}");
     }
     let mut db_mem_task = DbTask::spawn_new(1);
-    let mem_conn = db_mem_task.pool().unwrap().connection().unwrap();
+    let mem_conn = db_mem_task.pool().unwrap().connection();
     let mem_log = create_and_append(
         &mem_conn,
         execution_id,

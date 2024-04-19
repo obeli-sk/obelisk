@@ -214,7 +214,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             retry_exp_backoff: self.child_retry_exp_backoff,
             max_retries: self.child_max_retries,
         };
-        let db_connection = self.db_pool.connection().map_err(DbError::Connection)?;
+        let db_connection = self.db_pool.connection();
         let parent_version = db_connection
             .append_batch_create_child(
                 vec![join_set, child_exec_req, join_next],
@@ -367,7 +367,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             },
         };
 
-        let db_connection = self.db_pool.connection().map_err(DbError::Connection)?;
+        let db_connection = self.db_pool.connection();
 
         self.version = db_connection
             .append_batch(
@@ -599,7 +599,7 @@ mod tests {
         };
         // Create an execution.
         let created_at = sim_clock.now();
-        let db_connection = db_pool.connection().unwrap();
+        let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
                 created_at,

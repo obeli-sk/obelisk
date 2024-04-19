@@ -435,7 +435,7 @@ mod tests {
         // Create an execution.
         let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = now();
-        let db_connection = db_pool.connection().unwrap();
+        let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -538,7 +538,7 @@ mod tests {
         )
         .unwrap();
         let execution_id = ExecutionId::generate();
-        let db_connection = db_pool.connection().expect("must be open");
+        let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),

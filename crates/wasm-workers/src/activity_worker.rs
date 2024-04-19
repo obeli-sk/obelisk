@@ -336,7 +336,7 @@ pub(crate) mod tests {
         test_utils::set_up();
         let mut db_task = DbTask::spawn_new(1);
         let db_pool = db_task.pool().unwrap();
-        let db_connection = db_pool.connection().expect("must be open");
+        let db_connection = db_pool.connection();
         let exec_task = spawn_activity_fibo(db_pool);
         // Create an execution.
         let execution_id = ExecutionId::generate();
@@ -436,7 +436,7 @@ pub(crate) mod tests {
         let params = Params::from([Val::U8(fibo_input)]);
         let created_at = now();
         let mut execution_ids = Vec::with_capacity(executions);
-        let db_connection = db_pool.connection().expect("must be open");
+        let db_connection = db_pool.connection();
         for _ in 0..executions {
             let execution_id = ExecutionId::generate();
             db_connection
@@ -738,7 +738,7 @@ pub(crate) mod tests {
             let execution_id = ExecutionId::generate();
             warn!("Testing {execution_id}");
             let created_at = now();
-            let db_connection = db_pool.connection().unwrap();
+            let db_connection = db_pool.connection();
             db_connection
                 .create(CreateRequest {
                     created_at,
@@ -858,7 +858,7 @@ pub(crate) mod tests {
             // Create an execution.
             let execution_id = ExecutionId::generate();
             let created_at = now();
-            let db_connection = db_pool.connection().unwrap();
+            let db_connection = db_pool.connection();
             db_connection
                 .create(CreateRequest {
                     created_at,

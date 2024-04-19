@@ -937,6 +937,7 @@ dependencies = [
  "chrono",
  "concepts",
  "db-mem",
+ "db-sqlite",
  "derivative",
  "derive_more",
  "indexmap 2.2.6",

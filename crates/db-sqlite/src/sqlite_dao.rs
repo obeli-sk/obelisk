@@ -6,10 +6,10 @@ use concepts::{
     prefixed_ulid::{DelayId, ExecutorId, JoinSetId, RunId},
     storage::{
         AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest,
-        DbConnection, DbError, ExecutionEvent, ExecutionEventInner, ExecutionLog, ExpiredTimer,
-        HistoryEvent, LockKind, LockPendingResponse, LockResponse, LockedExecution, PendingState,
-        SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE,
-        DUMMY_INTERMITTENT_TIMEOUT,
+        DbConnection, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
+        ExpiredTimer, HistoryEvent, LockKind, LockPendingResponse, LockResponse, LockedExecution,
+        PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
     ExecutionId, FunctionFqn, StrVariant,
 };
@@ -87,8 +87,15 @@ impl From<rusqlite::Error> for SqliteError {
     }
 }
 
+#[derive(Clone)]
 pub struct SqlitePool {
     pool: Pool,
+}
+
+impl DbPool<SqlitePool> for SqlitePool {
+    fn connection(&self) -> SqlitePool {
+        self.clone()
+    }
 }
 
 impl SqlitePool {

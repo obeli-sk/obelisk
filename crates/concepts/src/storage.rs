@@ -425,7 +425,7 @@ impl From<CreateRequest> for ExecutionEventInner {
 }
 
 pub trait DbPool<DB: DbConnection>: Send + Sync + Clone {
-    fn connection(&self) -> Result<DB, DbConnectionError>;
+    fn connection(&self) -> DB;
 }
 
 #[async_trait]

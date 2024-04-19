@@ -79,7 +79,7 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let tick_sleep = config.tick_sleep;
-        let db_connection = db_pool.connection()?;
+        let db_connection = db_pool.connection();
         let abort_handle = tokio::spawn(
             async move {
                 info!("Spawned expired lock watcher");

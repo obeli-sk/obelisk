@@ -511,8 +511,8 @@ pub struct InMemoryPool(mpsc::Sender<DbRequest>);
 
 impl DbPool<InMemoryDbConnection> for InMemoryPool {
     #[allow(refining_impl_trait)]
-    fn connection(&self) -> Result<InMemoryDbConnection, DbConnectionError> {
-        Ok(InMemoryDbConnection(self.0.clone()))
+    fn connection(&self) -> InMemoryDbConnection {
+        InMemoryDbConnection(self.0.clone())
     }
 }
 
@@ -1034,7 +1034,7 @@ pub mod tests {
     async fn lifecycle() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.pool().unwrap().connection().unwrap();
+        let db_connection = db_task.pool().unwrap().connection();
         db_test_stubs::lifecycle(&db_connection).await;
         drop(db_connection);
         db_task.close().await;
@@ -1044,7 +1044,7 @@ pub mod tests {
     async fn expired_lock_should_be_found() {
         set_up();
         let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.pool().unwrap().connection().unwrap();
+        let db_connection = db_task.pool().unwrap().connection();
         db_test_stubs::expired_lock_should_be_found(&db_connection).await;
         drop(db_connection);
         db_task.close().await;
@@ -1067,7 +1067,7 @@ pub mod tests {
         let created_at = now();
         let ffqn = SOME_FFQN;
         let stopwatch = Instant::now();
-        let db_connection = db_pool.connection().unwrap();
+        let db_connection = db_pool.connection();
         for _ in 0..executions {
             let req = CreateRequest {
                 created_at,
@@ -1090,7 +1090,7 @@ pub mod tests {
         let exec_id = ExecutorId::generate();
         let mut exec_tasks = Vec::with_capacity(tasks);
         for _ in 0..tasks {
-            let db_connection = db_pool.connection().unwrap();
+            let db_connection = db_pool.connection();
             let task = tokio::spawn(async move {
                 let target = executions / tasks;
                 let mut locked = Vec::with_capacity(target);
