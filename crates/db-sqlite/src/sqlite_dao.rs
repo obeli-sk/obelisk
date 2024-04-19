@@ -613,7 +613,7 @@ impl SqlitePool {
                     Self::check_next_version(&tx, execution_id, &appending_version)?;
                     appending_version
                 } else {
-                    Self::current_version(&tx, execution_id)?
+                    Self::get_next_version(&tx, execution_id)?
                 };
                 let (pending_state, join_set_id) = {
                     match event {
