@@ -401,8 +401,11 @@ mod serde_params {
             D: serde::Deserializer<'de>,
         {
             let vec: Vec<WastValWithType> = deserializer.deserialize_seq(VecVisitor::default())?;
-
-            Ok(Self::WastValParams(Arc::new(vec)))
+            if vec.is_empty() {
+                Ok(Self::Empty)
+            } else {
+                Ok(Self::WastValParams(Arc::new(vec)))
+            }
         }
     }
 }
