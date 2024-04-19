@@ -15,7 +15,7 @@ use concepts::{
 };
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use std::{cmp::max, collections::VecDeque, path::Path, sync::Arc};
-use tracing::{debug, error, info, instrument, trace, warn, Span};
+use tracing::{debug, error, instrument, trace, warn, Span};
 
 const PRAGMA: &str = r"
 PRAGMA synchronous = NORMAL;
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS execution_log (
 const CREATE_TABLE_PENDING: &str = r"
 CREATE TABLE IF NOT EXISTS pending (
     execution_id TEXT NOT NULL,
-    expected_next_version INTEGER NOT NULL,
+    next_version INTEGER NOT NULL,
     pending_at TEXT NOT NULL,
     ffqn TEXT NOT NULL,
     PRIMARY KEY (execution_id)
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS pending (
 const CREATE_TABLE_LOCKED: &str = r"
 CREATE TABLE IF NOT EXISTS locked (
     execution_id TEXT NOT NULL,
-    expected_next_version INTEGER NOT NULL,
+    next_version INTEGER NOT NULL,
     join_set_id TEXT,
     delay_id TEXT,
     lock_expires_at TEXT NOT NULL,
@@ -227,19 +227,19 @@ impl SqlitePool {
             .map_err(async_sqlite::Error::Rusqlite)?)
     }
 
-    fn get_expected_next_version(
+    fn get_next_version(
         tx: &Transaction,
         execution_id: ExecutionId,
     ) -> Result<Version, SqliteError> {
         Self::current_version(tx, execution_id).map(|ver| Version::new(ver.0 + 1))
     }
 
-    fn check_expected_next_version(
+    fn check_next_version(
         tx: &Transaction,
         execution_id: ExecutionId,
-        expected_next_version: &Version,
+        appending_version: &Version,
     ) -> Result<(), SqliteError> {
-        if Self::get_expected_next_version(tx, execution_id)? != *expected_next_version {
+        if Self::get_next_version(tx, execution_id)? != *appending_version {
             return Err(SqliteError::DbError(DbError::Specific(
                 SpecificError::VersionMismatch,
             )));
@@ -248,8 +248,8 @@ impl SqlitePool {
     }
 
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
-    fn create(tx: &Transaction, req: CreateRequest) -> Result<AppendResponse, SqliteError> {
-        trace!("create");
+    fn create_inner(tx: &Transaction, req: CreateRequest) -> Result<AppendResponse, SqliteError> {
+        trace!("create_inner");
         let version = Version::new(0);
         let execution_id = req.execution_id;
         let execution_id_str = execution_id.to_string();
@@ -283,6 +283,7 @@ impl SqlitePool {
         Ok(next_version)
     }
 
+    #[instrument(skip_all, fields(%execution_id, %pending_state, %next_version, purge))]
     fn update_index(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -291,6 +292,7 @@ impl SqlitePool {
         purge: bool, // should the execution be deleted from `pending` and `locked`
         ffqn: Option<FunctionFqn>, // will be fetched from `Created` if required
     ) -> Result<(), SqliteError> {
+        trace!("update_index");
         let execution_id_str = execution_id.to_string();
         if purge {
             let mut stmt =
@@ -312,19 +314,19 @@ impl SqlitePool {
                 } else {
                     None
                 };
+                trace!("Inserting to `pending` with schedule: `{scheduled_at:?}`");
                 let mut stmt = tx.prepare(
-                    "INSERT INTO pending (execution_id, expected_next_version, pending_at, ffqn) \
-                    VALUES (:execution_id, :expected_next_version, :pending_at, :ffqn)",
+                    "INSERT INTO pending (execution_id, next_version, pending_at, ffqn) \
+                    VALUES (:execution_id, :next_version, :pending_at, :ffqn)",
                 )?;
                 let ffqn = if let Some(ffqn) = ffqn {
                     ffqn
                 } else {
                     Self::fetch_created_event(tx, execution_id)?.ffqn
                 };
-
                 stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
-                    ":expected_next_version": next_version.0,
+                    ":next_version": next_version.0,
                     ":pending_at": scheduled_at.unwrap_or_default(),
                     ":ffqn": ffqn.to_string()
                 })?;
@@ -333,21 +335,47 @@ impl SqlitePool {
             PendingState::Locked {
                 lock_expires_at, ..
             } => {
-                // Add to the `locked` table.
+                trace!("Inserting to `locked`");
                 let mut stmt = tx.prepare_cached(
-                    "INSERT INTO locked (execution_id, expected_next_version, lock_expires_at) \
+                    "INSERT INTO locked (execution_id, next_version, lock_expires_at) \
                 VALUES \
-                (:execution_id, :expected_next_version, :lock_expires_at)",
+                (:execution_id, :next_version, :lock_expires_at)",
                 )?;
                 stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
-                    ":expected_next_version": next_version.0, // If the lock expires, this version will be used by `expired_timers_watcher`.
+                    ":next_version": next_version.0, // If the lock expires, this version will be used by `expired_timers_watcher`.
                     ":lock_expires_at": lock_expires_at,
                 })?;
                 Ok(())
             }
             PendingState::BlockedByJoinSet { .. } | PendingState::Finished => Ok(()),
         }
+    }
+
+    #[instrument(skip_all, fields(%execution_id, %next_version, purge))]
+    fn update_index_version(
+        tx: &Transaction,
+        execution_id: ExecutionId,
+        next_version: &Version,
+    ) -> Result<(), SqliteError> {
+        trace!("update_index_version");
+        let execution_id_str = execution_id.to_string();
+        let mut stmt = tx.prepare_cached(
+            "UPDATE pending SET next_version = :next_version WHERE execution_id = :execution_id AND next_version = :current_version",
+        )?;
+        stmt.execute(named_params! {
+            ":execution_id": execution_id_str,
+            ":next_version": next_version.0,
+            ":current_version": next_version.0 - 1,
+        })?;
+        let mut stmt =
+            tx.prepare_cached("UPDATE locked SET next_version = :next_version WHERE execution_id = :execution_id AND next_version = :current_version")?;
+        stmt.execute(named_params! {
+            ":execution_id": execution_id_str,
+            ":next_version": next_version.0,
+            ":current_version": next_version.0 - 1,
+        })?;
+        Ok(())
     }
 
     #[instrument(skip_all, fields(%execution_id))]
@@ -378,7 +406,7 @@ impl SqlitePool {
     }
 
     #[instrument(skip_all, fields(%execution_id, %run_id, %executor_id))]
-    fn lock(
+    fn lock_inner(
         tx: &Transaction,
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
@@ -387,8 +415,8 @@ impl SqlitePool {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockedExecution, SqliteError> {
-        trace!("lock");
-        Self::check_expected_next_version(tx, execution_id, &appending_version)?;
+        trace!("lock_inner");
+        Self::check_next_version(tx, execution_id, &appending_version)?;
         let pending_state = Self::current_pending_state(tx, execution_id)?;
         let lock_kind = pending_state
             .can_append_lock(created_at, executor_id, run_id, lock_expires_at)
@@ -399,31 +427,35 @@ impl SqlitePool {
         match lock_kind {
             LockKind::CreatingNewLock => {
                 let mut stmt = tx.prepare_cached(
-            "DELETE FROM pending WHERE execution_id = :execution_id AND expected_next_version = :expected_next_version",
-        )?;
+                    "DELETE FROM pending WHERE execution_id = :execution_id AND next_version = :next_version",
+                )?;
                 let deleted = stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
-                    ":expected_next_version": appending_version.0, // This must be the version requested.
+                    ":next_version": appending_version.0, // This must be the version requested.
                 })?;
                 if deleted != 1 {
-                    info!("Locking failed: expected to delete one `pending` row, actual number: {deleted}");
+                    error!("Locking failed while in {pending_state}: expected to delete one `pending` row, actual number: {deleted}");
                     return Err(SqliteError::DbError(DbError::Specific(
-                        SpecificError::VersionMismatch,
+                        SpecificError::ConsistencyError(StrVariant::Static(
+                            "consistency error in `pending` table - locking failed",
+                        )),
                     )));
                 }
             }
             LockKind::Extending => {
                 let mut stmt = tx.prepare_cached(
-                    "DELETE FROM locked WHERE execution_id = :execution_id AND expected_next_version = :expected_next_version",
+                    "DELETE FROM locked WHERE execution_id = :execution_id AND next_version = :next_version",
                 )?;
                 let deleted = stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
-                    ":expected_next_version": appending_version.0, // This must be the version requested.
+                    ":next_version": appending_version.0, // This must be the version requested.
                 })?;
                 if deleted != 1 {
-                    info!("Locking failed: expected to delete one `locked` row, actual number: {deleted}");
+                    error!("Locking failed: expected to delete one `locked` row, actual number: {deleted}");
                     return Err(SqliteError::DbError(DbError::Specific(
-                        SpecificError::VersionMismatch,
+                        SpecificError::ConsistencyError(StrVariant::Static(
+                            "consistency error in `locked` table- locking failed",
+                        )),
                     )));
                 }
             }
@@ -536,10 +568,10 @@ impl SqlitePool {
         // Appending after `Finished` would be an application concern.
         let found_pending_state = Self::current_pending_state(&tx, execution_id)?;
         if found_pending_state == PendingState::Finished {
-            warn!("Ignoring append request received in Finished state: {req:?}");
+            error!("Cannot append request received in Finished state: {req:?}");
             Err(DbError::Specific(SpecificError::ValidationFailed(
                 StrVariant::Static("already finished"),
-            )))?
+            )))?;
         }
 
         match (req.event, appending_version) {
@@ -554,7 +586,7 @@ impl SqlitePool {
                 },
                 Some(version),
             ) => {
-                let locked = Self::lock(
+                let locked = Self::lock_inner(
                     &tx,
                     req.created_at,
                     execution_id,
@@ -571,7 +603,7 @@ impl SqlitePool {
             }
             (event, appending_version) => {
                 let appending_version = if let Some(appending_version) = appending_version {
-                    Self::check_expected_next_version(&tx, execution_id, &appending_version)?;
+                    Self::check_next_version(&tx, execution_id, &appending_version)?;
                     appending_version
                 } else {
                     Self::current_version(&tx, execution_id)?
@@ -661,6 +693,8 @@ impl SqlitePool {
                         true,
                         None,
                     )?;
+                } else {
+                    Self::update_index_version(&tx, execution_id, &next_version)?;
                 }
                 Ok(next_version)
             }
@@ -672,13 +706,14 @@ impl SqlitePool {
 impl DbConnection for SqlitePool {
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
+        trace!("create");
         self.pool
-            .transaction_write_with_span(move |tx| Self::create(tx, req), Span::current())
+            .transaction_write_with_span(move |tx| Self::create_inner(tx, req), Span::current())
             .await
             .map_err(DbError::from)
     }
 
-    #[instrument(skip_all, fields(%executor_id))]
+    #[instrument(skip(self))]
     async fn lock_pending(
         &self,
         batch_size: usize,
@@ -698,7 +733,7 @@ impl DbConnection for SqlitePool {
                     // TODO: The locked executions should be sorted by pending date, otherwise ffqns later in the list might get starved.
                     for ffqn in ffqns {
                         let mut stmt = tx.prepare(
-                            "SELECT execution_id, expected_next_version FROM pending WHERE \
+                            "SELECT execution_id, next_version FROM pending WHERE \
                             pending_at <= :pending_at AND ffqn = :ffqn \
                             ORDER BY pending_at LIMIT :batch_size",
                         )?;
@@ -714,7 +749,7 @@ impl DbConnection for SqlitePool {
                                         .get::<_, String>("execution_id")?
                                         .parse::<ExecutionId>();
                                     let version =
-                                        Version::new(row.get::<_, usize>("expected_next_version")?);
+                                        Version::new(row.get::<_, usize>("next_version")?);
                                     Ok(execution_id.map(|e| (e, version)))
                                 },
                             )?
@@ -730,7 +765,7 @@ impl DbConnection for SqlitePool {
                     let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
                     // Append lock
                     for (execution_id, version) in execution_ids_versions {
-                        let locked = Self::lock(
+                        let locked = Self::lock_inner(
                             &tx,
                             created_at,
                             execution_id,
@@ -750,7 +785,7 @@ impl DbConnection for SqlitePool {
     }
 
     /// Specialized `append` which returns the event history.
-    #[instrument(skip_all, fields(%execution_id, %run_id, %executor_id))]
+    #[instrument(skip(self))]
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
@@ -760,10 +795,11 @@ impl DbConnection for SqlitePool {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse, DbError> {
+        trace!("lock");
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
-                    let locked = Self::lock(
+                    let locked = Self::lock_inner(
                         &tx,
                         created_at,
                         execution_id,
@@ -780,13 +816,14 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
-    #[instrument(skip_all, fields(%execution_id))]
+    #[instrument(skip(self))]
     async fn append(
         &self,
         execution_id: ExecutionId,
-        appending_version: Option<Version>,
+        version: Option<Version>,
         req: AppendRequest,
     ) -> Result<AppendResponse, DbError> {
+        trace!("append");
         // Disallow `Created` event
         if let ExecutionEventInner::Created { .. } = req.event {
             error!("Cannot append `Created` event - use `create` instead");
@@ -796,19 +833,21 @@ impl DbConnection for SqlitePool {
         }
         self.pool
             .transaction_write_with_span(
-                move |tx| Self::append(tx, execution_id, req, appending_version),
+                move |tx| Self::append(tx, execution_id, req, version),
                 Span::current(),
             )
             .await
             .map_err(DbError::from)
     }
 
+    #[instrument(skip(self))]
     async fn append_batch(
         &self,
         batch: AppendBatch,
         execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
+        trace!("append_batch");
         if batch.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -839,7 +878,7 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
-    #[instrument(skip_all, fields(%execution_id))]
+    #[instrument(skip(self))]
     async fn append_batch_create_child(
         &self,
         batch: AppendBatch,
@@ -847,6 +886,7 @@ impl DbConnection for SqlitePool {
         mut version: Version,
         child_req: CreateRequest,
     ) -> Result<AppendBatchResponse, DbError> {
+        trace!("append_batch_create_child");
         if batch.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -868,7 +908,7 @@ impl DbConnection for SqlitePool {
                     for req in batch {
                         version = Self::append(tx, execution_id, req, Some(version))?;
                     }
-                    Self::create(tx, child_req)?;
+                    Self::create_inner(tx, child_req)?;
                     Ok(version)
                 },
                 Span::current(),
@@ -877,7 +917,7 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
-    #[instrument(skip_all, fields(%execution_id))]
+    #[instrument(skip(self))]
     async fn append_batch_respond_to_parent(
         &self,
         batch: AppendBatch,
@@ -885,6 +925,7 @@ impl DbConnection for SqlitePool {
         version: Version,
         parent: (ExecutionId, AppendRequest),
     ) -> Result<AppendBatchResponse, DbError> {
+        trace!("append_batch_respond_to_parent");
         if batch.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -916,8 +957,9 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
-    #[instrument(skip_all, fields(%execution_id))]
+    #[instrument(skip(self))]
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
+        trace!("get");
         self.pool
             .conn_with_err_and_span::<_, _, SqliteError>(
                 move |tx| {
@@ -993,10 +1035,11 @@ impl DbConnection for SqlitePool {
 
     /// Get currently expired locks and async timers (delay requests)
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
+        trace!("get_expired_timers");
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
             move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT execution_id, expected_next_version, join_set_id, delay_id FROM locked WHERE lock_expires_at >= :at",
+                    "SELECT execution_id, next_version, join_set_id, delay_id FROM locked WHERE lock_expires_at >= :at",
                 )?;
                 let query_res = stmt
                     .query_map(
@@ -1005,7 +1048,7 @@ impl DbConnection for SqlitePool {
                         },
                         |row| {
                             let execution_id = row.get::<_, String>("execution_id")?.parse::<ExecutionId>();
-                            let version = Version::new(row.get::<_, usize>("expected_next_version")?);
+                            let version = Version::new(row.get::<_, usize>("next_version")?);
                             let join_set_id = row.get::<_, Option<String>>("join_set_id")?.map(|str| str.parse::<JoinSetId>());
                             let delay_id = row.get::<_, Option<String>>("delay_id")?.map(|str| str.parse::<DelayId>());
                             Ok((execution_id, version, join_set_id, delay_id))
@@ -1045,10 +1088,21 @@ impl DbConnection for SqlitePool {
 
 #[cfg(all(test, not(madsim)))] // async-sqlite attempts to spawn a system thread in simulation
 mod tests {
+    use std::time::Duration;
+
     use super::SqlitePool;
-    use db_tests_common::db_test_stubs;
+    use concepts::{
+        prefixed_ulid::{DelayId, ExecutorId, JoinSetId, RunId},
+        storage::{
+            AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, HistoryEvent,
+            JoinSetRequest,
+        },
+        ExecutionId, Params,
+    };
+    use db_tests_common::db_test_stubs::{self, SOME_FFQN};
     use tempfile::NamedTempFile;
     use test_utils::set_up;
+    use utils::time::now;
 
     async fn pool() -> (SqlitePool, Option<NamedTempFile>) {
         if let Ok(path) = std::env::var("SQLITE_FILE") {
@@ -1086,6 +1140,61 @@ mod tests {
         set_up();
         let (pool, _guard) = pool().await;
         db_test_stubs::expired_lock_should_be_found(&pool).await;
+        pool.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn lock_delete_pending_bug() {
+        set_up();
+        let (pool, _guard) = pool().await;
+        let db_connection = &pool;
+        let execution_id = ExecutionId::generate();
+        let executor_id = ExecutorId::generate();
+        // Create
+        let version = db_connection
+            .create(CreateRequest {
+                created_at: now(),
+                execution_id,
+                ffqn: SOME_FFQN,
+                params: Params::default(),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
+            .await
+            .unwrap();
+        let version = db_connection
+            .append(
+                execution_id,
+                Some(version),
+                AppendRequest {
+                    created_at: now(),
+                    event: ExecutionEventInner::HistoryEvent {
+                        event: HistoryEvent::JoinSetRequest {
+                            join_set_id: JoinSetId::generate(),
+                            request: JoinSetRequest::DelayRequest {
+                                delay_id: DelayId::generate(),
+                                expires_at: now(),
+                            },
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let locked_at = now();
+        let (_, _version) = db_connection
+            .lock(
+                locked_at,
+                execution_id,
+                RunId::generate(),
+                version,
+                executor_id,
+                locked_at + Duration::from_millis(100),
+            )
+            .await
+            .unwrap();
         pool.close().await.unwrap();
     }
 }

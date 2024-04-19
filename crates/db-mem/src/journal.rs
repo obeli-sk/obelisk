@@ -5,7 +5,7 @@ use concepts::storage::{ExecutionLog, PendingState, SpecificError, Version};
 use concepts::ExecutionId;
 use concepts::{FunctionFqn, Params, StrVariant};
 use std::cmp::max;
-use std::{collections::VecDeque, sync::Arc, time::Duration};
+use std::{collections::VecDeque, time::Duration};
 
 #[derive(Debug)]
 pub struct ExecutionJournal {

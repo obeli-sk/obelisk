@@ -67,8 +67,6 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
         .await
         .unwrap_err();
 
-    // TODO: attempt to append an intermediate timeout while not locked
-
     // LockPending
     let run_id = {
         let created_at = sim_clock.now();

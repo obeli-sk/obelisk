@@ -1,3 +1,5 @@
+#![cfg(not(madsim))] // Madsim does not work with `async-sqlite`
+
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionLog;
@@ -36,7 +38,10 @@ async fn stochastic_proptest() {
             created_at: now(),
         })
         .collect::<Vec<_>>();
-    info!("Steps: {append_requests:?}");
+    info!("Creating: {create_req:?}");
+    for (idx, step) in append_requests.iter().enumerate() {
+        info!("{idx}: {step:?}");
+    }
     let mut db_mem_task = DbTask::spawn_new(1);
     let mem_conn = db_mem_task.pool().unwrap().connection().unwrap();
     let mem_log = create_and_append(

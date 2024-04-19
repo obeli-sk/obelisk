@@ -585,7 +585,7 @@ pub enum ExpiredTimer {
 #[serde(tag = "type")]
 pub enum PendingState {
     PendingNow,
-    #[display(fmt = "Locked(`{lock_expires_at}`)")]
+    #[display(fmt = "Locked(`{lock_expires_at}`, {executor_id}, {run_id})")]
     Locked {
         executor_id: ExecutorId,
         run_id: RunId,
