@@ -533,6 +533,7 @@ mod tests {
     };
     use concepts::{Params, SupportedFunctionResult};
     use db_mem::inmemory_dao::DbTask;
+    use db_tests::sqlite_pool;
     use indexmap::IndexMap;
     use simple_worker::SOME_FFQN;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
@@ -583,6 +584,13 @@ mod tests {
         let pool = db_task.pool().unwrap();
         execute_simple_lifecycle_tick_based(pool).await;
         db_task.close().await;
+    }
+
+    #[tokio::test]
+    async fn execute_simple_lifecycle_tick_based_sqlite() {
+        let (pool, _guard) = sqlite_pool().await;
+        execute_simple_lifecycle_tick_based(pool.clone()).await;
+        pool.close().await.unwrap();
     }
 
     async fn execute_simple_lifecycle_tick_based<

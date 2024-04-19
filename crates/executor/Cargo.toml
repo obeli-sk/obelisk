@@ -27,6 +27,7 @@ valuable.workspace = true
 
 [dev-dependencies]
 db-mem.workspace = true
+db-tests.workspace = true
 db-sqlite.workspace = true
 test-utils.workspace = true
 

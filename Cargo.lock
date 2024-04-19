@@ -938,6 +938,7 @@ dependencies = [
  "concepts",
  "db-mem",
  "db-sqlite",
+ "db-tests",
  "derivative",
  "derive_more",
  "indexmap 2.2.6",
