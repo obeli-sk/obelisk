@@ -1,5 +1,4 @@
 #![allow(clippy::all, dead_code)]
-//TODO: Replace get(usize) with get(&str)
 use async_sqlite::{rusqlite::named_params, ClientBuilder, JournalMode, Pool, PoolBuilder};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -149,9 +148,9 @@ impl SqlitePool {
                 ":variant": DUMMY_CREATED.variant(),
             },
             |row| {
-                let created_at = row.get(0)?;
+                let created_at = row.get("created_at")?;
                 let event = serde_json::from_value::<ExecutionEventInner>(
-                    row.get::<_, serde_json::Value>(1)?,
+                    row.get::<_, serde_json::Value>("json_value")?,
                 )
                 .map(|event| (created_at, event))
                 .map_err(|serde| {
@@ -193,7 +192,7 @@ impl SqlitePool {
         execution_id: ExecutionId,
     ) -> Result<u32, SqliteError> {
         let mut stmt = conn.prepare(
-            "SELECT COUNT(*) FROM execution_log WHERE execution_id = :execution_id AND (variant = :v1 OR variant = :v2)",
+            "SELECT COUNT(*) as count FROM execution_log WHERE execution_id = :execution_id AND (variant = :v1 OR variant = :v2)",
         )?;
         Ok(stmt
             .query_row(
@@ -202,7 +201,7 @@ impl SqlitePool {
                     ":v1": DUMMY_INTERMITTENT_TIMEOUT.variant(),
                     ":v2": DUMMY_INTERMITTENT_FAILURE.variant(),
                 },
-                |row| row.get(0),
+                |row| row.get("count"),
             )
             .map_err(async_sqlite::Error::Rusqlite)?)
     }
@@ -220,7 +219,7 @@ impl SqlitePool {
                     ":execution_id": execution_id.to_string(),
                 },
                 |row| {
-                    let version: usize = row.get(0)?;
+                    let version: usize = row.get("version")?;
                     Ok(Version::new(version))
                 },
             )
@@ -365,7 +364,7 @@ impl SqlitePool {
                 named_params! {
                     ":execution_id": execution_id.to_string(),
                 },
-                |row| row.get::<_, serde_json::Value>(0),
+                |row| row.get::<_, serde_json::Value>("pending_state"),
             )
             .optional()
             .map_err(async_sqlite::Error::Rusqlite)?
@@ -443,7 +442,7 @@ impl SqlitePool {
                 },
                 |row| {
                     let event = serde_json::from_value::<ExecutionEventInner>(
-                        row.get::<_, serde_json::Value>(0)?,
+                        row.get::<_, serde_json::Value>("json_value")?,
                     )
                     .map_err(|serde| {
                         SqliteError::Parsing(StrVariant::Arc(Arc::from(serde.to_string())))
@@ -701,8 +700,8 @@ impl DbConnection for SqlitePool {
                                 },
                                 |row| {
                                     let execution_id =
-                                        row.get::<_, String>(0)?.parse::<ExecutionId>();
-                                    let version = Version::new(row.get::<_, usize>(1)?);
+                                        row.get::<_, String>("execution_id")?.parse::<ExecutionId>();
+                                    let version = Version::new(row.get::<_, usize>("expected_next_version")?);
                                     Ok(execution_id.map(|e| (e, version)))
                                 },
                             )?
@@ -919,9 +918,9 @@ impl DbConnection for SqlitePool {
                                 ":execution_id": execution_id.to_string(),
                             },
                             |row| {
-                                let created_at = row.get(0)?;
+                                let created_at = row.get("created_at")?;
                                 let event = serde_json::from_value::<ExecutionEventInner>(
-                                    row.get::<_, serde_json::Value>(1)?,
+                                    row.get::<_, serde_json::Value>("json_value")?,
                                 )
                                 .map(|event| ExecutionEvent { created_at, event })
                                 .map_err(|serde| {
@@ -929,7 +928,7 @@ impl DbConnection for SqlitePool {
                                         serde.to_string(),
                                     )))
                                 });
-                                let pending_state = row.get::<_, Option<serde_json::Value>>(2)?;
+                                let pending_state = row.get::<_, Option<serde_json::Value>>("pending_state")?;
 
                                 Ok(event.map(|event| (event, pending_state)))
                             },
@@ -991,10 +990,10 @@ impl DbConnection for SqlitePool {
                             ":at": at,
                         },
                         |row| {
-                            let execution_id = row.get::<_, String>(0)?.parse::<ExecutionId>();
-                            let version = Version::new(row.get::<_, usize>(1)?);
-                            let join_set_id = row.get::<_, Option<String>>(2)?.map(|str| str.parse::<JoinSetId>());
-                            let delay_id = row.get::<_, Option<String>>(3)?.map(|str| str.parse::<DelayId>());
+                            let execution_id = row.get::<_, String>("execution_id")?.parse::<ExecutionId>();
+                            let version = Version::new(row.get::<_, usize>("expected_next_version")?);
+                            let join_set_id = row.get::<_, Option<String>>("join_set_id")?.map(|str| str.parse::<JoinSetId>());
+                            let delay_id = row.get::<_, Option<String>>("delay_id")?.map(|str| str.parse::<DelayId>());
                             Ok((execution_id, version, join_set_id, delay_id))
                         },
                     )?
