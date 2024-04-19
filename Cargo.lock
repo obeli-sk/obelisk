@@ -667,7 +667,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "concepts",
- "db-tests",
+ "db-tests-common",
  "derivative",
  "derive_more",
  "hashbrown 0.14.3",
@@ -689,7 +689,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "concepts",
- "db-tests",
+ "db-tests-common",
  "derivative",
  "derive_more",
  "madsim",
@@ -704,7 +704,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "db-tests"
+name = "db-tests-common"
 version = "0.1.0"
 dependencies = [
  "arbitrary",

@@ -6,7 +6,7 @@ members = [
     "crates/db",
     "crates/executor",
     "crates/testing/cargo-component-builder",
-    "crates/testing/db-tests",
+    "crates/testing/db-tests-common",
     "crates/testing/test-programs/fibo/activity",
     "crates/testing/test-programs/fibo/activity/builder",
     "crates/testing/test-programs/fibo/workflow",
@@ -41,7 +41,7 @@ rust-version = "1.77.0"
 cargo-component-builder.path = "crates/testing/cargo-component-builder"
 concepts.path = "crates/concepts"
 db.path = "crates/db"
-db-tests.path = "crates/testing/db-tests"
+db-tests-common.path = "crates/testing/db-tests-common"
 db-sqlite.path = "crates/db-sqlite"
 executor.path = "crates/executor/"
 test-programs-fibo-activity-builder.path = "crates/testing/test-programs/fibo/activity/builder"

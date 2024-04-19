@@ -22,7 +22,7 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-db-tests.workspace = true
+db-tests-common.workspace = true
 test-utils.workspace = true
 utils.workspace = true
 

@@ -1023,8 +1023,8 @@ pub mod tests {
     use super::*;
     use concepts::Params;
     use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
-    use db_tests::db_test_stubs;
-    use db_tests::db_test_stubs::SOME_FFQN;
+    use db_tests_common::db_test_stubs;
+    use db_tests_common::db_test_stubs::SOME_FFQN;
     use std::time::{Duration, Instant};
     use test_utils::arbitrary::UnstructuredHolder;
     use test_utils::env_or_default;

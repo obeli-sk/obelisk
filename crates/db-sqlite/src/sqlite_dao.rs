@@ -699,9 +699,11 @@ impl DbConnection for SqlitePool {
                                     ":batch_size": batch_size - execution_ids_versions.len(),
                                 },
                                 |row| {
-                                    let execution_id =
-                                        row.get::<_, String>("execution_id")?.parse::<ExecutionId>();
-                                    let version = Version::new(row.get::<_, usize>("expected_next_version")?);
+                                    let execution_id = row
+                                        .get::<_, String>("execution_id")?
+                                        .parse::<ExecutionId>();
+                                    let version =
+                                        Version::new(row.get::<_, usize>("expected_next_version")?);
                                     Ok(execution_id.map(|e| (e, version)))
                                 },
                             )?
@@ -928,7 +930,8 @@ impl DbConnection for SqlitePool {
                                         serde.to_string(),
                                     )))
                                 });
-                                let pending_state = row.get::<_, Option<serde_json::Value>>("pending_state")?;
+                                let pending_state =
+                                    row.get::<_, Option<serde_json::Value>>("pending_state")?;
 
                                 Ok(event.map(|event| (event, pending_state)))
                             },
@@ -1032,7 +1035,7 @@ impl DbConnection for SqlitePool {
 #[cfg(all(test, not(madsim)))] // async-sqlite attempts to spawn a system thread in simulation
 mod tests {
     use super::SqlitePool;
-    use db_tests::db_test_stubs;
+    use db_tests_common::db_test_stubs;
     use tempfile::NamedTempFile;
     use test_utils::set_up;
 

@@ -1,5 +1,5 @@
 [package]
-name = "db-tests"
+name = "db-tests-common"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
