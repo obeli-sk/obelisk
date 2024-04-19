@@ -659,7 +659,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "db"
+name = "db-mem"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
@@ -916,7 +916,7 @@ dependencies = [
  "cfg-if",
  "chrono",
  "concepts",
- "db",
+ "db-mem",
  "derivative",
  "derive_more",
  "indexmap 2.2.6",
@@ -2947,7 +2947,7 @@ dependencies = [
  "cfg-if",
  "chrono",
  "concepts",
- "db",
+ "db-mem",
  "derivative",
  "derive_more",
  "executor",

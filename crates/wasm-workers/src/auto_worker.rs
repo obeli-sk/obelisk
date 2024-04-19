@@ -187,7 +187,7 @@ mod tests {
         EngineConfig,
     };
     use concepts::{prefixed_ulid::ConfigId, StrVariant};
-    use db::inmemory_dao::DbTask;
+    use db_mem::inmemory_dao::DbTask;
     use test_utils::set_up;
     use utils::time::now;
 

@@ -275,7 +275,7 @@ pub(crate) mod tests {
         storage::{CreateRequest, DbConnection, DbPool},
         ExecutionId, Params, SupportedFunctionResult,
     };
-    use db::inmemory_dao::DbTask;
+    use db_mem::inmemory_dao::DbTask;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::time::{Duration, Instant};
     use test_utils::env_or_default;

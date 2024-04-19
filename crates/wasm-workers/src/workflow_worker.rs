@@ -370,7 +370,7 @@ mod tests {
     use assert_matches::assert_matches;
     use concepts::storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState};
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
-    use db::inmemory_dao::DbTask;
+    use db_mem::inmemory_dao::DbTask;
     use executor::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
         expired_timers_watcher,

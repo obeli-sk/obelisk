@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/concepts",
     "crates/db-sqlite",
-    "crates/db",
+    "crates/db-mem",
     "crates/executor",
     "crates/testing/cargo-component-builder",
     "crates/testing/db-tests-common",
@@ -40,7 +40,7 @@ rust-version = "1.77.0"
 [workspace.dependencies]
 cargo-component-builder.path = "crates/testing/cargo-component-builder"
 concepts.path = "crates/concepts"
-db.path = "crates/db"
+db-mem.path = "crates/db-mem"
 db-tests-common.path = "crates/testing/db-tests-common"
 db-sqlite.path = "crates/db-sqlite"
 executor.path = "crates/executor/"

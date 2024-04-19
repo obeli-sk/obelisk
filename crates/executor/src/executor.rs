@@ -532,7 +532,7 @@ mod tests {
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
     use concepts::{Params, SupportedFunctionResult};
-    use db::inmemory_dao::DbTask;
+    use db_mem::inmemory_dao::DbTask;
     use indexmap::IndexMap;
     use simple_worker::SOME_FFQN;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};

@@ -437,7 +437,7 @@ mod tests {
         FinishedExecutionResult,
     };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
-    use db::inmemory_dao::DbTask;
+    use db_mem::inmemory_dao::DbTask;
     use derivative::Derivative;
     use executor::{
         executor::{ExecConfig, ExecTask},
