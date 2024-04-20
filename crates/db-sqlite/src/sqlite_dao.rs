@@ -1167,7 +1167,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lock_delete_pending_bug() {
+    async fn append_batch_respond_to_parent() {
+        set_up();
+        let (pool, _guard) = sqlite_pool().await;
+        db_test_stubs::append_batch_respond_to_parent(&pool).await;
+        pool.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn lock_should_delete_from_pending() {
         set_up();
         let (pool, _guard) = sqlite_pool().await;
         let db_connection = &pool;
@@ -1187,6 +1195,7 @@ mod tests {
             })
             .await
             .unwrap();
+        // Append an event that does not change Pending state but must update the version in the `pending` table.
         let version = db_connection
             .append(
                 execution_id,

@@ -1,8 +1,8 @@
 use assert_matches::assert_matches;
-use concepts::prefixed_ulid::RunId;
+use concepts::prefixed_ulid::{JoinSetId, RunId};
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
-    SpecificError, Version,
+    JoinSetResponse, SpecificError, Version,
 };
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
 use concepts::{storage::HistoryEvent, FinishedExecutionResult};
@@ -341,4 +341,65 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection) {
         assert_eq!(MAX_RETRIES, *max_retries);
         assert_eq!(RETRY_EXP_BACKOFF, *retry_exp_backoff);
     }
+}
+
+pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
+    let sim_clock = SimClock::new(now());
+    let parent_id = ExecutionId::generate();
+    let child_id = ExecutionId::generate();
+    // Create parent
+    db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: parent_id,
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            scheduled_at: None,
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+        })
+        .await
+        .unwrap();
+    // Create child
+    let child_version = db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id: child_id,
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            scheduled_at: None,
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+        })
+        .await
+        .unwrap();
+    let child_resp = vec![AppendRequest {
+        created_at: sim_clock.now(),
+        event: ExecutionEventInner::Finished {
+            result: Ok(concepts::SupportedFunctionResult::None),
+        },
+    }];
+    let parent_add = AppendRequest {
+        created_at: sim_clock.now(),
+        event: ExecutionEventInner::HistoryEvent {
+            event: HistoryEvent::JoinSetResponse {
+                join_set_id: JoinSetId::generate(),
+                response: JoinSetResponse::ChildExecutionFinished {
+                    child_execution_id: child_id,
+                    result: Ok(concepts::SupportedFunctionResult::None),
+                },
+            },
+        },
+    };
+    db_connection
+        .append_batch_respond_to_parent(
+            child_resp,
+            child_id,
+            child_version,
+            (parent_id, parent_add),
+        )
+        .await
+        .unwrap();
 }
