@@ -7,7 +7,7 @@ use concepts::storage::{AppendRequest, CreateRequest};
 use concepts::ExecutionId;
 use concepts::Params;
 use db_mem::inmemory_dao::DbTask;
-use db_tests::sqlite_pool;
+use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
 use db_tests_common::db_test_stubs::SOME_FFQN;
 use std::time::Duration;
 use test_utils::arbitrary::UnstructuredHolder;

@@ -28,7 +28,7 @@ valuable.workspace = true
 [dev-dependencies]
 db-mem.workspace = true
 db-tests.workspace = true
-db-sqlite.workspace = true
+db-sqlite = { workspace = true, features = ["tempfile"] }
 test-utils.workspace = true
 
 anyhow.workspace = true

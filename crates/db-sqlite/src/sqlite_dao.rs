@@ -1105,11 +1105,25 @@ impl DbConnection for SqlitePool {
     }
 }
 
+#[cfg(any(test, feature = "tempfile"))]
+pub mod tempfile {
+    use super::SqlitePool;
+    use tempfile::NamedTempFile;
+
+    pub async fn sqlite_pool() -> (SqlitePool, Option<NamedTempFile>) {
+        if let Ok(path) = std::env::var("SQLITE_FILE") {
+            (SqlitePool::new(path).await.unwrap(), None)
+        } else {
+            let file = NamedTempFile::new().unwrap();
+            let path = file.path();
+            (SqlitePool::new(path).await.unwrap(), Some(file))
+        }
+    }
+}
+
 #[cfg(all(test, not(madsim)))] // async-sqlite attempts to spawn a system thread in simulation
 mod tests {
-    use std::time::Duration;
-
-    use super::SqlitePool;
+    use crate::sqlite_dao::tempfile::sqlite_pool;
     use concepts::{
         prefixed_ulid::{DelayId, ExecutorId, JoinSetId, RunId},
         storage::{
@@ -1119,24 +1133,14 @@ mod tests {
         ExecutionId, Params,
     };
     use db_tests_common::db_test_stubs::{self, SOME_FFQN};
-    use tempfile::NamedTempFile;
+    use std::time::Duration;
     use test_utils::set_up;
     use utils::time::now;
-
-    async fn pool() -> (SqlitePool, Option<NamedTempFile>) {
-        if let Ok(path) = std::env::var("SQLITE_FILE") {
-            (SqlitePool::new(path).await.unwrap(), None)
-        } else {
-            let file = NamedTempFile::new().unwrap();
-            let path = file.path();
-            (SqlitePool::new(path).await.unwrap(), Some(file))
-        }
-    }
 
     #[tokio::test]
     async fn check_sqlite_version() {
         test_utils::set_up();
-        let (pool, _guard) = pool().await;
+        let (pool, _guard) = sqlite_pool().await;
         let version = pool
             .pool
             .conn(|conn| conn.query_row("SELECT SQLITE_VERSION()", [], |row| row.get(0)))
@@ -1149,7 +1153,7 @@ mod tests {
     #[tokio::test]
     async fn lifecycle() {
         set_up();
-        let (pool, _guard) = pool().await;
+        let (pool, _guard) = sqlite_pool().await;
         db_test_stubs::lifecycle(&pool).await;
         pool.close().await.unwrap();
     }
@@ -1157,7 +1161,7 @@ mod tests {
     #[tokio::test]
     async fn expired_lock_should_be_found() {
         set_up();
-        let (pool, _guard) = pool().await;
+        let (pool, _guard) = sqlite_pool().await;
         db_test_stubs::expired_lock_should_be_found(&pool).await;
         pool.close().await.unwrap();
     }
@@ -1165,7 +1169,7 @@ mod tests {
     #[tokio::test]
     async fn lock_delete_pending_bug() {
         set_up();
-        let (pool, _guard) = pool().await;
+        let (pool, _guard) = sqlite_pool().await;
         let db_connection = &pool;
         let execution_id = ExecutionId::generate();
         let executor_id = ExecutorId::generate();

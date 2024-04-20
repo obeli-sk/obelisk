@@ -590,7 +590,9 @@ mod tests {
     #[cfg(not(madsim))]
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based_sqlite() {
-        let (pool, _guard) = db_tests::sqlite_pool().await;
+        use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
+
+        let (pool, _guard) = sqlite_pool().await;
         execute_simple_lifecycle_tick_based(pool.clone()).await;
         pool.close().await.unwrap();
     }

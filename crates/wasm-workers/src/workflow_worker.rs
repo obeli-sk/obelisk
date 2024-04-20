@@ -435,7 +435,9 @@ mod tests {
     #[cfg(not(madsim))]
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity_sqlite() {
-        let (db_pool, _guard) = db_tests::sqlite_pool().await;
+        use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
+
+        let (db_pool, _guard) = sqlite_pool().await;
         fibo_workflow_should_schedule_fibo_activity(db_pool.clone()).await;
         db_pool.close().await.unwrap();
     }
