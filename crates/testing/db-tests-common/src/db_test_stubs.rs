@@ -1,4 +1,5 @@
 use assert_matches::assert_matches;
+use chrono::DateTime;
 use concepts::prefixed_ulid::{JoinSetId, RunId};
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
@@ -402,4 +403,72 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
         )
         .await
         .unwrap();
+}
+
+pub async fn lock_pending_should_sort_by_scheduled_at(db_connection: &impl DbConnection) {
+    let sim_clock = SimClock::new(DateTime::default());
+    let created_at = sim_clock.now();
+    let older_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at,
+            execution_id: older_id,
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            scheduled_at: Some(sim_clock.now()),
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+        })
+        .await
+        .unwrap();
+
+    sim_clock.move_time_forward(Duration::from_nanos(1));
+    let newer_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at,
+            execution_id: newer_id,
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            scheduled_at: Some(sim_clock.now()),
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+        })
+        .await
+        .unwrap();
+
+    sim_clock.move_time_forward(Duration::from_nanos(999));
+    let newest_id = ExecutionId::generate();
+    db_connection
+        .create(CreateRequest {
+            created_at,
+            execution_id: newest_id,
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            scheduled_at: Some(sim_clock.now()),
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+        })
+        .await
+        .unwrap();
+
+    let locked_ids = db_connection
+        .lock_pending(
+            3,
+            sim_clock.now(),
+            vec![SOME_FFQN],
+            sim_clock.now(),
+            ExecutorId::generate(),
+            sim_clock.now() + Duration::from_secs(1),
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|locked| locked.execution_id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(vec![older_id, newer_id, newest_id], locked_ids);
 }

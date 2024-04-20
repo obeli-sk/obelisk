@@ -1175,6 +1175,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lock_pending_should_sort_by_scheduled_at() {
+        set_up();
+        let (pool, _guard) = sqlite_pool().await;
+        db_test_stubs::lock_pending_should_sort_by_scheduled_at(&pool).await;
+        pool.close().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn lock_should_delete_from_pending() {
         set_up();
         let (pool, _guard) = sqlite_pool().await;

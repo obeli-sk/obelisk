@@ -1060,6 +1060,16 @@ pub mod tests {
         db_task.close().await;
     }
 
+    #[tokio::test]
+    async fn lock_pending_should_sort_by_scheduled_at() {
+        set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.pool().unwrap().connection();
+        db_test_stubs::lock_pending_should_sort_by_scheduled_at(&db_connection).await;
+        drop(db_connection);
+        db_task.close().await;
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_lock_pending_parallel() {
         const EXECUTIONS: usize = 100_000;
