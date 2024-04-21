@@ -76,15 +76,13 @@ async fn main() {
     let exec_task = ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None);
 
     let db_connection = db_pool.connection();
-    const HTTP_GET_ACTIVITY_FFQN: FunctionFqn =
-        FunctionFqn::new_static_tuple(test_programs_http_get_activity_builder::GET);
     let params = Params::from([Val::String("neverssl.com".into()), Val::String("/".into())]);
     let execution_id = ExecutionId::generate();
     db_connection
         .create(CreateRequest {
             created_at: now(),
             execution_id,
-            ffqn: HTTP_GET_ACTIVITY_FFQN,
+            ffqn: FunctionFqn::new_static_tuple(test_programs_http_get_activity_builder::GET),
             params,
             parent: None,
             scheduled_at: None,
