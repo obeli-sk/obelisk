@@ -49,7 +49,7 @@ impl FunctionError {
 
 // Generate `host_activities::Host` trait
 wasmtime::component::bindgen!({
-    path: "../../wit/workflow-engine/",
+    path: "host-wit/",
     async: true,
     interfaces: "import my-org:workflow-engine/host-activities;",
 });

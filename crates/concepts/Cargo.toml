@@ -5,7 +5,6 @@ authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-
 [dependencies]
 val-json.workspace = true
 
