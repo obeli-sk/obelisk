@@ -564,7 +564,7 @@ pub async fn wait_for_pending_state_fn<T: Debug>(
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpiredTimer {
     Lock {
         execution_id: ExecutionId,

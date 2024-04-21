@@ -1058,7 +1058,7 @@ impl DbConnection for SqlitePool {
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
             move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT execution_id, next_version, join_set_id, delay_id FROM locked WHERE lock_expires_at >= :at",
+                    "SELECT execution_id, next_version, join_set_id, delay_id FROM locked WHERE lock_expires_at <= :at",
                 )?;
                 let query_res = stmt
                     .query_map(
@@ -1124,17 +1124,18 @@ pub mod tempfile {
 #[cfg(all(test, not(madsim)))] // async-sqlite attempts to spawn a system thread in simulation
 mod tests {
     use crate::sqlite_dao::tempfile::sqlite_pool;
+    use chrono::DateTime;
     use concepts::{
         prefixed_ulid::{DelayId, ExecutorId, JoinSetId, RunId},
         storage::{
-            AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, HistoryEvent,
-            JoinSetRequest,
+            AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, ExpiredTimer,
+            HistoryEvent, JoinSetRequest,
         },
         ExecutionId, Params,
     };
     use db_tests_common::db_test_stubs::{self, SOME_FFQN};
     use std::time::Duration;
-    use test_utils::set_up;
+    use test_utils::{set_up, sim_clock::SimClock};
     use utils::time::now;
 
     #[tokio::test]
@@ -1235,6 +1236,66 @@ mod tests {
             )
             .await
             .unwrap();
+        pool.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_expired_lock() {
+        set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (pool, _guard) = sqlite_pool().await;
+        let db_connection = &pool;
+        let execution_id = ExecutionId::generate();
+        let executor_id = ExecutorId::generate();
+        // Create
+        let version = db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id,
+                ffqn: SOME_FFQN,
+                params: Params::default(),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
+            .await
+            .unwrap();
+        let lock_expiry = Duration::from_millis(100);
+        let (_, version) = db_connection
+            .lock(
+                sim_clock.now(),
+                execution_id,
+                RunId::generate(),
+                version,
+                executor_id,
+                sim_clock.now() + lock_expiry,
+            )
+            .await
+            .unwrap();
+
+        assert!(db_connection
+            .get_expired_timers(sim_clock.now())
+            .await
+            .unwrap()
+            .is_empty());
+
+        sim_clock.move_time_forward(lock_expiry);
+
+        let mut actual = db_connection
+            .get_expired_timers(sim_clock.now())
+            .await
+            .unwrap();
+        assert_eq!(1, actual.len());
+        let actual = actual.pop().unwrap();
+        let expected = ExpiredTimer::Lock {
+            execution_id,
+            version,
+            already_retried_count: 0,
+            max_retries: 0,
+            retry_exp_backoff: Duration::ZERO,
+        };
+        assert_eq!(expected, actual);
         pool.close().await.unwrap();
     }
 }
