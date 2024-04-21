@@ -569,7 +569,7 @@ pub enum ExpiredTimer {
     Lock {
         execution_id: ExecutionId,
         version: Version,
-        already_retried_count: u32,
+        already_tried_count: u32,
         max_retries: u32,
         retry_exp_backoff: Duration,
     },

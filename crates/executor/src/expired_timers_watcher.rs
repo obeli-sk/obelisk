@@ -128,13 +128,13 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
                 ExpiredTimer::Lock {
                     execution_id,
                     version,
-                    already_retried_count,
+                    already_tried_count,
                     max_retries,
                     retry_exp_backoff,
                 } => {
-                    let event = if already_retried_count < max_retries {
+                    let event = if already_tried_count < max_retries {
                         let duration =
-                            retry_exp_backoff * 2_u32.saturating_pow(already_retried_count);
+                            retry_exp_backoff * 2_u32.saturating_pow(already_tried_count);
                         let expires_at = executed_at + duration;
                         debug!(%execution_id, "Retrying execution with expired lock after {duration:?} at {expires_at}");
                         ExecutionEventInner::IntermittentTimeout { expires_at }

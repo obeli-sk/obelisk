@@ -1086,8 +1086,8 @@ impl DbConnection for SqlitePool {
                         }
                         (None, None) => {
                             let created = Self::fetch_created_event(conn, execution_id)?;
-                            let already_retried_count = Self::count_intermittent_events(conn, execution_id)?;
-                            ExpiredTimer::Lock { execution_id, version, already_retried_count, max_retries: created.max_retries, retry_exp_backoff: created.retry_exp_backoff }
+                            let already_tried_count = Self::count_intermittent_events(conn, execution_id)?;
+                            ExpiredTimer::Lock { execution_id, version, already_tried_count, max_retries: created.max_retries, retry_exp_backoff: created.retry_exp_backoff }
                         }
                         _ => {
                             error!("invalid combination of `join_set_id`, `delay_id`");
@@ -1291,7 +1291,7 @@ mod tests {
         let expected = ExpiredTimer::Lock {
             execution_id,
             version,
-            already_retried_count: 0,
+            already_tried_count: 0,
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
         };

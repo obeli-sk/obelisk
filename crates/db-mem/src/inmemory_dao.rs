@@ -931,7 +931,7 @@ impl DbTask {
                     execution_id: journal.execution_id(),
                     version: journal.version(),
                     max_retries: journal.max_retries(),
-                    already_retried_count: journal.already_retried_count(),
+                    already_tried_count: journal.already_retried_count(),
                     retry_exp_backoff: journal.retry_exp_backoff(),
                 },
             });
