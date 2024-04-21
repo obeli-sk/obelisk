@@ -262,7 +262,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         .await
         {
             Ok(Some(append)) => {
-                debug!("Appending {append:?}");
+                trace!("Appending {append:?}");
                 let db_connection = db_pool.connection();
                 if let Some((parent_id, parent_append_request)) = append.parent_response {
                     db_connection

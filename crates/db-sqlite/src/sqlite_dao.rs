@@ -755,6 +755,7 @@ impl DbConnection for SqlitePool {
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
         debug!("create");
+        trace!(?req, "create");
         self.pool
             .transaction_write_with_span(move |tx| Self::create_inner(tx, req), Span::current())
             .await
@@ -876,14 +877,15 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, req))]
     async fn append(
         &self,
         execution_id: ExecutionId,
         version: Option<Version>,
         req: AppendRequest,
     ) -> Result<AppendResponse, DbError> {
-        debug!("append");
+        debug!(%req, "append");
+        trace!(?req, "append");
         // Disallow `Created` event
         if let ExecutionEventInner::Created { .. } = req.event {
             error!("Cannot append `Created` event - use `create` instead");
@@ -900,7 +902,7 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, batch))]
     async fn append_batch(
         &self,
         batch: AppendBatch,
@@ -908,6 +910,7 @@ impl DbConnection for SqlitePool {
         version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
         debug!("append_batch");
+        trace!(?batch, "append_batch");
         if batch.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -938,7 +941,7 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, batch, child_req))]
     async fn append_batch_create_child(
         &self,
         batch: AppendBatch,
@@ -947,6 +950,7 @@ impl DbConnection for SqlitePool {
         child_req: CreateRequest,
     ) -> Result<AppendBatchResponse, DbError> {
         debug!("append_batch_create_child");
+        trace!(?batch, ?child_req, "append_batch_create_child");
         if batch.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -977,7 +981,7 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, batch, parent))]
     async fn append_batch_respond_to_parent(
         &self,
         batch: AppendBatch,
@@ -986,6 +990,7 @@ impl DbConnection for SqlitePool {
         parent: (ExecutionId, AppendRequest),
     ) -> Result<AppendBatchResponse, DbError> {
         debug!("append_batch_respond_to_parent");
+        trace!(?batch, ?parent, "append_batch_respond_to_parent");
         if batch.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -1094,6 +1099,7 @@ impl DbConnection for SqlitePool {
     }
 
     /// Get currently expired locks and async timers (delay requests)
+    #[instrument(skip(self))]
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
         trace!("get_expired_timers");
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
