@@ -1165,19 +1165,8 @@ pub mod tempfile {
 #[cfg(all(test, not(madsim)))] // async-sqlite attempts to spawn a system thread in simulation
 mod tests {
     use crate::sqlite_dao::tempfile::sqlite_pool;
-    use chrono::DateTime;
-    use concepts::{
-        prefixed_ulid::{DelayId, ExecutorId, JoinSetId, RunId},
-        storage::{
-            AppendRequest, CreateRequest, DbConnection, ExecutionEventInner, ExpiredTimer,
-            HistoryEvent, JoinSetRequest,
-        },
-        ExecutionId, Params,
-    };
-    use db_tests_common::db_test_stubs::{self, SOME_FFQN};
-    use std::time::Duration;
-    use test_utils::{set_up, sim_clock::SimClock};
-    use utils::time::now;
+    use db_tests_common::db_test_stubs;
+    use test_utils::set_up;
 
     #[tokio::test]
     async fn check_sqlite_version() {
@@ -1228,196 +1217,23 @@ mod tests {
     async fn lock_should_delete_from_pending() {
         set_up();
         let (pool, _guard) = sqlite_pool().await;
-        let db_connection = &pool;
-        let execution_id = ExecutionId::generate();
-        let executor_id = ExecutorId::generate();
-        // Create
-        let version = db_connection
-            .create(CreateRequest {
-                created_at: now(),
-                execution_id,
-                ffqn: SOME_FFQN,
-                params: Params::default(),
-                parent: None,
-                scheduled_at: None,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-            })
-            .await
-            .unwrap();
-        // Append an event that does not change Pending state but must update the version in the `pending` table.
-        let version = db_connection
-            .append(
-                execution_id,
-                Some(version),
-                AppendRequest {
-                    created_at: now(),
-                    event: ExecutionEventInner::HistoryEvent {
-                        event: HistoryEvent::JoinSetRequest {
-                            join_set_id: JoinSetId::generate(),
-                            request: JoinSetRequest::DelayRequest {
-                                delay_id: DelayId::generate(),
-                                expires_at: now(),
-                            },
-                        },
-                    },
-                },
-            )
-            .await
-            .unwrap();
-        let locked_at = now();
-        let (_, _version) = db_connection
-            .lock(
-                locked_at,
-                execution_id,
-                RunId::generate(),
-                version,
-                executor_id,
-                locked_at + Duration::from_millis(100),
-            )
-            .await
-            .unwrap();
+        db_test_stubs::lock_should_delete_from_pending(&pool).await;
         pool.close().await.unwrap();
     }
 
     #[tokio::test]
     async fn get_expired_lock() {
         set_up();
-        let sim_clock = SimClock::new(DateTime::default());
         let (pool, _guard) = sqlite_pool().await;
-        let db_connection = &pool;
-        let execution_id = ExecutionId::generate();
-        let executor_id = ExecutorId::generate();
-        // Create
-        let version = db_connection
-            .create(CreateRequest {
-                created_at: sim_clock.now(),
-                execution_id,
-                ffqn: SOME_FFQN,
-                params: Params::default(),
-                parent: None,
-                scheduled_at: None,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-            })
-            .await
-            .unwrap();
-        let lock_expiry = Duration::from_millis(100);
-        let (_, version) = db_connection
-            .lock(
-                sim_clock.now(),
-                execution_id,
-                RunId::generate(),
-                version,
-                executor_id,
-                sim_clock.now() + lock_expiry,
-            )
-            .await
-            .unwrap();
-
-        assert!(db_connection
-            .get_expired_timers(sim_clock.now())
-            .await
-            .unwrap()
-            .is_empty());
-
-        sim_clock.move_time_forward(lock_expiry);
-
-        let mut actual = db_connection
-            .get_expired_timers(sim_clock.now())
-            .await
-            .unwrap();
-        assert_eq!(1, actual.len());
-        let actual = actual.pop().unwrap();
-        let expected = ExpiredTimer::Lock {
-            execution_id,
-            version,
-            already_tried_count: 0,
-            max_retries: 0,
-            retry_exp_backoff: Duration::ZERO,
-        };
-        assert_eq!(expected, actual);
+        db_test_stubs::get_expired_lock(&pool).await;
         pool.close().await.unwrap();
     }
 
     #[tokio::test]
     async fn get_expired_delay() {
         set_up();
-        let sim_clock = SimClock::new(DateTime::default());
         let (pool, _guard) = sqlite_pool().await;
-        let db_connection = &pool;
-        let execution_id = ExecutionId::generate();
-        let executor_id = ExecutorId::generate();
-        // Create
-        let version = db_connection
-            .create(CreateRequest {
-                created_at: sim_clock.now(),
-                execution_id,
-                ffqn: SOME_FFQN,
-                params: Params::default(),
-                parent: None,
-                scheduled_at: None,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-            })
-            .await
-            .unwrap();
-        let lock_expiry = Duration::from_millis(100);
-        let (_, version) = db_connection
-            .lock(
-                sim_clock.now(),
-                execution_id,
-                RunId::generate(),
-                version,
-                executor_id,
-                sim_clock.now() + lock_expiry * 2,
-            )
-            .await
-            .unwrap();
-
-        let join_set_id = JoinSetId::generate();
-        let delay_id = DelayId::generate();
-        let version = db_connection
-            .append(
-                execution_id,
-                Some(version),
-                AppendRequest {
-                    created_at: now(),
-                    event: ExecutionEventInner::HistoryEvent {
-                        event: HistoryEvent::JoinSetRequest {
-                            join_set_id,
-                            request: JoinSetRequest::DelayRequest {
-                                delay_id,
-                                expires_at: sim_clock.now() + lock_expiry,
-                            },
-                        },
-                    },
-                },
-            )
-            .await
-            .unwrap();
-
-        assert!(db_connection
-            .get_expired_timers(sim_clock.now())
-            .await
-            .unwrap()
-            .is_empty());
-
-        sim_clock.move_time_forward(lock_expiry);
-
-        let mut actual = db_connection
-            .get_expired_timers(sim_clock.now())
-            .await
-            .unwrap();
-        assert_eq!(1, actual.len());
-        let actual = actual.pop().unwrap();
-        let expected = ExpiredTimer::AsyncDelay {
-            execution_id,
-            version,
-            join_set_id,
-            delay_id,
-        };
-        assert_eq!(expected, actual);
+        db_test_stubs::get_expired_delay(&pool).await;
         pool.close().await.unwrap();
     }
 }

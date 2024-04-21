@@ -1070,6 +1070,36 @@ pub mod tests {
         db_task.close().await;
     }
 
+    #[tokio::test]
+    async fn lock_should_delete_from_pending() {
+        set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.pool().unwrap().connection();
+        db_test_stubs::lock_should_delete_from_pending(&db_connection).await;
+        drop(db_connection);
+        db_task.close().await;
+    }
+
+    #[tokio::test]
+    async fn get_expired_lock() {
+        set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.pool().unwrap().connection();
+        db_test_stubs::get_expired_lock(&db_connection).await;
+        drop(db_connection);
+        db_task.close().await;
+    }
+
+    #[tokio::test]
+    async fn get_expired_delay() {
+        set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_connection = db_task.pool().unwrap().connection();
+        db_test_stubs::get_expired_delay(&db_connection).await;
+        drop(db_connection);
+        db_task.close().await;
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
     async fn perf_lock_pending_parallel() {
         const EXECUTIONS: usize = 100_000;

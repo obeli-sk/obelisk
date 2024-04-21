@@ -1,9 +1,9 @@
 use assert_matches::assert_matches;
 use chrono::DateTime;
-use concepts::prefixed_ulid::{JoinSetId, RunId};
+use concepts::prefixed_ulid::{DelayId, JoinSetId, RunId};
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
-    JoinSetResponse, SpecificError, Version,
+    JoinSetRequest, JoinSetResponse, SpecificError, Version,
 };
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
 use concepts::{storage::HistoryEvent, FinishedExecutionResult};
@@ -471,4 +471,186 @@ pub async fn lock_pending_should_sort_by_scheduled_at(db_connection: &impl DbCon
         .collect::<Vec<_>>();
 
     assert_eq!(vec![older_id, newer_id, newest_id], locked_ids);
+}
+
+pub async fn lock_should_delete_from_pending(db_connection: &impl DbConnection) {
+    let execution_id = ExecutionId::generate();
+    let executor_id = ExecutorId::generate();
+    // Create
+    let version = db_connection
+        .create(CreateRequest {
+            created_at: now(),
+            execution_id,
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            scheduled_at: None,
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+        })
+        .await
+        .unwrap();
+    // Append an event that does not change Pending state but must update the version in the `pending` table.
+    let version = db_connection
+        .append(
+            execution_id,
+            Some(version),
+            AppendRequest {
+                created_at: now(),
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id: JoinSetId::generate(),
+                        request: JoinSetRequest::DelayRequest {
+                            delay_id: DelayId::generate(),
+                            expires_at: now(),
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let locked_at = now();
+    let (_, _version) = db_connection
+        .lock(
+            locked_at,
+            execution_id,
+            RunId::generate(),
+            version,
+            executor_id,
+            locked_at + Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+}
+
+pub async fn get_expired_lock(db_connection: &impl DbConnection) {
+    let sim_clock = SimClock::new(DateTime::default());
+    let execution_id = ExecutionId::generate();
+    let executor_id = ExecutorId::generate();
+    // Create
+    let version = db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id,
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            scheduled_at: None,
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+        })
+        .await
+        .unwrap();
+    let lock_expiry = Duration::from_millis(100);
+    let (_, version) = db_connection
+        .lock(
+            sim_clock.now(),
+            execution_id,
+            RunId::generate(),
+            version,
+            executor_id,
+            sim_clock.now() + lock_expiry,
+        )
+        .await
+        .unwrap();
+
+    assert!(db_connection
+        .get_expired_timers(sim_clock.now())
+        .await
+        .unwrap()
+        .is_empty());
+
+    sim_clock.move_time_forward(lock_expiry);
+
+    let mut actual = db_connection
+        .get_expired_timers(sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(1, actual.len());
+    let actual = actual.pop().unwrap();
+    let expected = ExpiredTimer::Lock {
+        execution_id,
+        version,
+        already_tried_count: 0,
+        max_retries: 0,
+        retry_exp_backoff: Duration::ZERO,
+    };
+    assert_eq!(expected, actual);
+}
+
+pub async fn get_expired_delay(db_connection: &impl DbConnection) {
+    let sim_clock = SimClock::new(DateTime::default());
+    let execution_id = ExecutionId::generate();
+    let executor_id = ExecutorId::generate();
+    // Create
+    let version = db_connection
+        .create(CreateRequest {
+            created_at: sim_clock.now(),
+            execution_id,
+            ffqn: SOME_FFQN,
+            params: Params::default(),
+            parent: None,
+            scheduled_at: None,
+            retry_exp_backoff: Duration::ZERO,
+            max_retries: 0,
+        })
+        .await
+        .unwrap();
+    let lock_expiry = Duration::from_millis(100);
+    let (_, version) = db_connection
+        .lock(
+            sim_clock.now(),
+            execution_id,
+            RunId::generate(),
+            version,
+            executor_id,
+            sim_clock.now() + lock_expiry * 2,
+        )
+        .await
+        .unwrap();
+
+    let join_set_id = JoinSetId::generate();
+    let delay_id = DelayId::generate();
+    let version = db_connection
+        .append(
+            execution_id,
+            Some(version),
+            AppendRequest {
+                created_at: now(),
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id,
+                        request: JoinSetRequest::DelayRequest {
+                            delay_id,
+                            expires_at: sim_clock.now() + lock_expiry,
+                        },
+                    },
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(db_connection
+        .get_expired_timers(sim_clock.now())
+        .await
+        .unwrap()
+        .is_empty());
+
+    sim_clock.move_time_forward(lock_expiry);
+
+    let mut actual = db_connection
+        .get_expired_timers(sim_clock.now())
+        .await
+        .unwrap();
+    assert_eq!(1, actual.len());
+    let actual = actual.pop().unwrap();
+    let expected = ExpiredTimer::AsyncDelay {
+        execution_id,
+        version,
+        join_set_id,
+        delay_id,
+    };
+    assert_eq!(expected, actual);
 }
