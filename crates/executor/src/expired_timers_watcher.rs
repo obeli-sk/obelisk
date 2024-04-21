@@ -70,7 +70,7 @@ impl Drop for TaskHandle {
 
 impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
     pub fn spawn_new<C: ClockFn + 'static, P: DbPool<DB>>(
-        db_pool: &P,
+        db_pool: &P,//FIXME: DbConnection
         config: TimersWatcherConfig<C>,
     ) -> Result<TaskHandle, DbConnectionError> {
         let executor_id = ExecutorId::generate();

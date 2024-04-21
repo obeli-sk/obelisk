@@ -103,13 +103,13 @@ impl SqlitePool {
     async fn init(pool: &Pool) -> Result<(), SqliteError> {
         pool.conn_with_err_and_span(
             |conn| {
-                debug!("Executing `PRAGMA`");
+                trace!("Executing `PRAGMA`");
                 conn.execute(PRAGMA, [])?;
-                debug!("Executing `CREATE_TABLE_EXECUTION_LOG`");
+                trace!("Executing `CREATE_TABLE_EXECUTION_LOG`");
                 conn.execute(CREATE_TABLE_EXECUTION_LOG, [])?;
-                debug!("Executing `CREATE_TABLE_PENDING`");
+                trace!("Executing `CREATE_TABLE_PENDING`");
                 conn.execute(CREATE_TABLE_PENDING, [])?;
-                debug!("Executing `CREATE_TABLE_LOCKED`");
+                trace!("Executing `CREATE_TABLE_LOCKED`");
                 conn.execute(CREATE_TABLE_LOCKED, [])?;
                 info!("Done setting up sqlite");
                 Ok::<_, SqliteError>(())
@@ -1054,7 +1054,7 @@ impl DbConnection for SqlitePool {
 
     /// Get currently expired locks and async timers (delay requests)
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
-        debug!("get_expired_timers");
+        trace!("get_expired_timers");
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
             move |conn| {
                 let mut stmt = conn.prepare(

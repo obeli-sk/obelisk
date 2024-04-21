@@ -538,14 +538,11 @@ mod tests {
     use indexmap::IndexMap;
     use simple_worker::SOME_FFQN;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
+    use test_utils::set_up;
     use test_utils::sim_clock::SimClock;
     use utils::time::now;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::WastValWithType;
-
-    fn set_up() {
-        test_utils::set_up();
-    }
 
     async fn tick_fn<
         W: Worker + Debug,
