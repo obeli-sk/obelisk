@@ -7,8 +7,8 @@ use concepts::{
     storage::{
         AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest,
         DbConnection, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
-        ExpiredTimer, HistoryEvent, LockKind, LockPendingResponse, LockResponse, LockedExecution,
-        PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        ExpiredTimer, HistoryEvent, JoinSetRequest, LockKind, LockPendingResponse, LockResponse,
+        LockedExecution, PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
         DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
     ExecutionId, FunctionFqn, StrVariant,
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS locked (
     join_set_id TEXT,
     delay_id TEXT,
     lock_expires_at TEXT NOT NULL,
-    PRIMARY KEY (execution_id)
+    PRIMARY KEY (execution_id, join_set_id, delay_id)
 )
 "; // TODO: index by `lock_expires_at`
 
@@ -360,10 +360,11 @@ impl SqlitePool {
     }
 
     #[instrument(skip_all, fields(%execution_id, %next_version, purge))]
-    fn update_index_version(
+    fn update_index_no_pending_state_change(
         tx: &Transaction,
         execution_id: ExecutionId,
         next_version: &Version,
+        delay_req: Option<(JoinSetId, DelayId, DateTime<Utc>)>,
     ) -> Result<(), SqliteError> {
         debug!("update_index_version");
         let execution_id_str = execution_id.to_string();
@@ -382,6 +383,21 @@ impl SqlitePool {
             ":next_version": next_version.0,
             ":current_version": next_version.0 - 1,
         })?;
+        if let Some((join_set_id, delay_id, expires_at)) = delay_req {
+            debug!("Inserting delay to `locked`");
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO locked (execution_id, next_version, join_set_id, delay_id, lock_expires_at) \
+                VALUES \
+                (:execution_id, :next_version, :join_set_id, :delay_id, :lock_expires_at)",
+            )?;
+            stmt.execute(named_params! {
+                ":execution_id": execution_id_str,
+                ":next_version": next_version.0, // If the lock expires, this version will be used by `expired_timers_watcher`.
+                ":join_set_id": join_set_id.to_string(),
+                ":delay_id": delay_id.to_string(),
+                ":lock_expires_at": expires_at,
+            })?;
+        }
         Ok(())
     }
 
@@ -615,7 +631,7 @@ impl SqlitePool {
                 } else {
                     Self::get_next_version(&tx, execution_id)?
                 };
-                let (pending_state, join_set_id) = {
+                let (pending_state, join_set_id, delay_req) = {
                     match event {
                         ExecutionEventInner::IntermittentFailure { expires_at, .. }
                         | ExecutionEventInner::IntermittentTimeout { expires_at } => (
@@ -623,21 +639,40 @@ impl SqlitePool {
                                 scheduled_at: expires_at,
                             }),
                             None,
+                            None,
                         ),
                         ExecutionEventInner::Finished { .. } => {
-                            (Some(PendingState::Finished), None)
+                            (Some(PendingState::Finished), None, None)
                         }
                         ExecutionEventInner::HistoryEvent {
                             event: HistoryEvent::Yield,
-                        } => (Some(PendingState::PendingNow), None),
+                        } => (Some(PendingState::PendingNow), None, None),
                         ExecutionEventInner::HistoryEvent {
                             event:
                                 HistoryEvent::JoinSet { join_set_id }
-                                | HistoryEvent::JoinSetRequest { join_set_id, .. },
-                        } => (None, Some(join_set_id)),
+                                | HistoryEvent::JoinSetRequest {
+                                    join_set_id,
+                                    request: JoinSetRequest::ChildExecutionRequest { .. },
+                                },
+                        } => (None, Some(join_set_id), None),
+                        ExecutionEventInner::HistoryEvent {
+                            event:
+                                HistoryEvent::JoinSetRequest {
+                                    join_set_id,
+                                    request:
+                                        JoinSetRequest::DelayRequest {
+                                            delay_id,
+                                            expires_at,
+                                        },
+                                },
+                        } => (
+                            None,
+                            Some(join_set_id),
+                            Some((join_set_id, delay_id, expires_at)),
+                        ),
                         ExecutionEventInner::HistoryEvent {
                             event: HistoryEvent::Persist { .. },
-                        } => (None, None),
+                        } => (None, None, None),
                         ExecutionEventInner::HistoryEvent {
                             event:
                                 HistoryEvent::JoinNext {
@@ -650,6 +685,7 @@ impl SqlitePool {
                                 lock_expires_at,
                             }),
                             Some(join_set_id),
+                            None,
                         ),
                         ExecutionEventInner::HistoryEvent {
                             event: HistoryEvent::JoinSetResponse { join_set_id, .. },
@@ -668,11 +704,11 @@ impl SqlitePool {
                                 }
                                 _ => None,
                             };
-                            (pending_state, Some(join_set_id))
+                            (pending_state, Some(join_set_id), None)
                         }
                         ExecutionEventInner::CancelRequest => {
                             //TODO
-                            (None, None)
+                            (None, None, None)
                         }
                         ExecutionEventInner::Locked { .. }
                         | ExecutionEventInner::Created { .. } => unreachable!("handled above"),
@@ -701,7 +737,12 @@ impl SqlitePool {
                         None,
                     )?;
                 } else {
-                    Self::update_index_version(&tx, execution_id, &next_version)?;
+                    Self::update_index_no_pending_state_change(
+                        &tx,
+                        execution_id,
+                        &next_version,
+                        delay_req,
+                    )?;
                 }
                 Ok(next_version)
             }
@@ -1294,6 +1335,87 @@ mod tests {
             already_tried_count: 0,
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
+        };
+        assert_eq!(expected, actual);
+        pool.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_expired_delay() {
+        set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (pool, _guard) = sqlite_pool().await;
+        let db_connection = &pool;
+        let execution_id = ExecutionId::generate();
+        let executor_id = ExecutorId::generate();
+        // Create
+        let version = db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id,
+                ffqn: SOME_FFQN,
+                params: Params::default(),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
+            .await
+            .unwrap();
+        let lock_expiry = Duration::from_millis(100);
+        let (_, version) = db_connection
+            .lock(
+                sim_clock.now(),
+                execution_id,
+                RunId::generate(),
+                version,
+                executor_id,
+                sim_clock.now() + lock_expiry * 2,
+            )
+            .await
+            .unwrap();
+
+        let join_set_id = JoinSetId::generate();
+        let delay_id = DelayId::generate();
+        let version = db_connection
+            .append(
+                execution_id,
+                Some(version),
+                AppendRequest {
+                    created_at: now(),
+                    event: ExecutionEventInner::HistoryEvent {
+                        event: HistoryEvent::JoinSetRequest {
+                            join_set_id,
+                            request: JoinSetRequest::DelayRequest {
+                                delay_id,
+                                expires_at: sim_clock.now() + lock_expiry,
+                            },
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(db_connection
+            .get_expired_timers(sim_clock.now())
+            .await
+            .unwrap()
+            .is_empty());
+
+        sim_clock.move_time_forward(lock_expiry);
+
+        let mut actual = db_connection
+            .get_expired_timers(sim_clock.now())
+            .await
+            .unwrap();
+        assert_eq!(1, actual.len());
+        let actual = actual.pop().unwrap();
+        let expected = ExpiredTimer::AsyncDelay {
+            execution_id,
+            version,
+            join_set_id,
+            delay_id,
         };
         assert_eq!(expected, actual);
         pool.close().await.unwrap();
