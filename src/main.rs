@@ -98,7 +98,6 @@ async fn main() {
         .wait_for_finished_result(execution_id, Some(Duration::from_secs(1)))
         .await
         .unwrap();
-
     info!("Res: {res:?}");
 
     exec_task.close().await;

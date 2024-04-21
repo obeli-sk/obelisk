@@ -1082,7 +1082,7 @@ impl DbConnection for SqlitePool {
                         (Some(join_set_id), Some(delay_id)) => {
                             let join_set_id = join_set_id.map_err(|str| SqliteError::Parsing(StrVariant::Static(str)))?;
                             let delay_id = delay_id.map_err(|str| SqliteError::Parsing(StrVariant::Static(str)))?;
-                            ExpiredTimer::AsyncTimer { execution_id, version, join_set_id, delay_id }
+                            ExpiredTimer::AsyncDelay { execution_id, version, join_set_id, delay_id }
                         }
                         (None, None) => {
                             let created = Self::fetch_created_event(conn, execution_id)?;

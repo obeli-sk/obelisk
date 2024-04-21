@@ -573,7 +573,7 @@ pub enum ExpiredTimer {
         max_retries: u32,
         retry_exp_backoff: Duration,
     },
-    AsyncTimer {
+    AsyncDelay {
         execution_id: ExecutionId,
         version: Version,
         join_set_id: JoinSetId,
