@@ -211,7 +211,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 #[derive(Debug, thiserror::Error)]
 enum RunError {
     #[error(transparent)]
-    WorkerError(WorkerError),
+    WorkerError(#[from] WorkerError),
     #[error("wasm function call error")]
     FunctionCall(Box<dyn Error + Send + Sync>, Version),
 }
@@ -254,11 +254,16 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
             {
                 Ok(instance) => instance,
                 Err(err) => {
-                    return Err(RunError::WorkerError(WorkerError::IntermittentError {
+                    let reason = err.to_string();
+                    let version = store.into_data().version;
+                    if reason.starts_with("maximum concurrent") {
+                        return Err(WorkerError::LimitReached(reason, version))?;
+                    }
+                    return Err(WorkerError::IntermittentError {
                         reason: StrVariant::Static("cannot instantiate"),
                         err: err.into(),
-                        version: store.into_data().version,
-                    }));
+                        version,
+                    })?;
                 }
             };
             (instance, store)
