@@ -390,7 +390,7 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                         let mut dst_map = IndexMap::new();
                         while let Some(field_name) = map.next_key::<Box<str>>()? {
                             if let Some(field_type) = record.get(&field_name) {
-                                let value = map.next_value_seed(WastValDeserialize(&field_type))?;
+                                let value = map.next_value_seed(WastValDeserialize(field_type))?;
                                 dst_map.insert(field_name, value);
                             } else {
                                 return Err(Error::custom(format!(
@@ -409,7 +409,7 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                 D: Deserializer<'de>,
             {
                 if let TypeWrapper::Option(inner_seed) = self.0 {
-                    let inner_value = WastValDeserialize(&inner_seed).deserialize(deserializer)?;
+                    let inner_value = WastValDeserialize(inner_seed).deserialize(deserializer)?;
                     Ok(WastVal::Option(Some(inner_value.into())))
                 } else {
                     Err(Error::invalid_type(Unexpected::Option, &self))
