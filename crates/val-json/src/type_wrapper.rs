@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TypeWrapper { // TODO: serde using wit syntax.
+pub enum TypeWrapper {
+    // TODO: serde using wit syntax.
     Bool,
     S8,
     U8,
@@ -128,6 +129,11 @@ impl TryFrom<&wasmtime::component::Val> for TypeWrapper {
                 let ok = transform(res.ok())?;
                 let err = transform(res.err())?;
                 Ok(Self::Result { ok, err })
+            }
+            Val::Option(option) => {
+                let inner = option.ty().ty();
+                let inner = Self::try_from(inner)?;
+                Ok(Self::Option(inner.into()))
             }
             _ => Err(TypeConversionError::UnsupportedType(format!("{value:?}"))),
         }
