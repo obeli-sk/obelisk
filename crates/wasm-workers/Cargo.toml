@@ -35,7 +35,6 @@ wit-parser.workspace = true
 [dev-dependencies]
 db-mem.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
-db-tests.workspace = true
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-programs-sleep-activity-builder.workspace = true
