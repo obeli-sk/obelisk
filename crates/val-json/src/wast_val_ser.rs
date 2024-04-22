@@ -32,7 +32,10 @@ impl Serialize for WastVal {
             WastVal::Variant(_, _) => todo!(),
             WastVal::Enum(_) => todo!(),
             WastVal::Option(_) => todo!(),
-            WastVal::Result(_) => todo!(),
+            WastVal::Result(result) => match result {
+                Ok(ok) => serializer.serialize_newtype_variant("Result", 0, "Ok", ok),
+                Err(err) => serializer.serialize_newtype_variant("Result", 0, "Err", err),
+            },
             WastVal::Flags(_) => todo!(),
         }
     }
@@ -108,9 +111,9 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
     {
         use serde::de::{Error, Unexpected};
 
-        struct ExtendVecVisitor<'a>(&'a TypeWrapper);
+        struct WastValVisitor<'a>(&'a TypeWrapper);
 
-        impl<'de, 'a> Visitor<'de> for ExtendVecVisitor<'a> {
+        impl<'de, 'a> Visitor<'de> for WastValVisitor<'a> {
             type Value = WastVal;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -320,9 +323,64 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                     Err(Error::invalid_type(Unexpected::Str(val), &self))
                 }
             }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                if let TypeWrapper::Result { ok, err } = self.0 {
+                    let ok_or_err = map
+                        .next_key::<String>()?
+                        .ok_or(Error::custom("invalid map key, expected String"))?;
+                    if ok_or_err == "Ok" {
+                        if let Some(ok) = ok {
+                            let ok = map.next_value_seed(WastValDeserialize(ok))?;
+                            Ok(WastVal::Result(Ok(Some(ok.into()))))
+                        } else {
+                            let dummy_seed = TypeWrapper::Option(TypeWrapper::Bool.into());
+                            let value_seed = WastValDeserialize(&dummy_seed);
+                            let value = map.next_value_seed(value_seed)?;
+                            if matches!(value, WastVal::Option(None)) {
+                                Ok(WastVal::Result(Ok(None)))
+                            } else {
+                                Err(Error::custom("invalid result value, expected null"))
+                            }
+                        }
+                    } else if ok_or_err == "Err" {
+                        if let Some(err) = err {
+                            let err = map.next_value_seed(WastValDeserialize(err))?;
+                            Ok(WastVal::Result(Err(Some(err.into()))))
+                        } else {
+                            let dummy_seed = TypeWrapper::Option(TypeWrapper::Bool.into());
+                            let value_seed = WastValDeserialize(&dummy_seed);
+                            let value = map.next_value_seed(value_seed)?;
+                            if matches!(value, WastVal::Option(None)) {
+                                Ok(WastVal::Result(Err(None)))
+                            } else {
+                                Err(Error::custom("invalid result value, expected null"))
+                            }
+                        }
+                    } else {
+                        Err(Error::custom("expected one of `Ok`, `Err`"))
+                    }
+                } else {
+                    Err(Error::invalid_type(Unexpected::Map, &self))
+                }
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                if matches!(self.0, TypeWrapper::Option(_)) {
+                    Ok(WastVal::Option(None))
+                } else {
+                    Err(Error::invalid_type(Unexpected::Option, &self))
+                }
+            }
         }
 
-        deserializer.deserialize_any(ExtendVecVisitor(self.0))
+        deserializer.deserialize_any(WastValVisitor(self.0))
     }
 }
 
@@ -550,6 +608,62 @@ mod tests {
             val: WastVal::Bool(true),
         };
         let json = json!({"type": "Bool","val": true});
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_result_ok_none() {
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Result {
+                ok: None,
+                err: None,
+            },
+            val: WastVal::Result(Ok(None)),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_result_ok_some() {
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Result {
+                ok: Some(TypeWrapper::Bool.into()),
+                err: None,
+            },
+            val: WastVal::Result(Ok(Some(WastVal::Bool(true).into()))),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_result_err_none() {
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Result {
+                ok: None,
+                err: None,
+            },
+            val: WastVal::Result(Err(None)),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_result_err_some() {
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Result {
+                ok: Some(TypeWrapper::Bool.into()),
+                err: Some(TypeWrapper::String.into()),
+            },
+            val: WastVal::Result(Err(Some(WastVal::String("test".into()).into()))),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }

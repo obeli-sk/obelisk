@@ -8,7 +8,6 @@ use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use executor::worker::Worker;
 use std::sync::Arc;
 use std::{marker::PhantomData, time::Duration};
-use tracing::info;
 use utils::time::now;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::{
@@ -92,11 +91,10 @@ async fn main() {
         .await
         .unwrap();
 
-    let res = db_connection
+    let _ = db_connection
         .wait_for_finished_result(execution_id, Some(Duration::from_secs(1)))
         .await
         .unwrap();
-    info!("Res: {res:?}");
 
     exec_task.close().await;
     timers_watcher.close().await;

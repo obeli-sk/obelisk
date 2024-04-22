@@ -39,7 +39,7 @@ pub enum WastVal {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct WastValWithType {
     pub r#type: TypeWrapper,
-    pub val: WastVal,
+    pub val: WastVal, // FIXME: rename to `value`
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
