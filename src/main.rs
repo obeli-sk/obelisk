@@ -43,7 +43,7 @@ async fn main() {
     );
 
     let timers_watcher = TimersWatcherTask::spawn_new(
-        &db_pool,
+        db_pool.connection(),
         TimersWatcherConfig {
             tick_sleep: Duration::from_millis(100),
             clock_fn: now,

@@ -545,7 +545,7 @@ mod tests {
 
         let workflow_exec_task = spawn_workflow_sleep(db_pool.clone(), sim_clock.clock_fn());
         let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
-            &db_pool,
+            db_pool.connection(),
             expired_timers_watcher::TimersWatcherConfig {
                 tick_sleep: TICK_SLEEP,
                 clock_fn: sim_clock.clock_fn(),

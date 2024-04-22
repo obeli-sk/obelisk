@@ -3,7 +3,6 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::DbConnection;
 use concepts::storage::DbError;
-use concepts::storage::DbPool;
 use concepts::{
     storage::{
         AppendRequest, DbConnectionError, ExecutionEventInner, ExpiredTimer, HistoryEvent,
@@ -69,8 +68,8 @@ impl Drop for TaskHandle {
 }
 
 impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
-    pub fn spawn_new<C: ClockFn + 'static, P: DbPool<DB>>(
-        db_pool: &P, //FIXME: DbConnection
+    pub fn spawn_new<C: ClockFn + 'static>(
+        db_connection: DB,
         config: TimersWatcherConfig<C>,
     ) -> Result<TaskHandle, DbConnectionError> {
         let executor_id = ExecutorId::generate();
@@ -80,7 +79,6 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let tick_sleep = config.tick_sleep;
-        let db_connection = db_pool.connection();
         let abort_handle = tokio::spawn(
             async move {
                 info!("Spawned expired lock watcher");

@@ -693,7 +693,7 @@ pub(crate) mod tests {
             let db_pool = db_task.pool().expect("must be open");
             let timers_watcher_task =
                 executor::expired_timers_watcher::TimersWatcherTask::spawn_new(
-                    &db_pool,
+                    db_pool.connection(),
                     executor::expired_timers_watcher::TimersWatcherConfig {
                         tick_sleep: TICK_SLEEP,
                         clock_fn: now,
