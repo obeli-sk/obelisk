@@ -18,7 +18,7 @@ use std::{
     time::Duration,
 };
 use tokio::task::AbortHandle;
-use tracing::{debug, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::ClockFn;
 
 #[derive(Debug, Clone)]
@@ -111,7 +111,7 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
             }
             (Err(err), Some(old)) if err == *old => {}
             (Err(err), _) => {
-                warn!("Tick failed: {err:?}");
+                error!("Tick failed: {err:?}");
                 *old_err = Some(err);
             }
         }

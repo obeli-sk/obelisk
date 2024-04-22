@@ -279,7 +279,7 @@ pub(crate) mod tests {
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use std::time::{Duration, Instant};
     use test_utils::env_or_default;
-    use tracing::warn;
+    use tracing::info;
     use utils::time::now;
     use val_json::{
         type_wrapper::TypeWrapper,
@@ -369,6 +369,8 @@ pub(crate) mod tests {
     async fn perf_fibo_parallel() {
         use std::sync::Arc;
 
+        use tracing::info;
+
         const EXECUTIONS: usize = 20_000; // release: 70_000
         const RECYCLE: bool = true;
         const PERMITS: usize = 1_000_000;
@@ -455,7 +457,7 @@ pub(crate) mod tests {
             execution_ids.push(execution_id);
         }
 
-        warn!(
+        info!(
             "Created {executions} executions in {:?}",
             stopwatch.elapsed()
         );
@@ -500,7 +502,7 @@ pub(crate) mod tests {
             );
             counter += 1;
         }
-        warn!(
+        info!(
             "Finished {counter} in {} ms",
             stopwatch.elapsed().as_millis()
         );
@@ -597,7 +599,7 @@ pub(crate) mod tests {
                 );
             }
         }
-        warn!(
+        info!(
             "Finished {counter} in {} ms",
             stopwatch.elapsed().as_millis()
         );
@@ -671,6 +673,8 @@ pub(crate) mod tests {
 
     #[cfg(all(test, not(madsim)))] // Requires madsim support in wasmtime
     mod wasmtime_nosim {
+        use tracing::info;
+
         use super::*;
         pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_sleep_activity_builder::SLEEP_LOOP); // sleep-loop: func(millis: u64, iterations: u32);
@@ -736,7 +740,7 @@ pub(crate) mod tests {
             // Create an execution.
             let stopwatch = Instant::now();
             let execution_id = ExecutionId::generate();
-            warn!("Testing {execution_id}");
+            info!("Testing {execution_id}");
             let created_at = now();
             let db_connection = db_pool.connection();
             db_connection
@@ -764,7 +768,7 @@ pub(crate) mod tests {
                 )
             );
             let stopwatch = stopwatch.elapsed();
-            warn!("Finished in {stopwatch:?}");
+            info!("Finished in {stopwatch:?}");
             assert!(stopwatch < LOCK_EXPIRY * 2);
 
             drop(db_connection);

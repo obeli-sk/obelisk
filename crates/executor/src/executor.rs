@@ -133,7 +133,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             }
             (Err(err), Some(old)) if err == *old => {}
             (Err(err), _) => {
-                warn!("Tick failed: {err:?}");
+                error!("Tick failed: {err:?}");
                 *old_err = Some(err);
             }
         }
@@ -407,6 +407,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                             Self::check_version(&db_pool.connection(), execution_id, new_version)
                                 .await?;
                         warn!("Limit reached: {reason}, yielding");
+                        // Do not punish the execution.
                         ExecutionEventInner::HistoryEvent {
                             event: HistoryEvent::Yield,
                         }

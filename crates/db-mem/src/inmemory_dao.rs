@@ -1130,7 +1130,7 @@ pub mod tests {
             };
             db_connection.create(req).await.unwrap();
         }
-        warn!(
+        info!(
             "Created {executions} executions in {:?}",
             stopwatch.elapsed()
         );
@@ -1164,7 +1164,7 @@ pub mod tests {
         for task_handle in exec_tasks {
             let _locked_vec = task_handle.await.unwrap();
         }
-        warn!("Finished in {} ms", stopwatch.elapsed().as_millis());
+        info!("Finished in {} ms", stopwatch.elapsed().as_millis());
         drop(db_connection);
         drop(db_pool);
         db_task.close().await;
