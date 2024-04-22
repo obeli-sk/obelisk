@@ -359,14 +359,14 @@ pub fn match_val(expected: &WastVal, actual: &Val) -> anyhow::Result<()> {
         WastVal::Float32(e) => match actual {
             Val::Float32(a) => core::match_f32(
                 a.to_bits(),
-                &NanPattern::Value(wast::token::Float32 { bits: e.to_bits() }),
+                &NanPattern::Value(wast::token::F32 { bits: e.to_bits() }),
             ),
             _ => mismatch(expected, actual),
         },
         WastVal::Float64(e) => match actual {
             Val::Float64(a) => core::match_f64(
                 a.to_bits(),
-                &NanPattern::Value(wast::token::Float64 { bits: e.to_bits() }),
+                &NanPattern::Value(wast::token::F64 { bits: e.to_bits() }),
             ),
             _ => mismatch(expected, actual),
         },

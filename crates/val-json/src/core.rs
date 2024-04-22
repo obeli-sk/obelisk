@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use std::fmt::{Display, LowerHex};
 use wasmtime::{ExternRef, Val};
 use wast::core::{HeapType, NanPattern, V128Pattern, WastArgCore, WastRetCore};
-use wast::token::{Float32, Float64};
+use wast::token::{F32, F64};
 
 /// Translate from a `script::Value` to a `RuntimeValue`.
 pub fn val(v: &WastArgCore<'_>) -> Result<Val> {
@@ -121,7 +121,7 @@ where
     }
 }
 
-pub fn match_f32(actual: u32, expected: &NanPattern<Float32>) -> Result<()> {
+pub fn match_f32(actual: u32, expected: &NanPattern<F32>) -> Result<()> {
     match expected {
         // Check if an f32 (as u32 bits to avoid possible quieting when moving values in registers, e.g.
         // https://developer.arm.com/documentation/ddi0344/i/neon-and-vfp-programmers-model/modes-of-operation/default-nan-mode?lang=en)
@@ -186,7 +186,7 @@ pub fn match_f32(actual: u32, expected: &NanPattern<Float32>) -> Result<()> {
     }
 }
 
-pub fn match_f64(actual: u64, expected: &NanPattern<Float64>) -> Result<()> {
+pub fn match_f64(actual: u64, expected: &NanPattern<F64>) -> Result<()> {
     match expected {
         // Check if an f64 (as u64 bits to avoid possible quieting when moving values in registers, e.g.
         // https://developer.arm.com/documentation/ddi0344/i/neon-and-vfp-programmers-model/modes-of-operation/default-nan-mode?lang=en)

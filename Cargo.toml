@@ -101,7 +101,6 @@ async-sqlite = { version = "0.2.2", features = [
     "tracing",
 ] }
 async-trait = "0.1"
-bitflags = "2.4.2"
 cargo_metadata = "0.18"
 cfg-if = "1.0.0"
 chrono = { version = "0.4.34", features = ["arbitrary", "serde"] }
@@ -156,11 +155,11 @@ wasmtime = { version = "19.0.1", default-features = false, features = [
 ] }
 wasmtime-wasi = "19.0"
 wasmtime-wasi-http = "19.0"
-wast = "201.0.0"
+wast = "202.0.0"
 wiremock = "0.6"
-wit-bindgen-rt = "0.22.0"
-wit-component = "0.201.0"
-wit-parser = "0.201.0"
+wit-bindgen-rt = "0.24.0"
+wit-component = "0.202.0"
+wit-parser = "0.202.0"
 
 [patch.crates-io]
 async-sqlite = { git = "https://github.com/tomasol/async-sqlite", rev = "11d12d46159cdc36dbda12a5efa381c0d2bf85a8" } # rusqlite 0.31.0, sqlite 3.45

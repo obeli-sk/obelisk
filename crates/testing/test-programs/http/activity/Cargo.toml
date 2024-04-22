@@ -7,7 +7,6 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-bitflags.workspace = true
 wit-bindgen-rt.workspace = true
 
 [lib]

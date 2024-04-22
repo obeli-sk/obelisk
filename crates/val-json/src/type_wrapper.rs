@@ -45,8 +45,8 @@ impl TryFrom<wit_parser::Type> for TypeWrapper {
         match value {
             wit_parser::Type::Bool => Ok(Self::Bool),
             wit_parser::Type::Char => Ok(Self::Char),
-            wit_parser::Type::Float32 => Ok(Self::Float32),
-            wit_parser::Type::Float64 => Ok(Self::Float64),
+            wit_parser::Type::F32 => Ok(Self::Float32),
+            wit_parser::Type::F64 => Ok(Self::Float64),
             wit_parser::Type::S16 => Ok(Self::S16),
             wit_parser::Type::S32 => Ok(Self::S32),
             wit_parser::Type::S64 => Ok(Self::S64),
