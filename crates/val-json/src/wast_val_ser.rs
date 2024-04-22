@@ -2,6 +2,7 @@ use crate::{
     type_wrapper::TypeWrapper,
     wast_val::{WastVal, WastValWithType},
 };
+use indexmap::IndexMap;
 use serde::{
     de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor},
     Deserialize, Serialize, Serializer,
@@ -34,7 +35,14 @@ impl Serialize for WastVal {
                 }
                 seq.end()
             }
-            WastVal::Record(_) => todo!(),
+            WastVal::Record(record) => {
+                use serde::ser::SerializeMap;
+                let mut ser = serializer.serialize_map(Some(record.len()))?;
+                for (key, value) in record {
+                    ser.serialize_entry(key, value)?;
+                }
+                ser.end()
+            }
             WastVal::Tuple(_) => todo!(),
             WastVal::Variant(_, _) => todo!(),
             WastVal::Enum(_) => todo!(),
@@ -341,43 +349,58 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
             where
                 A: MapAccess<'de>,
             {
-                if let TypeWrapper::Result { ok, err } = self.0 {
-                    let ok_or_err = map
-                        .next_key::<String>()?
-                        .ok_or(Error::custom("invalid map key, expected String"))?;
-                    if ok_or_err == "Ok" {
-                        if let Some(ok) = ok {
-                            let ok = map.next_value_seed(WastValDeserialize(ok))?;
-                            Ok(WastVal::Result(Ok(Some(ok.into()))))
-                        } else {
-                            let dummy_seed = TypeWrapper::Option(TypeWrapper::Bool.into());
-                            let value_seed = WastValDeserialize(&dummy_seed);
-                            let value = map.next_value_seed(value_seed)?;
-                            if matches!(value, WastVal::Option(None)) {
-                                Ok(WastVal::Result(Ok(None)))
+                match self.0 {
+                    TypeWrapper::Result { ok, err } => {
+                        let ok_or_err = map
+                            .next_key::<String>()?
+                            .ok_or(Error::custom("invalid map key, expected String"))?;
+                        if ok_or_err == "Ok" {
+                            if let Some(ok) = ok {
+                                let ok = map.next_value_seed(WastValDeserialize(ok))?;
+                                Ok(WastVal::Result(Ok(Some(ok.into()))))
                             } else {
-                                Err(Error::custom("invalid result value, expected null"))
+                                let dummy_seed = TypeWrapper::Option(TypeWrapper::Bool.into());
+                                let value_seed = WastValDeserialize(&dummy_seed);
+                                let value = map.next_value_seed(value_seed)?;
+                                if matches!(value, WastVal::Option(None)) {
+                                    Ok(WastVal::Result(Ok(None)))
+                                } else {
+                                    Err(Error::custom("invalid result value, expected null"))
+                                }
                             }
-                        }
-                    } else if ok_or_err == "Err" {
-                        if let Some(err) = err {
-                            let err = map.next_value_seed(WastValDeserialize(err))?;
-                            Ok(WastVal::Result(Err(Some(err.into()))))
-                        } else {
-                            let dummy_seed = TypeWrapper::Option(TypeWrapper::Bool.into());
-                            let value_seed = WastValDeserialize(&dummy_seed);
-                            let value = map.next_value_seed(value_seed)?;
-                            if matches!(value, WastVal::Option(None)) {
-                                Ok(WastVal::Result(Err(None)))
+                        } else if ok_or_err == "Err" {
+                            if let Some(err) = err {
+                                let err = map.next_value_seed(WastValDeserialize(err))?;
+                                Ok(WastVal::Result(Err(Some(err.into()))))
                             } else {
-                                Err(Error::custom("invalid result value, expected null"))
+                                let dummy_seed = TypeWrapper::Option(TypeWrapper::Bool.into());
+                                let value_seed = WastValDeserialize(&dummy_seed);
+                                let value = map.next_value_seed(value_seed)?;
+                                if matches!(value, WastVal::Option(None)) {
+                                    Ok(WastVal::Result(Err(None)))
+                                } else {
+                                    Err(Error::custom("invalid result value, expected null"))
+                                }
                             }
+                        } else {
+                            Err(Error::custom("expected one of `Ok`, `Err`"))
                         }
-                    } else {
-                        Err(Error::custom("expected one of `Ok`, `Err`"))
                     }
-                } else {
-                    Err(Error::invalid_type(Unexpected::Map, &self))
+                    TypeWrapper::Record(record) => {
+                        let mut dst_map = IndexMap::new();
+                        while let Some(field_name) = map.next_key::<Box<str>>()? {
+                            if let Some(field_type) = record.get(&field_name) {
+                                let value = map.next_value_seed(WastValDeserialize(&field_type))?;
+                                dst_map.insert(field_name, value);
+                            } else {
+                                return Err(Error::custom(format!(
+                                    "unexpected field name `{field_name}`"
+                                )));
+                            }
+                        }
+                        Ok(WastVal::Record(dst_map))
+                    }
+                    _ => Err(Error::invalid_type(Unexpected::Map, &self)),
                 }
             }
 
@@ -438,6 +461,7 @@ mod tests {
         wast_val::{WastVal, WastValWithType},
         wast_val_ser::WastValDeserialize,
     };
+    use indexmap::IndexMap;
     use serde::de::{DeserializeSeed, Expected, SeqAccess, Visitor};
 
     // Visitor implementation that deserializes a JSON array into `Vec<WastVal>`.
@@ -752,6 +776,24 @@ mod tests {
             value: WastVal::List(vec![WastVal::Bool(true)]),
         };
         let json = serde_json::to_value(&expected).unwrap();
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_record() {
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Record(IndexMap::from([
+                (Box::from("field1"), TypeWrapper::Bool),
+                (Box::from("field2"), TypeWrapper::U32),
+            ])),
+            value: WastVal::Record(IndexMap::from([
+                (Box::from("field1"), WastVal::Bool(true)),
+                (Box::from("field2"), WastVal::U32(1)),
+            ])),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        println!("\n{json}");
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }

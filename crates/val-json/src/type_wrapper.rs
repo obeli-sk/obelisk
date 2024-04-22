@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,7 +18,7 @@ pub enum TypeWrapper {
     Char,
     String,
     List(Box<TypeWrapper>),
-    // Record(Record),
+    Record(IndexMap<Box<str>, TypeWrapper>),
     // Tuple(Tuple),
     // Variant(Variant),
     // Enum(Enum),
@@ -94,6 +95,13 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
                 })
             }
             Type::List(list) => Ok(Self::List(Box::new(Self::try_from(list.ty())?))),
+            Type::Record(record) => {
+                let vec = record
+                    .fields()
+                    .map(|field| Self::try_from(field.ty).map(|ty| (Box::from(field.name), ty)))
+                    .collect::<Result<_, _>>()?;
+                Ok(Self::Record(vec))
+            }
             _ => Err(TypeConversionError::UnsupportedType(format!("{value:?}"))),
         }
     }

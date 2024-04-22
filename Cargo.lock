@@ -2832,6 +2832,7 @@ name = "val-json"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "indexmap 2.2.6",
  "serde",
  "serde_json",
  "thiserror",

@@ -1,6 +1,7 @@
 use crate::type_wrapper::TypeConversionError;
 use crate::{core, type_wrapper::TypeWrapper};
 use anyhow::{anyhow, bail, Context};
+use indexmap::IndexMap;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
@@ -27,7 +28,7 @@ pub enum WastVal {
     Char(char),
     String(Box<str>),
     List(Vec<WastVal>),
-    Record(Vec<(Box<str>, WastVal)>),
+    Record(IndexMap<Box<str>, WastVal>),
     Tuple(Vec<WastVal>),
     Variant(Box<str>, Option<Box<WastVal>>),
     Enum(Box<str>),
