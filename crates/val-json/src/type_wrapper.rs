@@ -16,7 +16,7 @@ pub enum TypeWrapper {
     Float64,
     Char,
     String,
-    // List(List),
+    List(Box<TypeWrapper>),
     // Record(Record),
     // Tuple(Tuple),
     // Variant(Variant),
@@ -81,18 +81,19 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
             Type::Float64 => Ok(Self::Float64),
             Type::Char => Ok(Self::Char),
             Type::String => Ok(Self::String),
-            Type::Option(inner) => Ok(Self::Option(Box::new(Self::try_from(inner.ty())?))),
-            Type::Result(inner) => {
+            Type::Option(option) => Ok(Self::Option(Box::new(Self::try_from(option.ty())?))),
+            Type::Result(result) => {
                 let transform = |ty: Option<Type>| {
                     ty.map(Self::try_from)
                         .transpose()
                         .map(|option| option.map(Box::new))
                 };
                 Ok(Self::Result {
-                    ok: transform(inner.ok())?,
-                    err: transform(inner.err())?,
+                    ok: transform(result.ok())?,
+                    err: transform(result.err())?,
                 })
             }
+            Type::List(list) => Ok(Self::List(Box::new(Self::try_from(list.ty())?))),
             _ => Err(TypeConversionError::UnsupportedType(format!("{value:?}"))),
         }
     }
@@ -119,8 +120,13 @@ impl TryFrom<&wasmtime::component::Val> for TypeWrapper {
             Val::U32(_) => Ok(Self::U32),
             Val::U64(_) => Ok(Self::U64),
             Val::U8(_) => Ok(Self::U8),
-            Val::Result(res) => {
-                let res = res.ty();
+            Val::Option(option) => {
+                let inner = option.ty().ty();
+                let inner = Self::try_from(inner)?;
+                Ok(Self::Option(inner.into()))
+            }
+            Val::Result(result) => {
+                let res = result.ty();
                 let transform = |ty: Option<Type>| {
                     ty.map(Self::try_from)
                         .transpose()
@@ -130,10 +136,10 @@ impl TryFrom<&wasmtime::component::Val> for TypeWrapper {
                 let err = transform(res.err())?;
                 Ok(Self::Result { ok, err })
             }
-            Val::Option(option) => {
-                let inner = option.ty().ty();
+            Val::List(list) => {
+                let inner = list.ty().ty();
                 let inner = Self::try_from(inner)?;
-                Ok(Self::Option(inner.into()))
+                Ok(Self::List(inner.into()))
             }
             _ => Err(TypeConversionError::UnsupportedType(format!("{value:?}"))),
         }

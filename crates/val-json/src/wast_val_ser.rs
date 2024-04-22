@@ -26,7 +26,14 @@ impl Serialize for WastVal {
             WastVal::Float64(v) => serializer.serialize_f64(*v),
             WastVal::Char(v) => serializer.serialize_char(*v),
             WastVal::String(v) => serializer.serialize_str(v),
-            WastVal::List(_) => todo!(),
+            WastVal::List(list) => {
+                use serde::ser::SerializeSeq;
+                let mut seq = serializer.serialize_seq(Some(list.len()))?;
+                for val in list {
+                    seq.serialize_element(val)?;
+                }
+                seq.end()
+            }
             WastVal::Record(_) => todo!(),
             WastVal::Tuple(_) => todo!(),
             WastVal::Variant(_, _) => todo!(),
@@ -396,6 +403,23 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                     Err(Error::invalid_type(Unexpected::Option, &self))
                 }
             }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                if let TypeWrapper::List(inner_seed) = self.0 {
+                    let mut vec = Vec::new();
+                    while let Some(element) =
+                        seq.next_element_seed(WastValDeserialize(inner_seed.as_ref()))?
+                    {
+                        vec.push(element);
+                    }
+                    Ok(WastVal::List(vec))
+                } else {
+                    Err(Error::invalid_type(Unexpected::Seq, &self))
+                }
+            }
         }
         match self.0 {
             TypeWrapper::Option(_) => deserializer.deserialize_option(WastValVisitor(self.0)),
@@ -715,6 +739,17 @@ mod tests {
         let expected = WastValWithType {
             r#type: TypeWrapper::Option(TypeWrapper::Bool.into()),
             value: WastVal::Option(None),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_list() {
+        let expected = WastValWithType {
+            r#type: TypeWrapper::List(TypeWrapper::Bool.into()),
+            value: WastVal::List(vec![WastVal::Bool(true)]),
         };
         let json = serde_json::to_value(&expected).unwrap();
         let actual = serde_json::from_value(json).unwrap();
