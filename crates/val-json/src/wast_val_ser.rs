@@ -46,7 +46,7 @@ impl<'de> Deserialize<'de> for WastValWithType {
     where
         D: Deserializer<'de>,
     {
-        const FIELDS: &[&str] = &["type", "val"];
+        const FIELDS: &[&str] = &["type", "value"];
         deserializer.deserialize_struct("WastValWithType", FIELDS, WastValWithTypeVisitor)
     }
 }
@@ -57,7 +57,7 @@ struct WastValWithTypeVisitor;
 #[serde(field_identifier, rename_all = "lowercase")]
 enum WastValWithTypeField {
     Type,
-    Val,
+    Value,
 }
 
 impl<'de> Visitor<'de> for WastValWithTypeVisitor {
@@ -72,7 +72,7 @@ impl<'de> Visitor<'de> for WastValWithTypeVisitor {
         V: MapAccess<'de>,
     {
         let mut r#type = None;
-        let mut val = None;
+        let mut value = None;
         while let Some(key) = map.next_key()? {
             match key {
                 WastValWithTypeField::Type => {
@@ -81,21 +81,21 @@ impl<'de> Visitor<'de> for WastValWithTypeVisitor {
                     }
                     r#type = Some(map.next_value()?);
                 }
-                WastValWithTypeField::Val => {
-                    if val.is_some() {
-                        return Err(de::Error::duplicate_field("val"));
+                WastValWithTypeField::Value => {
+                    if value.is_some() {
+                        return Err(de::Error::duplicate_field("value"));
                     }
                     if let Some(t) = &r#type {
-                        val = Some(map.next_value_seed(WastValDeserialize(t))?);
+                        value = Some(map.next_value_seed(WastValDeserialize(t))?);
                     } else {
-                        return Err(de::Error::custom("`type` field must preceed `val` field"));
+                        return Err(de::Error::custom("`type` field must preceed `value` field"));
                     }
                 }
             }
         }
         let r#type = r#type.ok_or_else(|| de::Error::missing_field("type"))?;
-        let val = val.ok_or_else(|| de::Error::missing_field("val"))?;
-        Ok(Self::Value { r#type, val })
+        let value = value.ok_or_else(|| de::Error::missing_field("value"))?;
+        Ok(Self::Value { r#type, value })
     }
 }
 
@@ -605,9 +605,9 @@ mod tests {
     fn test_deserialize_struct() {
         let expected = WastValWithType {
             r#type: TypeWrapper::Bool,
-            val: WastVal::Bool(true),
+            value: WastVal::Bool(true),
         };
-        let json = json!({"type": "Bool","val": true});
+        let json = json!({"type": "Bool","value": true});
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -619,7 +619,7 @@ mod tests {
                 ok: None,
                 err: None,
             },
-            val: WastVal::Result(Ok(None)),
+            value: WastVal::Result(Ok(None)),
         };
         let json = serde_json::to_value(&expected).unwrap();
         let actual = serde_json::from_value(json).unwrap();
@@ -633,7 +633,7 @@ mod tests {
                 ok: Some(TypeWrapper::Bool.into()),
                 err: None,
             },
-            val: WastVal::Result(Ok(Some(WastVal::Bool(true).into()))),
+            value: WastVal::Result(Ok(Some(WastVal::Bool(true).into()))),
         };
         let json = serde_json::to_value(&expected).unwrap();
         let actual = serde_json::from_value(json).unwrap();
@@ -647,7 +647,7 @@ mod tests {
                 ok: None,
                 err: None,
             },
-            val: WastVal::Result(Err(None)),
+            value: WastVal::Result(Err(None)),
         };
         let json = serde_json::to_value(&expected).unwrap();
         let actual = serde_json::from_value(json).unwrap();
@@ -661,7 +661,7 @@ mod tests {
                 ok: Some(TypeWrapper::Bool.into()),
                 err: Some(TypeWrapper::String.into()),
             },
-            val: WastVal::Result(Err(Some(WastVal::String("test".into()).into()))),
+            value: WastVal::Result(Err(Some(WastVal::String("test".into()).into()))),
         };
         let json = serde_json::to_value(&expected).unwrap();
         let actual = serde_json::from_value(json).unwrap();

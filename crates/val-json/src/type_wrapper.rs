@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TypeWrapper {
+pub enum TypeWrapper { // TODO: serde using wit syntax.
     Bool,
     S8,
     U8,

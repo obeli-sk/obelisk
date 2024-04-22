@@ -495,7 +495,7 @@ mod tests {
         let res = assert_matches!(res, SupportedFunctionResult::Infallible(val) => val);
         assert_eq!(
             FIBO_10_OUTPUT,
-            assert_matches!(res, WastValWithType{ val: WastVal::U64(actual), r#type: TypeWrapper::U64} => actual),
+            assert_matches!(res, WastValWithType{ value: WastVal::U64(actual), r#type: TypeWrapper::U64} => actual),
         );
         workflow_exec_task.close().await;
         activity_exec_task.close().await;

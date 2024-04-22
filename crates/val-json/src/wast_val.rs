@@ -39,7 +39,7 @@ pub enum WastVal {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct WastValWithType {
     pub r#type: TypeWrapper,
-    pub val: WastVal, // FIXME: rename to `value`
+    pub value: WastVal,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -56,7 +56,7 @@ impl TryFrom<Val> for WastValWithType {
     fn try_from(value: Val) -> Result<Self, Self::Error> {
         let r#type = TypeWrapper::try_from(&value)?;
         let val = WastVal::try_from(value)?;
-        Ok(Self { r#type, val })
+        Ok(Self { r#type, value: val })
     }
 }
 

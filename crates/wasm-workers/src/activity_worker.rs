@@ -356,7 +356,7 @@ pub(crate) mod tests {
             .unwrap();
         // Check the result.
         let fibo = assert_matches!(db_connection.wait_for_finished_result(execution_id, None).await.unwrap(),
-            Ok(SupportedFunctionResult::Infallible(WastValWithType {val: WastVal::U64(val), r#type: TypeWrapper::U64 })) => val);
+            Ok(SupportedFunctionResult::Infallible(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 })) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
         exec_task.close().await;
@@ -494,7 +494,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap(),
                 Ok(SupportedFunctionResult::Infallible(WastValWithType {
-                    val: WastVal::U64(_),
+                    value: WastVal::U64(_),
                     r#type: TypeWrapper::U64
                 }))
             );
@@ -589,7 +589,7 @@ pub(crate) mod tests {
                     res,
                     Ok((
                         SupportedFunctionResult::Infallible(WastValWithType {
-                            val: WastVal::U64(_),
+                            value: WastVal::U64(_),
                             r#type: TypeWrapper::U64
                         }),
                         _
@@ -884,7 +884,7 @@ pub(crate) mod tests {
             let val = assert_matches!(wast_val, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());
             // check types
-            let (ok, err) = assert_matches!(res, SupportedFunctionResult::Fallible(WastValWithType{val: _,
+            let (ok, err) = assert_matches!(res, SupportedFunctionResult::Fallible(WastValWithType{value: _,
                 r#type: TypeWrapper::Result{ok, err}}) => (ok, err));
             assert_eq!(Some(Box::new(TypeWrapper::String)), ok);
             assert_eq!(Some(Box::new(TypeWrapper::String)), err);

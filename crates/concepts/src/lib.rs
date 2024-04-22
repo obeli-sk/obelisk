@@ -264,8 +264,8 @@ impl SupportedFunctionResult {
             let r#type = TypeWrapper::try_from(&res)?;
             let val = WastVal::try_from(res)?;
             match &val {
-                WastVal::Result(_) => Ok(Self::Fallible(WastValWithType { r#type, val })),
-                _ => Ok(Self::Infallible(WastValWithType { r#type, val })),
+                WastVal::Result(_) => Ok(Self::Fallible(WastValWithType { r#type, value: val })),
+                _ => Ok(Self::Infallible(WastValWithType { r#type, value: val })),
             }
         } else {
             Err(ResultParsingError::MultiValue)
@@ -276,7 +276,7 @@ impl SupportedFunctionResult {
     pub fn fallible_err(&self) -> Option<Option<&WastVal>> {
         match self {
             SupportedFunctionResult::Fallible(WastValWithType {
-                val: WastVal::Result(Err(err)),
+                value: WastVal::Result(Err(err)),
                 ..
             }) => Some(err.as_deref()),
             _ => None,
@@ -287,7 +287,7 @@ impl SupportedFunctionResult {
     pub fn fallible_ok(&self) -> Option<Option<&WastVal>> {
         match self {
             SupportedFunctionResult::Fallible(WastValWithType {
-                val: WastVal::Result(Ok(ok)),
+                value: WastVal::Result(Ok(ok)),
                 ..
             }) => Some(ok.as_deref()),
             _ => None,
@@ -299,7 +299,7 @@ impl SupportedFunctionResult {
         match self {
             SupportedFunctionResult::None => None,
             SupportedFunctionResult::Fallible(v) | SupportedFunctionResult::Infallible(v) => {
-                Some(&v.val)
+                Some(&v.value)
             }
         }
     }
@@ -446,7 +446,7 @@ impl Params {
                         ty,
                         WastValWithType {
                             r#type: _,
-                            val: wast_val,
+                            value: wast_val,
                         },
                     ),
                 ) in types.iter().zip(wast_vals.iter()).enumerate()

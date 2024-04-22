@@ -1,6 +1,5 @@
 //! Append only database containing executions and their state changes - execution journal.
-//! Current execution state can be obtained by getting the last (non-async-response)
-//! state from the execution journal.
+//! Current [`PendingState`] can be obtained by reading last (few) events.
 //!
 //! When inserting, the row in the journal must contain a version that must be equal
 //! to the current number of events in the journal. First change with the expected version wins.
