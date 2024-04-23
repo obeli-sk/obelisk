@@ -203,11 +203,21 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
     }
     {
         let created_at = sim_clock.now();
-        info!(now = %created_at, "Yield");
+        info!(now = %created_at, "persist and unlock");
         let req = AppendRequest {
             event: ExecutionEventInner::HistoryEvent {
-                event: HistoryEvent::Yield,
+                event: HistoryEvent::Persist {
+                    value: Vec::from("hello".as_bytes()),
+                },
             },
+            created_at,
+        };
+        version = db_connection
+            .append(execution_id, Some(version), req)
+            .await
+            .unwrap();
+        let req = AppendRequest {
+            event: ExecutionEventInner::Unlocked,
             created_at,
         };
         version = db_connection
@@ -231,7 +241,9 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             .await
             .unwrap();
         assert_eq!(1, event_history.len());
-        assert_eq!(vec![HistoryEvent::Yield], event_history);
+        let value =
+            assert_matches!(event_history.last(), Some(HistoryEvent::Persist { value }) => value );
+        assert_eq!(Vec::from("hello".as_bytes()), *value);
         version = current_version;
     }
     {

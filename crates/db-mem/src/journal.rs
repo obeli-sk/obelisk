@@ -114,10 +114,7 @@ impl ExecutionJournal {
                     ExecutionEventInner::Created {
                         scheduled_at: None, ..
                     }
-                    | ExecutionEventInner::HistoryEvent {
-                        event: HistoryEvent::Yield { .. },
-                        ..
-                    },
+                    | ExecutionEventInner::Unlocked,
                 ) => Some(PendingState::PendingNow),
 
                 (

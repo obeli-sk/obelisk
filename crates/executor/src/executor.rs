@@ -406,11 +406,8 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         (new_version2, _) =
                             Self::check_version(&db_pool.connection(), execution_id, new_version)
                                 .await?;
-                        warn!("Limit reached: {reason}, yielding");
-                        // Do not punish the execution.
-                        ExecutionEventInner::HistoryEvent {
-                            event: HistoryEvent::Yield,
-                        }
+                        warn!("Limit reached: {reason}, unlocking");
+                        ExecutionEventInner::Unlocked
                     }
                     WorkerError::FatalError(
                         FatalError::NonDeterminismDetected(reason),

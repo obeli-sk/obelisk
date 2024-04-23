@@ -510,7 +510,7 @@ pub mod prefixed_ulid {
     }
 
     impl<T> PrefixedUlid<T> {
-        fn new(ulid: Ulid) -> Self {
+        const fn new(ulid: Ulid) -> Self {
             Self {
                 ulid,
                 phantom_data: PhantomData,
@@ -529,7 +529,7 @@ pub mod prefixed_ulid {
         }
 
         #[must_use]
-        pub fn from_parts(timestamp_ms: u64, random: u128) -> Self {
+        pub const fn from_parts(timestamp_ms: u64, random: u128) -> Self {
             Self::new(Ulid::from_parts(timestamp_ms, random))
         }
 

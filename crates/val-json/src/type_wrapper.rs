@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeWrapper {
-    // TODO: serde using wit syntax.
     Bool,
     S8,
     U8,
@@ -56,6 +55,7 @@ impl TryFrom<wit_parser::Type> for TypeWrapper {
             wit_parser::Type::U32 => Ok(Self::U32),
             wit_parser::Type::U64 => Ok(Self::U64),
             wit_parser::Type::U8 => Ok(Self::U8),
+            // FIXME: Add Record, Option, Result, List
             wit_parser::Type::Id(_) => {
                 Err(TypeConversionError::UnsupportedType(format!("{value:?}")))
             }

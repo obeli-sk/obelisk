@@ -644,9 +644,9 @@ impl SqlitePool {
                         ExecutionEventInner::Finished { .. } => {
                             (Some(PendingState::Finished), None, None)
                         }
-                        ExecutionEventInner::HistoryEvent {
-                            event: HistoryEvent::Yield,
-                        } => (Some(PendingState::PendingNow), None, None),
+                        ExecutionEventInner::Unlocked => {
+                            (Some(PendingState::PendingNow), None, None)
+                        }
                         ExecutionEventInner::HistoryEvent {
                             event:
                                 HistoryEvent::JoinSet { join_set_id }
