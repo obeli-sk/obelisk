@@ -9,7 +9,7 @@ use executor::worker::FatalError;
 use executor::worker::{Worker, WorkerError};
 use std::collections::HashMap;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
@@ -230,7 +230,12 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! {
             res = call_function =>{
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration,  "Finished");
+
+                if let Err(err) = &res {
+                    info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an error");
+                } else {
+                    debug!(duration = ?stopwatch.elapsed(), ?deadline_duration,  %execution_deadline, "Finished");
+                }
                 res
             },
             ()   = tokio::time::sleep(deadline_duration) => {

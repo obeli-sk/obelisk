@@ -15,7 +15,7 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools;
 use wasmtime::{component::Val, Engine};
@@ -165,6 +165,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
 impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
     for WorkflowWorker<C, DB, P>
 {
+    fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+        self.exported_ffqns_to_results_len.keys()
+    }
+
     async fn run(
         &self,
         execution_id: ExecutionId,
@@ -174,59 +178,14 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         version: Version,
         execution_deadline: DateTime<Utc>,
     ) -> Result<(SupportedFunctionResult, Version), WorkerError> {
-        match self
-            .run(
-                execution_id,
-                ffqn,
-                params,
-                events,
-                version,
-                execution_deadline,
-            )
-            .await
-        {
-            Ok((supported_result, version)) => Ok((supported_result, version)),
-            Err(RunError::FunctionCall(err, version)) => {
-                match err
-                    .source()
-                    .and_then(|source| source.downcast_ref::<FunctionError>())
-                {
-                    Some(err) => Err(err.clone().into_worker_error(version)),
-                    None => Err(WorkerError::IntermittentError {
-                        err,
-                        reason: StrVariant::Static("uncategorized error"),
-                        version,
-                    }),
-                }
-            }
-            Err(RunError::WorkerError(err)) => Err(err),
+        #[derive(Debug, thiserror::Error)]
+        enum RunError {
+            #[error(transparent)]
+            WorkerError(#[from] WorkerError),
+            #[error("wasm function call error: `{0}`")]
+            FunctionCall(Box<dyn Error + Send + Sync>, Version),
         }
-    }
 
-    fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
-        self.exported_ffqns_to_results_len.keys()
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-enum RunError {
-    #[error(transparent)]
-    WorkerError(#[from] WorkerError),
-    #[error("wasm function call error")]
-    FunctionCall(Box<dyn Error + Send + Sync>, Version),
-}
-
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
-    #[tracing::instrument(skip_all)]
-    async fn run(
-        &self,
-        execution_id: ExecutionId,
-        ffqn: FunctionFqn,
-        params: Params,
-        events: Vec<HistoryEvent>,
-        version: Version,
-        execution_deadline: DateTime<Utc>,
-    ) -> Result<(SupportedFunctionResult, Version), RunError> {
         let results_len = *self
             .exported_ffqns_to_results_len
             .get(&ffqn)
@@ -322,13 +281,43 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
             .unwrap_or_default();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! {
-            res = call_function =>{
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished");
-                res
+            res = call_function => {
+                match res {
+                    Ok((supported_result, version)) => {
+                        debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished");
+                        Ok((supported_result, version))
+                    },
+                    Err(RunError::FunctionCall(err, version)) => {
+                        match err
+                            .source()
+                            .and_then(|source| source.downcast_ref::<FunctionError>())
+                        {
+                            Some(err) => {
+                                let err = err.clone().into_worker_error(version);
+                                if matches!(err, WorkerError::ChildExecutionRequest | WorkerError::DelayRequest) {
+                                    debug!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an interrupt");
+                                } else {
+                                    info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a error");
+                                }
+                                Err(err)
+                            },
+                            None => {
+                                let err = WorkerError::IntermittentError {
+                                    err,
+                                    reason: StrVariant::Static("uncategorized error"),
+                                    version,
+                                };
+                                info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an error");
+                                Err(err)
+                            },
+                        }
+                    }
+                    Err(RunError::WorkerError(err)) => Err(err),
+                }
             },
             () = tokio::time::sleep(deadline_duration) => {
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
-                Err(RunError::WorkerError(WorkerError::IntermittentTimeout))
+                Err(WorkerError::IntermittentTimeout)
             }
         }
     }
