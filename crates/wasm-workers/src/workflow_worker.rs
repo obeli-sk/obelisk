@@ -358,7 +358,10 @@ mod tests {
     // TODO: test timeouts, retries
     use super::*;
     use crate::{
-        activity_worker::tests::{spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT},
+        activity_worker::tests::{
+            spawn_activity, spawn_activity_fibo, wasmtime_nosim::HTTP_GET_ACTIVITY_FFQN,
+            FIBO_10_INPUT, FIBO_10_OUTPUT,
+        },
         EngineConfig,
     };
     use assert_matches::assert_matches;
@@ -385,19 +388,19 @@ mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
-    pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    pub(crate) fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
+        wasm_path: &'static str,
+        ffqn: FunctionFqn,
+        clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
-        let fibo_worker = Arc::new(
+        let worker = Arc::new(
             WorkflowWorker::new_with_config(
-                WasmComponent::new(StrVariant::Static(
-                    test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-                ))
-                .unwrap(),
+                WasmComponent::new(StrVariant::Static(wasm_path)).unwrap(),
                 WorkflowConfig {
                     db_pool: db_pool.clone(),
                     config_id: ConfigId::generate(),
-                    clock_fn: now,
+                    clock_fn: clock_fn.clone(),
                     join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
@@ -409,13 +412,24 @@ mod tests {
         );
 
         let exec_config = ExecConfig {
-            ffqns: vec![FIBO_WORKFLOW_FFQN],
+            ffqns: vec![ffqn],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
-            clock_fn: now,
+            clock_fn,
         };
-        ExecTask::spawn_new(fibo_worker, exec_config, db_pool, None)
+        ExecTask::spawn_new(worker, exec_config, db_pool, None)
+    }
+
+    pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+        db_pool: P,
+    ) -> ExecutorTaskHandle {
+        spawn_workflow(
+            db_pool,
+            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+            FIBO_WORKFLOW_FFQN,
+            now,
+        )
     }
 
     #[tokio::test]
@@ -590,6 +604,81 @@ mod tests {
         drop(db_connection);
         workflow_exec_task.close().await;
         timers_watcher_task.close().await;
+        db_task.close().await;
+    }
+
+    #[tokio::test]
+    async fn http_get() {
+        use std::ops::Deref;
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+        const BODY: &str = "ok";
+        pub const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
+            FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::EXECUTE);
+
+        test_utils::set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_pool = db_task.pool().unwrap();
+
+        let activity_exec_task = spawn_activity(
+            db_pool.clone(),
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            HTTP_GET_ACTIVITY_FFQN,
+        );
+        let workflow_exec_task = spawn_workflow(
+            db_pool.clone(),
+            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+            HTTP_GET_WORKFLOW_FFQN,
+            now,
+        );
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
+            .expect(1)
+            .mount(&server)
+            .await;
+        debug!("started mock server on {}", server.address());
+        let params = Params::from([Val::U16(server.address().port())]);
+        // Create an execution.
+        let execution_id = ExecutionId::generate();
+        let created_at = now();
+        let db_connection = db_pool.connection();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id,
+                ffqn: HTTP_GET_WORKFLOW_FFQN,
+                params,
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::from_millis(10),
+                max_retries: 5, // retries enabled due to racy test
+            })
+            .await
+            .unwrap();
+        // Check the result.
+        let res = assert_matches!(
+            db_connection
+                .wait_for_finished_result(execution_id, Some(Duration::from_secs(1)))
+                .await
+                .unwrap(),
+            Ok(res) => res
+        );
+        let wast_val = assert_matches!(res.fallible_ok(), Some(Some(wast_val)) => wast_val);
+        let val = assert_matches!(wast_val, WastVal::String(val) => val);
+        assert_eq!(BODY, val.deref());
+        // check types
+        let (ok, err) = assert_matches!(res, SupportedFunctionResult::Fallible(WastValWithType{value: _,
+            r#type: TypeWrapper::Result{ok, err}}) => (ok, err));
+        assert_eq!(Some(Box::new(TypeWrapper::String)), ok);
+        assert_eq!(Some(Box::new(TypeWrapper::String)), err);
+        drop(db_connection);
+        drop(db_pool);
+        activity_exec_task.close().await;
+        workflow_exec_task.close().await;
         db_task.close().await;
     }
 }

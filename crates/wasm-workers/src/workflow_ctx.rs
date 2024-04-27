@@ -15,7 +15,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, trace};
+use tracing::{debug, instrument, trace};
 use utils::time::ClockFn;
 use wasmtime::component::{Linker, Val};
 
@@ -32,6 +32,7 @@ pub(crate) enum FunctionError {
     DelayRequest,
     #[error(transparent)]
     DbError(#[from] DbError),
+    // FIXME Add parameter/result parsing errors
 }
 
 impl FunctionError {
@@ -257,19 +258,22 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 
     #[allow(dead_code)] // False positive
+    #[instrument(skip_all, fields(%ffqn))]
     pub(crate) async fn call_imported_func(
         &mut self,
         ffqn: FunctionFqn,
         params: &[Val],
         results: &mut [Val],
     ) -> Result<(), FunctionError> {
+        trace!(?params, ?results, "call_imported_func start");
         let res = self
             .replay_or_interrupt(ffqn, Params::Vals(Arc::new(Vec::from(params))))
             .await?;
-        assert_eq!(results.len(), res.len(), "unexpected results length");
+        assert_eq!(results.len(), res.len(), "unexpected results length"); // FIXME: FunctionError
         for (idx, item) in res.value().into_iter().enumerate() {
             results[idx] = val_json::wast_val::val(item, &results[idx].ty()).unwrap();
         }
+        trace!(?params, ?results, "call_imported_func finish");
         Ok(())
     }
 

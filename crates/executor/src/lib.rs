@@ -44,9 +44,9 @@ pub mod worker {
         #[error("non-determinism detected: `{0}`")]
         NonDeterminismDetected(StrVariant),
         #[error("parameters cannot be parsed: {0}")]
-        ParamsParsingError(ParamsParsingError),
+        ParamsParsingError(ParamsParsingError), // FIXME: Add FFQN
         #[error("result cannot be parsed: {0}")]
-        ResultParsingError(ResultParsingError),
+        ResultParsingError(ResultParsingError), // FIXME: Add FFQN
     }
 
     pub type WorkerResult = Result<(SupportedFunctionResult, Version), WorkerError>;

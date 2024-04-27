@@ -677,7 +677,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(all(test, not(madsim)))] // Requires madsim support in wasmtime
-    mod wasmtime_nosim {
+    pub mod wasmtime_nosim {
         use tracing::info;
 
         use super::*;
@@ -831,7 +831,7 @@ pub(crate) mod tests {
             assert_matches!(err, WorkerError::IntermittentTimeout);
         }
 
-        const HTTP_GET_ACTIVITY_FFQN: FunctionFqn =
+        pub const HTTP_GET_ACTIVITY_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_http_get_activity_builder::GET);
         // get: func(authority: string, path: string) -> result<string, string>;
 

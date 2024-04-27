@@ -297,7 +297,7 @@ pub fn val(v: &WastVal, ty: &Type) -> anyhow::Result<Val> {
                 };
                 t.new_val(v)?
             }
-            _ => bail!("expected an expected value"),
+            _ => bail!("expected value of type {ty:?}, got value of type Result"),
         },
         WastVal::Flags(v) => match ty {
             Type::Flags(t) => {
