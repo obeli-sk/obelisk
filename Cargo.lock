@@ -1736,6 +1736,7 @@ dependencies = [
  "db-sqlite",
  "executor",
  "madsim-tokio",
+ "serde_json",
  "test-programs-http-get-activity-builder",
  "tracing",
  "tracing-subscriber",

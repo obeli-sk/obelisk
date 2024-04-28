@@ -6,10 +6,10 @@ use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use executor::worker::Worker;
+use serde_json::json;
 use std::sync::Arc;
 use std::{marker::PhantomData, time::Duration};
 use utils::time::now;
-use val_json::wast_val::{WastVal, WastValWithType};
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::{
     activity_worker::{activity_engine, RecycleInstancesSetting},
@@ -75,10 +75,7 @@ async fn main() {
     let exec_task = ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None);
 
     let db_connection = db_pool.connection();
-    let params = Params::from([
-        WastValWithType::try_from(WastVal::String("neverssl.com".into())).unwrap(),
-        WastValWithType::try_from(WastVal::String("/".into())).unwrap(),
-    ]);
+    let params = Params::from_json_array(json!(["neverssl.com", "/"])).unwrap();
     let execution_id = ExecutionId::generate();
     db_connection
         .create(CreateRequest {

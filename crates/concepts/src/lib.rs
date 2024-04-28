@@ -331,10 +331,8 @@ pub struct Params(ParamsInternal);
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ParamsInternal {
     Json(Value), //TODO: is Arc needed here? Or move upwards?
-    WastValParams(Arc<[WastValWithType]>),
     Vals {
         vals: Arc<[wasmtime::component::Val]>,
-        r#types: Arc<[TypeWrapper]>,
     },
     Empty,
 }
@@ -352,7 +350,6 @@ mod serde_params {
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use std::marker::PhantomData;
-    use std::ops::Deref;
     use val_json::wast_val::WastVal;
 
     impl Serialize for Params {
@@ -361,14 +358,7 @@ mod serde_params {
             S: ::serde::Serializer,
         {
             match &self.0 {
-                ParamsInternal::WastValParams(params) => {
-                    let mut seq = serializer.serialize_seq(Some(params.len()))?;
-                    for element in params.deref() {
-                        seq.serialize_element(&element.value)?;
-                    }
-                    seq.end()
-                }
-                ParamsInternal::Vals { vals, r#types: _ } => {
+                ParamsInternal::Vals { vals } => {
                     let mut seq = serializer.serialize_seq(Some(vals.len()))?; // size must be equal, checked when constructed.
                     for val in vals.iter() {
                         let value = WastVal::try_from(val.clone())
@@ -453,17 +443,11 @@ impl Params {
         Self(ParamsInternal::Empty)
     }
 
-    pub fn from_wasmtime(
-        vals: Arc<[wasmtime::component::Val]>,
-        r#types: Arc<[TypeWrapper]>,
-    ) -> Result<Self, &'static str> {
-        if vals.len() != r#types.len() {
-            return Err("mismatch between `vals` and `types` length");
-        }
+    pub fn from_wasmtime(vals: Arc<[wasmtime::component::Val]>) -> Self {
         if vals.is_empty() {
-            Ok(Self::default())
+            Self::default()
         } else {
-            Ok(Self(ParamsInternal::Vals { vals, types }))
+            Self(ParamsInternal::Vals { vals })
         }
     }
 
@@ -473,11 +457,6 @@ impl Params {
             Value::Array(_) => Ok(Self(ParamsInternal::Json(value))),
             _ => Err("passed `Value` must be `Array`"),
         }
-    }
-
-    #[must_use]
-    pub fn new(vec: Arc<[WastValWithType]>) -> Self {
-        Self(ParamsInternal::WastValParams(vec))
     }
 
     pub fn as_vals(
@@ -499,15 +478,6 @@ impl Params {
                     .collect())
             }
             ParamsInternal::Vals { vals, .. } => Ok(vals.clone()),
-            ParamsInternal::WastValParams(wast_vals) => Ok(wast_vals
-                .iter()
-                .map(
-                    |WastValWithType {
-                         r#type: _,
-                         value: wast_val,
-                     }| wast_val.as_val(),
-                )
-                .collect()),
             ParamsInternal::Empty => Ok(Arc::from([])),
         }
     }
@@ -517,7 +487,6 @@ impl Params {
         match &self.0 {
             ParamsInternal::Json(value) => assert_matches!(value, Value::Array(vec) => vec.len()),
             ParamsInternal::Vals { vals, .. } => vals.len(),
-            ParamsInternal::WastValParams(vals) => vals.len(),
             ParamsInternal::Empty => 0,
         }
     }
@@ -525,18 +494,6 @@ impl Params {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-}
-
-impl From<&[WastValWithType]> for Params {
-    fn from(value: &[WastValWithType]) -> Self {
-        Self::new(Arc::from(value))
-    }
-}
-
-impl<const N: usize> From<[WastValWithType; N]> for Params {
-    fn from(value: [WastValWithType; N]) -> Self {
-        Self::new(Arc::from(value))
     }
 }
 

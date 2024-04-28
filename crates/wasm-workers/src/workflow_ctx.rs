@@ -17,7 +17,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, instrument, trace};
 use utils::time::ClockFn;
-use val_json::type_wrapper::TypeWrapper;
 use wasmtime::component::{Linker, Val};
 
 const DB_LATENCY_MILLIS: u32 = 10; // do not interrupt if requested to sleep for less time.
@@ -264,15 +263,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         &mut self,
         ffqn: FunctionFqn,
         params: &[Val],
-        param_types: Arc<[TypeWrapper]>,
         results: &mut [Val],
     ) -> Result<(), FunctionError> {
         trace!(?params, "call_imported_func start");
         let res = self
-            .replay_or_interrupt(
-                ffqn,
-                Params::from_wasmtime(Arc::from(params), param_types).unwrap(), // FIXME: FunctionError
-            )
+            .replay_or_interrupt(ffqn, Params::from_wasmtime(Arc::from(params)))
             .await?;
         assert_eq!(results.len(), res.len(), "unexpected results length"); // FIXME: FunctionError
         for (idx, item) in res.value().into_iter().enumerate() {
@@ -519,8 +514,7 @@ mod tests {
                 let res = match step {
                     WorkflowStep::Sleep { millis } => ctx.sleep(*millis).await,
                     WorkflowStep::Call { ffqn } => {
-                        ctx.call_imported_func(ffqn.clone(), &[], Arc::from([]), &mut [])
-                            .await
+                        ctx.call_imported_func(ffqn.clone(), &[], &mut []).await
                     }
                 };
                 if let Err(err) = res {
@@ -615,7 +609,7 @@ mod tests {
                 created_at,
                 execution_id,
                 ffqn: MOCK_FFQN,
-                params: Params::from([]),
+                params: Params::default(),
                 parent: None,
                 scheduled_at: None,
                 retry_exp_backoff: Duration::ZERO,

@@ -93,7 +93,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                 ifc_fqn = import.ifc_fqn
             );
             if let Ok(mut linker_instance) = linker.instance(import.ifc_fqn.deref()) {
-                for (function_name, (param_types, _result_type)) in &import.fns {
+                for function_name in import.fns.keys() {
                     let ffqn = FunctionFqn {
                         ifc_fqn: import.ifc_fqn.clone(),
                         function_name: function_name.clone(),
@@ -101,7 +101,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                     trace!("Adding mock for imported function {ffqn} to the linker");
                     let res = linker_instance.func_new_async(function_name.deref(), {
                         let ffqn = ffqn.clone();
-                        let param_types = param_types.clone();
                         move |mut store_ctx: wasmtime::StoreContextMut<
                             '_,
                             WorkflowCtx<C, DB, P>,
@@ -109,11 +108,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                               params: &[Val],
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
-                            let param_types = param_types.clone();
                             Box::new(async move {
                                 Ok(store_ctx
                                     .data_mut()
-                                    .call_imported_func(ffqn, params, param_types, results)
+                                    .call_imported_func(ffqn, params, results)
                                     .await?)
                             })
                         }
@@ -553,14 +551,13 @@ mod tests {
         .unwrap();
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
+        let params = Params::from_json_array(json!([SLEEP_MILLIS])).unwrap();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id,
                 ffqn: SLEEP_HOST_ACTIVITY_FFQN,
-                params: Params::from([
-                    WastValWithType::try_from(WastVal::U32(SLEEP_MILLIS)).unwrap()
-                ]),
+                params,
                 parent: None,
                 scheduled_at: None,
                 retry_exp_backoff: Duration::ZERO,
@@ -639,10 +636,7 @@ mod tests {
             .mount(&server)
             .await;
         debug!("started mock server on {}", server.address());
-        let params =
-            Params::from([
-                WastValWithType::try_from(WastVal::U16(server.address().port())).unwrap(),
-            ]);
+        let params = Params::from_json_array(json!([server.address().port()])).unwrap();
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = now();

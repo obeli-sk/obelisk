@@ -438,7 +438,7 @@ pub(crate) mod tests {
         // create executions
         let stopwatch = Instant::now();
         let fibo_ffqn = FIBO_ACTIVITY_FFQN;
-        let params = Params::from([WastValWithType::try_from(WastVal::U8(fibo_input)).unwrap()]);
+        let params = Params::from_wasmtime(Arc::from([Val::U8(fibo_input)]));
         let created_at = now();
         let mut execution_ids = Vec::with_capacity(executions);
         let db_connection = db_pool.connection();
@@ -575,10 +575,7 @@ pub(crate) mod tests {
                                 .run(
                                     ExecutionId::generate(),
                                     FIBO_ACTIVITY_FFQN,
-                                    Params::from([WastValWithType::try_from(WastVal::U8(
-                                        fibo_input,
-                                    ))
-                                    .unwrap()]),
+                                    Params::from_json_array(json!([fibo_input])).unwrap(),
                                     Vec::new(),
                                     Version::new(0),
                                     execution_deadline,
@@ -666,9 +663,7 @@ pub(crate) mod tests {
                         .run(
                             ExecutionId::generate(),
                             FIBO_ACTIVITY_FFQN,
-                            Params::from([
-                                WastValWithType::try_from(WastVal::U8(fibo_input)).unwrap()
-                            ]),
+                            Params::from_json_array(json!([fibo_input])).unwrap(),
                             Vec::new(),
                             Version::new(0),
                             execution_deadline,
@@ -771,10 +766,8 @@ pub(crate) mod tests {
                     created_at,
                     execution_id,
                     ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
-                    params: Params::from([
-                        WastValWithType::try_from(WastVal::U32(sleep_millis)).unwrap(),
-                        WastValWithType::try_from(WastVal::U32(sleep_iterations)).unwrap(),
-                    ]),
+                    params: Params::from_json_array(json!([sleep_millis, sleep_iterations]))
+                        .unwrap(),
                     parent: None,
                     scheduled_at: None,
                     retry_exp_backoff: Duration::ZERO,
@@ -845,10 +838,7 @@ pub(crate) mod tests {
                 .run(
                     ExecutionId::generate(),
                     SLEEP_LOOP_ACTIVITY_FFQN,
-                    Params::from([
-                        WastValWithType::try_from(WastVal::U32(sleep_millis)).unwrap(),
-                        WastValWithType::try_from(WastVal::U32(sleep_iterations)).unwrap(),
-                    ]),
+                    Params::from_json_array(json!([sleep_millis, sleep_iterations])).unwrap(),
                     Vec::new(),
                     Version::new(0),
                     executed_at + TIMEOUT,
@@ -883,14 +873,12 @@ pub(crate) mod tests {
                 .mount(&server)
                 .await;
             debug!("started mock server on {}", server.address());
-            let params = Params::from([
-                WastValWithType::try_from(WastVal::String(format!(
-                    "127.0.0.1:{port}",
-                    port = server.address().port()
-                )))
-                .unwrap(),
-                WastValWithType::try_from(WastVal::String("/".into())).unwrap(),
-            ]);
+            let params = Params::from_json_array(json!([
+                format!("127.0.0.1:{port}", port = server.address().port()),
+                "/"
+            ]))
+            .unwrap();
+
             // Create an execution.
             let execution_id = ExecutionId::generate();
             let created_at = now();
