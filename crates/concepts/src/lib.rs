@@ -439,15 +439,14 @@ impl Params {
         Self(ParamsInternal::Empty)
     }
 
-    #[must_use]
     pub fn from_wasmtime(
         vals: Arc<[wasmtime::component::Val]>,
         r#types: Arc<[TypeWrapper]>,
     ) -> Result<Self, &'static str> {
-        if vals.len() != r#types.len() {
-            Err("mismatch between `vals` and `types` length")
-        } else {
+        if vals.len() == r#types.len() {
             Ok(Self(ParamsInternal::Vals { vals, types }))
+        } else {
+            Err("mismatch between `vals` and `types` length")
         }
     }
 

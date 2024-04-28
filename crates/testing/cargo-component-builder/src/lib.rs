@@ -9,7 +9,7 @@ use utils::wasm_tools;
 use wasmtime::{component::Component, Engine};
 
 fn to_snake_case(input: &str) -> String {
-    input.replace('-', "_").replace('.', "_")
+    input.replace(['-', '.'], "_")
 }
 
 pub fn build_activity() {
@@ -22,6 +22,7 @@ pub fn build_workflow() {
 
 const FEATURES: &str = "wasm";
 
+#[allow(clippy::too_many_lines)]
 fn build_internal(tripple: &str) {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
@@ -46,9 +47,27 @@ fn build_internal(tripple: &str) {
             Map(IndexMap<String, Value>),
             Leaf(Vec<String>),
         }
+        fn ser_map(map: &IndexMap<String, Value>, output: &mut String) {
+            for (k, v) in map {
+                match v {
+                    Value::Leaf(vec) => {
+                        for line in vec {
+                            *output += line;
+                            *output += "\n";
+                        }
+                    }
+                    Value::Map(map) => {
+                        *output += &format!("#[allow(clippy::all)]\npub mod r#{k} {{\n");
+                        ser_map(map, output);
+                        *output += "}\n";
+                    }
+                }
+            }
+        }
+
         let component = Component::from_file(&engine, wasm_path).unwrap();
         let exim = wasm_tools::decode(&component, &engine).expect("cannot decode wasm component");
-        generated_code += &format!("pub mod exports {{\n");
+        generated_code += "pub mod exports {\n";
         let mut outer_map: IndexMap<String, Value> = IndexMap::new();
         for export in exim.exports {
             let ifc_fqn_split = export
@@ -75,37 +94,21 @@ fn build_internal(tripple: &str) {
                 .map(|function_name| {
                     format!(
                         "pub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\");\n",
-                        name_upper = to_snake_case(&function_name).to_uppercase(),
+                        name_upper = to_snake_case(function_name).to_uppercase(),
                         ifc = export.ifc_fqn,
                         fn = function_name,
                     )
                 })
                 .collect();
             assert!(
-                map.insert("".to_string(), Value::Leaf(vec)).is_none(),
+                map.insert(String::new(), Value::Leaf(vec)).is_none(),
                 "same interface cannot appear twice"
             );
         }
-        fn ser_map(map: &IndexMap<String, Value>, output: &mut String) {
-            for (k, v) in map {
-                match v {
-                    Value::Leaf(vec) => {
-                        for line in vec {
-                            *output += line;
-                            *output += "\n";
-                        }
-                    }
-                    Value::Map(map) => {
-                        *output += &format!("pub mod r#{k} {{\n");
-                        ser_map(map, output);
-                        *output += "}\n";
-                    }
-                }
-            }
-        }
+
         ser_map(&outer_map, &mut generated_code);
 
-        generated_code += &format!("}}\n");
+        generated_code += "}\n";
     }
     std::fs::write(out_dir.join("gen.rs"), generated_code).unwrap();
 
@@ -126,7 +129,7 @@ fn build_internal(tripple: &str) {
     }
     let wit_path = &package.manifest_path.parent().unwrap().join("wit");
     if wit_path.exists() && wit_path.is_dir() {
-        add_dependency(&wit_path);
+        add_dependency(wit_path);
     }
 }
 

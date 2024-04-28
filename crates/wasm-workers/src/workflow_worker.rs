@@ -160,6 +160,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         self.exim.exported_functions()
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn run(
         &self,
         execution_id: ExecutionId,
@@ -243,7 +244,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 ));
             } // guest panic exits here
             let result = match SupportedFunctionResult::new(
-                results.into_iter().zip(result_types.into_iter().cloned()),
+                results.into_iter().zip(result_types.iter().cloned()),
             ) {
                 Ok(result) => result,
                 Err(err) => {
@@ -276,28 +277,26 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         Ok((supported_result, version))
                     },
                     Err(RunError::FunctionCall(err, version)) => {
-                        match err
+                        if let Some(err) =  err
                             .source()
                             .and_then(|source| source.downcast_ref::<FunctionError>())
                         {
-                            Some(err) => {
-                                let err = err.clone().into_worker_error(version);
-                                if matches!(err, WorkerError::ChildExecutionRequest | WorkerError::DelayRequest) {
-                                    debug!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an interrupt");
-                                } else {
-                                    info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a error");
-                                }
-                                Err(err)
-                            },
-                            None => {
-                                let err = WorkerError::IntermittentError {
-                                    err,
-                                    reason: StrVariant::Static("uncategorized error"),
-                                    version,
-                                };
-                                info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an error");
-                                Err(err)
-                            },
+                            let err = err.clone().into_worker_error(version);
+                            if matches!(err, WorkerError::ChildExecutionRequest | WorkerError::DelayRequest) {
+                                debug!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an interrupt");
+                            } else {
+                                info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a error");
+                            }
+                            Err(err)
+                        } else  {
+                            let err = WorkerError::IntermittentError {
+                                err,
+                                reason: StrVariant::Static("uncategorized error"),
+                                version,
+                            };
+                            info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an error");
+                            Err(err)
+
                         }
                     }
                     Err(RunError::WorkerError(err)) => Err(err),
@@ -346,10 +345,7 @@ mod tests {
     // TODO: test timeouts, retries
     use super::*;
     use crate::{
-        activity_worker::tests::{
-            spawn_activity, spawn_activity_fibo, wasmtime_nosim::HTTP_GET_ACTIVITY_FFQN,
-            FIBO_10_INPUT, FIBO_10_OUTPUT,
-        },
+        activity_worker::tests::{spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT},
         EngineConfig,
     };
     use assert_matches::assert_matches;
@@ -605,13 +601,18 @@ mod tests {
         db_task.close().await;
     }
 
+    #[cfg(not(madsim))]
     #[tokio::test]
     async fn http_get() {
+        use crate::activity_worker::tests::{
+            spawn_activity, wasmtime_nosim::HTTP_GET_ACTIVITY_FFQN,
+        };
         use std::ops::Deref;
         use wiremock::{
             matchers::{method, path},
             Mock, MockServer, ResponseTemplate,
         };
+
         const BODY: &str = "ok";
         pub const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::EXECUTE);

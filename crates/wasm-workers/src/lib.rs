@@ -50,10 +50,10 @@ impl WasmComponent {
     fn new(wasm_path: StrVariant, engine: &Engine) -> Result<Self, WasmFileError> {
         info!("Reading");
         let component =
-            Component::from_file(&engine, wasm_path.deref()).map_err(|err: wasmtime::Error| {
+            Component::from_file(engine, wasm_path.deref()).map_err(|err: wasmtime::Error| {
                 WasmFileError::CannotReadComponent(wasm_path.clone(), err)
             })?;
-        let exim = wasm_tools::decode(&component, &engine)
+        let exim = wasm_tools::decode(&component, engine)
             .map_err(|err| WasmFileError::DecodeError(wasm_path.clone(), err))?;
         trace!(?exim, "Exports and imports");
         Ok(Self {

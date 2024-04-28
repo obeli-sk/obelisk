@@ -192,7 +192,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 });
             }; // guest panic exits here
             let result = match SupportedFunctionResult::new(
-                results.into_iter().zip(result_types.into_iter().cloned()),
+                results.into_iter().zip(result_types.iter().cloned()),
             ) {
                 Ok(result) => result,
                 Err(err) => {
@@ -686,14 +686,18 @@ pub(crate) mod tests {
         assert!(limit_reached > 0, "Limit was not reached");
     }
 
-    #[cfg(all(test, not(madsim)))] // Requires madsim support in wasmtime
+    #[cfg(not(madsim))] // Requires madsim support in wasmtime
     pub mod wasmtime_nosim {
+        use super::*;
         use tracing::info;
 
-        use super::*;
         pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_sleep_activity_builder::exports::testing::sleep::sleep::SLEEP_LOOP,
         ); // sleep-loop: func(millis: u64, iterations: u32);
+        pub const HTTP_GET_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_http_get_activity_builder::exports::testing::http::http_get::GET,
+        );
+        // get: func(authority: string, path: string) -> result<string, string>;
 
         #[rstest::rstest]
         #[case(10, 100, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
@@ -854,11 +858,6 @@ pub(crate) mod tests {
             assert_matches!(err, WorkerError::IntermittentTimeout);
         }
 
-        pub const HTTP_GET_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
-            test_programs_http_get_activity_builder::exports::testing::http::http_get::GET,
-        );
-        // get: func(authority: string, path: string) -> result<string, string>;
-
         #[tokio::test]
         async fn http_get() {
             use std::ops::Deref;
@@ -885,9 +884,10 @@ pub(crate) mod tests {
                 .await;
             debug!("started mock server on {}", server.address());
             let params = Params::from([
-                WastValWithType::try_from(WastVal::String(
-                    format!("127.0.0.1:{port}", port = server.address().port()).into(),
-                ))
+                WastValWithType::try_from(WastVal::String(format!(
+                    "127.0.0.1:{port}",
+                    port = server.address().port()
+                )))
                 .unwrap(),
                 WastValWithType::try_from(WastVal::String("/".into())).unwrap(),
             ]);

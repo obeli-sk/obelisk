@@ -99,7 +99,7 @@ fn exported<'a>(
                         (params, result),
                     );
                 } else {
-                    debug!("Ignoring export - not a ComponentFunc: {export:?}")
+                    debug!("Ignoring export - not a ComponentFunc: {export:?}");
                 }
             }
             vec.push(PackageIfcFns {
@@ -115,8 +115,8 @@ fn exported<'a>(
 
 pub fn decode(component: &Component, engine: &Engine) -> Result<ExIm, DecodeError> {
     let component_type = component.component_type();
-    let exports = exported(component_type.exports(&engine), &engine)?;
-    let imports = exported(component_type.imports(&engine), &engine)?;
+    let exports = exported(component_type.exports(engine), engine)?;
+    let imports = exported(component_type.imports(engine), engine)?;
     Ok(ExIm::new(exports, imports))
 }
 

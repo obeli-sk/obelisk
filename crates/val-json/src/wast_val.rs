@@ -96,7 +96,7 @@ impl TryFrom<Val> for WastVal {
             Val::String(v) => Self::String(v),
             Val::List(v) => Self::List(
                 v.into_iter()
-                    .map(|v| WastVal::try_from(v))
+                    .map(WastVal::try_from)
                     .collect::<Result<_, _>>()?,
             ),
             Val::Record(v) => Self::Record(
@@ -106,7 +106,7 @@ impl TryFrom<Val> for WastVal {
             ),
             Val::Tuple(v) => Self::Tuple(
                 v.into_iter()
-                    .map(|v| WastVal::try_from(v))
+                    .map(WastVal::try_from)
                     .collect::<Result<_, _>>()?,
             ),
             Val::Variant(str, v) => Self::Variant(
@@ -193,6 +193,7 @@ impl PartialEq for WastVal {
 
 impl Eq for WastVal {}
 
+#[must_use]
 pub fn val(v: &WastVal) -> Val {
     match v {
         WastVal::Bool(b) => Val::Bool(*b),
@@ -207,9 +208,9 @@ pub fn val(v: &WastVal) -> Val {
         WastVal::F32(b) => Val::Float32(*b),
         WastVal::F64(b) => Val::Float64(*b),
         WastVal::Char(b) => Val::Char(*b),
-        WastVal::String(s) => Val::String(s.to_string().into()),
+        WastVal::String(s) => Val::String(s.to_string()),
         WastVal::List(vals) => {
-            let vals = vals.iter().map(|v| val(v)).collect();
+            let vals = vals.iter().map(val).collect();
             Val::List(vals)
         }
         WastVal::Record(vals) => {
@@ -217,23 +218,20 @@ pub fn val(v: &WastVal) -> Val {
             for (name, v) in vals {
                 fields.push((name.to_string(), val(v)));
             }
-            Val::Record(fields.into())
+            Val::Record(fields)
         }
-        WastVal::Tuple(vals) => Val::Tuple(vals.iter().map(|v| val(v)).collect()),
+        WastVal::Tuple(vals) => Val::Tuple(vals.iter().map(val).collect()),
         WastVal::Enum(name) => Val::Enum(name.to_string()),
         WastVal::Variant(name, payload) => {
             let payload = payload_val(payload.as_deref());
             Val::Variant(name.to_string(), payload)
         }
-        WastVal::Option(v) => Val::Option(match v {
-            Some(v) => Some(Box::new(val(v))),
-            None => None,
-        }),
+        WastVal::Option(v) => Val::Option(v.as_ref().map(|v| Box::new(val(v)))),
         WastVal::Result(v) => Val::Result(match v {
             Ok(v) => Ok(payload_val(v.as_deref())),
             Err(v) => Err(payload_val(v.as_deref())),
         }),
-        WastVal::Flags(v) => Val::Flags(v.iter().map(|s| s.to_string()).collect()),
+        WastVal::Flags(v) => Val::Flags(v.iter().map(std::string::ToString::to_string).collect()),
     }
 }
 
