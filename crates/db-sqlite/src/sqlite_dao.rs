@@ -261,8 +261,8 @@ impl SqlitePool {
         let execution_id = req.execution_id;
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx.prepare(
-                "INSERT INTO execution_log (execution_id, created_at, version, json_value, variant, pending_state ) \
-                VALUES (:execution_id, :created_at, :version, :json_value, :variant, :pending_state)")?;
+                "INSERT INTO execution_log (execution_id, created_at, version, json_value, variant, pending_state, join_set_id ) \
+                VALUES (:execution_id, :created_at, :version, :json_value, :variant, :pending_state, :join_set_id)")?;
         let ffqn = req.ffqn.clone();
         let created_at = req.created_at;
         let scheduled_at = req.scheduled_at;
@@ -277,6 +277,7 @@ impl SqlitePool {
             ":json_value": serde_json::to_value(&event).unwrap(),
             ":variant": event.variant(),
             ":pending_state": serde_json::to_value(&pending_state).unwrap(),
+            ":join_set_id": event.join_set_id().map(|join_set_id| join_set_id.to_string()),
         })?;
         let next_version = Version::new(version.0 + 1);
         Self::update_index(
@@ -424,8 +425,10 @@ impl SqlitePool {
                 // Every execution created must have at least Created pending state.
                 SpecificError::NotFound,
             )))?;
-        serde_json::from_value::<PendingState>(pending_state)
-            .map_err(|serde| SqliteError::Parsing(StrVariant::Arc(Arc::from(serde.to_string()))))
+        serde_json::from_value::<PendingState>(pending_state).map_err(|serde| {
+            error!("Cannot parse `pending_state` - {serde:?}");
+            SqliteError::Parsing(StrVariant::Arc(Arc::from(serde.to_string())))
+        })
     }
 
     #[instrument(skip_all, fields(%execution_id, %run_id, %executor_id))]
@@ -501,6 +504,7 @@ impl SqlitePool {
                         row.get::<_, serde_json::Value>("json_value")?,
                     )
                     .map_err(|serde| {
+                        error!("Cannot deserialize {row:?} - {serde:?}");
                         SqliteError::Parsing(StrVariant::Arc(Arc::from(serde.to_string())))
                     });
                     Ok(event)
@@ -631,7 +635,7 @@ impl SqlitePool {
                 } else {
                     Self::get_next_version(&tx, execution_id)?
                 };
-                let (pending_state, join_set_id, delay_req) = {
+                let (pending_state, delay_req) = {
                     match event {
                         ExecutionEventInner::IntermittentFailure { expires_at, .. }
                         | ExecutionEventInner::IntermittentTimeout { expires_at } => (
@@ -639,22 +643,19 @@ impl SqlitePool {
                                 scheduled_at: expires_at,
                             }),
                             None,
-                            None,
                         ),
                         ExecutionEventInner::Finished { .. } => {
-                            (Some(PendingState::Finished), None, None)
+                            (Some(PendingState::Finished), None)
                         }
-                        ExecutionEventInner::Unlocked => {
-                            (Some(PendingState::PendingNow), None, None)
-                        }
+                        ExecutionEventInner::Unlocked => (Some(PendingState::PendingNow), None),
                         ExecutionEventInner::HistoryEvent {
                             event:
-                                HistoryEvent::JoinSet { join_set_id }
+                                HistoryEvent::JoinSet { .. }
                                 | HistoryEvent::JoinSetRequest {
-                                    join_set_id,
                                     request: JoinSetRequest::ChildExecutionRequest { .. },
+                                    ..
                                 },
-                        } => (None, Some(join_set_id), None),
+                        } => (None, None),
                         ExecutionEventInner::HistoryEvent {
                             event:
                                 HistoryEvent::JoinSetRequest {
@@ -665,14 +666,10 @@ impl SqlitePool {
                                             expires_at,
                                         },
                                 },
-                        } => (
-                            None,
-                            Some(join_set_id),
-                            Some((join_set_id, delay_id, expires_at)),
-                        ),
+                        } => (None, Some((join_set_id, delay_id, expires_at))),
                         ExecutionEventInner::HistoryEvent {
                             event: HistoryEvent::Persist { .. },
-                        } => (None, None, None),
+                        } => (None, None),
                         ExecutionEventInner::HistoryEvent {
                             event:
                                 HistoryEvent::JoinNext {
@@ -684,7 +681,6 @@ impl SqlitePool {
                                 join_set_id,
                                 lock_expires_at,
                             }),
-                            Some(join_set_id),
                             None,
                         ),
                         ExecutionEventInner::HistoryEvent {
@@ -704,11 +700,11 @@ impl SqlitePool {
                                 }
                                 _ => None,
                             };
-                            (pending_state, Some(join_set_id), None)
+                            (pending_state, None)
                         }
                         ExecutionEventInner::CancelRequest => {
                             //TODO
-                            (None, None, None)
+                            (None, None)
                         }
                         ExecutionEventInner::Locked { .. }
                         | ExecutionEventInner::Created { .. } => unreachable!("handled above"),
@@ -723,7 +719,7 @@ impl SqlitePool {
                     ":json_value": serde_json::to_value(&event).unwrap(),
                     ":version": appending_version.0,
                     ":variant": event.variant(),
-                    ":join_set_id": join_set_id.map(|join_set_id | join_set_id.to_string()),
+                    ":join_set_id": event.join_set_id().map(|join_set_id | join_set_id.to_string()),
                     ":pending_state": pending_state.map(|pending_state| serde_json::to_value(&pending_state).unwrap()),
                 })?;
                 let next_version = Version::new(appending_version.0 + 1);
@@ -804,7 +800,7 @@ impl DbConnection for SqlitePool {
                             .collect::<Result<Vec<_>, _>>()?
                             .into_iter()
                             .collect::<Result<Vec<_>, _>>()
-                            .map_err(|str| SqliteError::Parsing(StrVariant::Static(str)))?;
+                            .map_err(|str| SqliteError::Parsing(str))?;
                         execution_ids_versions.extend(execs_and_versions);
                         if execution_ids_versions.len() == batch_size {
                             break;
@@ -1044,6 +1040,7 @@ impl DbConnection for SqlitePool {
                                 )
                                 .map(|event| ExecutionEvent { created_at, event })
                                 .map_err(|serde| {
+                                    error!("Cannot deserialize {row:?} - {serde:?}");
                                     SqliteError::Parsing(StrVariant::Arc(Arc::from(
                                         serde.to_string(),
                                     )))
@@ -1124,11 +1121,11 @@ impl DbConnection for SqlitePool {
                     ;
                 let mut expired_timers: Vec<ExpiredTimer> = Vec::new();
                 for(execution_id, version, join_set_id, delay_id) in query_res {
-                    let execution_id = execution_id.map_err(|str| SqliteError::Parsing(StrVariant::Static(str)))?;
+                    let execution_id = execution_id.map_err(|str| SqliteError::Parsing(str))?;
                     let expired_timer = match (join_set_id, delay_id) {
                         (Some(join_set_id), Some(delay_id)) => {
-                            let join_set_id = join_set_id.map_err(|str| SqliteError::Parsing(StrVariant::Static(str)))?;
-                            let delay_id = delay_id.map_err(|str| SqliteError::Parsing(StrVariant::Static(str)))?;
+                            let join_set_id = join_set_id.map_err(|str| SqliteError::Parsing(str))?;
+                            let delay_id = delay_id.map_err(|str| SqliteError::Parsing(str))?;
                             ExpiredTimer::AsyncDelay { execution_id, version, join_set_id, delay_id }
                         }
                         (None, None) => {
