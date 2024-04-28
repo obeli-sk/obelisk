@@ -451,18 +451,15 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
+pub mod params {
+    use crate::{type_wrapper::TypeWrapper, wast_val::WastVal, wast_val_ser::WastValDeserialize};
     use core::fmt;
-    use std::marker::PhantomData;
-
-    use crate::{
-        type_wrapper::TypeWrapper,
-        wast_val::{WastVal, WastValWithType},
-        wast_val_ser::WastValDeserialize,
+    use serde::{
+        de::{Expected, SeqAccess, Visitor},
+        Deserializer,
     };
-    use indexmap::IndexMap;
-    use serde::de::{DeserializeSeed, Expected, SeqAccess, Visitor};
+    use serde_json::Value;
+    use std::marker::PhantomData;
 
     // Visitor implementation that deserializes a JSON array into `Vec<WastVal>`.
     struct SequenceVisitor<'a, V, I: ExactSizeIterator<Item = &'a TypeWrapper>> {
@@ -514,18 +511,39 @@ mod tests {
         }
     }
 
-    pub fn deserialize_sequence<'a>(
-        param_vals: &str,
+    pub fn deserialize_str<'a>(
+        params: impl AsRef<str>,
         param_types: impl IntoIterator<
             Item = &'a TypeWrapper,
             IntoIter = impl ExactSizeIterator<Item = &'a TypeWrapper>,
         >,
     ) -> Result<Vec<WastVal>, serde_json::Error> {
-        use serde::Deserializer;
-        let mut deserializer = serde_json::Deserializer::from_str(param_vals);
+        let mut deserializer = serde_json::Deserializer::from_str(params.as_ref());
         let visitor = SequenceVisitor::new(param_types.into_iter());
         deserializer.deserialize_seq(visitor)
     }
+
+    pub fn deserialize_values<'a>(
+        params: &Value,
+        param_types: impl IntoIterator<
+            Item = &'a TypeWrapper,
+            IntoIter = impl ExactSizeIterator<Item = &'a TypeWrapper>,
+        >,
+    ) -> Result<Vec<WastVal>, serde_json::Error> {
+        deserialize_str(params.to_string(), param_types) //FIXME: serializing to string and then deserializing
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::params::deserialize_str;
+    use crate::{
+        type_wrapper::TypeWrapper,
+        wast_val::{WastVal, WastValWithType},
+        wast_val_ser::WastValDeserialize,
+    };
+    use indexmap::IndexMap;
+    use serde::de::DeserializeSeed;
 
     #[test]
     fn bool() {
@@ -635,7 +653,7 @@ mod tests {
         let param_types = r#"["Bool", "U8", "S16"]"#;
         let param_vals = "[true, 8, -16]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-        let actual = deserialize_sequence(param_vals, param_types.iter()).unwrap();
+        let actual = deserialize_str(param_vals, param_types.iter()).unwrap();
         assert_eq!(expected, actual);
     }
 
@@ -644,7 +662,7 @@ mod tests {
         let param_types = r#"["Bool", "U8", "S16"]"#;
         let param_vals = "[true, 8]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-        let err = deserialize_sequence(param_vals, &param_types).unwrap_err();
+        let err = deserialize_str(param_vals, &param_types).unwrap_err();
         assert_starts_with(&err, "invalid length 2, expected an array of length 3");
     }
 
@@ -653,7 +671,7 @@ mod tests {
         let param_types = r#"["Bool", "U8"]"#;
         let param_vals = "[true, 8, false]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
-        let err = deserialize_sequence(param_vals, &param_types).unwrap_err();
+        let err = deserialize_str(param_vals, &param_types).unwrap_err();
         assert_starts_with(
             &err,
             "invalid length that is too big, at element `Bool(false)`, expected an array of length 2",

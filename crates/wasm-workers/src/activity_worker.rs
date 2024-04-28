@@ -170,7 +170,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                     .func(&ffqn.function_name)
                     .expect("function must be found")
             };
-            let params = match params.as_vals(&func.params(&store)) {
+            let params = match params.as_vals(func.params(&store)) {
                 Ok(params) => params,
                 Err(err) => {
                     return Err(WorkerError::FatalError(
@@ -275,6 +275,7 @@ pub(crate) mod tests {
     };
     use db_mem::inmemory_dao::DbTask;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
+    use serde_json::json;
     use std::time::{Duration, Instant};
     use test_utils::env_or_default;
     use tracing::info;
@@ -339,7 +340,7 @@ pub(crate) mod tests {
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = now();
-        let params = Params::from([WastValWithType::try_from(WastVal::U8(FIBO_10_INPUT)).unwrap()]);
+        let params = Params::from_json_array(json!([FIBO_10_INPUT])).unwrap();
         db_connection
             .create(CreateRequest {
                 created_at,

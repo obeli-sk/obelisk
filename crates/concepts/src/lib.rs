@@ -1,8 +1,9 @@
 use ::serde::{Deserialize, Serialize};
+use assert_matches::assert_matches;
 pub use prefixed_ulid::ExecutionId;
+use serde_json::Value;
 use std::{
     borrow::Borrow,
-    error::Error,
     fmt::{Debug, Display},
     hash::Hash,
     marker::PhantomData,
@@ -10,9 +11,11 @@ use std::{
     sync::Arc,
 };
 use val_json::{
-    type_wrapper::TypeWrapper,
+    type_wrapper::{TypeConversionError, TypeWrapper},
     wast_val::{WastVal, WastValWithType},
+    wast_val_ser::params,
 };
+use wasmtime::component::{Type, Val};
 
 pub mod storage;
 
@@ -327,6 +330,7 @@ pub struct Params(ParamsInternal);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ParamsInternal {
+    Json(Value), //TODO: is Arc needed here? Or move upwards?
     WastValParams(Arc<[WastValWithType]>),
     Vals {
         vals: Arc<[wasmtime::component::Val]>,
@@ -346,10 +350,10 @@ mod serde_params {
     use serde::de::{SeqAccess, Visitor};
     use serde::ser::SerializeSeq;
     use serde::{Deserialize, Serialize};
+    use serde_json::Value;
     use std::marker::PhantomData;
     use std::ops::Deref;
-    use std::sync::Arc;
-    use val_json::wast_val::{WastVal, WastValWithType};
+    use val_json::wast_val::WastVal;
 
     impl Serialize for Params {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -360,23 +364,31 @@ mod serde_params {
                 ParamsInternal::WastValParams(params) => {
                     let mut seq = serializer.serialize_seq(Some(params.len()))?;
                     for element in params.deref() {
-                        seq.serialize_element(element)?;
+                        seq.serialize_element(&element.value)?;
                     }
                     seq.end()
                 }
-                ParamsInternal::Vals { vals, r#types } => {
+                ParamsInternal::Vals { vals, r#types: _ } => {
                     let mut seq = serializer.serialize_seq(Some(vals.len()))?; // size must be equal, checked when constructed.
-                    for (val, r#type) in vals.iter().zip(r#types.iter()) {
+                    for val in vals.iter() {
                         let value = WastVal::try_from(val.clone())
                             .map_err(|err| serde::ser::Error::custom(err.to_string()))?;
-                        seq.serialize_element(&WastValWithType {
-                            value,
-                            r#type: r#type.clone(),
-                        })?;
+                        seq.serialize_element(&value)?;
                     }
                     seq.end()
                 }
                 ParamsInternal::Empty => serializer.serialize_seq(Some(0))?.end(),
+                ParamsInternal::Json(value) => {
+                    if let Value::Array(vec) = value {
+                        let mut seq = serializer.serialize_seq(Some(vec.len()))?;
+                        for item in vec {
+                            seq.serialize_element(item)?;
+                        }
+                        seq.end()
+                    } else {
+                        unreachable!("Array verified in `from_json_value`")
+                    }
+                }
             }
         }
     }
@@ -413,11 +425,11 @@ mod serde_params {
         where
             D: serde::Deserializer<'de>,
         {
-            let vec: Vec<WastValWithType> = deserializer.deserialize_seq(VecVisitor::default())?;
+            let vec: Vec<Value> = deserializer.deserialize_seq(VecVisitor::default())?;
             if vec.is_empty() {
                 Ok(Self(ParamsInternal::Empty))
             } else {
-                Ok(Self(ParamsInternal::WastValParams(Arc::from(vec))))
+                Ok(Self(ParamsInternal::Json(Value::Array(vec))))
             }
         }
     }
@@ -426,11 +438,13 @@ mod serde_params {
 #[derive(Debug, thiserror::Error)]
 
 pub enum ParamsParsingError {
-    #[error("error parsing {idx}-th parameter: `{err:?}`")]
-    ParameterError {
+    #[error("error converting type {idx}-th parameter: `{err}`")]
+    ParameterTypeError {
         idx: usize,
-        err: Box<dyn Error + Send + Sync>,
+        err: TypeConversionError,
     },
+    #[error("error deserializing parameters - `{0}`")]
+    DeserializationError(#[from] serde_json::Error),
 }
 
 impl Params {
@@ -443,10 +457,21 @@ impl Params {
         vals: Arc<[wasmtime::component::Val]>,
         r#types: Arc<[TypeWrapper]>,
     ) -> Result<Self, &'static str> {
-        if vals.len() == r#types.len() {
-            Ok(Self(ParamsInternal::Vals { vals, types }))
+        if vals.len() != r#types.len() {
+            return Err("mismatch between `vals` and `types` length");
+        }
+        if vals.is_empty() {
+            Ok(Self::default())
         } else {
-            Err("mismatch between `vals` and `types` length")
+            Ok(Self(ParamsInternal::Vals { vals, types }))
+        }
+    }
+
+    pub fn from_json_array(value: Value) -> Result<Self, &'static str> {
+        match value {
+            Value::Array(vec) if vec.is_empty() => Ok(Self::default()),
+            Value::Array(_) => Ok(Self(ParamsInternal::Json(value))),
+            _ => Err("passed `Value` must be `Array`"),
         }
     }
 
@@ -455,12 +480,24 @@ impl Params {
         Self(ParamsInternal::WastValParams(vec))
     }
 
-    // TODO: optimize allocations
     pub fn as_vals(
         &self,
-        _param_types: &[Type],
+        param_types: Box<[Type]>,
     ) -> Result<Arc<[wasmtime::component::Val]>, ParamsParsingError> {
         match &self.0 {
+            ParamsInternal::Json(params) => {
+                let param_types = param_types
+                    .into_vec()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, ty)| TypeWrapper::try_from(ty).map_err(|err| (idx, err)))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|(idx, err)| ParamsParsingError::ParameterTypeError { idx, err })?;
+                Ok(params::deserialize_values(params, param_types.iter())?
+                    .into_iter()
+                    .map(Val::from)
+                    .collect())
+            }
             ParamsInternal::Vals { vals, .. } => Ok(vals.clone()),
             ParamsInternal::WastValParams(wast_vals) => Ok(wast_vals
                 .iter()
@@ -478,6 +515,7 @@ impl Params {
     #[must_use]
     pub fn len(&self) -> usize {
         match &self.0 {
+            ParamsInternal::Json(value) => assert_matches!(value, Value::Array(vec) => vec.len()),
             ParamsInternal::Vals { vals, .. } => vals.len(),
             ParamsInternal::WastValParams(vals) => vals.len(),
             ParamsInternal::Empty => 0,
@@ -552,25 +590,33 @@ pub mod prefixed_ulid {
     }
 
     mod impls {
+        use crate::StrVariant;
+
         use super::{PrefixedUlid, Ulid};
         use std::{fmt::Debug, fmt::Display, hash::Hash, marker::PhantomData, str::FromStr};
 
         impl<T> FromStr for PrefixedUlid<T> {
-            type Err = &'static str;
+            type Err = StrVariant;
 
             fn from_str(input: &str) -> Result<Self, Self::Err> {
                 let prefix = Self::prefix();
                 let mut input_chars = input.chars();
                 for exp in prefix.chars() {
                     if input_chars.next() != Some(exp) {
-                        return Err("wrong prefix");
+                        return Err(StrVariant::Arc(
+                            format!("wrong prefix - `{input}`, expected `{prefix}_`").into(),
+                        ));
                     }
                 }
                 if input_chars.next() != Some('_') {
-                    return Err("wrong prefix");
+                    return Err(StrVariant::Arc(
+                        format!("wrong prefix - `{input}`, expected `{prefix}_`").into(),
+                    ));
                 }
                 let Ok(ulid) = Ulid::from_string(input_chars.as_str()) else {
-                    return Err("wrong suffix");
+                    return Err(StrVariant::Arc(
+                        format!("Cannot parse ulid - `{input}`").into(),
+                    ));
                 };
                 Ok(Self {
                     ulid,

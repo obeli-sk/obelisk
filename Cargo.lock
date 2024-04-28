@@ -2996,6 +2996,7 @@ dependencies = [
  "madsim-tokio",
  "rand",
  "rstest",
+ "serde_json",
  "test-programs-fibo-activity-builder",
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-activity-builder",

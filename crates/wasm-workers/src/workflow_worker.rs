@@ -226,7 +226,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     .func(&ffqn.function_name)
                     .expect("function must be found")
             };
-            let params = match params.as_vals(&func.params(&store)) {
+            let params = match params.as_vals(func.params(&store)) {
                 Ok(params) => params,
                 Err(err) => {
                     return Err(RunError::WorkerError(WorkerError::FatalError(
@@ -356,6 +356,7 @@ mod tests {
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
         expired_timers_watcher,
     };
+    use serde_json::json;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use utils::time::now;
@@ -448,15 +449,13 @@ mod tests {
         let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = now();
         let db_connection = db_pool.connection();
+        let params = Params::from_json_array(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
         db_connection
             .create(CreateRequest {
                 created_at,
                 execution_id,
                 ffqn: FIBO_WORKFLOW_FFQN,
-                params: Params::from([
-                    WastValWithType::try_from(WastVal::U8(FIBO_10_INPUT)).unwrap(),
-                    WastValWithType::try_from(WastVal::U32(INPUT_ITERATIONS)).unwrap(),
-                ]),
+                params,
                 parent: None,
                 scheduled_at: None,
                 retry_exp_backoff: Duration::ZERO,

@@ -275,6 +275,23 @@ impl ExecutionEventInner {
     pub fn variant(&self) -> &'static str {
         Into::<&'static str>::into(self)
     }
+
+    pub fn join_set_id(&self) -> Option<JoinSetId> {
+        match self {
+            Self::Created {
+                parent: Some((_parent_id, join_set_id)),
+                ..
+            } => Some(*join_set_id),
+            Self::HistoryEvent {
+                event:
+                    HistoryEvent::JoinSet { join_set_id }
+                    | HistoryEvent::JoinSetRequest { join_set_id, .. }
+                    | HistoryEvent::JoinNext { join_set_id, .. }
+                    | HistoryEvent::JoinSetResponse { join_set_id, .. },
+            } => Some(*join_set_id),
+            _ => None,
+        }
+    }
 }
 
 #[derive(
@@ -543,14 +560,14 @@ pub trait DbConnection: Send + Sync {
 pub async fn wait_for_pending_state_fn<T: Debug>(
     db_connection: &dyn DbConnection,
     execution_id: ExecutionId,
-    prdicate: impl Fn(ExecutionLog) -> Option<T> + Send,
+    predicate: impl Fn(ExecutionLog) -> Option<T> + Send,
     timeout: Option<Duration>,
 ) -> Result<T, DbError> {
     trace!(%execution_id, "Waiting for predicate");
     let fut = async move {
         loop {
             let execution_log = db_connection.get(execution_id).await?;
-            if let Some(t) = prdicate(execution_log) {
+            if let Some(t) = predicate(execution_log) {
                 debug!(%execution_id, "Found: {t:?}");
                 return Ok(t);
             }
