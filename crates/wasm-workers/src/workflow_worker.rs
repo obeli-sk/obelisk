@@ -9,7 +9,6 @@ use concepts::{Params, SupportedFunctionResult};
 use derivative::Derivative;
 use executor::worker::FatalError;
 use executor::worker::{Worker, WorkerError};
-use std::collections::HashMap;
 use std::error::Error;
 use std::marker::PhantomData;
 use std::ops::Deref;
@@ -17,7 +16,7 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
-use utils::wasm_tools;
+use utils::wasm_tools::ExIm;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -50,7 +49,6 @@ impl Default for JoinNextBlockingStrategy {
 
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
-
 pub struct WorkflowConfig<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     pub config_id: ConfigId,
     pub clock_fn: C,
@@ -67,9 +65,10 @@ pub struct WorkflowConfig<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     config: WorkflowConfig<C, DB, P>,
     engine: Arc<Engine>,
-    exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
+    // exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
     linker: wasmtime::component::Linker<WorkflowCtx<C, DB, P>>,
     component: wasmtime::component::Component,
+    exim: ExIm,
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
@@ -81,38 +80,28 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
     ) -> Result<Self, WasmFileError> {
         const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
         let mut linker = wasmtime::component::Linker::new(&engine);
-        // Compile the wasm component
-        let component = wasmtime::component::Component::from_binary(&engine, &wasm_component.wasm)
-            .map_err(|err| {
-                WasmFileError::CompilationError(wasm_component.wasm_path.clone(), err.into())
-            })?;
+
         // Mock imported functions
 
-        let imported_interfaces = {
-            let imp_fns_to_metadata = wasm_tools::functions_to_metadata(
-                wasm_component.imported_ifc_fns,
-            )
-            .map_err(|err| {
-                WasmFileError::FunctionMetadataError(wasm_component.wasm_path.clone(), err)
-            })?;
-            wasm_tools::group_by_ifc_to_fn_names(imp_fns_to_metadata.keys())
-        };
-
-        for (ifc_fqn, functions) in &imported_interfaces {
-            if ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
+        for import in &wasm_component.exim.imports {
+            if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
                 // Skip host-implemented functions
                 continue;
             }
-            trace!("Adding imported interface {ifc_fqn} to the linker");
-            if let Ok(mut linker_instance) = linker.instance(ifc_fqn) {
-                for function_name in functions {
+            trace!(
+                "Adding imported interface {ifc_fqn} to the linker",
+                ifc_fqn = import.ifc_fqn
+            );
+            if let Ok(mut linker_instance) = linker.instance(import.ifc_fqn.deref()) {
+                for (function_name, (param_types, _result_type)) in &import.fns {
                     let ffqn = FunctionFqn {
-                        ifc_fqn: ifc_fqn.clone(),
+                        ifc_fqn: import.ifc_fqn.clone(),
                         function_name: function_name.clone(),
                     };
                     trace!("Adding mock for imported function {ffqn} to the linker");
-                    let res = linker_instance.func_new_async(&component, function_name, {
+                    let res = linker_instance.func_new_async(function_name.deref(), {
                         let ffqn = ffqn.clone();
+                        let param_types = param_types.clone();
                         move |mut store_ctx: wasmtime::StoreContextMut<
                             '_,
                             WorkflowCtx<C, DB, P>,
@@ -120,10 +109,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                               params: &[Val],
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
+                            let param_types = param_types.clone();
                             Box::new(async move {
                                 Ok(store_ctx
                                     .data_mut()
-                                    .call_imported_func(ffqn, params, results)
+                                    .call_imported_func(ffqn, params, param_types, results)
                                     .await?)
                             })
                         }
@@ -143,7 +133,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                     }
                 }
             } else {
-                trace!("Skipping interface {ifc_fqn}");
+                trace!("Skipping interface {ifc_fqn}", ifc_fqn = import.ifc_fqn);
             }
         }
         WorkflowCtx::add_to_linker(&mut linker).map_err(|err| WasmFileError::LinkingError {
@@ -154,9 +144,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         Ok(Self {
             config,
             engine,
-            exported_ffqns_to_results_len: wasm_component.exported_ffqns_to_results_len,
+            // exported_ffqns_to_results_len: wasm_component.exported_ffqns_to_results_len,
             linker,
-            component,
+            component: wasm_component.component,
+            exim: wasm_component.exim,
         })
     }
 }
@@ -166,7 +157,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     for WorkflowWorker<C, DB, P>
 {
     fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
-        self.exported_ffqns_to_results_len.keys()
+        self.exim.exported_functions()
     }
 
     async fn run(
@@ -185,12 +176,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             #[error("wasm function call error: `{0}`")]
             FunctionCall(Box<dyn Error + Send + Sync>, Version),
         }
-
-        let results_len = *self
-            .exported_ffqns_to_results_len
-            .get(&ffqn)
-            .expect("executor must only run existing functions");
-        trace!("Params: {params:?}, results_len:{results_len}",);
+        trace!("Params: {params:?}");
         let (instance, mut store) = {
             let seed = execution_id.random_part();
             let ctx = WorkflowCtx::new(
@@ -239,8 +225,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     .func(&ffqn.function_name)
                     .expect("function must be found")
             };
-            let param_types = func.params(&store);
-            let params = match params.as_vals(&param_types) {
+            let params = match params.as_vals() {
                 Ok(params) => params,
                 Err(err) => {
                     return Err(RunError::WorkerError(WorkerError::FatalError(
@@ -249,14 +234,17 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     )));
                 }
             };
-            let mut results = vec![Val::Bool(false); results_len];
+            let result_types = func.results(&mut store);
+            let mut results = vec![Val::Bool(false); result_types.len()];
             if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
                 return Err(RunError::FunctionCall(
                     err.into(),
                     store.into_data().version,
                 ));
             } // guest panic exits here
-            let result = match SupportedFunctionResult::new(results) {
+            let result = match SupportedFunctionResult::new(
+                results.into_iter().zip(result_types.into_iter().cloned()),
+            ) {
                 Ok(result) => result,
                 Err(err) => {
                     return Err(RunError::WorkerError(WorkerError::FatalError(
@@ -379,12 +367,12 @@ mod tests {
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
     };
-    use wasmtime::component::Val;
 
-    pub const FIBO_WORKFLOW_FFQN: FunctionFqn =
-        FunctionFqn::new_static_tuple(test_programs_fibo_workflow_builder::FIBOA); // fiboa: func(n: u8, iterations: u32) -> u64;
+    pub const FIBO_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
+        test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA,
+    ); // fiboa: func(n: u8, iterations: u32) -> u64;
     const SLEEP_HOST_ACTIVITY_FFQN: FunctionFqn =
-        FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::SLEEP_HOST_ACTIVITY); // sleep-host-activity: func(millis: u64);
+        FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_HOST_ACTIVITY); // sleep-host-activity: func(millis: u64);
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
@@ -394,9 +382,10 @@ mod tests {
         ffqn: FunctionFqn,
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
+        let workflow_engine = workflow_engine(EngineConfig::default());
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
-                WasmComponent::new(StrVariant::Static(wasm_path)).unwrap(),
+                WasmComponent::new(StrVariant::Static(wasm_path), &workflow_engine).unwrap(),
                 WorkflowConfig {
                     db_pool: db_pool.clone(),
                     config_id: ConfigId::generate(),
@@ -406,7 +395,7 @@ mod tests {
                     child_max_retries: 0,
                     phantom_data: PhantomData,
                 },
-                workflow_engine(EngineConfig::default()),
+                workflow_engine,
             )
             .unwrap(),
         );
@@ -468,7 +457,10 @@ mod tests {
                 created_at,
                 execution_id,
                 ffqn: FIBO_WORKFLOW_FFQN,
-                params: Params::from([Val::U8(FIBO_10_INPUT), Val::U32(INPUT_ITERATIONS)]),
+                params: Params::from([
+                    WastValWithType::try_from(WastVal::U8(FIBO_10_INPUT)).unwrap(),
+                    WastValWithType::try_from(WastVal::U32(INPUT_ITERATIONS)).unwrap(),
+                ]),
                 parent: None,
                 scheduled_at: None,
                 retry_exp_backoff: Duration::ZERO,
@@ -513,11 +505,15 @@ mod tests {
         db_pool: P,
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
+        let workflow_engine = workflow_engine(EngineConfig::default());
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
-                WasmComponent::new(StrVariant::Static(
-                    test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
-                ))
+                WasmComponent::new(
+                    StrVariant::Static(
+                        test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+                    ),
+                    &workflow_engine,
+                )
                 .unwrap(),
                 WorkflowConfig {
                     db_pool: db_pool.clone(),
@@ -528,7 +524,7 @@ mod tests {
                     child_max_retries: 0,
                     phantom_data: PhantomData,
                 },
-                workflow_engine(EngineConfig::default()),
+                workflow_engine,
             )
             .unwrap(),
         );
@@ -567,7 +563,9 @@ mod tests {
                 created_at: sim_clock.now(),
                 execution_id,
                 ffqn: SLEEP_HOST_ACTIVITY_FFQN,
-                params: Params::from([Val::U32(SLEEP_MILLIS)]),
+                params: Params::from([
+                    WastValWithType::try_from(WastVal::U32(SLEEP_MILLIS)).unwrap()
+                ]),
                 parent: None,
                 scheduled_at: None,
                 retry_exp_backoff: Duration::ZERO,
@@ -616,7 +614,7 @@ mod tests {
         };
         const BODY: &str = "ok";
         pub const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
-            FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::EXECUTE);
+            FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::EXECUTE);
 
         test_utils::set_up();
         let mut db_task = DbTask::spawn_new(1);
@@ -641,7 +639,10 @@ mod tests {
             .mount(&server)
             .await;
         debug!("started mock server on {}", server.address());
-        let params = Params::from([Val::U16(server.address().port())]);
+        let params =
+            Params::from([
+                WastValWithType::try_from(WastVal::U16(server.address().port())).unwrap(),
+            ]);
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = now();
@@ -667,14 +668,9 @@ mod tests {
                 .unwrap(),
             Ok(res) => res
         );
-        let wast_val = assert_matches!(res.fallible_ok(), Some(Some(wast_val)) => wast_val);
+        let wast_val = assert_matches!(res.value(), Some(wast_val) => wast_val);
         let val = assert_matches!(wast_val, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
-        // check types
-        let (ok, err) = assert_matches!(res, SupportedFunctionResult::Fallible(WastValWithType{value: _,
-            r#type: TypeWrapper::Result{ok, err}}) => (ok, err));
-        assert_eq!(Some(Box::new(TypeWrapper::String)), ok);
-        assert_eq!(Some(Box::new(TypeWrapper::String)), err);
         drop(db_connection);
         drop(db_pool);
         activity_exec_task.close().await;

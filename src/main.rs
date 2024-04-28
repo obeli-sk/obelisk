@@ -9,6 +9,7 @@ use executor::worker::Worker;
 use std::sync::Arc;
 use std::{marker::PhantomData, time::Duration};
 use utils::time::now;
+use val_json::wast_val::{WastVal, WastValWithType};
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::{
     activity_worker::{activity_engine, RecycleInstancesSetting},
@@ -16,7 +17,6 @@ use wasm_workers::{
     workflow_worker::{workflow_engine, JoinNextBlockingStrategy},
     EngineConfig,
 };
-use wasmtime::component::Val;
 
 #[tokio::main]
 async fn main() {
@@ -75,13 +75,18 @@ async fn main() {
     let exec_task = ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None);
 
     let db_connection = db_pool.connection();
-    let params = Params::from([Val::String("neverssl.com".into()), Val::String("/".into())]);
+    let params = Params::from([
+        WastValWithType::try_from(WastVal::String("neverssl.com".into())).unwrap(),
+        WastValWithType::try_from(WastVal::String("/".into())).unwrap(),
+    ]);
     let execution_id = ExecutionId::generate();
     db_connection
         .create(CreateRequest {
             created_at: now(),
             execution_id,
-            ffqn: FunctionFqn::new_static_tuple(test_programs_http_get_activity_builder::GET),
+            ffqn: FunctionFqn::new_static_tuple(
+                test_programs_http_get_activity_builder::exports::testing::http::http_get::GET,
+            ),
             params,
             parent: None,
             scheduled_at: None,

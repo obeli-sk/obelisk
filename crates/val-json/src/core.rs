@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 use anyhow::{bail, Context, Result};
 use std::fmt::{Display, LowerHex};
-use wasmtime::{ExternRef, Val};
+use wasmtime::Val;
 use wast::core::{HeapType, NanPattern, V128Pattern, WastArgCore, WastRetCore};
 use wast::token::{F32, F64};
 
@@ -23,7 +23,6 @@ pub fn val(v: &WastArgCore<'_>) -> Result<Val> {
         V128(x) => Val::V128(u128::from_le_bytes(x.to_le_bytes()).into()),
         RefNull(HeapType::Extern) => Val::ExternRef(None),
         RefNull(HeapType::Func) => Val::FuncRef(None),
-        RefExtern(x) => Val::ExternRef(Some(ExternRef::new(*x))),
         other => bail!("couldn't convert {:?} to a runtime value", other),
     })
 }
@@ -72,30 +71,12 @@ pub fn match_val(actual: &Val, expected: &WastRetCore) -> Result<()> {
         (Val::ExternRef(None), WastRetCore::RefExtern(Some(_))) => {
             bail!("expected non-null reference, found null")
         }
-        (Val::ExternRef(Some(x)), WastRetCore::RefNull(Some(HeapType::Extern))) => {
-            let x = x
-                .data()
-                .downcast_ref::<u32>()
-                .expect("only u32 externrefs created in wast test suites");
-            bail!("expected null externref, found non-null externref of {x}");
-        }
         (Val::ExternRef(Some(_)) | Val::FuncRef(Some(_)), WastRetCore::RefNull(_)) => {
             bail!("expected null, found non-null reference: {actual:?}")
         }
 
         // Non-null references.
         (Val::FuncRef(Some(_)), WastRetCore::RefFunc(_)) => Ok(()),
-        (Val::ExternRef(Some(x)), WastRetCore::RefExtern(Some(y))) => {
-            let x = x
-                .data()
-                .downcast_ref::<u32>()
-                .expect("only u32 externrefs created in wast test suites");
-            if x == y {
-                Ok(())
-            } else {
-                bail!("expected {} found {}", y, x);
-            }
-        }
 
         _ => bail!(
             "don't know how to compare {:?} and {:?} yet",

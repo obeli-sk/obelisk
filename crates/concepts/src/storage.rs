@@ -155,7 +155,7 @@ pub struct ExecutionEvent {
 
 pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     ffqn: FunctionFqn::new_static("", ""),
-    params: Params::Empty,
+    params: Params::default(),
     parent: None,
     scheduled_at: None,
     retry_exp_backoff: Duration::ZERO,

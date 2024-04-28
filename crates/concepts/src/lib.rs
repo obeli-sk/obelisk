@@ -256,13 +256,17 @@ pub enum ResultParsingError {
 }
 
 impl SupportedFunctionResult {
-    pub fn new(mut vec: Vec<wasmtime::component::Val>) -> Result<Self, ResultParsingError> {
-        if vec.is_empty() {
+    pub fn new<
+        I: ExactSizeIterator<Item = (wasmtime::component::Val, wasmtime::component::Type)>,
+    >(
+        mut iter: I,
+    ) -> Result<Self, ResultParsingError> {
+        if iter.len() == 0 {
             Ok(Self::None)
-        } else if vec.len() == 1 {
-            let res = vec.pop().unwrap();
-            let r#type = TypeWrapper::try_from(&res)?;
-            let val = WastVal::try_from(res)?;
+        } else if iter.len() == 1 {
+            let (val, r#type) = iter.next().unwrap();
+            let r#type = TypeWrapper::try_from(r#type)?;
+            let val = WastVal::try_from(val)?;
             match &val {
                 WastVal::Result(_) => Ok(Self::Fallible(WastValWithType { r#type, value: val })),
                 _ => Ok(Self::Infallible(WastValWithType { r#type, value: val })),
@@ -319,52 +323,61 @@ impl SupportedFunctionResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Params {
-    WastValParams(Arc<Vec<WastValWithType>>),
-    Vals(Arc<Vec<wasmtime::component::Val>>),
+pub struct Params(ParamsInternal);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ParamsInternal {
+    WastValParams(Arc<[WastValWithType]>),
+    Vals {
+        vals: Arc<[wasmtime::component::Val]>,
+        r#types: Arc<[TypeWrapper]>,
+    },
     Empty,
 }
 
 impl Default for Params {
     fn default() -> Self {
-        Self::Empty
+        Self(ParamsInternal::Empty)
     }
 }
 
 mod serde_params {
-    use std::marker::PhantomData;
-    use std::ops::Deref;
-    use std::sync::Arc;
-
-    use crate::Params;
+    use crate::{Params, ParamsInternal};
     use serde::de::{SeqAccess, Visitor};
     use serde::ser::SerializeSeq;
     use serde::{Deserialize, Serialize};
-    use val_json::wast_val::WastValWithType;
+    use std::marker::PhantomData;
+    use std::ops::Deref;
+    use std::sync::Arc;
+    use val_json::wast_val::{WastVal, WastValWithType};
 
     impl Serialize for Params {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: ::serde::Serializer,
         {
-            let holder;
-            let wast_val_params: &[WastValWithType] = match self {
-                Self::WastValParams(params) => params.deref(),
-                Self::Vals(vals) => {
-                    holder = vals
-                        .iter()
-                        .map(|val| WastValWithType::try_from(val.clone()))
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|err| serde::ser::Error::custom(err.to_string()))?;
-                    holder.deref()
+            match &self.0 {
+                ParamsInternal::WastValParams(params) => {
+                    let mut seq = serializer.serialize_seq(Some(params.len()))?;
+                    for element in params.deref() {
+                        seq.serialize_element(element)?;
+                    }
+                    seq.end()
                 }
-                Self::Empty => &[],
-            };
-            let mut seq = serializer.serialize_seq(Some(wast_val_params.len()))?;
-            for element in wast_val_params {
-                seq.serialize_element(element)?;
+                ParamsInternal::Vals { vals, r#types } => {
+                    let mut seq = serializer.serialize_seq(Some(vals.len()))?; // size must be equal, checked when constructed.
+                    for (val, r#type) in vals.iter().zip(r#types.iter()) {
+                        let value = WastVal::try_from(val.clone())
+                            .map_err(|err| serde::ser::Error::custom(err.to_string()))?;
+                        seq.serialize_element(&WastValWithType {
+                            value,
+                            r#type: r#type.clone(),
+                        })?;
+                    }
+                    seq.end()
+                }
+                ParamsInternal::Empty => serializer.serialize_seq(Some(0))?.end(),
             }
-            seq.end()
         }
     }
 
@@ -402,9 +415,9 @@ mod serde_params {
         {
             let vec: Vec<WastValWithType> = deserializer.deserialize_seq(VecVisitor::default())?;
             if vec.is_empty() {
-                Ok(Self::Empty)
+                Ok(Self(ParamsInternal::Empty))
             } else {
-                Ok(Self::WastValParams(Arc::new(vec)))
+                Ok(Self(ParamsInternal::WastValParams(Arc::from(vec))))
             }
         }
     }
@@ -413,8 +426,6 @@ mod serde_params {
 #[derive(Debug, thiserror::Error)]
 
 pub enum ParamsParsingError {
-    #[error("arity mismatch")]
-    ArityMismatch,
     #[error("error parsing {idx}-th parameter: `{err:?}`")]
     ParameterError {
         idx: usize,
@@ -424,75 +435,68 @@ pub enum ParamsParsingError {
 
 impl Params {
     #[must_use]
-    pub fn new(params: Vec<wasmtime::component::Val>) -> Self {
-        Self::Vals(Arc::new(params))
+    pub const fn default() -> Self {
+        Self(ParamsInternal::Empty)
+    }
+
+    #[must_use]
+    pub fn from_wasmtime(
+        vals: Arc<[wasmtime::component::Val]>,
+        r#types: Arc<[TypeWrapper]>,
+    ) -> Result<Self, &'static str> {
+        if vals.len() != r#types.len() {
+            Err("mismatch between `vals` and `types` length")
+        } else {
+            Ok(Self(ParamsInternal::Vals { vals, types }))
+        }
+    }
+
+    #[must_use]
+    pub fn new(vec: Arc<[WastValWithType]>) -> Self {
+        Self(ParamsInternal::WastValParams(vec))
     }
 
     // TODO: optimize allocations
-    pub fn as_vals(
-        &self,
-        types: &[wasmtime::component::Type],
-    ) -> Result<Arc<Vec<wasmtime::component::Val>>, ParamsParsingError> {
-        match self {
-            Self::Vals(vals) => Ok(vals.clone()),
-            Self::WastValParams(wast_vals) => {
-                if types.len() != wast_vals.len() {
-                    return Err(ParamsParsingError::ArityMismatch);
-                }
-                let mut vec = Vec::with_capacity(types.len());
-                for (
-                    idx,
-                    (
-                        ty,
-                        WastValWithType {
-                            r#type: _,
-                            value: wast_val,
-                        },
-                    ),
-                ) in types.iter().zip(wast_vals.iter()).enumerate()
-                {
-                    let val = val_json::wast_val::val(wast_val, ty).map_err(|err| {
-                        ParamsParsingError::ParameterError {
-                            idx,
-                            err: err.into(),
-                        }
-                    })?;
-                    vec.push(val);
-                }
-                Ok(Arc::new(vec))
-            }
-            Self::Empty => Ok(Arc::new(Vec::new())), // TODO: Arc<[T]>
+    pub fn as_vals(&self) -> Result<Arc<[wasmtime::component::Val]>, ParamsParsingError> {
+        match &self.0 {
+            ParamsInternal::Vals { vals, .. } => Ok(vals.clone()),
+            ParamsInternal::WastValParams(wast_vals) => Ok(wast_vals
+                .iter()
+                .map(
+                    |WastValWithType {
+                         r#type: _,
+                         value: wast_val,
+                     }| val_json::wast_val::val(wast_val),
+                )
+                .collect()),
+            ParamsInternal::Empty => Ok(Arc::from([])),
         }
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
-        match self {
-            Self::Vals(vals) => vals.len(),
-            Self::WastValParams(vals) => vals.len(),
-            Self::Empty => 0,
+        match &self.0 {
+            ParamsInternal::Vals { vals, .. } => vals.len(),
+            ParamsInternal::WastValParams(vals) => vals.len(),
+            ParamsInternal::Empty => 0,
         }
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        match self {
-            Self::Vals(vals) => vals.is_empty(),
-            Self::WastValParams(vals) => vals.is_empty(),
-            Self::Empty => true,
-        }
+        self.len() == 0
     }
 }
 
-impl From<&[wasmtime::component::Val]> for Params {
-    fn from(value: &[wasmtime::component::Val]) -> Self {
-        Self::Vals(Arc::new(Vec::from(value)))
+impl From<&[WastValWithType]> for Params {
+    fn from(value: &[WastValWithType]) -> Self {
+        Self::new(Arc::from(value))
     }
 }
 
-impl<const N: usize> From<[wasmtime::component::Val; N]> for Params {
-    fn from(value: [wasmtime::component::Val; N]) -> Self {
-        Self::Vals(Arc::new(Vec::from(value)))
+impl<const N: usize> From<[WastValWithType; N]> for Params {
+    fn from(value: [WastValWithType; N]) -> Self {
+        Self::new(Arc::from(value))
     }
 }
 

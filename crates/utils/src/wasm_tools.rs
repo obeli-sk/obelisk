@@ -1,215 +1,144 @@
-use concepts::{FnName, FunctionFqn, FunctionMetadata, IfcFqnName};
-use std::{collections::HashMap, error::Error, sync::Arc};
+use concepts::{FnName, FunctionFqn, IfcFqnName};
+use indexmap::IndexMap;
+use std::sync::Arc;
+use tracing::debug;
 use val_json::{type_wrapper::TypeConversionError, type_wrapper::TypeWrapper};
-use wit_component::DecodedWasm;
-use wit_parser::{Resolve, WorldId, WorldItem, WorldKey};
+use wasmtime::{
+    component::{types::ComponentItem, Component},
+    Engine,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DecodeError {
-    #[error(transparent)]
-    ParseError(Box<dyn Error>),
-    #[error("input file must be a WASI component")]
-    NotAComponent,
-    #[error("empty packages are not supported")]
-    EmptyPackage,
-    #[error("empty interfaces are not supported")]
-    EmptyInterface,
+    #[error("multi-value result is not supported in {0}")]
+    MultiValueResultNotSupported(FunctionFqn),
+    #[error("unsupported type in {ffqn} - {err}")]
+    TypeNotSupported {
+        err: TypeConversionError,
+        ffqn: FunctionFqn,
+    },
 }
 
-pub fn decode(wasm: &[u8]) -> Result<(Resolve, WorldId), DecodeError> {
-    let decoded = wit_component::decode(wasm).map_err(|err| DecodeError::ParseError(err.into()))?;
-    match decoded {
-        DecodedWasm::Component(resolve, world_id) => Ok((resolve, world_id)),
-        DecodedWasm::WitPackage(..) => Err(DecodeError::NotAComponent),
-    }
+#[derive(Debug, Clone)]
+pub struct ExIm {
+    pub exports: Vec<PackageIfcFns>,
+    pub imports: Vec<PackageIfcFns>,
+    exported_functions: Vec<FunctionFqn>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PackageIfcFns {
-    pub package_name: wit_parser::PackageName,
-    pub ifc_name: String,
-    pub fns: indexmap::IndexMap<String, wit_parser::Function>,
+    pub ifc_fqn: IfcFqnName,
+    pub fns: IndexMap<FnName, (Arc<[TypeWrapper]>, Option<TypeWrapper>)>,
 }
 
-pub fn exported_ifc_fns(
-    resolve: &Resolve,
-    world_id: &WorldId,
-) -> Result<Vec<PackageIfcFns>, DecodeError> {
-    let world = resolve.worlds.get(*world_id).expect("world must exist");
-    ifc_fns(resolve, world.exports.iter())
-}
-
-pub fn imported_ifc_fns(
-    resolve: &Resolve,
-    world_id: &WorldId,
-) -> Result<Vec<PackageIfcFns>, DecodeError> {
-    let world = resolve.worlds.get(*world_id).expect("world must exist");
-    ifc_fns(resolve, world.imports.iter())
-}
-
-fn ifc_fns<'a>(
-    resolve: &'a Resolve,
-    iter: impl Iterator<Item = (&'a WorldKey, &'a WorldItem)>,
-) -> Result<Vec<PackageIfcFns>, DecodeError> {
-    iter.filter_map(|(_, item)| match item {
-        wit_parser::WorldItem::Interface(ifc) => {
-            let ifc = resolve.interfaces.get(*ifc).unwrap();
-            let Some(package_name) = ifc
-                .package
-                .and_then(|pkg| resolve.packages.get(pkg))
-                .map(|p| &p.name)
-            else {
-                return Some(Err(DecodeError::EmptyPackage));
-            };
-            let Some(ifc_name) = ifc.name.as_deref() else {
-                return Some(Err(DecodeError::EmptyInterface));
-            };
-            Some(Ok(PackageIfcFns {
-                package_name: package_name.clone(),
-                ifc_name: ifc_name.to_owned(),
-                fns: ifc.functions.clone(),
-            }))
+impl ExIm {
+    fn new(exports: Vec<PackageIfcFns>, imports: Vec<PackageIfcFns>) -> Self {
+        let exported_functions = exports
+            .iter()
+            .flat_map(|ifc| {
+                ifc.fns.keys().map(|fun| FunctionFqn {
+                    ifc_fqn: ifc.ifc_fqn.clone(),
+                    function_name: fun.clone(),
+                })
+            })
+            .collect();
+        Self {
+            exports,
+            imports,
+            exported_functions,
         }
-        _ => None,
-    })
-    .collect::<Result<Vec<_>, _>>()
+    }
+    pub fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+        self.exported_functions.iter()
+    }
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum FunctionMetadataError {
-    #[error("{0}")]
-    UnsupportedType(#[from] TypeConversionError),
-
-    #[error("unsupported return type in {ffqn}, got type `{ty}`")]
-    UnsupportedReturnType { ffqn: String, ty: String },
-}
-
-pub fn functions_and_result_lengths(
-    exported_interfaces: Vec<PackageIfcFns>,
-) -> Result<HashMap<FunctionFqn, usize>, FunctionMetadataError> {
-    let mut resp = HashMap::new();
-    for PackageIfcFns {
-        package_name,
-        ifc_name,
-        fns,
-    } in exported_interfaces
-    {
-        let ifc_fqn = if let Some(version) = &package_name.version {
-            format!(
-                "{namespace}:{name}/{ifc_name}@{version}",
-                namespace = package_name.namespace,
-                name = package_name.name
-            )
-        } else {
-            format!("{package_name}/{ifc_name}")
-        };
-        for (function_name, function) in fns {
-            let ffqn = FunctionFqn::new_owned(
-                Arc::from(ifc_fqn.clone()),
-                Arc::from(function_name.clone()),
-            );
-            match &function.results {
-                wit_parser::Results::Anon(_) => Ok(()),
-                wit_parser::Results::Named(named) if named.is_empty() => Ok(()),
-                other @ wit_parser::Results::Named(_) => {
-                    Err(FunctionMetadataError::UnsupportedReturnType {
-                        ffqn: ffqn.to_string(),
-                        ty: format!("{other:?}"),
-                    })
+fn exported<'a>(
+    iterator: impl ExactSizeIterator<Item = (&'a str, ComponentItem)> + 'a,
+    engine: &Engine,
+) -> Result<Vec<PackageIfcFns>, DecodeError> {
+    let mut vec = Vec::new();
+    for (ifc_fqn, item) in iterator {
+        if let ComponentItem::ComponentInstance(instance) = item {
+            let exports = instance.exports(engine);
+            let mut fns = IndexMap::new();
+            for (function_name, export) in exports {
+                if let ComponentItem::ComponentFunc(func) = export {
+                    let params = func
+                        .params()
+                        .map(TypeWrapper::try_from)
+                        .collect::<Result<Arc<_>, _>>()
+                        .map_err(|err| DecodeError::TypeNotSupported {
+                            err,
+                            ffqn: FunctionFqn::new_owned(
+                                Arc::from(ifc_fqn),
+                                Arc::from(function_name),
+                            ),
+                        })?;
+                    let mut results = func.results();
+                    let result = if results.len() <= 1 {
+                        results
+                            .next()
+                            .map(TypeWrapper::try_from)
+                            .transpose()
+                            .map_err(|err| DecodeError::TypeNotSupported {
+                                err,
+                                ffqn: FunctionFqn::new_owned(
+                                    Arc::from(ifc_fqn),
+                                    Arc::from(function_name),
+                                ),
+                            })
+                    } else {
+                        Err(DecodeError::MultiValueResultNotSupported(
+                            FunctionFqn::new_owned(Arc::from(ifc_fqn), Arc::from(function_name)),
+                        ))
+                    }?;
+                    fns.insert(
+                        FnName::new_owned(Arc::from(function_name)),
+                        (params, result),
+                    );
+                } else {
+                    debug!("Ignoring export - not a ComponentFunc: {export:?}")
                 }
-            }?;
-            resp.insert(ffqn, function.results.len());
-        }
-    }
-    Ok(resp)
-}
-
-pub fn functions_to_metadata(
-    exported_interfaces: Vec<PackageIfcFns>,
-) -> Result<HashMap<FunctionFqn, FunctionMetadata>, FunctionMetadataError> {
-    let mut functions_to_results = HashMap::new();
-    for PackageIfcFns {
-        package_name,
-        ifc_name,
-        fns,
-    } in exported_interfaces
-    {
-        let ifc_fqn = if let Some(version) = &package_name.version {
-            format!(
-                "{namespace}:{name}/{ifc_name}@{version}",
-                namespace = package_name.namespace,
-                name = package_name.name
-            )
+            }
+            vec.push(PackageIfcFns {
+                ifc_fqn: IfcFqnName::new_owned(Arc::from(ifc_fqn)),
+                fns,
+            });
         } else {
-            format!("{package_name}/{ifc_name}")
-        };
-        for (function_name, function) in fns {
-            let fqn = FunctionFqn::new_owned(
-                Arc::from(ifc_fqn.clone()),
-                Arc::from(function_name.clone()),
-            );
-            let params = function
-                .params
-                .iter()
-                .map(|(name, ty)| TypeWrapper::try_from(*ty).map(|ty| (name.clone(), ty)))
-                .collect::<Result<_, TypeConversionError>>()?;
-            match &function.results {
-                wit_parser::Results::Anon(_) => Ok(()),
-                wit_parser::Results::Named(named) if named.is_empty() => Ok(()),
-                other @ wit_parser::Results::Named(_) => {
-                    Err(FunctionMetadataError::UnsupportedReturnType {
-                        ffqn: fqn.to_string(),
-                        ty: format!("{other:?}"),
-                    })
-                }
-            }?;
-            functions_to_results.insert(
-                fqn,
-                FunctionMetadata {
-                    results_len: function.results.len(),
-                    params,
-                },
-            );
+            panic!("not a ComponentInstance: {item:?}")
         }
     }
-    Ok(functions_to_results)
+    Ok(vec)
 }
 
-pub fn group_by_ifc_to_fn_names<'a>(
-    fqns: impl Iterator<Item = &'a FunctionFqn>,
-) -> HashMap<IfcFqnName, Vec<FnName>> {
-    let mut ifcs_to_fn_names = HashMap::<_, Vec<_>>::new();
-    for fqn in fqns {
-        ifcs_to_fn_names
-            .entry(fqn.ifc_fqn.clone())
-            .or_default()
-            .push(fqn.function_name.clone());
-    }
-    ifcs_to_fn_names
+pub fn decode(component: &Component, engine: &Engine) -> Result<ExIm, DecodeError> {
+    let component_type = component.component_type();
+    let exports = exported(component_type.exports(&engine), &engine)?;
+    let imports = exported(component_type.imports(&engine), &engine)?;
+    Ok(ExIm::new(exports, imports))
 }
 
 #[cfg(test)]
 mod tests {
-    use tracing::debug;
+    use std::sync::Arc;
+    use wasmtime::{component::Component, Engine};
 
-    #[test]
-    fn test_exported_interfaces() {
-        test_utils::set_up();
-        let wasm_path = test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW;
-        let wasm = std::fs::read(wasm_path).unwrap();
-        let (resolve, world_id) = super::decode(&wasm).unwrap();
-        let exported_interfaces = super::exported_ifc_fns(&resolve, &world_id).unwrap();
-        debug!(" {exported_interfaces:#?}",);
+    fn engine() -> Arc<Engine> {
+        let mut wasmtime_config = wasmtime::Config::new();
+        wasmtime_config.wasm_component_model(true);
+        wasmtime_config.async_support(true);
+        Arc::new(Engine::new(&wasmtime_config).unwrap())
     }
 
     #[test]
-    fn test_imported_functions() {
+    fn test() {
         test_utils::set_up();
         let wasm_path = test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW;
-        let wasm = std::fs::read(wasm_path).unwrap();
-        let (resolve, world_id) = super::decode(&wasm).unwrap();
-        let exported_interfaces = super::imported_ifc_fns(&resolve, &world_id).unwrap();
-        debug!(" {exported_interfaces:#?}");
-        assert_eq!(exported_interfaces.len(), 2);
+        let engine = engine();
+        let component = Component::from_file(&engine, wasm_path).unwrap();
+        let exim = super::decode(&component, &engine).unwrap();
+        insta::assert_debug_snapshot!(&exim);
     }
 }

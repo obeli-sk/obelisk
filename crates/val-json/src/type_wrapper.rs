@@ -12,55 +12,32 @@ pub enum TypeWrapper {
     U32,
     S64,
     U64,
-    Float32,
-    Float64,
+    F32,
+    F64,
     Char,
     String,
     List(Box<TypeWrapper>),
     Record(IndexMap<Box<str>, TypeWrapper>),
-    // Tuple(Tuple),
-    // Variant(Variant),
-    // Enum(Enum),
+    Tuple(Vec<TypeWrapper>),
+    Variant(IndexMap<Box<str>, Option<TypeWrapper>>),
+    Enum(Vec<Box<str>>),
     Option(Box<TypeWrapper>),
     Result {
         ok: Option<Box<TypeWrapper>>,
         err: Option<Box<TypeWrapper>>,
     },
-    // Flags(Flags),
-    // Own(ResourceType),
-    // Borrow(ResourceType),
+    Flags(Vec<Box<str>>),
+    Own(ResourceTypeWrapper),
+    Borrow(ResourceTypeWrapper),
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceTypeWrapper {}
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum TypeConversionError {
     #[error("unsupported type {0}")]
     UnsupportedType(String),
-}
-
-impl TryFrom<wit_parser::Type> for TypeWrapper {
-    type Error = TypeConversionError;
-
-    fn try_from(value: wit_parser::Type) -> Result<Self, Self::Error> {
-        match value {
-            wit_parser::Type::Bool => Ok(Self::Bool),
-            wit_parser::Type::Char => Ok(Self::Char),
-            wit_parser::Type::F32 => Ok(Self::Float32),
-            wit_parser::Type::F64 => Ok(Self::Float64),
-            wit_parser::Type::S16 => Ok(Self::S16),
-            wit_parser::Type::S32 => Ok(Self::S32),
-            wit_parser::Type::S64 => Ok(Self::S64),
-            wit_parser::Type::S8 => Ok(Self::S8),
-            wit_parser::Type::String => Ok(Self::String),
-            wit_parser::Type::U16 => Ok(Self::U16),
-            wit_parser::Type::U32 => Ok(Self::U32),
-            wit_parser::Type::U64 => Ok(Self::U64),
-            wit_parser::Type::U8 => Ok(Self::U8),
-            // FIXME: Add Record, Option, Result, List
-            wit_parser::Type::Id(_) => {
-                Err(TypeConversionError::UnsupportedType(format!("{value:?}")))
-            }
-        }
-    }
 }
 
 impl TryFrom<wasmtime::component::Type> for TypeWrapper {
@@ -78,8 +55,8 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
             Type::U32 => Ok(Self::U32),
             Type::S64 => Ok(Self::S64),
             Type::U64 => Ok(Self::U64),
-            Type::Float32 => Ok(Self::Float32),
-            Type::Float64 => Ok(Self::Float64),
+            Type::Float32 => Ok(Self::F32),
+            Type::Float64 => Ok(Self::F64),
             Type::Char => Ok(Self::Char),
             Type::String => Ok(Self::String),
             Type::Option(option) => Ok(Self::Option(Box::new(Self::try_from(option.ty())?))),
@@ -96,60 +73,41 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
             }
             Type::List(list) => Ok(Self::List(Box::new(Self::try_from(list.ty())?))),
             Type::Record(record) => {
-                let vec = record
+                let map = record
                     .fields()
                     .map(|field| Self::try_from(field.ty).map(|ty| (Box::from(field.name), ty)))
                     .collect::<Result<_, _>>()?;
-                Ok(Self::Record(vec))
+                Ok(Self::Record(map))
             }
-            _ => Err(TypeConversionError::UnsupportedType(format!("{value:?}"))),
-        }
-    }
-}
-
-impl TryFrom<&wasmtime::component::Val> for TypeWrapper {
-    type Error = TypeConversionError;
-
-    fn try_from(value: &wasmtime::component::Val) -> Result<Self, Self::Error> {
-        use wasmtime::component::Type;
-        use wasmtime::component::Val;
-
-        match value {
-            Val::Bool(_) => Ok(Self::Bool),
-            Val::Char(_) => Ok(Self::Char),
-            Val::Float32(_) => Ok(Self::Float32),
-            Val::Float64(_) => Ok(Self::Float64),
-            Val::S16(_) => Ok(Self::S16),
-            Val::S32(_) => Ok(Self::S32),
-            Val::S64(_) => Ok(Self::S64),
-            Val::S8(_) => Ok(Self::S8),
-            Val::String(_) => Ok(Self::String),
-            Val::U16(_) => Ok(Self::U16),
-            Val::U32(_) => Ok(Self::U32),
-            Val::U64(_) => Ok(Self::U64),
-            Val::U8(_) => Ok(Self::U8),
-            Val::Option(option) => {
-                let inner = option.ty().ty();
-                let inner = Self::try_from(inner)?;
-                Ok(Self::Option(inner.into()))
+            Type::Variant(variant) => {
+                let map = variant
+                    .cases()
+                    .map(|case| {
+                        if let Some(ty) = case.ty {
+                            Self::try_from(ty).map(|ty| (Box::from(case.name), Some(ty)))
+                        } else {
+                            Ok((Box::from(case.name), None))
+                        }
+                    })
+                    .collect::<Result<_, _>>()?;
+                Ok(Self::Variant(map))
             }
-            Val::Result(result) => {
-                let res = result.ty();
-                let transform = |ty: Option<Type>| {
-                    ty.map(Self::try_from)
-                        .transpose()
-                        .map(|option| option.map(Box::new))
-                };
-                let ok = transform(res.ok())?;
-                let err = transform(res.err())?;
-                Ok(Self::Result { ok, err })
+            Type::Tuple(tuple) => Ok(Self::Tuple(
+                tuple
+                    .types()
+                    .map(Self::try_from)
+                    .collect::<Result<_, _>>()?,
+            )),
+            Type::Enum(names) => Ok(Self::Enum(names.names().map(Box::from).collect())),
+            Type::Borrow(_) => {
+                // TODO finish
+                Ok(Self::Borrow(ResourceTypeWrapper {}))
             }
-            Val::List(list) => {
-                let inner = list.ty().ty();
-                let inner = Self::try_from(inner)?;
-                Ok(Self::List(inner.into()))
+            Type::Own(_) => {
+                // TODO finish
+                Ok(Self::Own(ResourceTypeWrapper {}))
             }
-            _ => Err(TypeConversionError::UnsupportedType(format!("{value:?}"))),
+            Type::Flags(flags) => Ok(Self::Flags(flags.names().map(Box::from).collect())),
         }
     }
 }

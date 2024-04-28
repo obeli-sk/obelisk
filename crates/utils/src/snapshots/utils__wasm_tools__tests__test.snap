@@ -1,0 +1,78 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: "&exim"
+---
+ExIm {
+    exports: [
+        PackageIfcFns {
+            ifc_fqn: testing:fibo-workflow/workflow,
+            fns: {
+                fibow: (
+                    [
+                        U8,
+                        U32,
+                    ],
+                    Some(
+                        U64,
+                    ),
+                ),
+                fiboa: (
+                    [
+                        U8,
+                        U32,
+                    ],
+                    Some(
+                        U64,
+                    ),
+                ),
+            },
+        },
+        PackageIfcFns {
+            ifc_fqn: testing:fibo-workflow/workflow-nesting,
+            fns: {
+                fibo-nested-workflow: (
+                    [
+                        U8,
+                    ],
+                    Some(
+                        U64,
+                    ),
+                ),
+            },
+        },
+    ],
+    imports: [
+        PackageIfcFns {
+            ifc_fqn: testing:fibo/fibo,
+            fns: {
+                fibo: (
+                    [
+                        U8,
+                    ],
+                    Some(
+                        U64,
+                    ),
+                ),
+            },
+        },
+        PackageIfcFns {
+            ifc_fqn: testing:fibo-workflow/workflow,
+            fns: {
+                fibow: (
+                    [
+                        U8,
+                        U32,
+                    ],
+                    Some(
+                        U64,
+                    ),
+                ),
+            },
+        },
+    ],
+    exported_functions: [
+        testing:fibo-workflow/workflow.fibow,
+        testing:fibo-workflow/workflow.fiboa,
+        testing:fibo-workflow/workflow-nesting.fibo-nested-workflow,
+    ],
+}

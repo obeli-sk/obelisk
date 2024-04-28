@@ -13,12 +13,12 @@ use async_trait::async_trait;
 use concepts::{
     prefixed_ulid::ConfigId,
     storage::{DbConnection, DbPool},
-    FunctionFqn, StrVariant,
+    FunctionFqn, IfcFqnName, StrVariant,
 };
 use derivative::Derivative;
 use executor::worker::Worker;
 use itertools::Either;
-use std::{marker::PhantomData, sync::Arc, time::Duration};
+use std::{marker::PhantomData, ops::Deref, sync::Arc, time::Duration};
 use utils::time::ClockFn;
 use wasmtime::Engine;
 
@@ -56,13 +56,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> AutoWorker<C, DB, P> {
         workflow_engine: Arc<Engine>,
         activity_engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
-        let wasm_component = WasmComponent::new(config.wasm_path)?;
-        if supported_wasi_imports(
-            wasm_component
-                .imported_ifc_fns
-                .iter()
-                .map(|pif| &pif.package_name),
-        ) {
+        // must pick an engine to parse the comopnent
+        let wasm_component = WasmComponent::new(config.wasm_path.clone(), &activity_engine)?;
+        if supported_wasi_imports(wasm_component.exim.imports.iter().map(|pif| &pif.ifc_fqn)) {
             let config = ActivityConfig {
                 config_id: config.config_id,
                 recycled_instances: config.activity_recycled_instances,
@@ -71,6 +67,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> AutoWorker<C, DB, P> {
             ActivityWorker::new_with_config(wasm_component, config, activity_engine)
                 .map(Self::ActivityWorker)
         } else {
+            // wrong engine was picked
+            let wasm_component = WasmComponent::new(config.wasm_path, &workflow_engine)?;
             let config = WorkflowConfig {
                 config_id: config.config_id,
                 clock_fn: config.clock_fn,
@@ -93,10 +91,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> AutoWorker<C, DB, P> {
     }
 }
 
-fn supported_wasi_imports<'a>(
-    mut imported_packages: impl Iterator<Item = &'a wit_parser::PackageName>,
-) -> bool {
-    imported_packages.all(|pkg_name| pkg_name.namespace == "wasi")
+fn supported_wasi_imports<'a>(mut imported_packages: impl Iterator<Item = &'a IfcFqnName>) -> bool {
+    imported_packages.all(|ifc| ifc.deref().starts_with("wasi:"))
 }
 
 #[async_trait]

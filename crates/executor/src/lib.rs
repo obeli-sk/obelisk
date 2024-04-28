@@ -63,6 +63,6 @@ pub mod worker {
             execution_deadline: DateTime<Utc>,
         ) -> WorkerResult;
 
-        fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn>;
+        fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn>; // FIXME: Rename to `exported_functions`
     }
 }

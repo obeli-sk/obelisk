@@ -23,8 +23,8 @@ impl Serialize for WastVal {
             WastVal::U32(v) => serializer.serialize_u32(*v),
             WastVal::S64(v) => serializer.serialize_i64(*v),
             WastVal::U64(v) => serializer.serialize_u64(*v),
-            WastVal::Float32(v) => serializer.serialize_f32(*v),
-            WastVal::Float64(v) => serializer.serialize_f64(*v),
+            WastVal::F32(v) => serializer.serialize_f32(*v),
+            WastVal::F64(v) => serializer.serialize_f64(*v),
             WastVal::Char(v) => serializer.serialize_char(*v),
             WastVal::String(v) => serializer.serialize_str(v),
             WastVal::List(list) => {
@@ -292,8 +292,8 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
             where
                 E: Error,
             {
-                if matches!(self.0, TypeWrapper::Float32) {
-                    Ok(WastVal::Float32(val))
+                if matches!(self.0, TypeWrapper::F32) {
+                    Ok(WastVal::F32(val))
                 } else {
                     Err(Error::invalid_type(
                         Unexpected::Float(f64::from(val)),
@@ -306,15 +306,15 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
             where
                 E: Error,
             {
-                if *self.0 == TypeWrapper::Float64 {
-                    Ok(WastVal::Float64(val))
-                } else if *self.0 == TypeWrapper::Float32 {
+                if *self.0 == TypeWrapper::F64 {
+                    Ok(WastVal::F64(val))
+                } else if *self.0 == TypeWrapper::F32 {
                     // Warining: This might truncate the value.
                     #[allow(clippy::cast_possible_truncation)]
                     let f32 = val as f32;
                     // Fail on overflow.
                     if val.is_finite() == f32.is_finite() {
-                        return Ok(WastVal::Float32(f32));
+                        return Ok(WastVal::F32(f32));
                     }
                     Err(())
                 } else {
@@ -388,8 +388,8 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                     }
                     TypeWrapper::Record(record) => {
                         let mut dst_map = IndexMap::new();
-                        while let Some(field_name) = map.next_key::<Box<str>>()? {
-                            if let Some(field_type) = record.get(&field_name) {
+                        while let Some(field_name) = map.next_key::<String>()? {
+                            if let Some(field_type) = record.get(field_name.as_str()) {
                                 let value = map.next_value_seed(WastValDeserialize(field_type))?;
                                 dst_map.insert(field_name, value);
                             } else {
@@ -573,9 +573,9 @@ mod tests {
 
     #[test]
     fn f32() {
-        let expected = WastVal::Float32(-123.1_f32);
+        let expected = WastVal::F32(-123.1_f32);
         let input = "-123.1";
-        let ty = TypeWrapper::Float32;
+        let ty = TypeWrapper::F32;
         let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(input))
             .unwrap();
@@ -584,9 +584,9 @@ mod tests {
 
     #[test]
     fn f32_max() {
-        let expected = WastVal::Float32(f32::MAX);
+        let expected = WastVal::F32(f32::MAX);
         let input = f32::MAX.to_string();
-        let ty = TypeWrapper::Float32;
+        let ty = TypeWrapper::F32;
         let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(&input))
             .unwrap();
@@ -596,9 +596,9 @@ mod tests {
     #[test]
     fn f64() {
         let f = f64::from(f32::MAX) + 1.0;
-        let expected = WastVal::Float64(f);
+        let expected = WastVal::F64(f);
         let input = f.to_string();
-        let ty = TypeWrapper::Float64;
+        let ty = TypeWrapper::F64;
         let actual = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(&input))
             .unwrap();
@@ -609,20 +609,20 @@ mod tests {
     fn f32_from_f64_overflow1() {
         let f = f64::from(f32::MAX) * 2.0;
         let input = f.to_string();
-        let ty = TypeWrapper::Float32;
+        let ty = TypeWrapper::F32;
         let err = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(&input))
             .unwrap_err();
         assert_starts_with(
             &err,
-            "invalid type: floating point `6.805646932770577e38`, expected value matching Float32",
+            "invalid type: floating point `6.805646932770577e38`, expected value matching F32",
         );
     }
 
     #[test]
     fn f64_out_of_range() {
         let input = f64::MAX.to_string();
-        let ty = TypeWrapper::Float64;
+        let ty = TypeWrapper::F64;
         let err = WastValDeserialize(&ty)
             .deserialize(&mut serde_json::Deserializer::from_str(&input))
             .unwrap_err();
@@ -788,8 +788,8 @@ mod tests {
                 (Box::from("field2"), TypeWrapper::U32),
             ])),
             value: WastVal::Record(IndexMap::from([
-                (Box::from("field1"), WastVal::Bool(true)),
-                (Box::from("field2"), WastVal::U32(1)),
+                ("field1".to_string(), WastVal::Bool(true)),
+                ("field2".to_string(), WastVal::U32(1)),
             ])),
         };
         let json = serde_json::to_value(&expected).unwrap();

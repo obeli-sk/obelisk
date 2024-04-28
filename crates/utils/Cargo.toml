@@ -18,10 +18,9 @@ tracing.workspace = true
 wasmtime-wasi-http.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
-wit-component.workspace = true
-wit-parser.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 madsim.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
 test-utils.workspace = true

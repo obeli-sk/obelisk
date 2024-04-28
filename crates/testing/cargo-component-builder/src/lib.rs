@@ -4,10 +4,12 @@ use std::{
 };
 
 use cargo_metadata::camino::Utf8Path;
+use indexmap::IndexMap;
 use utils::wasm_tools;
+use wasmtime::{component::Component, Engine};
 
 fn to_snake_case(input: &str) -> String {
-    input.replace('-', "_")
+    input.replace('-', "_").replace('.', "_")
 }
 
 pub fn build_activity() {
@@ -24,30 +26,86 @@ fn build_internal(tripple: &str) {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
     let pkg_name = pkg_name.strip_suffix("-builder").unwrap();
-    let wasm = run_cargo_component_build(&out_dir, pkg_name, tripple, FEATURES);
+    let wasm_path = run_cargo_component_build(&out_dir, pkg_name, tripple, FEATURES);
     if std::env::var("RUST_LOG").is_ok() {
-        println!("cargo:warning=Built {wasm:?}");
+        println!("cargo:warning=Built {wasm_path:?}");
     }
+    let engine = {
+        let mut wasmtime_config = wasmtime::Config::new();
+        wasmtime_config.wasm_component_model(true);
+        wasmtime_config.async_support(true);
+        Engine::new(&wasmtime_config).unwrap()
+    };
     let mut generated_code = String::new();
     generated_code += &format!(
-        "pub const {name_upper}: &str = {wasm:?};\n",
+        "pub const {name_upper}: &str = {wasm_path:?};\n",
         name_upper = to_snake_case(pkg_name).to_uppercase()
     );
     {
-        let wasm = std::fs::read(wasm).unwrap();
-        let (resolve, world_id) = wasm_tools::decode(&wasm).expect("cannot decode wasm component");
-        let exported_interfaces = wasm_tools::exported_ifc_fns(&resolve, &world_id)
-            .expect("cannot parse functions of wasm component");
-        let ffqns =
-            wasm_tools::functions_and_result_lengths(exported_interfaces).expect("metadata error");
-        for ffqn in ffqns.keys() {
-            generated_code += &format!(
-                "pub const {name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\");\n",
-                name_upper = to_snake_case(&ffqn.function_name).to_uppercase(),
-                ifc = ffqn.ifc_fqn,
-                fn = ffqn.function_name,
+        enum Value {
+            Map(IndexMap<String, Value>),
+            Leaf(Vec<String>),
+        }
+        let component = Component::from_file(&engine, wasm_path).unwrap();
+        let exim = wasm_tools::decode(&component, &engine).expect("cannot decode wasm component");
+        generated_code += &format!("pub mod exports {{\n");
+        let mut outer_map: IndexMap<String, Value> = IndexMap::new();
+        for export in exim.exports {
+            let ifc_fqn_split = export
+                .ifc_fqn
+                .split_terminator([':', '/', '@'])
+                .map(to_snake_case);
+            let mut map = &mut outer_map;
+            for mut split in ifc_fqn_split {
+                if split.starts_with(|c: char| c.is_numeric()) {
+                    split = format!("_{split}");
+                }
+                if let Value::Map(m) = map
+                    .entry(split)
+                    .or_insert_with(|| Value::Map(IndexMap::new()))
+                {
+                    map = m;
+                } else {
+                    unreachable!()
+                }
+            }
+            let vec = export
+                .fns
+                .keys()
+                .map(|function_name| {
+                    format!(
+                        "pub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\");\n",
+                        name_upper = to_snake_case(&function_name).to_uppercase(),
+                        ifc = export.ifc_fqn,
+                        fn = function_name,
+                    )
+                })
+                .collect();
+            assert!(
+                map.insert("".to_string(), Value::Leaf(vec)).is_none(),
+                "same interface cannot appear twice"
             );
         }
+        fn ser_map(map: &IndexMap<String, Value>, output: &mut String) {
+            for (k, v) in map {
+                match v {
+                    Value::Leaf(vec) => {
+                        for line in vec {
+                            *output += line;
+                            *output += "\n";
+                        }
+                    }
+                    Value::Map(map) => {
+                        *output += &format!("pub mod r#{k} {{\n");
+                        ser_map(map, output);
+                        *output += "}\n";
+                    }
+                }
+            }
+        }
+        ser_map(&outer_map, &mut generated_code);
+
+        generated_code += &format!("}}\n");
     }
     std::fs::write(out_dir.join("gen.rs"), generated_code).unwrap();
 
@@ -58,18 +116,17 @@ fn build_internal(tripple: &str) {
         .find(|p| p.name == pkg_name)
         .unwrap_or_else(|| panic!("package `{pkg_name}` must exist"));
 
-    println!("cargo:rerun-if-changed={}", package.manifest_path); // Cargo.toml
-    let mut src_paths: Vec<_> = package
+    add_dependency(&package.manifest_path); // Cargo.toml
+    for src_path in package
         .targets
         .iter()
         .map(|target| target.src_path.parent().unwrap())
-        .collect();
+    {
+        add_dependency(src_path);
+    }
     let wit_path = &package.manifest_path.parent().unwrap().join("wit");
     if wit_path.exists() && wit_path.is_dir() {
-        src_paths.push(wit_path);
-    }
-    for src_path in src_paths {
-        add_dependency(src_path);
+        add_dependency(&wit_path);
     }
 }
 

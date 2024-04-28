@@ -7,13 +7,14 @@ use wasmtime::{
 };
 use wasmtime_wasi::{self, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::bindings::http::types::ErrorCode;
+use wasmtime_wasi_http::HttpResult;
 use wasmtime_wasi_http::{
     types::{self, HostFutureIncomingResponse, OutgoingRequest},
     WasiHttpCtx, WasiHttpView,
 };
 
 type RequestSender = Arc<
-    dyn Fn(&mut Ctx, OutgoingRequest) -> wasmtime::Result<Resource<HostFutureIncomingResponse>>
+    dyn Fn(&mut Ctx, OutgoingRequest) -> HttpResult<Resource<HostFutureIncomingResponse>>
         + Send
         + Sync,
 >;
@@ -49,7 +50,7 @@ impl WasiHttpView for Ctx {
     fn send_request(
         &mut self,
         request: OutgoingRequest,
-    ) -> wasmtime::Result<Resource<HostFutureIncomingResponse>> {
+    ) -> HttpResult<Resource<HostFutureIncomingResponse>> {
         if let Some(rejected_authority) = &self.rejected_authority {
             let (auth, _port) = request.authority.split_once(':').unwrap();
             if auth == rejected_authority {
