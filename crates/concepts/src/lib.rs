@@ -443,6 +443,7 @@ impl Params {
         Self(ParamsInternal::Empty)
     }
 
+    #[must_use]
     pub fn from_wasmtime(vals: Arc<[wasmtime::component::Val]>) -> Self {
         if vals.is_empty() {
             Self::default()

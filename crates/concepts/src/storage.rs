@@ -276,6 +276,7 @@ impl ExecutionEventInner {
         Into::<&'static str>::into(self)
     }
 
+    #[must_use]
     pub fn join_set_id(&self) -> Option<JoinSetId> {
         match self {
             Self::Created {

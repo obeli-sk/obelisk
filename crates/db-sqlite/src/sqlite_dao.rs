@@ -654,7 +654,8 @@ impl SqlitePool {
                                 | HistoryEvent::JoinSetRequest {
                                     request: JoinSetRequest::ChildExecutionRequest { .. },
                                     ..
-                                },
+                                }
+                                | HistoryEvent::Persist { .. },
                         } => (None, None),
                         ExecutionEventInner::HistoryEvent {
                             event:
@@ -667,9 +668,6 @@ impl SqlitePool {
                                         },
                                 },
                         } => (None, Some((join_set_id, delay_id, expires_at))),
-                        ExecutionEventInner::HistoryEvent {
-                            event: HistoryEvent::Persist { .. },
-                        } => (None, None),
                         ExecutionEventInner::HistoryEvent {
                             event:
                                 HistoryEvent::JoinNext {

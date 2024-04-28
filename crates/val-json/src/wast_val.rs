@@ -211,7 +211,7 @@ impl WastVal {
             Self::Char(b) => Val::Char(*b),
             Self::String(s) => Val::String(s.to_string()),
             Self::List(vals) => {
-                let vals = vals.iter().map(|v| v.as_val()).collect();
+                let vals = vals.iter().map(Self::as_val).collect();
                 Val::List(vals)
             }
             Self::Record(vals) => {
@@ -221,7 +221,7 @@ impl WastVal {
                 }
                 Val::Record(fields)
             }
-            Self::Tuple(vals) => Val::Tuple(vals.iter().map(|v| v.as_val()).collect()),
+            Self::Tuple(vals) => Val::Tuple(vals.iter().map(Self::as_val).collect()),
             Self::Enum(name) => Val::Enum(name.to_string()),
             Self::Variant(name, payload) => {
                 let payload = Self::payload_val(payload.as_deref());
