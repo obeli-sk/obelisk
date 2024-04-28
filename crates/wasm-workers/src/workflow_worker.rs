@@ -226,7 +226,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     .func(&ffqn.function_name)
                     .expect("function must be found")
             };
-            let params = match params.as_vals() {
+            let params = match params.as_vals(&func.params(&store)) {
                 Ok(params) => params,
                 Err(err) => {
                     return Err(RunError::WorkerError(WorkerError::FatalError(

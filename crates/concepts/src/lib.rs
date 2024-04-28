@@ -456,7 +456,10 @@ impl Params {
     }
 
     // TODO: optimize allocations
-    pub fn as_vals(&self) -> Result<Arc<[wasmtime::component::Val]>, ParamsParsingError> {
+    pub fn as_vals(
+        &self,
+        _param_types: &[Type],
+    ) -> Result<Arc<[wasmtime::component::Val]>, ParamsParsingError> {
         match &self.0 {
             ParamsInternal::Vals { vals, .. } => Ok(vals.clone()),
             ParamsInternal::WastValParams(wast_vals) => Ok(wast_vals
@@ -465,7 +468,7 @@ impl Params {
                     |WastValWithType {
                          r#type: _,
                          value: wast_val,
-                     }| val_json::wast_val::val(wast_val),
+                     }| wast_val.as_val(),
                 )
                 .collect()),
             ParamsInternal::Empty => Ok(Arc::from([])),

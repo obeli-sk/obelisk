@@ -193,48 +193,56 @@ impl PartialEq for WastVal {
 
 impl Eq for WastVal {}
 
-#[must_use]
-pub fn val(v: &WastVal) -> Val {
-    match v {
-        WastVal::Bool(b) => Val::Bool(*b),
-        WastVal::U8(b) => Val::U8(*b),
-        WastVal::S8(b) => Val::S8(*b),
-        WastVal::U16(b) => Val::U16(*b),
-        WastVal::S16(b) => Val::S16(*b),
-        WastVal::U32(b) => Val::U32(*b),
-        WastVal::S32(b) => Val::S32(*b),
-        WastVal::U64(b) => Val::U64(*b),
-        WastVal::S64(b) => Val::S64(*b),
-        WastVal::F32(b) => Val::Float32(*b),
-        WastVal::F64(b) => Val::Float64(*b),
-        WastVal::Char(b) => Val::Char(*b),
-        WastVal::String(s) => Val::String(s.to_string()),
-        WastVal::List(vals) => {
-            let vals = vals.iter().map(val).collect();
-            Val::List(vals)
-        }
-        WastVal::Record(vals) => {
-            let mut fields = Vec::new();
-            for (name, v) in vals {
-                fields.push((name.to_string(), val(v)));
+impl WastVal {
+    #[must_use]
+    pub fn as_val(&self) -> Val {
+        match self {
+            Self::Bool(b) => Val::Bool(*b),
+            Self::U8(b) => Val::U8(*b),
+            Self::S8(b) => Val::S8(*b),
+            Self::U16(b) => Val::U16(*b),
+            Self::S16(b) => Val::S16(*b),
+            Self::U32(b) => Val::U32(*b),
+            Self::S32(b) => Val::S32(*b),
+            Self::U64(b) => Val::U64(*b),
+            Self::S64(b) => Val::S64(*b),
+            Self::F32(b) => Val::Float32(*b),
+            Self::F64(b) => Val::Float64(*b),
+            Self::Char(b) => Val::Char(*b),
+            Self::String(s) => Val::String(s.to_string()),
+            Self::List(vals) => {
+                let vals = vals.iter().map(|v| v.as_val()).collect();
+                Val::List(vals)
             }
-            Val::Record(fields)
+            Self::Record(vals) => {
+                let mut fields = Vec::new();
+                for (name, v) in vals {
+                    fields.push((name.to_string(), v.as_val()));
+                }
+                Val::Record(fields)
+            }
+            Self::Tuple(vals) => Val::Tuple(vals.iter().map(|v| v.as_val()).collect()),
+            Self::Enum(name) => Val::Enum(name.to_string()),
+            Self::Variant(name, payload) => {
+                let payload = Self::payload_val(payload.as_deref());
+                Val::Variant(name.to_string(), payload)
+            }
+            Self::Option(v) => Val::Option(v.as_ref().map(|v| Box::new(v.as_val()))),
+            Self::Result(v) => Val::Result(match v {
+                Ok(v) => Ok(Self::payload_val(v.as_deref())),
+                Err(v) => Err(Self::payload_val(v.as_deref())),
+            }),
+            Self::Flags(v) => Val::Flags(v.iter().map(std::string::ToString::to_string).collect()),
         }
-        WastVal::Tuple(vals) => Val::Tuple(vals.iter().map(val).collect()),
-        WastVal::Enum(name) => Val::Enum(name.to_string()),
-        WastVal::Variant(name, payload) => {
-            let payload = payload_val(payload.as_deref());
-            Val::Variant(name.to_string(), payload)
-        }
-        WastVal::Option(v) => Val::Option(v.as_ref().map(|v| Box::new(val(v)))),
-        WastVal::Result(v) => Val::Result(match v {
-            Ok(v) => Ok(payload_val(v.as_deref())),
-            Err(v) => Err(payload_val(v.as_deref())),
-        }),
-        WastVal::Flags(v) => Val::Flags(v.iter().map(std::string::ToString::to_string).collect()),
+    }
+
+    fn payload_val(v: Option<&WastVal>) -> Option<Box<Val>> {
+        v.map(|v| Box::new(v.as_val()))
     }
 }
 
-fn payload_val(v: Option<&WastVal>) -> Option<Box<Val>> {
-    v.map(|v| Box::new(val(v)))
+impl From<WastVal> for Val {
+    fn from(value: WastVal) -> Self {
+        value.as_val()
+    }
 }

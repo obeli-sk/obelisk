@@ -170,7 +170,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                     .func(&ffqn.function_name)
                     .expect("function must be found")
             };
-            let params = match params.as_vals() {
+            let params = match params.as_vals(&func.params(&store)) {
                 Ok(params) => params,
                 Err(err) => {
                     return Err(WorkerError::FatalError(
@@ -339,14 +339,13 @@ pub(crate) mod tests {
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = now();
+        let params = Params::from([WastValWithType::try_from(WastVal::U8(FIBO_10_INPUT)).unwrap()]);
         db_connection
             .create(CreateRequest {
                 created_at,
                 execution_id,
                 ffqn: FIBO_ACTIVITY_FFQN,
-                params: Params::from([
-                    WastValWithType::try_from(WastVal::U8(FIBO_10_INPUT)).unwrap()
-                ]),
+                params,
                 parent: None,
                 scheduled_at: None,
                 retry_exp_backoff: Duration::ZERO,
