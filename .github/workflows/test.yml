@@ -41,7 +41,7 @@ jobs:
         env:
           RUSTFLAGS: "--cfg tracing_unstable"
       - name: cargo test
-        run: nix develop --command cargo nextest run --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
+        run: nix develop --command cargo nextest run --workspace --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
@@ -74,7 +74,7 @@ jobs:
         env:
           RUSTFLAGS: "--cfg madsim --cfg tracing_unstable"
       - name: cargo test
-        run: nix develop --command cargo nextest run --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
+        run: nix develop --command cargo nextest run --workspace --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg madsim --cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
