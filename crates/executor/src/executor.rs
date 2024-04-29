@@ -263,22 +263,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         {
             Ok(Some(append)) => {
                 trace!("Appending {append:?}");
-                let db_connection = db_pool.connection();
-                if let Some((parent_id, parent_append_request)) = append.parent_response {
-                    db_connection
-                        .append_batch_respond_to_parent(
-                            append.primary_events,
-                            append.execution_id,
-                            append.version,
-                            (parent_id, parent_append_request),
-                        )
-                        .await?;
-                } else {
-                    db_connection
-                        .append_batch(append.primary_events, append.execution_id, append.version)
-                        .await?;
-                }
-                Ok(())
+                append.append(db_pool.connection()).await
             }
             Ok(None) => Ok(()),
             Err(err) => Err(err),
@@ -379,6 +364,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     }
                     WorkerError::DbError(db_error) => {
                         info!("Worker encountered db error: {db_error:?}");
+                        // FIXME: What to do? ExecutionEventInner::IntermittentFailure
                         return Err(db_error);
                     }
                     WorkerError::IntermittentError {
@@ -464,6 +450,26 @@ struct Append {
     execution_id: ExecutionId,
     version: Version,
     parent_response: Option<(ExecutionId, AppendRequest)>,
+}
+
+impl Append {
+    async fn append(self, db_connection: impl DbConnection) -> Result<(), DbError> {
+        if let Some((parent_id, parent_append_request)) = self.parent_response {
+            db_connection
+                .append_batch_respond_to_parent(
+                    self.primary_events,
+                    self.execution_id,
+                    self.version,
+                    (parent_id, parent_append_request),
+                )
+                .await?;
+        } else {
+            db_connection
+                .append_batch(self.primary_events, self.execution_id, self.version)
+                .await?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(any(test, feature = "test"))]
@@ -966,6 +972,18 @@ mod tests {
         db_task.close().await;
     }
 
+    // #[tokio::test]
+    // async fn child_execution_permanently_failed_should_notify_parent() {
+    //     panic!()
+    // }
+
+    // #[tokio::test]
+    // async fn child_execution_permanently_timed_out_should_notify_parent() {
+    //     panic!()
+    // }
+
+    // TODO: Fatal errors should be propagated to the topmost parent
+
     #[derive(Clone, Debug)]
     struct SleepyWorker {
         duration: Duration,
@@ -1128,4 +1146,6 @@ mod tests {
         drop(timers_watcher);
         db_task.close().await;
     }
+
+    // TODO: same for IntermittentTimeout - should be handled by TimersWatcherTask. Count retries.
 }
