@@ -17,6 +17,13 @@ use rusqlite::{Connection, OptionalExtension, Transaction};
 use std::{cmp::max, collections::VecDeque, path::Path, sync::Arc};
 use tracing::{debug, error, info, instrument, trace, warn, Span};
 
+#[derive(Debug, Clone, Copy)]
+struct DelayReq {
+    join_set_id: JoinSetId,
+    delay_id: DelayId,
+    expires_at: DateTime<Utc>,
+}
+
 const PRAGMA: &str = r"
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = true;
@@ -24,7 +31,7 @@ PRAGMA busy_timeout = 1000;
 PRAGMA cache_size = 1000000000;
 ";
 
-// TODO metadata table with current app version
+// TODO metadata table with current schema version, migrations
 
 const CREATE_TABLE_EXECUTION_LOG: &str = r"
 CREATE TABLE IF NOT EXISTS execution_log (
@@ -365,7 +372,7 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: ExecutionId,
         next_version: &Version,
-        delay_req: Option<(JoinSetId, DelayId, DateTime<Utc>)>,
+        delay_req: Option<DelayReq>,
     ) -> Result<(), SqliteError> {
         debug!("update_index_version");
         let execution_id_str = execution_id.to_string();
@@ -384,7 +391,12 @@ impl SqlitePool {
             ":next_version": next_version.0,
             ":current_version": next_version.0 - 1,
         })?;
-        if let Some((join_set_id, delay_id, expires_at)) = delay_req {
+        if let Some(DelayReq {
+            join_set_id,
+            delay_id,
+            expires_at,
+        }) = delay_req
+        {
             debug!("Inserting delay to `locked`");
             let mut stmt = tx.prepare_cached(
                 "INSERT INTO locked (execution_id, next_version, join_set_id, delay_id, lock_expires_at) \
@@ -591,6 +603,20 @@ impl SqlitePool {
         req: AppendRequest,
         appending_version: Option<Version>,
     ) -> Result<AppendResponse, SqliteError> {
+        enum IndexAction {
+            PendingStateChanged(PendingState),
+            NoPendingStateChange(Option<DelayReq>),
+        }
+        impl IndexAction {
+            fn pending_state(&self) -> Option<&PendingState> {
+                if let IndexAction::PendingStateChanged(pending_state) = self {
+                    Some(pending_state)
+                } else {
+                    None
+                }
+            }
+        }
+
         // TODO: this check would go away if empty version was disallowed:
         // Appending after `Finished` would be an application concern.
         let found_pending_state = Self::current_pending_state(&tx, execution_id)?;
@@ -635,19 +661,20 @@ impl SqlitePool {
                 } else {
                     Self::get_next_version(&tx, execution_id)?
                 };
-                let (pending_state, delay_req) = {
+                let index_action = {
                     match event {
                         ExecutionEventInner::IntermittentFailure { expires_at, .. }
-                        | ExecutionEventInner::IntermittentTimeout { expires_at } => (
-                            Some(PendingState::PendingAt {
+                        | ExecutionEventInner::IntermittentTimeout { expires_at } => {
+                            IndexAction::PendingStateChanged(PendingState::PendingAt {
                                 scheduled_at: expires_at,
-                            }),
-                            None,
-                        ),
-                        ExecutionEventInner::Finished { .. } => {
-                            (Some(PendingState::Finished), None)
+                            })
                         }
-                        ExecutionEventInner::Unlocked => (Some(PendingState::PendingNow), None),
+                        ExecutionEventInner::Finished { .. } => {
+                            IndexAction::PendingStateChanged(PendingState::Finished)
+                        }
+                        ExecutionEventInner::Unlocked => {
+                            IndexAction::PendingStateChanged(PendingState::PendingNow)
+                        }
                         ExecutionEventInner::HistoryEvent {
                             event:
                                 HistoryEvent::JoinSet { .. }
@@ -656,7 +683,7 @@ impl SqlitePool {
                                     ..
                                 }
                                 | HistoryEvent::Persist { .. },
-                        } => (None, None),
+                        } => IndexAction::NoPendingStateChange(None),
                         ExecutionEventInner::HistoryEvent {
                             event:
                                 HistoryEvent::JoinSetRequest {
@@ -667,26 +694,27 @@ impl SqlitePool {
                                             expires_at,
                                         },
                                 },
-                        } => (None, Some((join_set_id, delay_id, expires_at))),
+                        } => IndexAction::NoPendingStateChange(Some(DelayReq {
+                            join_set_id,
+                            delay_id,
+                            expires_at,
+                        })),
                         ExecutionEventInner::HistoryEvent {
                             event:
                                 HistoryEvent::JoinNext {
                                     join_set_id,
                                     lock_expires_at,
                                 },
-                        } => (
-                            Some(PendingState::BlockedByJoinSet {
-                                join_set_id,
-                                lock_expires_at,
-                            }),
-                            None,
-                        ),
+                        } => IndexAction::PendingStateChanged(PendingState::BlockedByJoinSet {
+                            join_set_id,
+                            lock_expires_at,
+                        }),
                         ExecutionEventInner::HistoryEvent {
                             event: HistoryEvent::JoinSetResponse { join_set_id, .. },
                         } => {
                             // Was the previous event with `pending_state` a JoinNext with this join set?
                             // TODO: If `watcher`s would send responses together with new pending state, the select would not be needed.
-                            let pending_state = match found_pending_state {
+                            match found_pending_state {
                                 PendingState::BlockedByJoinSet {
                                     join_set_id: found_join_set_id,
                                     lock_expires_at,
@@ -694,15 +722,16 @@ impl SqlitePool {
                                     // Unblocking the execution
                                     let scheduled_at = max(req.created_at, lock_expires_at);
                                     // The original executor can continue until the lock expires, but the execution is not marked as timed out
-                                    Some(PendingState::PendingAt { scheduled_at })
+                                    IndexAction::PendingStateChanged(PendingState::PendingAt {
+                                        scheduled_at,
+                                    })
                                 }
-                                _ => None,
-                            };
-                            (pending_state, None)
+                                _ => IndexAction::NoPendingStateChange(None),
+                            }
                         }
                         ExecutionEventInner::CancelRequest => {
                             //TODO
-                            (None, None)
+                            IndexAction::NoPendingStateChange(None)
                         }
                         ExecutionEventInner::Locked { .. }
                         | ExecutionEventInner::Created { .. } => unreachable!("handled above"),
@@ -711,33 +740,36 @@ impl SqlitePool {
                 let mut stmt = tx.prepare(
                     "INSERT INTO execution_log (execution_id, created_at, json_value, version, variant, join_set_id, pending_state) \
                     VALUES (:execution_id, :created_at, :json_value, :version, :variant, :join_set_id, :pending_state)")?;
-                stmt.execute(named_params!{
+                stmt.execute(named_params! {
                     ":execution_id": execution_id.to_string(),
                     ":created_at": req.created_at,
                     ":json_value": serde_json::to_value(&event).unwrap(),
                     ":version": appending_version.0,
                     ":variant": event.variant(),
                     ":join_set_id": event.join_set_id().map(|join_set_id | join_set_id.to_string()),
-                    ":pending_state": pending_state.map(|pending_state| serde_json::to_value(&pending_state).unwrap()),
+                    ":pending_state": index_action.pending_state().map(|pending_state| serde_json::to_value(&pending_state).unwrap()),
                 })?;
                 let next_version = Version::new(appending_version.0 + 1);
-                if let Some(pending_state) = pending_state {
-                    Self::update_index(
-                        &tx,
-                        execution_id,
-                        &pending_state,
-                        &next_version,
-                        true,
-                        None,
-                    )?;
-                } else {
-                    Self::update_index_no_pending_state_change(
-                        &tx,
-                        execution_id,
-                        &next_version,
-                        delay_req,
-                    )?;
-                }
+                match index_action {
+                    IndexAction::PendingStateChanged(pending_state) => {
+                        Self::update_index(
+                            &tx,
+                            execution_id,
+                            &pending_state,
+                            &next_version,
+                            true,
+                            None,
+                        )?;
+                    }
+                    IndexAction::NoPendingStateChange(delay_req) => {
+                        Self::update_index_no_pending_state_change(
+                            &tx,
+                            execution_id,
+                            &next_version,
+                            delay_req,
+                        )?;
+                    }
+                };
                 Ok(next_version)
             }
         }
