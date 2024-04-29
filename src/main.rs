@@ -124,5 +124,5 @@ fn exec<DB: DbConnection + 'static>(
         tick_sleep: Duration::from_millis(1),
         clock_fn: now,
     };
-    ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None)
+    ExecTask::spawn_new(worker, exec_config, db_pool, None)
 }
