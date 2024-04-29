@@ -369,8 +369,6 @@ pub enum DbConnectionError {
     SendError,
     #[error("receive error")]
     RecvError,
-    #[error("timeout")]
-    Timeout,
 }
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]
@@ -450,6 +448,14 @@ pub trait DbPool<DB: DbConnection>: Send + Sync + Clone {
     fn connection(&self) -> DB;
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ClientError {
+    #[error("client timeout")]
+    Timeout,
+    #[error(transparent)]
+    DbError(#[from] DbError),
+}
+
 #[async_trait]
 pub trait DbConnection: Send + Sync {
     async fn lock_pending(
@@ -519,7 +525,7 @@ pub trait DbConnection: Send + Sync {
         &self,
         execution_id: ExecutionId,
         timeout: Option<Duration>,
-    ) -> Result<FinishedExecutionResult, DbError> {
+    ) -> Result<FinishedExecutionResult, ClientError> {
         let execution_log = self
             .wait_for_pending_state(execution_id, PendingState::Finished, timeout)
             .await?;
@@ -534,7 +540,7 @@ pub trait DbConnection: Send + Sync {
         execution_id: ExecutionId,
         expected_pending_state: PendingState,
         timeout: Option<Duration>,
-    ) -> Result<ExecutionLog, DbError> {
+    ) -> Result<ExecutionLog, ClientError> {
         trace!(%execution_id, "Waiting for {expected_pending_state}");
         let fut = async move {
             loop {
@@ -550,7 +556,7 @@ pub trait DbConnection: Send + Sync {
         if let Some(timeout) = timeout {
             tokio::select! {
                 res = fut => res,
-                () = tokio::time::sleep(timeout) => Err(DbError::Connection(DbConnectionError::Timeout))
+                () = tokio::time::sleep(timeout) => Err(ClientError::Timeout)
             }
         } else {
             fut.await
@@ -563,7 +569,7 @@ pub async fn wait_for_pending_state_fn<T: Debug>(
     execution_id: ExecutionId,
     predicate: impl Fn(ExecutionLog) -> Option<T> + Send,
     timeout: Option<Duration>,
-) -> Result<T, DbError> {
+) -> Result<T, ClientError> {
     trace!(%execution_id, "Waiting for predicate");
     let fut = async move {
         loop {
@@ -579,7 +585,7 @@ pub async fn wait_for_pending_state_fn<T: Debug>(
     if let Some(timeout) = timeout {
         tokio::select! {
             res = fut => res,
-            () = tokio::time::sleep(timeout) => Err(DbError::Connection(DbConnectionError::Timeout))
+            () = tokio::time::sleep(timeout) => Err(ClientError::Timeout)
         }
     } else {
         fut.await
