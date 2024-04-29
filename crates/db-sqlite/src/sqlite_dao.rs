@@ -33,8 +33,9 @@ PRAGMA cache_size = 1000000000;
 
 // TODO metadata table with current schema version, migrations
 
-const CREATE_TABLE_EXECUTION_LOG: &str = r"
-CREATE TABLE IF NOT EXISTS execution_log (
+/// Stores execution history.
+const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
+CREATE TABLE IF NOT EXISTS t_execution_log (
     execution_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
     json_value JSONB NOT NULL,
@@ -46,8 +47,9 @@ CREATE TABLE IF NOT EXISTS execution_log (
 );
 ";
 
-const CREATE_TABLE_PENDING: &str = r"
-CREATE TABLE IF NOT EXISTS pending (
+/// Stores executions in `Pending` state
+const CREATE_TABLE_T_PENDING: &str = r"
+CREATE TABLE IF NOT EXISTS t_pending (
     execution_id TEXT NOT NULL,
     next_version INTEGER NOT NULL,
     pending_at TEXT NOT NULL,
@@ -56,8 +58,9 @@ CREATE TABLE IF NOT EXISTS pending (
 )
 "; // TODO: index by `pending_at` + `ffqn`
 
-const CREATE_TABLE_LOCKED: &str = r"
-CREATE TABLE IF NOT EXISTS locked (
+/// Stores executions in `Locked` state, as well as delay requests.
+const CREATE_TABLE_T_LOCKED: &str = r"
+CREATE TABLE IF NOT EXISTS t_locked (
     execution_id TEXT NOT NULL,
     next_version INTEGER NOT NULL,
     join_set_id TEXT,
@@ -112,12 +115,12 @@ impl SqlitePool {
             |conn| {
                 trace!("Executing `PRAGMA`");
                 conn.execute(PRAGMA, [])?;
-                trace!("Executing `CREATE_TABLE_EXECUTION_LOG`");
-                conn.execute(CREATE_TABLE_EXECUTION_LOG, [])?;
-                trace!("Executing `CREATE_TABLE_PENDING`");
-                conn.execute(CREATE_TABLE_PENDING, [])?;
-                trace!("Executing `CREATE_TABLE_LOCKED`");
-                conn.execute(CREATE_TABLE_LOCKED, [])?;
+                trace!("Executing `CREATE_TABLE_T_EXECUTION_LOG`");
+                conn.execute(CREATE_TABLE_T_EXECUTION_LOG, [])?;
+                trace!("Executing `CREATE_TABLE_T_PENDING`");
+                conn.execute(CREATE_TABLE_T_PENDING, [])?;
+                trace!("Executing `CREATE_TABLE_T_LOCKED`");
+                conn.execute(CREATE_TABLE_T_LOCKED, [])?;
                 info!("Done setting up sqlite");
                 Ok::<_, SqliteError>(())
             },
@@ -154,7 +157,7 @@ impl SqlitePool {
         execution_id: ExecutionId,
     ) -> Result<CreateRequest, SqliteError> {
         let mut stmt = conn.prepare(
-            "SELECT created_at, json_value FROM execution_log WHERE \
+            "SELECT created_at, json_value FROM t_execution_log WHERE \
             execution_id = :execution_id AND (variant = :variant)",
         )?;
         let (created_at, event) = stmt.query_row(
@@ -207,7 +210,7 @@ impl SqlitePool {
         execution_id: ExecutionId,
     ) -> Result<u32, SqliteError> {
         let mut stmt = conn.prepare(
-            "SELECT COUNT(*) as count FROM execution_log WHERE execution_id = :execution_id AND (variant = :v1 OR variant = :v2)",
+            "SELECT COUNT(*) as count FROM t_execution_log WHERE execution_id = :execution_id AND (variant = :v1 OR variant = :v2)",
         )?;
         Ok(stmt
             .query_row(
@@ -226,7 +229,7 @@ impl SqlitePool {
         execution_id: ExecutionId,
     ) -> Result<Version, SqliteError> {
         let mut stmt = tx.prepare(
-            "SELECT version FROM execution_log WHERE execution_id = :execution_id ORDER BY version DESC LIMIT 1",
+            "SELECT version FROM t_execution_log WHERE execution_id = :execution_id ORDER BY version DESC LIMIT 1",
         )?;
         Ok(stmt
             .query_row(
@@ -268,7 +271,7 @@ impl SqlitePool {
         let execution_id = req.execution_id;
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx.prepare(
-                "INSERT INTO execution_log (execution_id, created_at, version, json_value, variant, pending_state, join_set_id ) \
+                "INSERT INTO t_execution_log (execution_id, created_at, version, json_value, variant, pending_state, join_set_id ) \
                 VALUES (:execution_id, :created_at, :version, :json_value, :variant, :pending_state, :join_set_id)")?;
         let ffqn = req.ffqn.clone();
         let created_at = req.created_at;
@@ -311,13 +314,13 @@ impl SqlitePool {
         let execution_id_str = execution_id.to_string();
         if purge {
             let mut stmt =
-                tx.prepare_cached("DELETE FROM pending WHERE execution_id = :execution_id")?;
+                tx.prepare_cached("DELETE FROM t_pending WHERE execution_id = :execution_id")?;
             stmt.execute(named_params! {
                 ":execution_id": execution_id_str,
             })?;
 
             let mut stmt =
-                tx.prepare_cached("DELETE FROM locked WHERE execution_id = :execution_id")?;
+                tx.prepare_cached("DELETE FROM t_locked WHERE execution_id = :execution_id")?;
             stmt.execute(named_params! {
                 ":execution_id": execution_id_str,
             })?;
@@ -329,9 +332,9 @@ impl SqlitePool {
                 } else {
                     None
                 };
-                debug!("Inserting to `pending` with schedule: `{scheduled_at:?}`");
+                debug!("Inserting to `t_pending` with schedule: `{scheduled_at:?}`");
                 let mut stmt = tx.prepare(
-                    "INSERT INTO pending (execution_id, next_version, pending_at, ffqn) \
+                    "INSERT INTO t_pending (execution_id, next_version, pending_at, ffqn) \
                     VALUES (:execution_id, :next_version, :pending_at, :ffqn)",
                 )?;
                 let ffqn = if let Some(ffqn) = ffqn {
@@ -350,9 +353,9 @@ impl SqlitePool {
             PendingState::Locked {
                 lock_expires_at, ..
             } => {
-                debug!("Inserting to `locked`");
+                debug!("Inserting to `t_locked`");
                 let mut stmt = tx.prepare_cached(
-                    "INSERT INTO locked (execution_id, next_version, lock_expires_at) \
+                    "INSERT INTO t_locked (execution_id, next_version, lock_expires_at) \
                 VALUES \
                 (:execution_id, :next_version, :lock_expires_at)",
                 )?;
@@ -377,7 +380,7 @@ impl SqlitePool {
         debug!("update_index_version");
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx.prepare_cached(
-            "UPDATE pending SET next_version = :next_version WHERE execution_id = :execution_id AND next_version = :current_version",
+            "UPDATE t_pending SET next_version = :next_version WHERE execution_id = :execution_id AND next_version = :current_version",
         )?;
         stmt.execute(named_params! {
             ":execution_id": execution_id_str,
@@ -385,7 +388,7 @@ impl SqlitePool {
             ":current_version": next_version.0 - 1,
         })?;
         let mut stmt =
-            tx.prepare_cached("UPDATE locked SET next_version = :next_version WHERE execution_id = :execution_id AND next_version = :current_version")?;
+            tx.prepare_cached("UPDATE t_locked SET next_version = :next_version WHERE execution_id = :execution_id AND next_version = :current_version")?;
         stmt.execute(named_params! {
             ":execution_id": execution_id_str,
             ":next_version": next_version.0,
@@ -397,9 +400,9 @@ impl SqlitePool {
             expires_at,
         }) = delay_req
         {
-            debug!("Inserting delay to `locked`");
+            debug!("Inserting delay to `t_locked`");
             let mut stmt = tx.prepare_cached(
-                "INSERT INTO locked (execution_id, next_version, join_set_id, delay_id, lock_expires_at) \
+                "INSERT INTO t_locked (execution_id, next_version, join_set_id, delay_id, lock_expires_at) \
                 VALUES \
                 (:execution_id, :next_version, :join_set_id, :delay_id, :lock_expires_at)",
             )?;
@@ -420,7 +423,7 @@ impl SqlitePool {
         execution_id: ExecutionId,
     ) -> Result<PendingState, SqliteError> {
         let mut stmt = tx.prepare(
-            "SELECT pending_state FROM execution_log WHERE \
+            "SELECT pending_state FROM t_execution_log WHERE \
         execution_id = :execution_id AND pending_state IS NOT NULL \
         ORDER BY version DESC LIMIT 1",
         )?;
@@ -465,34 +468,34 @@ impl SqlitePool {
         match lock_kind {
             LockKind::CreatingNewLock => {
                 let mut stmt = tx.prepare_cached(
-                    "DELETE FROM pending WHERE execution_id = :execution_id AND next_version = :next_version",
+                    "DELETE FROM t_pending WHERE execution_id = :execution_id AND next_version = :next_version",
                 )?;
                 let deleted = stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
                     ":next_version": appending_version.0, // This must be the version requested.
                 })?;
                 if deleted != 1 {
-                    error!("Locking failed while in {pending_state}: expected to delete one `pending` row, actual number: {deleted}");
+                    error!("Locking failed while in {pending_state}: expected to delete one `t_pending` row, actual number: {deleted}");
                     return Err(SqliteError::DbError(DbError::Specific(
                         SpecificError::ConsistencyError(StrVariant::Static(
-                            "consistency error in `pending` table - locking failed",
+                            "consistency error in `t_pending` table - locking failed",
                         )),
                     )));
                 }
             }
             LockKind::Extending => {
                 let mut stmt = tx.prepare_cached(
-                    "DELETE FROM locked WHERE execution_id = :execution_id AND next_version = :next_version",
+                    "DELETE FROM t_locked WHERE execution_id = :execution_id AND next_version = :next_version",
                 )?;
                 let deleted = stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
                     ":next_version": appending_version.0, // This must be the version requested.
                 })?;
                 if deleted != 1 {
-                    error!("Locking failed: expected to delete one `locked` row, actual number: {deleted}");
+                    error!("Locking failed: expected to delete one `t_locked` row, actual number: {deleted}");
                     return Err(SqliteError::DbError(DbError::Specific(
                         SpecificError::ConsistencyError(StrVariant::Static(
-                            "consistency error in `locked` table- locking failed",
+                            "consistency error in `t_locked` table- locking failed",
                         )),
                     )));
                 }
@@ -500,7 +503,7 @@ impl SqlitePool {
         }
         // Fetch event_history and `Created` event to construct the response.
         let mut stmt = tx.prepare(
-            "SELECT json_value FROM execution_log WHERE \
+            "SELECT json_value FROM t_execution_log WHERE \
             execution_id = :execution_id AND (variant = :v1 OR variant = :v2) \
             ORDER BY version",
         )?;
@@ -563,7 +566,7 @@ impl SqlitePool {
             run_id,
         };
         let mut stmt = tx.prepare_cached(
-            "INSERT INTO execution_log \
+            "INSERT INTO t_execution_log \
             (execution_id, created_at, json_value, version, variant, pending_state) \
             VALUES \
             (:execution_id, :created_at, :json_value, :version, :variant, :pending_state)",
@@ -738,7 +741,7 @@ impl SqlitePool {
                     }
                 };
                 let mut stmt = tx.prepare(
-                    "INSERT INTO execution_log (execution_id, created_at, json_value, version, variant, join_set_id, pending_state) \
+                    "INSERT INTO t_execution_log (execution_id, created_at, json_value, version, variant, join_set_id, pending_state) \
                     VALUES (:execution_id, :created_at, :json_value, :version, :variant, :join_set_id, :pending_state)")?;
                 stmt.execute(named_params! {
                     ":execution_id": execution_id.to_string(),
@@ -807,7 +810,7 @@ impl DbConnection for SqlitePool {
                     // TODO: The locked executions should be sorted by pending date, otherwise ffqns later in the list might get starved.
                     for ffqn in ffqns {
                         let mut stmt = conn.prepare(
-                            "SELECT execution_id, next_version FROM pending WHERE \
+                            "SELECT execution_id, next_version FROM t_pending WHERE \
                             pending_at <= :pending_at AND ffqn = :ffqn \
                             ORDER BY pending_at LIMIT :batch_size",
                         )?;
@@ -1055,7 +1058,7 @@ impl DbConnection for SqlitePool {
             .conn_with_err_and_span::<_, _, SqliteError>(
                 move |tx| {
                     let mut stmt = tx.prepare(
-                        "SELECT created_at, json_value, pending_state FROM execution_log WHERE \
+                        "SELECT created_at, json_value, pending_state FROM t_execution_log WHERE \
                         execution_id = :execution_id ORDER BY version",
                     )?;
                     let events_and_pending_state = stmt
@@ -1132,7 +1135,7 @@ impl DbConnection for SqlitePool {
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
             move |conn| {
                 let mut stmt = conn.prepare(
-                    "SELECT execution_id, next_version, join_set_id, delay_id FROM locked WHERE lock_expires_at <= :at",
+                    "SELECT execution_id, next_version, join_set_id, delay_id FROM t_locked WHERE lock_expires_at <= :at",
                 )?;
                 let query_res = stmt
                     .query_map(
