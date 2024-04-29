@@ -1738,6 +1738,7 @@ dependencies = [
  "madsim-tokio",
  "serde_json",
  "test-programs-http-get-activity-builder",
+ "test-programs-http-get-workflow-builder",
  "tracing",
  "tracing-subscriber",
  "utils",

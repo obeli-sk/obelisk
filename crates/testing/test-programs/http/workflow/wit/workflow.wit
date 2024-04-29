@@ -2,6 +2,7 @@ package testing:http-workflow;
 
 interface workflow {
     execute: func(port: u16) -> string;
+    get: func(authority: string, path: string) -> result<string, string>;
 }
 
 world any {

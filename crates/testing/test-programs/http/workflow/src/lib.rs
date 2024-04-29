@@ -20,4 +20,8 @@ impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Compo
 
         crate::bindings::testing::http::http_get::get(&format!("127.0.0.1:{port}"), "/").unwrap()
     }
+
+    fn get(authority: String, path: String) -> Result<String, String> {
+        crate::bindings::testing::http::http_get::get(&authority, &path)
+    }
 }

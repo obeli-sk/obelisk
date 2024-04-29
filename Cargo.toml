@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 wasmtime.workspace = true                                # TODO: Remove
 test-programs-http-get-activity-builder.workspace = true # TODO: Remove
+test-programs-http-get-workflow-builder.workspace = true # TODO: Remove
 
 concepts.workspace = true
 db-sqlite.workspace = true
