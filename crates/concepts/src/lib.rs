@@ -29,10 +29,6 @@ pub enum FinishedExecutionError {
     NonDeterminismDetected(StrVariant),
     #[error("uncategorized error: `{0}`")]
     PermanentFailure(StrVariant), // intermittent failure that is not retried (anymore)
-    #[error("cancelled, reason: `{0}`")]
-    Cancelled(StrVariant),
-    #[error("continuing as {execution_id}")]
-    ContinueAsNew { execution_id: ExecutionId },
 }
 
 #[derive(Clone, Eq, derive_more::Display)]
