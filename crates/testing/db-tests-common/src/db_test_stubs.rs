@@ -345,14 +345,22 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection) {
         let expired = db_connection.get_expired_timers(expired_at).await.unwrap();
         assert_eq!(1, expired.len());
         let expired = &expired[0];
-        let (found_execution_id, version, already_retried_count, max_retries, retry_exp_backoff) = assert_matches!(expired,
-            ExpiredTimer::Lock { execution_id, version, already_tried_count, max_retries, retry_exp_backoff } =>
-            (execution_id, version, already_tried_count, max_retries, retry_exp_backoff));
+        let (
+            found_execution_id,
+            version,
+            already_retried_count,
+            max_retries,
+            retry_exp_backoff,
+            parent,
+        ) = assert_matches!(expired,
+            ExpiredTimer::Lock { execution_id, version, intermittent_event_count, max_retries, retry_exp_backoff, parent } =>
+            (execution_id, version, intermittent_event_count, max_retries, retry_exp_backoff, parent));
         assert_eq!(execution_id, *found_execution_id);
         assert_eq!(Version::new(2), *version);
         assert_eq!(0, *already_retried_count);
         assert_eq!(MAX_RETRIES, *max_retries);
         assert_eq!(RETRY_EXP_BACKOFF, *retry_exp_backoff);
+        assert_eq!(None, *parent);
     }
 }
 
@@ -584,9 +592,10 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection) {
     let expected = ExpiredTimer::Lock {
         execution_id,
         version,
-        already_tried_count: 0,
+        intermittent_event_count: 0,
         max_retries: 0,
         retry_exp_backoff: Duration::ZERO,
+        parent: None,
     };
     assert_eq!(expected, actual);
 }

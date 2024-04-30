@@ -24,9 +24,9 @@ This is a pre-release.
     * Cleaning up old hanging executions with expired locks. Executions that have the budget will be retried.
 
 # Planned features
-* TUI
 * Configurable `Error` retries, disabled for workflows
 * Allow starting multiple child executions in parallel
+* TUI
 * Structured concurrency patterns (join, race)
 * WASM upgrades - disabling work stealing by executors with outdated wasm hashes
 * Params typecheck on creation, introspection of types of all functions in the system

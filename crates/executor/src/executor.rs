@@ -1,11 +1,13 @@
 use crate::worker::{FatalError, Worker, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
+use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{DbPool, ExecutionLog};
+use concepts::FinishedExecutionResult;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params, StrVariant};
 use concepts::{
     storage::{
         AppendRequest, DbConnection, DbError, ExecutionEventInner, HistoryEvent, JoinSetResponse,
-        SpecificError, Version,
+        Version,
     },
     FinishedExecutionError,
 };
@@ -213,6 +215,10 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                             locked_execution.event_history,
                             execution_deadline,
                             clock_fn,
+                            locked_execution.retry_exp_backoff,
+                            locked_execution.parent,
+                            locked_execution.max_retries,
+                            locked_execution.intermittent_event_count,
                         )
                         .await;
                         if let Err(err) = res {
@@ -229,7 +235,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
     }
 
     #[instrument(skip_all, fields(%execution_id, %ffqn))]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // FIXME: Pass LockedExecution
     async fn run_worker(
         worker: Arc<W>,
         db_pool: P,
@@ -240,6 +246,10 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         event_history: Vec<HistoryEvent>,
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
+        retry_exp_backoff: Duration,
+        parent: Option<(ExecutionId, JoinSetId)>,
+        max_retries: u32,
+        intermittent_event_count: u32,
     ) -> Result<(), DbError> {
         trace!(%version, ?params, ?event_history, "Worker::run starting");
         let worker_result = worker
@@ -256,51 +266,46 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         match Self::worker_result_to_execution_event(
             execution_id,
             worker_result,
-            &db_pool,
             clock_fn(),
-        )
-        .await
-        {
+            retry_exp_backoff,
+            parent,
+            max_retries,
+            intermittent_event_count,
+        ) {
             Ok(Some(append)) => {
                 trace!("Appending {append:?}");
-                append.append(db_pool.connection()).await
+                append.append(&db_pool.connection()).await
             }
             Ok(None) => Ok(()),
             Err(err) => Err(err),
         }
     }
 
-    async fn check_version(
-        db_connection: &dyn DbConnection,
-        execution_id: ExecutionId,
-        new_version: Version,
-    ) -> Result<(Version, ExecutionLog), DbError> {
-        let execution_log = db_connection.get(execution_id).await?;
-        if execution_log.version == new_version {
-            Ok((new_version, execution_log))
-        } else {
-            Err(DbError::Specific(SpecificError::VersionMismatch))
-        }
-    }
-
+    // FIXME: On a slow execution: race between `expired_timers_watcher` this if retry_exp_backoff is 0.
     /// Map the `WorkerError` to an intermittent or a permanent failure.
     #[allow(clippy::too_many_lines)]
-    async fn worker_result_to_execution_event(
+    fn worker_result_to_execution_event(
         execution_id: ExecutionId,
         worker_result: WorkerResult,
-        db_pool: &P,
         result_obtained_at: DateTime<Utc>,
+        retry_exp_backoff: Duration,
+        parent: Option<(ExecutionId, JoinSetId)>,
+        max_retries: u32,
+        intermittent_event_count: u32,
     ) -> Result<Option<Append>, DbError> {
         Ok(match worker_result {
             Ok((result, new_version)) => {
                 let finished_res;
-                let execution_log = db_pool.connection().get(execution_id).await?;
-                let event = if let Some(exec_err) = result.fallible_err() {
+                let primary_event = if let Some(exec_err) = result.fallible_err() {
                     info!("Execution finished with an error result");
                     let reason = StrVariant::Arc(Arc::from(format!(
                         "Execution returned error result: `{exec_err:?}`"
                     )));
-                    if let Some(duration) = execution_log.can_be_retried_after() {
+                    if let Some(duration) = ExecutionLog::can_be_retried_after(
+                        intermittent_event_count,
+                        max_retries,
+                        retry_exp_backoff,
+                    ) {
                         let expires_at = result_obtained_at + duration;
                         debug!("Retrying failed execution after {duration:?} at {expires_at}");
                         finished_res = None;
@@ -319,41 +324,17 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     finished_res = Some(Ok(result.clone()));
                     ExecutionEventInner::Finished { result: Ok(result) }
                 };
-                let finished_event = AppendRequest {
-                    created_at: result_obtained_at,
-                    event,
-                };
-                let parent_response = if let (Some(finished_res), Some((parent_id, join_set_id))) =
-                    (finished_res, execution_log.parent())
-                {
-                    Some((
-                        parent_id,
-                        AppendRequest {
-                            created_at: result_obtained_at,
-                            event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinSetResponse {
-                                    join_set_id,
-                                    response: JoinSetResponse::ChildExecutionFinished {
-                                        child_execution_id: execution_id,
-                                        result: finished_res,
-                                    },
-                                },
-                            },
-                        },
-                    ))
-                } else {
-                    None
-                };
+                let parent = parent.and_then(|(p, j)| finished_res.map(|r| (p, j, r)));
                 Some(Append {
-                    primary_events: vec![finished_event],
+                    created_at: result_obtained_at,
+                    primary_event,
                     execution_id,
                     version: new_version,
-                    parent_response,
+                    parent,
                 })
             }
             Err(err) => {
-                let new_version2;
-                let event = match err {
+                let (primary_event, parent, version) = match err {
                     WorkerError::ChildExecutionRequest | WorkerError::DelayRequest => {
                         return Ok(None);
                     }
@@ -370,74 +351,64 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     WorkerError::IntermittentError {
                         reason,
                         err: _,
-                        version: new_version,
+                        version,
                     } => {
-                        let version_and_exec_log =
-                            Self::check_version(&db_pool.connection(), execution_id, new_version)
-                                .await?;
-                        new_version2 = version_and_exec_log.0;
-                        let execution_log = version_and_exec_log.1;
-                        if let Some(duration) = execution_log.can_be_retried_after() {
+                        if let Some(duration) = ExecutionLog::can_be_retried_after(
+                            intermittent_event_count,
+                            max_retries,
+                            retry_exp_backoff,
+                        ) {
                             let expires_at = result_obtained_at + duration;
                             debug!("Retrying failed execution after {duration:?} at {expires_at}");
-                            ExecutionEventInner::IntermittentFailure { expires_at, reason }
+                            (
+                                ExecutionEventInner::IntermittentFailure { expires_at, reason },
+                                None,
+                                version,
+                            )
                         } else {
                             info!("Permanently failed");
-                            ExecutionEventInner::Finished {
-                                result: Err(FinishedExecutionError::PermanentFailure(reason)),
-                            }
+                            let result = Err(FinishedExecutionError::PermanentFailure(reason));
+                            let parent = parent.map(|(p, j)| (p, j, result.clone()));
+                            (ExecutionEventInner::Finished { result }, parent, version)
                         }
                     }
                     WorkerError::LimitReached(reason, new_version) => {
-                        (new_version2, _) =
-                            Self::check_version(&db_pool.connection(), execution_id, new_version)
-                                .await?;
                         warn!("Limit reached: {reason}, unlocking");
-                        ExecutionEventInner::Unlocked
+                        (ExecutionEventInner::Unlocked, None, new_version)
                     }
                     WorkerError::FatalError(
                         FatalError::NonDeterminismDetected(reason),
-                        new_version,
+                        version,
                     ) => {
-                        (new_version2, _) =
-                            Self::check_version(&db_pool.connection(), execution_id, new_version)
-                                .await?;
                         info!("Non-determinism detected");
-                        ExecutionEventInner::Finished {
-                            result: Err(FinishedExecutionError::NonDeterminismDetected(reason)),
-                        }
+                        let result = Err(FinishedExecutionError::NonDeterminismDetected(reason));
+                        let parent = parent.map(|(p, j)| (p, j, result.clone()));
+                        (ExecutionEventInner::Finished { result }, parent, version)
                     }
-                    WorkerError::FatalError(FatalError::ParamsParsingError(err), new_version) => {
-                        (new_version2, _) =
-                            Self::check_version(&db_pool.connection(), execution_id, new_version)
-                                .await?;
+                    WorkerError::FatalError(FatalError::ParamsParsingError(err), version) => {
                         info!("Error parsing parameters");
-                        ExecutionEventInner::Finished {
-                            result: Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
+                        let result =
+                            Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
                                 Arc::from(format!("error parsing parameters: {err:?}")),
-                            ))),
-                        }
+                            )));
+                        let parent = parent.map(|(p, j)| (p, j, result.clone()));
+                        (ExecutionEventInner::Finished { result }, parent, version)
                     }
-                    WorkerError::FatalError(FatalError::ResultParsingError(err), new_version) => {
-                        (new_version2, _) =
-                            Self::check_version(&db_pool.connection(), execution_id, new_version)
-                                .await?;
+                    WorkerError::FatalError(FatalError::ResultParsingError(err), version) => {
                         info!("Error parsing result");
-                        ExecutionEventInner::Finished {
-                            result: Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
-                                Arc::from(format!("error parsing result: {err:?}")),
-                            ))),
-                        }
+                        let result = Err(FinishedExecutionError::PermanentFailure(
+                            StrVariant::Arc(Arc::from(format!("error parsing result: {err:?}"))),
+                        ));
+                        let parent = parent.map(|(p, j)| (p, j, result.clone()));
+                        (ExecutionEventInner::Finished { result }, parent, version)
                     }
                 };
                 Some(Append {
-                    primary_events: vec![AppendRequest {
-                        created_at: result_obtained_at,
-                        event,
-                    }],
+                    created_at: result_obtained_at,
+                    primary_event,
                     execution_id,
-                    version: new_version2,
-                    parent_response: None,
+                    version,
+                    parent,
                 })
             }
         })
@@ -445,27 +416,46 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
 }
 
 #[derive(Debug)]
-struct Append {
-    primary_events: Vec<AppendRequest>,
-    execution_id: ExecutionId,
-    version: Version,
-    parent_response: Option<(ExecutionId, AppendRequest)>,
+pub(crate) struct Append {
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) primary_event: ExecutionEventInner,
+    pub(crate) execution_id: ExecutionId,
+    pub(crate) version: Version,
+    pub(crate) parent: Option<(ExecutionId, JoinSetId, FinishedExecutionResult)>,
 }
 
 impl Append {
-    async fn append(self, db_connection: impl DbConnection) -> Result<(), DbError> {
-        if let Some((parent_id, parent_append_request)) = self.parent_response {
+    pub(crate) async fn append(self, db_connection: &impl DbConnection) -> Result<(), DbError> {
+        let primary_append = vec![AppendRequest {
+            created_at: self.created_at,
+            event: self.primary_event,
+        }];
+        if let Some((parent_id, join_set_id, result)) = self.parent {
             db_connection
                 .append_batch_respond_to_parent(
-                    self.primary_events,
+                    primary_append,
                     self.execution_id,
                     self.version,
-                    (parent_id, parent_append_request),
+                    (
+                        parent_id,
+                        AppendRequest {
+                            created_at: self.created_at,
+                            event: ExecutionEventInner::HistoryEvent {
+                                event: HistoryEvent::JoinSetResponse {
+                                    join_set_id,
+                                    response: JoinSetResponse::ChildExecutionFinished {
+                                        child_execution_id: self.execution_id,
+                                        result,
+                                    },
+                                },
+                            },
+                        },
+                    ),
                 )
                 .await?;
         } else {
             db_connection
-                .append_batch(self.primary_events, self.execution_id, self.version)
+                .append_batch(primary_append, self.execution_id, self.version)
                 .await?;
         }
         Ok(())

@@ -1,3 +1,4 @@
+use crate::executor::Append;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::DbConnection;
@@ -125,33 +126,36 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
                 ExpiredTimer::Lock {
                     execution_id,
                     version,
-                    already_tried_count,
+                    intermittent_event_count,
                     max_retries,
                     retry_exp_backoff,
+                    parent,
                 } => {
-                    let event = if already_tried_count < max_retries {
+                    let append = if intermittent_event_count < max_retries {
                         let duration =
-                            retry_exp_backoff * 2_u32.saturating_pow(already_tried_count);
+                            retry_exp_backoff * 2_u32.saturating_pow(intermittent_event_count);
                         let expires_at = executed_at + duration;
                         debug!(%execution_id, "Retrying execution with expired lock after {duration:?} at {expires_at}");
-                        ExecutionEventInner::IntermittentTimeout { expires_at }
+                        Append {
+                            created_at: executed_at,
+                            primary_event: ExecutionEventInner::IntermittentTimeout { expires_at },
+                            execution_id,
+                            version,
+                            parent: None,
+                        }
                     } else {
                         info!(%execution_id, "Marking execution with expired lock as permanently timed out");
-                        ExecutionEventInner::Finished {
-                            result: Err(FinishedExecutionError::PermanentTimeout),
+                        let result = Err(FinishedExecutionError::PermanentTimeout);
+                        let parent = parent.map(|(p, j)| (p, j, result.clone()));
+                        Append {
+                            created_at: executed_at,
+                            primary_event: ExecutionEventInner::Finished { result },
+                            execution_id,
+                            version,
+                            parent,
                         }
                     };
-                    let res = self
-                        .db_connection
-                        .append(
-                            execution_id,
-                            Some(version),
-                            AppendRequest {
-                                created_at: executed_at,
-                                event,
-                            },
-                        )
-                        .await;
+                    let res = append.append(&self.db_connection).await;
                     if let Err(err) = res {
                         debug!(%execution_id, "Failed to update expired lock - {err:?}");
                     } else {

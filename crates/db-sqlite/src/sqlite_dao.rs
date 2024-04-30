@@ -534,6 +534,7 @@ impl SqlitePool {
             scheduled_at,
             retry_exp_backoff,
             max_retries,
+            parent,
             ..
         }) = events.pop_front()
         else {
@@ -559,6 +560,7 @@ impl SqlitePool {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let intermittent_event_count = Self::count_intermittent_events(tx, execution_id)?;
         // Append to `execution_log` table.
         let event = ExecutionEventInner::Locked {
             executor_id,
@@ -596,6 +598,8 @@ impl SqlitePool {
             scheduled_at,
             retry_exp_backoff,
             max_retries,
+            parent,
+            intermittent_event_count,
         })
     }
 
@@ -1163,12 +1167,14 @@ impl DbConnection for SqlitePool {
                         }
                         (None, None) => {
                             let created = Self::fetch_created_event(conn, execution_id)?;
-                            let already_tried_count = Self::count_intermittent_events(conn, execution_id)?;
-                            ExpiredTimer::Lock { execution_id, version, already_tried_count, max_retries: created.max_retries, retry_exp_backoff: created.retry_exp_backoff }
+                            let intermittent_event_count = Self::count_intermittent_events(conn, execution_id)?;
+                            ExpiredTimer::Lock { execution_id, version, intermittent_event_count, max_retries: created.max_retries,
+                                retry_exp_backoff: created.retry_exp_backoff, parent: created.parent }
                         }
                         _ => {
                             error!("invalid combination of `join_set_id`, `delay_id`");
-                            return Err(SqliteError::DbError(DbError::Specific(SpecificError::ConsistencyError(StrVariant::Static("invalid combination of `join_set_id`, `delay_id`")))));
+                            return Err(SqliteError::DbError(DbError::Specific(
+                                SpecificError::ConsistencyError(StrVariant::Static("invalid combination of `join_set_id`, `delay_id`")))));
                         }
                     };
                     expired_timers.push(expired_timer);

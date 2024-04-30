@@ -29,22 +29,15 @@ pub struct ExecutionLog {
 }
 
 impl ExecutionLog {
-    fn already_tried_count(&self) -> u32 {
-        u32::try_from(
-            self.events
-                .iter()
-                .filter(|event| event.event.is_intermittent_event())
-                .count(),
-        )
-        .unwrap()
-    }
-
     #[must_use]
-    pub fn can_be_retried_after(&self) -> Option<Duration> {
-        let already_tried_count = self.already_tried_count();
-        if already_tried_count < self.max_retries() + 1 {
+    pub fn can_be_retried_after(
+        intermittent_event_count: u32,
+        max_retries: u32,
+        retry_exp_backoff: Duration,
+    ) -> Option<Duration> {
+        if intermittent_event_count < max_retries + 1 {
             // TODO: Add test for number of retries
-            let duration = self.retry_exp_backoff() * 2_u32.saturating_pow(already_tried_count);
+            let duration = retry_exp_backoff * 2_u32.saturating_pow(intermittent_event_count);
             Some(duration)
         } else {
             None
@@ -406,7 +399,10 @@ pub struct LockedExecution {
     pub scheduled_at: Option<DateTime<Utc>>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
+    pub parent: Option<(ExecutionId, JoinSetId)>,
+    pub intermittent_event_count: u32,
 }
+
 pub type LockPendingResponse = Vec<LockedExecution>;
 pub type AppendBatchResponse = Version;
 
@@ -597,9 +593,10 @@ pub enum ExpiredTimer {
     Lock {
         execution_id: ExecutionId,
         version: Version,
-        already_tried_count: u32,
+        intermittent_event_count: u32,
         max_retries: u32,
         retry_exp_backoff: Duration,
+        parent: Option<(ExecutionId, JoinSetId)>,
     },
     AsyncDelay {
         execution_id: ExecutionId,

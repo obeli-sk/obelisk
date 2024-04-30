@@ -1,5 +1,6 @@
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
+use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{CreateRequest, ExecutionEvent, ExecutionEventInner, HistoryEvent};
 use concepts::storage::{ExecutionLog, PendingState, SpecificError, Version};
 use concepts::ExecutionId;
@@ -215,7 +216,7 @@ impl ExecutionJournal {
     }
 
     #[must_use]
-    pub fn already_retried_count(&self) -> u32 {
+    pub fn intermittent_event_count(&self) -> u32 {
         u32::try_from(
             self.execution_events
                 .iter()
@@ -231,6 +232,14 @@ impl ExecutionJournal {
                 event: ExecutionEventInner::Created { params, .. },
                 ..
             }) => params.clone())
+    }
+
+    #[must_use]
+    pub fn parent(&self) -> Option<(ExecutionId, JoinSetId)> {
+        assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
+                event: ExecutionEventInner::Created { parent, .. },
+                ..
+            }) => *parent)
     }
 
     #[must_use]
