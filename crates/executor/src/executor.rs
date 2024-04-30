@@ -1,9 +1,9 @@
 use crate::worker::{FatalError, Worker, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::JoinSetId;
-use concepts::storage::{DbPool, ExecutionLog};
+use concepts::storage::{DbPool, ExecutionLog, LockedExecution};
 use concepts::FinishedExecutionResult;
-use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, Params, StrVariant};
+use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, StrVariant};
 use concepts::{
     storage::{
         AppendRequest, DbConnection, DbError, ExecutionEventInner, HistoryEvent, JoinSetResponse,
@@ -209,16 +209,9 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                             worker,
                             db_pool,
                             execution_id,
-                            locked_execution.version,
-                            locked_execution.ffqn,
-                            locked_execution.params,
-                            locked_execution.event_history,
                             execution_deadline,
                             clock_fn,
-                            locked_execution.retry_exp_backoff,
-                            locked_execution.parent,
-                            locked_execution.max_retries,
-                            locked_execution.intermittent_event_count,
+                            locked_execution,
                         )
                         .await;
                         if let Err(err) = res {
@@ -234,31 +227,28 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         Ok(ExecutionProgress { executions })
     }
 
-    #[instrument(skip_all, fields(%execution_id, %ffqn))]
-    #[allow(clippy::too_many_arguments)] // FIXME: Pass LockedExecution
+    #[instrument(skip_all, fields(%execution_id, ffqn = %locked_execution.ffqn))]
     async fn run_worker(
         worker: Arc<W>,
         db_pool: P,
         execution_id: ExecutionId,
-        version: Version,
-        ffqn: FunctionFqn,
-        params: Params,
-        event_history: Vec<HistoryEvent>,
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
-        retry_exp_backoff: Duration,
-        parent: Option<(ExecutionId, JoinSetId)>,
-        max_retries: u32,
-        intermittent_event_count: u32,
+        locked_execution: LockedExecution,
     ) -> Result<(), DbError> {
-        trace!(%version, ?params, ?event_history, "Worker::run starting");
+        trace!(
+            version = %locked_execution.version,
+            params = ?locked_execution.params,
+            event_history = ?locked_execution.event_history,
+            "Worker::run starting"
+        );
         let worker_result = worker
             .run(
                 execution_id,
-                ffqn,
-                params,
-                event_history,
-                version,
+                locked_execution.ffqn,
+                locked_execution.params,
+                locked_execution.event_history,
+                locked_execution.version,
                 execution_deadline,
             )
             .await;
@@ -267,10 +257,10 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             execution_id,
             worker_result,
             clock_fn(),
-            retry_exp_backoff,
-            parent,
-            max_retries,
-            intermittent_event_count,
+            locked_execution.retry_exp_backoff,
+            locked_execution.parent,
+            locked_execution.max_retries,
+            locked_execution.intermittent_event_count,
         ) {
             Ok(Some(append)) => {
                 trace!("Appending {append:?}");
@@ -464,12 +454,16 @@ impl Append {
 
 #[cfg(any(test, feature = "test"))]
 pub mod simple_worker {
-    use super::{
-        trace, Arc, DateTime, ExecutionId, FunctionFqn, HistoryEvent, Params, Utc, Version, Worker,
-        WorkerResult,
-    };
+    use crate::worker::{Worker, WorkerResult};
     use async_trait::async_trait;
+    use chrono::{DateTime, Utc};
+    use concepts::{
+        storage::{HistoryEvent, Version},
+        ExecutionId, FunctionFqn, Params,
+    };
     use indexmap::IndexMap;
+    use std::sync::Arc;
+    use tracing::trace;
 
     pub(crate) const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
     pub(crate) const SOME_FFQN_PTR: &FunctionFqn = &SOME_FFQN;
