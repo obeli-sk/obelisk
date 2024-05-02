@@ -35,9 +35,9 @@ impl ExecutionLog {
         max_retries: u32,
         retry_exp_backoff: Duration,
     ) -> Option<Duration> {
-        if intermittent_event_count < max_retries + 1 {
+        if intermittent_event_count <= max_retries {
             // TODO: Add test for number of retries
-            let duration = retry_exp_backoff * 2_u32.saturating_pow(intermittent_event_count);
+            let duration = retry_exp_backoff * 2_u32.saturating_pow(intermittent_event_count - 1);
             Some(duration)
         } else {
             None
