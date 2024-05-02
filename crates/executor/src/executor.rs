@@ -483,6 +483,17 @@ pub mod simple_worker {
         pub worker_results_rev: SimpleWorkerResultMap,
     }
 
+    impl SimpleWorker {
+        pub fn with_single_result(res: WorkerResult) -> Self {
+            Self {
+                worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
+                    Version::new(2),
+                    (vec![], res),
+                )]))),
+            }
+        }
+    }
+
     impl valuable::Valuable for SimpleWorker {
         fn as_value(&self) -> valuable::Value<'_> {
             "SimpleWorker".as_value()
@@ -605,19 +616,15 @@ mod tests {
             tick_sleep: Duration::from_millis(100),
             clock_fn,
         };
-        let worker_results_rev = {
-            let finished_result: WorkerResult =
-                Ok((SupportedFunctionResult::None, Version::new(2)));
-            let mut worker_results_rev =
-                IndexMap::from([(Version::new(2), (vec![], finished_result))]);
-            worker_results_rev.reverse();
-            Arc::new(std::sync::Mutex::new(worker_results_rev))
-        };
+
         let execution_log = create_and_tick(
             created_at,
             pool,
             exec_config,
-            Arc::new(SimpleWorker { worker_results_rev }),
+            Arc::new(SimpleWorker::with_single_result(Ok((
+                SupportedFunctionResult::None,
+                Version::new(2),
+            )))),
             0,
             created_at,
             Duration::ZERO,
@@ -650,17 +657,10 @@ mod tests {
             clock_fn,
         };
 
-        let worker_results_rev = {
-            let finished_result: WorkerResult =
-                Ok((SupportedFunctionResult::None, Version::new(2)));
-            let mut worker_results_rev =
-                IndexMap::from([(Version::new(2), (vec![], finished_result))]);
-            worker_results_rev.reverse();
-            Arc::new(std::sync::Mutex::new(worker_results_rev))
-        };
-        let worker = Arc::new(SimpleWorker {
-            worker_results_rev: worker_results_rev.clone(),
-        });
+        let worker = Arc::new(SimpleWorker::with_single_result(Ok((
+            SupportedFunctionResult::None,
+            Version::new(2),
+        ))));
         let exec_task =
             ExecTask::spawn_new(worker.clone(), exec_config.clone(), db_pool.clone(), None);
 
@@ -766,19 +766,13 @@ mod tests {
             tick_sleep: Duration::ZERO,
             clock_fn: sim_clock.clock_fn(),
         };
-        let worker = Arc::new(SimpleWorker {
-            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
-                Version::new(2),
-                (
-                    vec![],
-                    Err(WorkerError::IntermittentError {
-                        reason: StrVariant::Static("fail"),
-                        err: anyhow!("").into(),
-                        version: Version::new(2),
-                    }),
-                ),
-            )]))),
-        });
+        let worker = Arc::new(SimpleWorker::with_single_result(Err(
+            WorkerError::IntermittentError {
+                reason: StrVariant::Static("fail"),
+                err: anyhow!("").into(),
+                version: Version::new(2),
+            },
+        )));
         let retry_exp_backoff = Duration::from_millis(100);
         debug!(now = %sim_clock.now(), "Creating an execution that should fail");
         let execution_log = create_and_tick(
@@ -793,16 +787,22 @@ mod tests {
         )
         .await;
         assert_eq!(3, execution_log.events.len());
-        assert_matches!(
-            &execution_log.events.get(2).unwrap(),
-            ExecutionEvent {
-                event: ExecutionEventInner::IntermittentFailure {
-                    reason,
-                    expires_at,
-                },
-                created_at: at,
-            } if reason.deref() == "fail" && *at == sim_clock.now() && *expires_at == sim_clock.now() + retry_exp_backoff
-        );
+        {
+            let (reason, at, expires_at) = assert_matches!(
+                &execution_log.events.get(2).unwrap(),
+                ExecutionEvent {
+                    event: ExecutionEventInner::IntermittentFailure {
+                        reason,
+                        expires_at,
+                    },
+                    created_at: at,
+                }
+                => (reason, *at, *expires_at)
+            );
+            assert_eq!("fail", reason.deref());
+            assert_eq!(at, sim_clock.now());
+            assert_eq!(sim_clock.now() + retry_exp_backoff, expires_at);
+        }
         let worker = Arc::new(SimpleWorker {
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(4),
@@ -863,24 +863,16 @@ mod tests {
             clock_fn,
         };
 
-        let worker = Arc::new(SimpleWorker {
-            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
-                Version::new(2),
-                (
-                    vec![],
-                    Ok((
-                        SupportedFunctionResult::Fallible(WastValWithType {
-                            r#type: TypeWrapper::Result {
-                                ok: None,
-                                err: None,
-                            },
-                            value: WastVal::Result(Err(None)),
-                        }),
-                        Version::new(2),
-                    )),
-                ),
-            )]))),
-        });
+        let worker = Arc::new(SimpleWorker::with_single_result(Ok((
+            SupportedFunctionResult::Fallible(WastValWithType {
+                r#type: TypeWrapper::Result {
+                    ok: None,
+                    err: None,
+                },
+                value: WastVal::Result(Err(None)),
+            }),
+            Version::new(2),
+        ))));
         let execution_log = create_and_tick(
             created_at,
             db_pool.clone(),
@@ -977,26 +969,16 @@ mod tests {
             tick_sleep: Duration::ZERO,
             clock_fn,
         };
-        let worker = Arc::new(SimpleWorker {
-            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
-                Version::new(2),
-                (
-                    vec![],
-                    Ok((
-                        SupportedFunctionResult::Fallible(WastValWithType {
-                            r#type: TypeWrapper::Result {
-                                ok: None,
-                                err: None,
-                            },
-                            value: WastVal::Result(Err(Some(
-                                WastVal::String("myerror".to_string()).into(),
-                            ))),
-                        }),
-                        Version::new(2),
-                    )),
-                ),
-            )]))),
-        });
+        let worker = Arc::new(SimpleWorker::with_single_result(Ok((
+            SupportedFunctionResult::Fallible(WastValWithType {
+                r#type: TypeWrapper::Result {
+                    ok: None,
+                    err: None,
+                },
+                value: WastVal::Result(Err(Some(WastVal::String("myerror".to_string()).into()))),
+            }),
+            Version::new(2),
+        ))));
         let execution_log = create_and_tick(
             created_at,
             db_pool.clone(),
@@ -1041,19 +1023,13 @@ mod tests {
             tick_sleep: Duration::ZERO,
             clock_fn,
         };
-        let worker = Arc::new(SimpleWorker {
-            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
-                Version::new(2),
-                (
-                    vec![],
-                    WorkerResult::Err(WorkerError::IntermittentError {
-                        reason: StrVariant::Static("error reason"),
-                        err: anyhow!("myerror").into(),
-                        version: Version::new(2),
-                    }),
-                ),
-            )]))),
-        });
+        let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
+            WorkerError::IntermittentError {
+                reason: StrVariant::Static("error reason"),
+                err: anyhow!("myerror").into(),
+                version: Version::new(2),
+            },
+        )));
         let execution_log = create_and_tick(
             created_at,
             db_pool.clone(),
