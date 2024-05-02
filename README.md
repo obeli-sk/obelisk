@@ -24,7 +24,7 @@ This is a pre-release.
     * Cleaning up old hanging executions with expired locks. Executions that have the budget will be retried.
 
 # Planned features
-* Configurable `Error` retries, disabled for workflows
+* ErrId, error detail
 * Allow starting multiple child executions in parallel
 * TUI
 * Structured concurrency patterns (join, race)

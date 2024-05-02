@@ -206,7 +206,8 @@ pub enum ExecutionEventInner {
     },
     /// Returns execution to [`PendingState::PendingNow`] state
     /// without timing out. This can happen when the executor is running
-    /// out of resources and needs to get rid of the lock.
+    /// out of resources and needs to get rid of the lock, or when a hot execution
+    /// has run out of time waiting for an [`JoinSetResponse`]
     Unlocked,
     // Created by the executor holding last lock.
     // Processed by a scheduler.

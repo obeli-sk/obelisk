@@ -281,13 +281,18 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         retry_exp_backoff: Duration,
         parent: Option<(ExecutionId, JoinSetId)>,
         max_retries: u32,
-        intermittent_event_count: u32,
+        mut intermittent_event_count: u32,
     ) -> Result<Option<Append>, DbError> {
         Ok(match worker_result {
             Ok((result, new_version)) => {
                 let finished_res;
+                // FIXME: interpret fallible result only in activity worker
                 let primary_event = if let Some(exec_err) = result.fallible_err() {
-                    info!("Execution finished with an error result");
+                    intermittent_event_count += 1;
+                    info!(
+                        intermittent_event_count,
+                        "Execution finished with an error result"
+                    );
                     let reason = StrVariant::Arc(Arc::from(format!(
                         "Execution returned error result: `{exec_err:?}`"
                     )));
@@ -343,6 +348,8 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         err: _,
                         version,
                     } => {
+                        intermittent_event_count += 1;
+                        info!(intermittent_event_count, "Execution finished with an error");
                         if let Some(duration) = ExecutionLog::can_be_retried_after(
                             intermittent_event_count,
                             max_retries,
@@ -530,7 +537,7 @@ mod tests {
     use test_utils::sim_clock::SimClock;
     use utils::time::now;
     use val_json::type_wrapper::TypeWrapper;
-    use val_json::wast_val::WastValWithType;
+    use val_json::wast_val::{WastVal, WastValWithType};
 
     async fn tick_fn<
         W: Worker + Debug,
@@ -844,10 +851,10 @@ mod tests {
     #[tokio::test]
     async fn execution_returning_err_should_be_retried() {
         set_up();
-        let created_at = now();
-        let clock_fn = move || created_at;
         let mut db_task = DbTask::spawn_new(1);
         let db_pool = db_task.pool().unwrap();
+        let created_at = now();
+        let clock_fn = move || created_at;
         let exec_config = ExecConfig {
             ffqns: vec![SOME_FFQN],
             batch_size: 1,
@@ -867,7 +874,7 @@ mod tests {
                                 ok: None,
                                 err: None,
                             },
-                            value: val_json::wast_val::WastVal::Result(Err(None)),
+                            value: WastVal::Result(Err(None)),
                         }),
                         Version::new(2),
                     )),
@@ -910,7 +917,7 @@ mod tests {
                                 ok: None,
                                 err: None,
                             },
-                            value: val_json::wast_val::WastVal::Result(Ok(None)),
+                            value: WastVal::Result(Ok(None)),
                         }),
                         Version::new(4),
                     )),
@@ -942,7 +949,7 @@ mod tests {
                                 ok,
                                 err,
                             },
-                            value:val_json::wast_val::WastVal::Result(Ok(None)),
+                            value:WastVal::Result(Ok(None)),
                         }
                     )),
                 },
@@ -956,15 +963,126 @@ mod tests {
         db_task.close().await;
     }
 
-    // #[tokio::test]
-    // async fn child_execution_permanently_failed_should_notify_parent() {
-    //     panic!()
-    // }
+    #[tokio::test]
+    async fn err_activity_should_not_be_retried_if_no_retries_are_set() {
+        set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_pool = db_task.pool().unwrap();
+        let created_at = now();
+        let clock_fn = move || created_at;
+        let exec_config = ExecConfig {
+            ffqns: vec![SOME_FFQN],
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            tick_sleep: Duration::ZERO,
+            clock_fn,
+        };
+        let worker = Arc::new(SimpleWorker {
+            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
+                Version::new(2),
+                (
+                    vec![],
+                    Ok((
+                        SupportedFunctionResult::Fallible(WastValWithType {
+                            r#type: TypeWrapper::Result {
+                                ok: None,
+                                err: None,
+                            },
+                            value: WastVal::Result(Err(Some(
+                                WastVal::String("myerror".to_string()).into(),
+                            ))),
+                        }),
+                        Version::new(2),
+                    )),
+                ),
+            )]))),
+        });
+        let execution_log = create_and_tick(
+            created_at,
+            db_pool.clone(),
+            exec_config.clone(),
+            worker,
+            0,
+            created_at,
+            Duration::ZERO,
+            tick_fn,
+        )
+        .await;
+        assert_eq!(3, execution_log.events.len());
+        let reason = assert_matches!(
+            &execution_log.events.get(2).unwrap(),
+            ExecutionEvent {
+                event: ExecutionEventInner::Finished{
+                    result: Err(FinishedExecutionError::PermanentFailure(reason))
+                },
+                created_at: at,
+            } if *at == created_at
+            => reason.to_string()
+        );
+        assert_eq!(
+            "Execution returned error result: `Some(String(\"myerror\"))`",
+            reason
+        );
+        drop(db_pool);
+        db_task.close().await;
+    }
 
-    // #[tokio::test]
-    // async fn child_execution_permanently_timed_out_should_notify_parent() {
-    //     panic!()
-    // }
+    #[tokio::test]
+    async fn worker_error_should_not_be_retried_if_no_retries_are_set() {
+        set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_pool = db_task.pool().unwrap();
+        let created_at = now();
+        let clock_fn = move || created_at;
+        let exec_config = ExecConfig {
+            ffqns: vec![SOME_FFQN],
+            batch_size: 1,
+            lock_expiry: Duration::from_secs(1),
+            tick_sleep: Duration::ZERO,
+            clock_fn,
+        };
+        let worker = Arc::new(SimpleWorker {
+            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
+                Version::new(2),
+                (
+                    vec![],
+                    WorkerResult::Err(WorkerError::IntermittentError {
+                        reason: StrVariant::Static("error reason"),
+                        err: anyhow!("myerror").into(),
+                        version: Version::new(2),
+                    }),
+                ),
+            )]))),
+        });
+        let execution_log = create_and_tick(
+            created_at,
+            db_pool.clone(),
+            exec_config.clone(),
+            worker,
+            0,
+            created_at,
+            Duration::ZERO,
+            tick_fn,
+        )
+        .await;
+        assert_eq!(3, execution_log.events.len());
+        let reason = assert_matches!(
+            &execution_log.events.get(2).unwrap(),
+            ExecutionEvent {
+                event: ExecutionEventInner::Finished{
+                    result: Err(FinishedExecutionError::PermanentFailure(reason))
+                },
+                created_at: at,
+            } if *at == created_at
+            => reason.to_string()
+        );
+        assert_eq!("error reason", reason);
+        drop(db_pool);
+        db_task.close().await;
+    }
+
+    // TODO child_execution_permanently_failed_should_notify_parent
+    // TODO child_execution_permanently_timed_out_should_notify_parent
 
     // TODO: Fatal errors should be propagated to the topmost parent
 
