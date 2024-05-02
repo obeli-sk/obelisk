@@ -32,9 +32,9 @@ pub mod worker {
         #[error("fatal error: {0}")]
         FatalError(FatalError, Version),
         #[error("child execution request")]
-        ChildExecutionRequest,
+        ChildExecutionRequest, // TODO: Move to OK part of `WorkerResult`
         #[error("sleep request")]
-        DelayRequest,
+        DelayRequest, // TODO: Move to OK part of `WorkerResult`
         #[error(transparent)]
         DbError(DbError),
     }

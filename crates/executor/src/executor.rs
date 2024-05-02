@@ -472,8 +472,10 @@ pub mod simple_worker {
     use std::sync::Arc;
     use tracing::trace;
 
-    pub(crate) const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
-    pub(crate) const SOME_FFQN_PTR: &FunctionFqn = &SOME_FFQN;
+    pub(crate) const FFQN_SOME: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+    pub(crate) const FFQN_SOME_PTR: &FunctionFqn = &FFQN_SOME;
+    pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
+    pub(crate) const FFQN_CHILD_PTR: &FunctionFqn = &FFQN_CHILD;
 
     pub type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent>, WorkerResult)>>>;
@@ -523,30 +525,31 @@ pub mod simple_worker {
         }
 
         fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
-            Some(SOME_FFQN_PTR).into_iter()
+            vec![FFQN_SOME_PTR, FFQN_CHILD_PTR].into_iter()
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use self::simple_worker::{SimpleWorker, SOME_FFQN_PTR};
+    use self::simple_worker::{SimpleWorker, FFQN_SOME_PTR};
     use super::*;
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use anyhow::anyhow;
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::storage::CreateRequest;
+    use concepts::storage::{CreateRequest, JoinSetRequest};
     use concepts::storage::{
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
     use concepts::{Params, SupportedFunctionResult};
     use db_mem::inmemory_dao::DbTask;
     use indexmap::IndexMap;
-    use simple_worker::SOME_FFQN;
+    use simple_worker::FFQN_SOME;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::set_up;
     use test_utils::sim_clock::SimClock;
+    use tests::simple_worker::FFQN_CHILD;
     use utils::time::now;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::{WastVal, WastValWithType};
@@ -611,7 +614,7 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN],
+            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
@@ -620,6 +623,7 @@ mod tests {
 
         let execution_log = create_and_tick(
             CreateAndTickConfig {
+                execution_id: ExecutionId::generate(),
                 created_at,
                 max_retries: 0,
                 executed_at: created_at,
@@ -653,7 +657,7 @@ mod tests {
         let mut db_task = DbTask::spawn_new(1);
         let db_pool = db_task.pool().unwrap();
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN],
+            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -669,6 +673,7 @@ mod tests {
 
         let execution_log = create_and_tick(
             CreateAndTickConfig {
+                execution_id: ExecutionId::generate(),
                 created_at,
                 max_retries: 0,
                 executed_at: created_at,
@@ -697,6 +702,7 @@ mod tests {
     }
 
     struct CreateAndTickConfig {
+        execution_id: ExecutionId,
         created_at: DateTime<Utc>,
         max_retries: u32,
         executed_at: DateTime<Utc>,
@@ -718,13 +724,12 @@ mod tests {
         mut tick: T,
     ) -> ExecutionLog {
         // Create an execution
-        let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
                 created_at: config.created_at,
-                execution_id,
-                ffqn: SOME_FFQN,
+                execution_id: config.execution_id,
+                ffqn: FFQN_SOME,
                 params: Params::default(),
                 parent: None,
                 scheduled_at: None,
@@ -735,7 +740,7 @@ mod tests {
             .unwrap();
         // execute!
         tick(exec_config, db_pool.clone(), worker, config.executed_at).await;
-        let execution_log = db_connection.get(execution_id).await.unwrap();
+        let execution_log = db_connection.get(config.execution_id).await.unwrap();
         debug!("Execution history after tick: {execution_log:?}");
         // check that DB contains Created and Locked events.
         assert_matches!(
@@ -768,7 +773,7 @@ mod tests {
         let mut db_task = DbTask::spawn_new(1);
         let db_pool = db_task.pool().unwrap();
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN],
+            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -785,6 +790,7 @@ mod tests {
         debug!(now = %sim_clock.now(), "Creating an execution that should fail");
         let execution_log = create_and_tick(
             CreateAndTickConfig {
+                execution_id: ExecutionId::generate(),
                 created_at: sim_clock.now(),
                 max_retries: 1,
                 executed_at: sim_clock.now(),
@@ -866,7 +872,7 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN],
+            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -885,6 +891,7 @@ mod tests {
         ))));
         let execution_log = create_and_tick(
             CreateAndTickConfig {
+                execution_id: ExecutionId::generate(),
                 created_at,
                 max_retries: 1,
                 executed_at: created_at,
@@ -975,7 +982,7 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN],
+            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -993,6 +1000,7 @@ mod tests {
         ))));
         let execution_log = create_and_tick(
             CreateAndTickConfig {
+                execution_id: ExecutionId::generate(),
                 created_at,
                 max_retries: 0,
                 executed_at: created_at,
@@ -1031,7 +1039,7 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN],
+            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -1046,6 +1054,7 @@ mod tests {
         )));
         let execution_log = create_and_tick(
             CreateAndTickConfig {
+                execution_id: ExecutionId::generate(),
                 created_at,
                 max_retries: 0,
                 executed_at: created_at,
@@ -1073,10 +1082,161 @@ mod tests {
         db_task.close().await;
     }
 
-    // TODO child_execution_permanently_failed_should_notify_parent
-    // TODO child_execution_permanently_timed_out_should_notify_parent
+    #[allow(clippy::too_many_lines)]
+    #[tokio::test]
+    async fn child_execution_permanently_failed_should_notify_parent() {
+        set_up();
+        let mut db_task = DbTask::spawn_new(1);
+        let db_pool = db_task.pool().unwrap();
+        let created_at = now();
+        let clock_fn = move || created_at;
 
-    // TODO: Fatal errors should be propagated to the topmost parent
+        let parent_worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
+            WorkerError::ChildExecutionRequest,
+        )));
+        let parent_execution_id = ExecutionId::generate();
+        db_pool
+            .connection()
+            .create(CreateRequest {
+                created_at,
+                execution_id: parent_execution_id,
+                ffqn: FFQN_SOME,
+                params: Params::default(),
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
+            .await
+            .unwrap();
+        tick_fn(
+            ExecConfig {
+                ffqns: vec![FFQN_SOME],
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: Duration::ZERO,
+                clock_fn,
+            },
+            db_pool.clone(),
+            parent_worker,
+            created_at,
+        )
+        .await;
+
+        let join_set_id = JoinSetId::generate();
+        let child_execution_id = ExecutionId::generate();
+        // executor does not append anything, this should have been written by the worker:
+        {
+            let child = CreateRequest {
+                created_at,
+                execution_id: child_execution_id,
+                ffqn: FFQN_CHILD,
+                params: Params::default(),
+                parent: Some((parent_execution_id, join_set_id)),
+                scheduled_at: None,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            };
+            let join_set = AppendRequest {
+                created_at,
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSet { join_set_id },
+                },
+            };
+            let child_exec_req = AppendRequest {
+                created_at,
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id,
+                        request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                    },
+                },
+            };
+            let join_next = AppendRequest {
+                created_at,
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinNext {
+                        join_set_id,
+                        lock_expires_at: created_at,
+                    },
+                },
+            };
+            db_pool
+                .connection()
+                .append_batch_create_child(
+                    vec![join_set, child_exec_req, join_next],
+                    parent_execution_id,
+                    Version::new(2),
+                    child,
+                )
+                .await
+                .unwrap();
+        }
+        let child_worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
+            WorkerError::IntermittentError {
+                reason: StrVariant::Static("error reason"),
+                err: anyhow!("myerror").into(),
+                version: Version::new(2),
+            },
+        )));
+
+        // execute the child
+        tick_fn(
+            ExecConfig {
+                ffqns: vec![FFQN_CHILD],
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: Duration::ZERO,
+                clock_fn,
+            },
+            db_pool.clone(),
+            child_worker,
+            created_at,
+        )
+        .await;
+        let child_log = db_pool.connection().get(child_execution_id).await.unwrap();
+        assert_eq!(PendingState::Finished, child_log.pending_state);
+        assert_matches!(
+            child_log.last_event(),
+            ExecutionEvent {
+                event: ExecutionEventInner::Finished{
+                    result: Err(FinishedExecutionError::PermanentFailure(_))
+                },
+                created_at: at,
+            } if *at == created_at
+        );
+        let parent_log = db_pool.connection().get(parent_execution_id).await.unwrap();
+        assert_eq!(
+            PendingState::PendingAt {
+                scheduled_at: created_at
+            },
+            parent_log.pending_state
+        );
+        let (found_join_set_id, found_child_execution_id, found_result) = assert_matches!(
+            parent_log.last_event(),
+            ExecutionEvent {
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetResponse {
+                        join_set_id: found_join_set_id,
+                        response: JoinSetResponse::ChildExecutionFinished {
+                            child_execution_id: found_child_execution_id,
+                            result: found_result,
+                        },
+                    },
+                },
+                created_at: at,
+            } if *at == created_at
+            => (*found_join_set_id, *found_child_execution_id, found_result)
+        );
+        assert_eq!(join_set_id, found_join_set_id);
+        assert_eq!(child_execution_id, found_child_execution_id);
+        assert!(found_result.is_err());
+
+        drop(db_pool);
+        db_task.close().await;
+    }
+
+    // TODO child_execution_permanently_timed_out_should_notify_parent
 
     #[derive(Clone, Debug)]
     struct SleepyWorker {
@@ -1108,7 +1268,7 @@ mod tests {
         }
 
         fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
-            Some(SOME_FFQN_PTR).into_iter()
+            Some(FFQN_SOME_PTR).into_iter()
         }
     }
 
@@ -1121,7 +1281,7 @@ mod tests {
         let db_pool = db_task.pool().unwrap();
         let lock_expiry = Duration::from_millis(100);
         let exec_config = ExecConfig {
-            ffqns: vec![SOME_FFQN],
+            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry,
             tick_sleep: Duration::ZERO,
@@ -1144,7 +1304,7 @@ mod tests {
             .create(CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id,
-                ffqn: SOME_FFQN,
+                ffqn: FFQN_SOME,
                 params: Params::default(),
                 parent: None,
                 scheduled_at: None,
