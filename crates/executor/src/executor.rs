@@ -484,6 +484,7 @@ pub mod simple_worker {
     }
 
     impl SimpleWorker {
+        #[must_use]
         pub fn with_single_result(res: WorkerResult) -> Self {
             Self {
                 worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
@@ -618,16 +619,18 @@ mod tests {
         };
 
         let execution_log = create_and_tick(
-            created_at,
+            CreateAndTickConfig {
+                created_at,
+                max_retries: 0,
+                executed_at: created_at,
+                retry_exp_backoff: Duration::ZERO,
+            },
             pool,
             exec_config,
             Arc::new(SimpleWorker::with_single_result(Ok((
                 SupportedFunctionResult::None,
                 Version::new(2),
             )))),
-            0,
-            created_at,
-            Duration::ZERO,
             tick_fn,
         )
         .await;
@@ -665,13 +668,15 @@ mod tests {
             ExecTask::spawn_new(worker.clone(), exec_config.clone(), db_pool.clone(), None);
 
         let execution_log = create_and_tick(
-            created_at,
+            CreateAndTickConfig {
+                created_at,
+                max_retries: 0,
+                executed_at: created_at,
+                retry_exp_backoff: Duration::ZERO,
+            },
             db_pool,
             exec_config,
             worker,
-            0,
-            created_at,
-            Duration::ZERO,
             |_, _, _, _| async {
                 tokio::time::sleep(Duration::from_secs(1)).await; // non deterministic if not run in madsim
                 ExecutionProgress::default()
@@ -691,7 +696,13 @@ mod tests {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
+    struct CreateAndTickConfig {
+        created_at: DateTime<Utc>,
+        max_retries: u32,
+        executed_at: DateTime<Utc>,
+        retry_exp_backoff: Duration,
+    }
+
     async fn create_and_tick<
         W: Worker,
         C: ClockFn,
@@ -700,13 +711,10 @@ mod tests {
         T: FnMut(ExecConfig<C>, P, Arc<W>, DateTime<Utc>) -> F,
         F: Future<Output = ExecutionProgress>,
     >(
-        created_at: DateTime<Utc>,
+        config: CreateAndTickConfig,
         db_pool: P,
         exec_config: ExecConfig<C>,
         worker: Arc<W>,
-        max_retries: u32,
-        executed_at: DateTime<Utc>,
-        retry_exp_backoff: Duration,
         mut tick: T,
     ) -> ExecutionLog {
         // Create an execution
@@ -714,19 +722,19 @@ mod tests {
         let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
-                created_at,
+                created_at: config.created_at,
                 execution_id,
                 ffqn: SOME_FFQN,
                 params: Params::default(),
                 parent: None,
                 scheduled_at: None,
-                retry_exp_backoff,
-                max_retries,
+                retry_exp_backoff: config.retry_exp_backoff,
+                max_retries: config.max_retries,
             })
             .await
             .unwrap();
         // execute!
-        tick(exec_config, db_pool.clone(), worker, executed_at).await;
+        tick(exec_config, db_pool.clone(), worker, config.executed_at).await;
         let execution_log = db_connection.get(execution_id).await.unwrap();
         debug!("Execution history after tick: {execution_log:?}");
         // check that DB contains Created and Locked events.
@@ -736,14 +744,14 @@ mod tests {
                 event: ExecutionEventInner::Created { .. },
                 created_at: actually_created_at,
             }
-            if created_at == *actually_created_at
+            if config.created_at == *actually_created_at
         );
         let locked_at = assert_matches!(
             execution_log.events.get(1).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Locked { .. },
                 created_at: locked_at
-            } if created_at <= *locked_at
+            } if config.created_at <= *locked_at
             => *locked_at
         );
         assert_matches!(execution_log.events.get(2).unwrap(), ExecutionEvent {
@@ -776,13 +784,15 @@ mod tests {
         let retry_exp_backoff = Duration::from_millis(100);
         debug!(now = %sim_clock.now(), "Creating an execution that should fail");
         let execution_log = create_and_tick(
-            sim_clock.now(),
+            CreateAndTickConfig {
+                created_at: sim_clock.now(),
+                max_retries: 1,
+                executed_at: sim_clock.now(),
+                retry_exp_backoff,
+            },
             db_pool.clone(),
             exec_config.clone(),
             worker,
-            1,
-            sim_clock.now(),
-            retry_exp_backoff,
             tick_fn,
         )
         .await;
@@ -874,13 +884,15 @@ mod tests {
             Version::new(2),
         ))));
         let execution_log = create_and_tick(
-            created_at,
+            CreateAndTickConfig {
+                created_at,
+                max_retries: 1,
+                executed_at: created_at,
+                retry_exp_backoff: Duration::ZERO,
+            },
             db_pool.clone(),
             exec_config.clone(),
             worker,
-            1,
-            created_at,
-            Duration::ZERO,
             tick_fn,
         )
         .await;
@@ -980,13 +992,15 @@ mod tests {
             Version::new(2),
         ))));
         let execution_log = create_and_tick(
-            created_at,
+            CreateAndTickConfig {
+                created_at,
+                max_retries: 0,
+                executed_at: created_at,
+                retry_exp_backoff: Duration::ZERO,
+            },
             db_pool.clone(),
             exec_config.clone(),
             worker,
-            0,
-            created_at,
-            Duration::ZERO,
             tick_fn,
         )
         .await;
@@ -1031,13 +1045,15 @@ mod tests {
             },
         )));
         let execution_log = create_and_tick(
-            created_at,
+            CreateAndTickConfig {
+                created_at,
+                max_retries: 0,
+                executed_at: created_at,
+                retry_exp_backoff: Duration::ZERO,
+            },
             db_pool.clone(),
             exec_config.clone(),
             worker,
-            0,
-            created_at,
-            Duration::ZERO,
             tick_fn,
         )
         .await;
