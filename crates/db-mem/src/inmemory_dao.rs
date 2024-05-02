@@ -1023,14 +1023,8 @@ impl DbTask {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use concepts::Params;
-    use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
     use db_tests_common::db_test_stubs;
-    use db_tests_common::db_test_stubs::SOME_FFQN;
-    use std::time::{Duration, Instant};
-    use test_utils::env_or_default;
     use test_utils::set_up;
-    use utils::time::now;
 
     #[tokio::test]
     async fn lifecycle() {
@@ -1099,77 +1093,6 @@ pub mod tests {
         let db_connection = db_task.pool().unwrap().connection();
         db_test_stubs::get_expired_delay(&db_connection).await;
         drop(db_connection);
-        db_task.close().await;
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
-    async fn perf_lock_pending_parallel() {
-        const EXECUTIONS: usize = 100_000;
-        const BATCH_SIZE: usize = 100_000;
-        const TASKS: usize = 1;
-
-        test_utils::set_up();
-        let executions = env_or_default("EXECUTIONS", EXECUTIONS);
-        let batch_size = env_or_default("BATCH_SIZE", BATCH_SIZE);
-        let tasks = env_or_default("TASKS", TASKS);
-
-        let mut db_task = DbTask::spawn_new(1);
-        let db_pool = db_task.pool().unwrap();
-
-        let created_at = now();
-        let ffqn = SOME_FFQN;
-        let stopwatch = Instant::now();
-        let db_connection = db_pool.connection();
-        for _ in 0..executions {
-            let req = CreateRequest {
-                created_at,
-                execution_id: ExecutionId::generate(),
-                ffqn: ffqn.clone(),
-                params: Params::default(),
-                parent: None,
-                scheduled_at: None,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-            };
-            db_connection.create(req).await.unwrap();
-        }
-        info!(
-            "Created {executions} executions in {:?}",
-            stopwatch.elapsed()
-        );
-        // spawn executors
-        let exec_id = ExecutorId::generate();
-        let mut exec_tasks = Vec::with_capacity(tasks);
-        for _ in 0..tasks {
-            let db_connection = db_pool.connection();
-            let task = tokio::spawn(async move {
-                let target = executions / tasks;
-                let mut locked = Vec::with_capacity(target);
-                while locked.len() < target {
-                    let now = now();
-                    let locked_now = db_connection
-                        .lock_pending(
-                            batch_size,
-                            now,
-                            vec![SOME_FFQN],
-                            now,
-                            exec_id,
-                            now + Duration::from_secs(1),
-                        )
-                        .await
-                        .unwrap();
-                    locked.extend(locked_now.into_iter());
-                }
-                locked
-            });
-            exec_tasks.push(task);
-        }
-        for task_handle in exec_tasks {
-            let _locked_vec = task_handle.await.unwrap();
-        }
-        info!("Finished in {} ms", stopwatch.elapsed().as_millis());
-        drop(db_connection);
-        drop(db_pool);
         db_task.close().await;
     }
 }

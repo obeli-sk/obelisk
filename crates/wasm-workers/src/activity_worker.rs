@@ -276,16 +276,14 @@ pub(crate) mod tests {
     use db_mem::inmemory_dao::DbTask;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use serde_json::json;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use test_utils::env_or_default;
-    use tracing::info;
     use utils::time::now;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
     };
 
-    pub const EPOCH_MILLIS: u64 = 10;
     pub const FIBO_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
         test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO,
     ); // func(n: u8) -> u64;
@@ -363,254 +361,6 @@ pub(crate) mod tests {
         db_task.close().await;
     }
 
-    #[cfg(test)]
-    #[allow(clippy::too_many_lines)]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
-    async fn perf_fibo_parallel() {
-        use std::sync::Arc;
-
-        use tracing::info;
-
-        const EXECUTIONS: usize = 20_000; // release: 70_000
-        const RECYCLE: bool = true;
-        const PERMITS: usize = 1_000_000;
-        const BATCH_SIZE: u32 = 10_000;
-        const LOCK_EXPIRY_MILLIS: u64 = 1100;
-        const TICK_SLEEP_MILLIS: u64 = 0;
-
-        const TASKS: u32 = 1; // release: 6
-        const MAX_INSTANCES: u32 = 10_000;
-        const DB_RPC_CAPACITY: usize = 1;
-
-        test_utils::set_up();
-        let fibo_input = env_or_default("FIBO_INPUT", FIBO_10_INPUT);
-        let executions = env_or_default("EXECUTIONS", EXECUTIONS);
-        let recycled_instances = env_or_default("RECYCLE", RECYCLE).into();
-        let permits = env_or_default("PERMITS", PERMITS);
-        let batch_size = env_or_default("BATCH_SIZE", BATCH_SIZE);
-        let lock_expiry =
-            Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
-        let tick_sleep =
-            Duration::from_millis(env_or_default("TICK_SLEEP_MILLIS", TICK_SLEEP_MILLIS));
-        let tasks = env_or_default("TASKS", TASKS);
-        let max_instances = env_or_default("MAX_INSTANCES", MAX_INSTANCES);
-        let db_rpc_capacity = env_or_default("DB_RPC_CAPACITY", DB_RPC_CAPACITY);
-
-        let mut pool = wasmtime::PoolingAllocationConfig::default();
-        pool.total_component_instances(max_instances);
-        pool.total_stacks(max_instances);
-        pool.total_core_instances(max_instances);
-        pool.total_memories(max_instances);
-        pool.total_tables(max_instances);
-
-        let engine = activity_engine(EngineConfig {
-            allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
-        });
-        // Start epoch ticking
-        let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
-            vec![engine.weak()],
-            Duration::from_millis(EPOCH_MILLIS),
-        );
-
-        // Spawn db
-        let mut db_task = DbTask::spawn_new(db_rpc_capacity);
-        let db_pool = db_task.pool().unwrap();
-
-        let fibo_worker = Arc::new(
-            ActivityWorker::new_with_config(
-                WasmComponent::new(
-                    StrVariant::Static(
-                        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                    ),
-                    &engine,
-                )
-                .unwrap(),
-                ActivityConfig {
-                    config_id: ConfigId::generate(),
-                    recycled_instances,
-                    clock_fn: now,
-                },
-                engine,
-            )
-            .unwrap(),
-        );
-
-        // create executions
-        let stopwatch = Instant::now();
-        let fibo_ffqn = FIBO_ACTIVITY_FFQN;
-        let params = Params::from_wasmtime(Arc::from([Val::U8(fibo_input)]));
-        let created_at = now();
-        let mut execution_ids = Vec::with_capacity(executions);
-        let db_connection = db_pool.connection();
-        for _ in 0..executions {
-            let execution_id = ExecutionId::generate();
-            db_connection
-                .create(CreateRequest {
-                    created_at,
-                    execution_id,
-                    ffqn: fibo_ffqn.clone(),
-                    params: params.clone(),
-                    parent: None,
-                    scheduled_at: None,
-                    retry_exp_backoff: Duration::ZERO,
-                    max_retries: 0,
-                })
-                .await
-                .unwrap();
-            execution_ids.push(execution_id);
-        }
-
-        info!(
-            "Created {executions} executions in {:?}",
-            stopwatch.elapsed()
-        );
-
-        // spawn executors
-        let stopwatch = Instant::now();
-        let task_limiter = if permits == 0 {
-            None
-        } else {
-            Some(Arc::new(tokio::sync::Semaphore::new(permits)))
-        };
-        let exec_tasks = (0..tasks)
-            .map(|_| {
-                let exec_config = ExecConfig {
-                    ffqns: vec![fibo_ffqn.clone()],
-                    batch_size,
-                    lock_expiry,
-                    tick_sleep,
-                    clock_fn: now,
-                };
-                ExecTask::spawn_new(
-                    fibo_worker.clone(),
-                    exec_config.clone(),
-                    db_pool.clone(),
-                    task_limiter.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        let mut counter = 0;
-        for execution_id in execution_ids {
-            // Check that the computation succeded.
-            assert_matches!(
-                db_connection
-                    .wait_for_finished_result(execution_id, Some(Duration::from_secs(2)))
-                    .await
-                    .unwrap(),
-                Ok(SupportedFunctionResult::Infallible(WastValWithType {
-                    value: WastVal::U64(_),
-                    r#type: TypeWrapper::U64
-                }))
-            );
-            counter += 1;
-        }
-        info!(
-            "Finished {counter} in {} ms",
-            stopwatch.elapsed().as_millis()
-        );
-        drop(db_connection);
-        drop(db_pool);
-        for exec_task in exec_tasks {
-            exec_task.close().await;
-        }
-        db_task.close().await;
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 20)]
-    async fn perf_fibo_direct() {
-        const FIBO_INPUT: u8 = 10;
-        const EXECUTIONS: u32 = 400_000; // release: 800_000
-        const RECYCLE: bool = true;
-        const LOCK_EXPIRY_MILLIS: u64 = 1100;
-        const TASKS: u32 = 10_000;
-        const MAX_INSTANCES: u32 = 10_000;
-        test_utils::set_up();
-        let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
-        let executions = env_or_default("EXECUTIONS", EXECUTIONS);
-        let recycled_instances = env_or_default("RECYCLE", RECYCLE).into();
-        let lock_expiry =
-            Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
-        let tasks = env_or_default("TASKS", TASKS);
-        let max_instances = env_or_default("MAX_INSTANCES", MAX_INSTANCES);
-
-        let mut pool = wasmtime::PoolingAllocationConfig::default();
-        pool.total_component_instances(max_instances);
-        pool.total_stacks(max_instances);
-        pool.total_core_instances(max_instances);
-        pool.total_memories(max_instances);
-        pool.total_tables(max_instances);
-
-        let engine = activity_engine(EngineConfig {
-            allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
-        });
-        let fibo_worker = ActivityWorker::new_with_config(
-            WasmComponent::new(
-                StrVariant::Static(
-                    test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                ),
-                &engine,
-            )
-            .unwrap(),
-            ActivityConfig {
-                config_id: ConfigId::generate(),
-                recycled_instances,
-                clock_fn: now,
-            },
-            engine,
-        )
-        .unwrap();
-
-        let stopwatch = Instant::now();
-        let execution_deadline = now() + lock_expiry;
-        // create executions
-        let join_handles = (0..tasks)
-            .map(|_| {
-                let fibo_worker = fibo_worker.clone();
-                tokio::spawn(async move {
-                    let mut vec = Vec::with_capacity(usize::try_from(executions / tasks).unwrap());
-                    for _ in 0..executions / tasks {
-                        vec.push(
-                            fibo_worker
-                                .run(
-                                    ExecutionId::generate(),
-                                    FIBO_ACTIVITY_FFQN,
-                                    Params::from_json_array(json!([fibo_input])).unwrap(),
-                                    Vec::new(),
-                                    Version::new(0),
-                                    execution_deadline,
-                                )
-                                .await,
-                        );
-                    }
-                    vec
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let mut counter = 0;
-        for jh in join_handles {
-            for res in jh.await.unwrap() {
-                counter += 1;
-                // Check that the computation succeded.
-                assert_matches!(
-                    res,
-                    Ok((
-                        SupportedFunctionResult::Infallible(WastValWithType {
-                            value: WastVal::U64(_),
-                            r#type: TypeWrapper::U64
-                        }),
-                        _
-                    ))
-                );
-            }
-        }
-        info!(
-            "Finished {counter} in {} ms",
-            stopwatch.elapsed().as_millis()
-        );
-    }
-
     #[tokio::test]
     async fn limit_reached() {
         const FIBO_INPUT: u8 = 10;
@@ -686,6 +436,8 @@ pub(crate) mod tests {
         use super::*;
         use tracing::info;
 
+        const EPOCH_MILLIS: u64 = 10;
+
         pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_sleep_activity_builder::exports::testing::sleep::sleep::SLEEP_LOOP,
         ); // sleep-loop: func(millis: u64, iterations: u32);
@@ -756,7 +508,7 @@ pub(crate) mod tests {
             let exec_task = ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None);
 
             // Create an execution.
-            let stopwatch = Instant::now();
+            let stopwatch = std::time::Instant::now();
             let execution_id = ExecutionId::generate();
             info!("Testing {execution_id}");
             let created_at = now();
