@@ -24,4 +24,24 @@ impl crate::bindings::exports::testing::http::http_get::Guest for Component {
         .map(|resp| String::from_utf8_lossy(&resp.body).to_string())
         .map_err(|err| format!("{err:?}"))
     }
+
+    fn get_successful(authority: String, path_with_query: String) -> Result<String, String> {
+        match crate::http::request(
+            Method::Get,
+            Scheme::Http,
+            &authority,
+            &path_with_query,
+            None,
+            None,
+        ) {
+            Ok(resp) => {
+                if resp.status >= 200 && resp.status <= 299 {
+                    Ok(String::from_utf8_lossy(&resp.body).to_string())
+                } else {
+                    Err(format!("wrong status code: {}", resp.status))
+                }
+            }
+            Err(err) => Err(format!("{err:?}")),
+        }
+    }
 }

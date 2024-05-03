@@ -20,7 +20,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::task::AbortHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::ClockFn;
 
@@ -44,10 +44,21 @@ pub struct ExecTask<W: Worker, C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 
 #[derive(Derivative, Default)]
 #[derivative(Debug)]
-struct ExecutionProgress {
+pub struct ExecutionProgress {
     #[derivative(Debug = "ignore")]
     #[allow(dead_code)] // allowed for testing
-    executions: Vec<(ExecutionId, AbortHandle)>,
+    executions: Vec<(ExecutionId, JoinHandle<()>)>,
+}
+
+impl ExecutionProgress {
+    #[cfg(feature = "test")]
+    pub async fn wait_for_tasks(self) -> Result<usize, tokio::task::JoinError> {
+        let execs = self.executions.len();
+        for (_, handle) in self.executions {
+            handle.await?;
+        }
+        Ok(execs)
+    }
 }
 
 pub struct ExecutorTaskHandle {
@@ -82,6 +93,23 @@ impl Drop for ExecutorTaskHandle {
 impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     ExecTask<W, C, DB, P>
 {
+    #[cfg(feature = "test")]
+    pub fn new(
+        worker: Arc<W>,
+        config: ExecConfig<C>,
+        db_pool: P,
+        task_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    ) -> Self {
+        Self {
+            worker,
+            config,
+            task_limiter,
+            executor_id: ExecutorId::generate(),
+            db_pool,
+            phantom_data: PhantomData,
+        }
+    }
+
     pub fn spawn_new(
         worker: Arc<W>,
         config: ExecConfig<C>,
@@ -164,6 +192,11 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         }
     }
 
+    #[cfg(feature = "test")]
+    pub async fn tick2(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, DbError> {
+        self.tick(executed_at).await
+    }
+
     #[instrument(skip_all)]
     async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, DbError> {
         let locked_executions = {
@@ -222,7 +255,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     .instrument(span),
                 )
             };
-            executions.push((execution_id, join_handle.abort_handle()));
+            executions.push((execution_id, join_handle));
         }
         Ok(ExecutionProgress { executions })
     }
@@ -242,6 +275,11 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             event_history = ?locked_execution.event_history,
             "Worker::run starting"
         );
+        let can_be_retried = ExecutionLog::can_be_retried_after(
+            locked_execution.intermittent_event_count + 1,
+            locked_execution.max_retries,
+            locked_execution.retry_exp_backoff,
+        );
         let worker_result = worker
             .run(
                 execution_id,
@@ -250,6 +288,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                 locked_execution.event_history,
                 locked_execution.version,
                 execution_deadline,
+                can_be_retried.is_some(),
             )
             .await;
         trace!(?worker_result, "Worker::run finished");
@@ -257,10 +296,8 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             execution_id,
             worker_result,
             clock_fn(),
-            locked_execution.retry_exp_backoff,
             locked_execution.parent,
-            locked_execution.max_retries,
-            locked_execution.intermittent_event_count,
+            can_be_retried,
         ) {
             Ok(Some(append)) => {
                 trace!("Appending {append:?}");
@@ -278,48 +315,14 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         execution_id: ExecutionId,
         worker_result: WorkerResult,
         result_obtained_at: DateTime<Utc>,
-        retry_exp_backoff: Duration,
         parent: Option<(ExecutionId, JoinSetId)>,
-        max_retries: u32,
-        mut intermittent_event_count: u32,
+        can_be_retried: Option<Duration>,
     ) -> Result<Option<Append>, DbError> {
         Ok(match worker_result {
             WorkerResult::Ok(result, new_version) => {
-                let finished_res;
-                // FIXME: interpret fallible result only in activity worker
-                let primary_event = if let Some(exec_err) = result.fallible_err() {
-                    intermittent_event_count += 1;
-                    info!(
-                        intermittent_event_count,
-                        "Execution finished with an error result"
-                    );
-                    let reason = StrVariant::Arc(Arc::from(format!(
-                        "Execution returned error result: `{exec_err:?}`"
-                    )));
-                    if let Some(duration) = ExecutionLog::can_be_retried_after(
-                        intermittent_event_count,
-                        max_retries,
-                        retry_exp_backoff,
-                    ) {
-                        let expires_at = result_obtained_at + duration;
-                        debug!("Retrying failed execution after {duration:?} at {expires_at}");
-                        finished_res = None;
-                        ExecutionEventInner::IntermittentFailure { expires_at, reason }
-                    } else {
-                        info!("Permanently failed");
-                        finished_res = Some(Err(FinishedExecutionError::PermanentFailure(
-                            reason.clone(),
-                        )));
-                        ExecutionEventInner::Finished {
-                            result: Err(FinishedExecutionError::PermanentFailure(reason)),
-                        }
-                    }
-                } else {
-                    info!("Execution finished successfully");
-                    finished_res = Some(Ok(result.clone()));
-                    ExecutionEventInner::Finished { result: Ok(result) }
-                };
-                let parent = parent.and_then(|(p, j)| finished_res.map(|r| (p, j, r)));
+                info!("Execution finished successfully");
+                let parent = parent.map(|(p, j)| (p, j, Ok(result.clone())));
+                let primary_event = ExecutionEventInner::Finished { result: Ok(result) };
                 Some(Append {
                     created_at: result_obtained_at,
                     primary_event,
@@ -346,13 +349,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         err: _,
                         version,
                     } => {
-                        intermittent_event_count += 1;
-                        info!(intermittent_event_count, "Execution finished with an error");
-                        if let Some(duration) = ExecutionLog::can_be_retried_after(
-                            intermittent_event_count,
-                            max_retries,
-                            retry_exp_backoff,
-                        ) {
+                        if let Some(duration) = can_be_retried {
                             let expires_at = result_obtained_at + duration;
                             debug!("Retrying failed execution after {duration:?} at {expires_at}");
                             (
@@ -513,6 +510,7 @@ pub mod simple_worker {
             eh: Vec<HistoryEvent>,
             version: Version,
             _execution_deadline: DateTime<Utc>,
+            _can_be_retried: bool,
         ) -> WorkerResult {
             let (expected_version, (expected_eh, worker_result)) =
                 self.worker_results_rev.lock().unwrap().pop().unwrap();
@@ -533,7 +531,6 @@ mod tests {
     use self::simple_worker::{SimpleWorker, FFQN_SOME_PTR};
     use super::*;
     use crate::{expired_timers_watcher, worker::WorkerResult};
-    use anyhow::anyhow;
     use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::storage::{CreateRequest, JoinSetRequest};
@@ -549,8 +546,6 @@ mod tests {
     use test_utils::sim_clock::SimClock;
     use tests::simple_worker::FFQN_CHILD;
     use utils::time::now;
-    use val_json::type_wrapper::TypeWrapper;
-    use val_json::wast_val::{WastVal, WastValWithType};
 
     async fn tick_fn<
         W: Worker + Debug,
@@ -775,12 +770,12 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            clock_fn: sim_clock.clock_fn(),
+            clock_fn: sim_clock.get_clock_fn(),
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
                 reason: StrVariant::Static("fail"),
-                err: anyhow!("").into(),
+                err: None,
                 version: Version::new(2),
             },
         )));
@@ -864,174 +859,6 @@ mod tests {
         db_task.close().await;
     }
 
-    #[allow(clippy::too_many_lines)]
-    #[tokio::test]
-    async fn execution_returning_err_should_be_retried() {
-        set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_pool = db_task.pool().unwrap();
-        let created_at = now();
-        let clock_fn = move || created_at;
-        let exec_config = ExecConfig {
-            ffqns: vec![FFQN_SOME],
-            batch_size: 1,
-            lock_expiry: Duration::from_secs(1),
-            tick_sleep: Duration::ZERO,
-            clock_fn,
-        };
-
-        let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-            SupportedFunctionResult::Fallible(WastValWithType {
-                r#type: TypeWrapper::Result {
-                    ok: None,
-                    err: None,
-                },
-                value: WastVal::Result(Err(None)),
-            }),
-            Version::new(2),
-        )));
-        let execution_log = create_and_tick(
-            CreateAndTickConfig {
-                execution_id: ExecutionId::generate(),
-                created_at,
-                max_retries: 1,
-                executed_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-            },
-            db_pool.clone(),
-            exec_config.clone(),
-            worker,
-            tick_fn,
-        )
-        .await;
-        assert_eq!(3, execution_log.events.len());
-        let reason = assert_matches!(
-            &execution_log.events.get(2).unwrap(),
-            ExecutionEvent {
-                event: ExecutionEventInner::IntermittentFailure {
-                    reason,
-                    expires_at: _
-                },
-                created_at: at,
-            } if *at == created_at
-            => reason.to_string()
-        );
-        assert_eq!("Execution returned error result: `None`", reason);
-        // tick again to finish the execution
-        let worker = Arc::new(SimpleWorker {
-            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
-                Version::new(4),
-                (
-                    vec![],
-                    WorkerResult::Ok(
-                        SupportedFunctionResult::Fallible(WastValWithType {
-                            r#type: TypeWrapper::Result {
-                                ok: None,
-                                err: None,
-                            },
-                            value: WastVal::Result(Ok(None)),
-                        }),
-                        Version::new(4),
-                    ),
-                ),
-            )]))),
-        });
-        tick_fn(exec_config, db_pool.clone(), worker, created_at).await;
-        let execution_log = {
-            let db_connection = db_pool.connection();
-            db_connection.get(execution_log.execution_id).await.unwrap()
-        };
-        debug!("Execution history after second tick: {execution_log:?}");
-
-        assert_eq!(5, execution_log.events.len());
-        assert_matches!(
-            execution_log.events.get(3).unwrap(),
-            ExecutionEvent {
-                event: ExecutionEventInner::Locked { .. },
-                created_at: locked_at
-            }  if *locked_at == created_at
-        );
-        let (ok, err) = assert_matches!(
-            execution_log.events.get(4).unwrap(),
-            ExecutionEvent {
-                event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionResult::Fallible(
-                        WastValWithType {
-                            r#type: TypeWrapper::Result {
-                                ok,
-                                err,
-                            },
-                            value:WastVal::Result(Ok(None)),
-                        }
-                    )),
-                },
-                created_at: finished_at,
-            } if *finished_at == created_at
-            => (ok, err)
-        );
-        assert_eq!(None, *ok);
-        assert_eq!(None, *err);
-        drop(db_pool);
-        db_task.close().await;
-    }
-
-    #[tokio::test]
-    async fn err_activity_should_not_be_retried_if_no_retries_are_set() {
-        set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_pool = db_task.pool().unwrap();
-        let created_at = now();
-        let clock_fn = move || created_at;
-        let exec_config = ExecConfig {
-            ffqns: vec![FFQN_SOME],
-            batch_size: 1,
-            lock_expiry: Duration::from_secs(1),
-            tick_sleep: Duration::ZERO,
-            clock_fn,
-        };
-        let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-            SupportedFunctionResult::Fallible(WastValWithType {
-                r#type: TypeWrapper::Result {
-                    ok: None,
-                    err: None,
-                },
-                value: WastVal::Result(Err(Some(WastVal::String("myerror".to_string()).into()))),
-            }),
-            Version::new(2),
-        )));
-        let execution_log = create_and_tick(
-            CreateAndTickConfig {
-                execution_id: ExecutionId::generate(),
-                created_at,
-                max_retries: 0,
-                executed_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-            },
-            db_pool.clone(),
-            exec_config.clone(),
-            worker,
-            tick_fn,
-        )
-        .await;
-        assert_eq!(3, execution_log.events.len());
-        let reason = assert_matches!(
-            &execution_log.events.get(2).unwrap(),
-            ExecutionEvent {
-                event: ExecutionEventInner::Finished{
-                    result: Err(FinishedExecutionError::PermanentFailure(reason))
-                },
-                created_at: at,
-            } if *at == created_at
-            => reason.to_string()
-        );
-        assert_eq!(
-            "Execution returned error result: `Some(String(\"myerror\"))`",
-            reason
-        );
-        drop(db_pool);
-        db_task.close().await;
-    }
-
     #[tokio::test]
     async fn worker_error_should_not_be_retried_if_no_retries_are_set() {
         set_up();
@@ -1049,7 +876,7 @@ mod tests {
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
                 reason: StrVariant::Static("error reason"),
-                err: anyhow!("myerror").into(),
+                err: None,
                 version: Version::new(2),
             },
         )));
@@ -1176,7 +1003,7 @@ mod tests {
         let child_worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
                 reason: StrVariant::Static("error reason"),
-                err: anyhow!("myerror").into(),
+                err: None,
                 version: Version::new(2),
             },
         )));
@@ -1263,6 +1090,7 @@ mod tests {
             _events: Vec<HistoryEvent>,
             version: Version,
             _execution_deadline: DateTime<Utc>,
+            _can_be_retired: bool,
         ) -> WorkerResult {
             tokio::time::sleep(self.duration).await;
             WorkerResult::Ok(self.result.clone(), version)
@@ -1286,7 +1114,7 @@ mod tests {
             batch_size: 1,
             lock_expiry,
             tick_sleep: Duration::ZERO,
-            clock_fn: sim_clock.clock_fn(),
+            clock_fn: sim_clock.get_clock_fn(),
         };
 
         let timers_watcher = expired_timers_watcher::TimersWatcherTask {

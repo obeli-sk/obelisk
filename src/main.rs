@@ -10,6 +10,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::{marker::PhantomData, time::Duration};
 use utils::time::now;
+use wasm_workers::activity_worker::TIMEOUT_SLEEP_UNIT;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::{
     activity_worker::{activity_engine, RecycleInstancesSetting},
@@ -113,6 +114,7 @@ fn exec<DB: DbConnection + 'static>(
         workflow_db_pool: db_pool.clone(),
         workflow_child_retry_exp_backoff: Duration::from_millis(10),
         workflow_child_max_retries: 5,
+        timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
         phantom_data: PhantomData,
     };
     let worker =

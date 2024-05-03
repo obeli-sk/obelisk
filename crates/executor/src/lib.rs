@@ -19,10 +19,10 @@ pub mod worker {
 
     #[derive(Debug, thiserror::Error)]
     pub enum WorkerError {
-        #[error("intermittent error: {reason} - `{err}`")]
+        #[error("intermittent error: {reason}")]
         IntermittentError {
             reason: StrVariant,
-            err: Box<dyn Error + Send + Sync>,
+            err: Option<Box<dyn Error + Send + Sync>>,
             version: Version,
         },
         #[error("Limit reached: {0}")]
@@ -57,6 +57,7 @@ pub mod worker {
     #[async_trait]
     pub trait Worker: valuable::Valuable + Send + Sync + 'static {
         async fn run(
+            // TODO: extract params to a struct
             &self,
             execution_id: ExecutionId,
             ffqn: FunctionFqn,
@@ -64,6 +65,7 @@ pub mod worker {
             event_history: Vec<HistoryEvent>,
             version: Version,
             execution_deadline: DateTime<Utc>,
+            can_be_retried: bool,
         ) -> WorkerResult;
 
         fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn>; // FIXME: Rename to `exported_functions`

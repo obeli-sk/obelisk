@@ -34,6 +34,7 @@ pub struct AutoConfig<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     pub workflow_db_pool: P,
     pub workflow_child_retry_exp_backoff: Duration,
     pub workflow_child_max_retries: u32,
+    pub timeout_sleep_unit: Duration,
     #[derivative(Debug = "ignore")]
     pub phantom_data: PhantomData<DB>,
 }
@@ -63,6 +64,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> AutoWorker<C, DB, P> {
                 config_id: config.config_id,
                 recycled_instances: config.activity_recycled_instances,
                 clock_fn: config.clock_fn,
+                timeout_sleep_unit: config.timeout_sleep_unit,
             };
             ActivityWorker::new_with_config(wasm_component, config, activity_engine)
                 .map(Self::ActivityWorker)
@@ -107,6 +109,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         event_history: Vec<concepts::storage::HistoryEvent>,
         version: concepts::storage::Version,
         execution_deadline: chrono::prelude::DateTime<chrono::prelude::Utc>,
+        can_be_retired: bool,
     ) -> executor::worker::WorkerResult {
         match self {
             AutoWorker::WorkflowWorker(w) => {
@@ -117,6 +120,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     event_history,
                     version,
                     execution_deadline,
+                    can_be_retired,
                 )
                 .await
             }
@@ -128,6 +132,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     event_history,
                     version,
                     execution_deadline,
+                    can_be_retired,
                 )
                 .await
             }
@@ -177,7 +182,7 @@ mod tests {
 
     use super::{AutoConfig, AutoWorker};
     use crate::{
-        activity_worker::{activity_engine, RecycleInstancesSetting},
+        activity_worker::{activity_engine, RecycleInstancesSetting, TIMEOUT_SLEEP_UNIT},
         auto_worker::Kind,
         workflow_worker::{workflow_engine, JoinNextBlockingStrategy},
         EngineConfig,
@@ -209,6 +214,7 @@ mod tests {
             workflow_db_pool: db_task.pool().unwrap(),
             workflow_child_retry_exp_backoff: Duration::ZERO,
             workflow_child_max_retries: 0,
+            timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
             phantom_data: PhantomData,
         };
         let worker = AutoWorker::new_with_config(

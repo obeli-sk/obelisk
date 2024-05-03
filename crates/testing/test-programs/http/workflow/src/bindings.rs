@@ -65,6 +65,59 @@ pub mod testing {
                     }
                 }
             }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn get_successful(authority: &str, path: &str) -> Result<_rt::String, _rt::String> {
+                unsafe {
+                    #[repr(align(4))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 12]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 12]);
+                    let vec0 = authority;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    let vec1 = path;
+                    let ptr1 = vec1.as_ptr().cast::<u8>();
+                    let len1 = vec1.len();
+                    let ptr2 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "testing:http/http-get")]
+                    extern "C" {
+                        #[link_name = "get-successful"]
+                        fn wit_import(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8);
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0.cast_mut(), len0, ptr1.cast_mut(), len1, ptr2);
+                    let l3 = i32::from(*ptr2.add(0).cast::<u8>());
+                    match l3 {
+                        0 => {
+                            let e = {
+                                let l4 = *ptr2.add(4).cast::<*mut u8>();
+                                let l5 = *ptr2.add(8).cast::<usize>();
+                                let len6 = l5;
+                                let bytes6 = _rt::Vec::from_raw_parts(l4.cast(), len6, len6);
+
+                                _rt::string_lift(bytes6)
+                            };
+                            Ok(e)
+                        }
+                        1 => {
+                            let e = {
+                                let l7 = *ptr2.add(4).cast::<*mut u8>();
+                                let l8 = *ptr2.add(8).cast::<usize>();
+                                let len9 = l8;
+                                let bytes9 = _rt::Vec::from_raw_parts(l7.cast(), len9, len9);
+
+                                _rt::string_lift(bytes9)
+                            };
+                            Err(e)
+                        }
+                        _ => _rt::invalid_enum_discriminant(),
+                    }
+                }
+            }
         }
     }
 }
@@ -262,14 +315,15 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.24.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 320] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc6\x01\x01A\x02\x01\
-A\x04\x01B\x03\x01j\x01s\x01s\x01@\x02\x09authoritys\x04paths\0\0\x04\0\x03get\x01\
-\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x05\x01@\x01\x04port{\0s\x04\0\x07\
-execute\x01\0\x01j\x01s\x01s\x01@\x02\x09authoritys\x04paths\0\x01\x04\0\x03get\x01\
-\x02\x04\x01\x1etesting:http-workflow/workflow\x05\x01\x04\x01\x19testing:http-w\
-orkflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-\
-by\x02\x0dwit-component\x070.202.0\x10wit-bindgen-rust\x060.24.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 339] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd9\x01\x01A\x02\x01\
+A\x04\x01B\x04\x01j\x01s\x01s\x01@\x02\x09authoritys\x04paths\0\0\x04\0\x03get\x01\
+\x01\x04\0\x0eget-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\
+\x05\x01@\x01\x04port{\0s\x04\0\x07execute\x01\0\x01j\x01s\x01s\x01@\x02\x09auth\
+oritys\x04paths\0\x01\x04\0\x03get\x01\x02\x04\x01\x1etesting:http-workflow/work\
+flow\x05\x01\x04\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\
+\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.202.0\x10wit-\
+bindgen-rust\x060.24.0";
 
 #[inline(never)]
 #[doc(hidden)]

@@ -32,7 +32,7 @@ impl SimClock {
         info!("Set clock from `{old}` to `{new}`");
     }
 
-    pub fn clock_fn(&self) -> impl Fn() -> DateTime<Utc> + Clone {
+    pub fn get_clock_fn(&self) -> impl Fn() -> DateTime<Utc> + Clone {
         let current_time = self.current_time.clone();
         move || *current_time.lock().unwrap()
     }

@@ -34,6 +34,7 @@ pub enum FinishedExecutionError {
 #[derive(Clone, Eq, derive_more::Display)]
 pub enum StrVariant {
     Static(&'static str),
+    // TODO String(String)
     Arc(Arc<str>),
 }
 

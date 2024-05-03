@@ -7,6 +7,7 @@ use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use concepts::{Params, SupportedFunctionResult};
 use executor::worker::{FatalError, WorkerResult};
 use executor::worker::{Worker, WorkerError};
+use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
@@ -59,7 +60,10 @@ pub struct ActivityConfig<C: ClockFn> {
     pub config_id: ConfigId,
     pub recycled_instances: RecycleInstancesSetting,
     pub clock_fn: C,
+    pub timeout_sleep_unit: Duration,
 }
+
+pub const TIMEOUT_SLEEP_UNIT: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
 pub struct ActivityWorker<C: ClockFn> {
@@ -128,6 +132,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         events: Vec<HistoryEvent>,
         version: Version,
         execution_deadline: DateTime<Utc>,
+        can_be_retried: bool,
     ) -> WorkerResult {
         trace!("Params: {params:?}");
         assert!(events.is_empty());
@@ -151,15 +156,15 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                         return WorkerResult::Err(WorkerError::LimitReached(reason, version));
                     }
                     return WorkerResult::Err(WorkerError::IntermittentError {
-                        reason: StrVariant::Static("cannot instantiate"),
-                        err: err.into(),
+                        reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
+                        err: Some(err.into()),
                         version,
                     });
                 }
             }
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
-        let call_function = async move {
+        let mut call_function = std::pin::pin!(async move {
             let func = {
                 let mut exports = instance.exports(&mut store);
                 let mut exports_instance = exports.root();
@@ -182,12 +187,9 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             let result_types = func.results(&mut store);
             let mut results = vec![Val::Bool(false); result_types.len()];
             if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
-                let err = err.into();
                 return WorkerResult::Err(WorkerError::IntermittentError {
-                    reason: StrVariant::Arc(Arc::from(format!(
-                        "wasm function call error: `{err}`"
-                    ))),
-                    err,
+                    reason: StrVariant::Arc(Arc::from(format!("wasm function call error - {err}"))),
+                    err: Some(err.into()),
                     version,
                 });
             }; // guest panic exits here
@@ -204,8 +206,10 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             };
             if let Err(err) = func.post_return_async(&mut store).await {
                 return WorkerResult::Err(WorkerError::IntermittentError {
-                    reason: StrVariant::Static("wasm post function call error"),
-                    err: err.into(),
+                    reason: StrVariant::Arc(Arc::from(format!(
+                        "wasm post function call error - {err}"
+                    ))),
+                    err: Some(err.into()),
                     version,
                 });
             }
@@ -214,26 +218,44 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 recycled_instances.lock().unwrap().push((instance, store));
             }
 
-            WorkerResult::Ok(result, version)
-        };
-        let started_at = (self.config.clock_fn)();
-        let deadline_duration = (execution_deadline - started_at)
-            .to_std()
-            .unwrap_or_default();
-        let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
-        tokio::select! {
-            res = call_function =>{
-
-                if let WorkerResult::Err(err) = &res {
-                    info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an error");
+            // Interpret `SupportedFunctionResult::Fallible` Err variant as an retry request
+            if let Some(exec_err) = result.fallible_err() {
+                info!("Execution returned an error result");
+                let reason = StrVariant::Arc(Arc::from(format!(
+                    "Execution returned an error result: `{exec_err:?}`"
+                )));
+                if can_be_retried {
+                    return WorkerResult::Err(WorkerError::IntermittentError {
+                        reason,
+                        err: None,
+                        version,
+                    });
                 } else {
-                    debug!(duration = ?stopwatch.elapsed(), ?deadline_duration,  %execution_deadline, "Finished");
+                    info!("Not able to retry");
                 }
-                res
-            },
-            ()   = tokio::time::sleep(deadline_duration) => {
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
-                WorkerResult::Err(WorkerError::IntermittentTimeout)
+            }
+
+            WorkerResult::Ok(result, version)
+        });
+        let started_at = (self.config.clock_fn)();
+        let deadline_delta = execution_deadline - started_at;
+        let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
+        loop {
+            tokio::select! {
+                res = &mut call_function => {
+                    if let WorkerResult::Err(err) = &res {
+                        info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta, %execution_deadline, "Finished with an error");
+                    } else {
+                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta,  %execution_deadline, "Finished");
+                    }
+                    return res;
+                },
+                ()   = tokio::time::sleep(self.config.timeout_sleep_unit) => {
+                    if (self.config.clock_fn)() - started_at >= deadline_delta {
+                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta, %execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
+                        return WorkerResult::Err(WorkerError::IntermittentTimeout);
+                    }
+                }
             }
         }
     }
@@ -303,6 +325,7 @@ pub(crate) mod tests {
                     config_id: ConfigId::generate(),
                     recycled_instances: RecycleInstancesSetting::Disable,
                     clock_fn: now,
+                    timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
                 },
                 engine,
             )
@@ -399,6 +422,7 @@ pub(crate) mod tests {
                 config_id: ConfigId::generate(),
                 recycled_instances,
                 clock_fn: now,
+                timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
             },
             engine,
         )
@@ -417,6 +441,7 @@ pub(crate) mod tests {
                             Vec::new(),
                             Version::new(0),
                             execution_deadline,
+                            false,
                         )
                         .await
                 })
@@ -437,6 +462,8 @@ pub(crate) mod tests {
     #[cfg(not(madsim))] // Requires madsim support in wasmtime
     pub mod wasmtime_nosim {
         use super::*;
+        use concepts::storage::ExecutionEventInner;
+        use test_utils::sim_clock::SimClock;
         use tracing::info;
 
         const EPOCH_MILLIS: u64 = 10;
@@ -495,6 +522,7 @@ pub(crate) mod tests {
                         config_id: ConfigId::generate(),
                         recycled_instances,
                         clock_fn: now,
+                        timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
                     },
                     engine,
                 )
@@ -582,6 +610,7 @@ pub(crate) mod tests {
                         config_id: ConfigId::generate(),
                         recycled_instances: RecycleInstancesSetting::Disable,
                         clock_fn: now,
+                        timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
                     },
                     engine,
                 )
@@ -597,6 +626,7 @@ pub(crate) mod tests {
                     Vec::new(),
                     Version::new(0),
                     executed_at + TIMEOUT,
+                    false,
                 )
                 .await
             else {
@@ -605,65 +635,160 @@ pub(crate) mod tests {
             assert_matches!(err, WorkerError::IntermittentTimeout);
         }
 
+        #[rstest::rstest(
+            succeed_eventually => [false, true]
+        )]
         #[tokio::test]
-        async fn http_get() {
+        async fn http_get_retry_on_fallible_err(succeed_eventually: bool) {
             use std::ops::Deref;
             use wiremock::{
                 matchers::{method, path},
                 Mock, MockServer, ResponseTemplate,
             };
             const BODY: &str = "ok";
+            const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
+            const HTTP_GET_SUCCESSFUL :FunctionFqn = FunctionFqn::new_static_tuple(
+                test_programs_http_get_activity_builder::exports::testing::http::http_get::GET_SUCCESSFUL,
+            );
             test_utils::set_up();
+            let sim_clock = SimClock::new(now());
             let mut db_task = DbTask::spawn_new(1);
             let db_pool = db_task.pool().unwrap();
-
-            let exec_task = spawn_activity(
-                db_pool.clone(),
-                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                HTTP_GET_ACTIVITY_FFQN,
+            let engine = activity_engine(EngineConfig::default());
+            let worker = Arc::new(
+                ActivityWorker::new_with_config(
+                    WasmComponent::new(StrVariant::Static(test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY), &engine).unwrap(),
+                    ActivityConfig {
+                        config_id: ConfigId::generate(),
+                        recycled_instances: RecycleInstancesSetting::Disable,
+                        clock_fn: sim_clock.get_clock_fn(),
+                        timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
+                    },
+                    engine,
+                )
+                .unwrap(),
             );
-            let server = MockServer::start().await;
-            Mock::given(method("GET"))
-                .and(path("/"))
-                .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
-                .expect(1)
-                .mount(&server)
-                .await;
-            debug!("started mock server on {}", server.address());
+            let exec_config = ExecConfig {
+                ffqns: vec![HTTP_GET_SUCCESSFUL],
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: Duration::ZERO,
+                clock_fn: sim_clock.get_clock_fn(),
+            };
+            let exec_task = ExecTask::new(worker, exec_config, db_pool.clone(), None);
+
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let server_address = listener
+                .local_addr()
+                .expect("Failed to get server address.");
+
             let params = Params::from_json_array(json!([
-                format!("127.0.0.1:{port}", port = server.address().port()),
+                format!("127.0.0.1:{port}", port = server_address.port()),
                 "/"
             ]))
             .unwrap();
-
-            // Create an execution.
             let execution_id = ExecutionId::generate();
-            let created_at = now();
+            let created_at = sim_clock.now();
             let db_connection = db_pool.connection();
             db_connection
                 .create(CreateRequest {
                     created_at,
                     execution_id,
-                    ffqn: HTTP_GET_ACTIVITY_FFQN,
+                    ffqn: HTTP_GET_SUCCESSFUL,
                     params,
                     parent: None,
                     scheduled_at: None,
-                    retry_exp_backoff: Duration::from_millis(10),
-                    max_retries: 5, // retries enabled due to racy test
+                    retry_exp_backoff: RETRY_EXP_BACKOFF,
+                    max_retries: 1,
                 })
                 .await
                 .unwrap();
-            // Check the result.
-            let res = assert_matches!(
-                db_connection
-                    .wait_for_finished_result(execution_id, Some(Duration::from_secs(1)))
+
+            let server = MockServer::builder().listener(listener).start().await;
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(500).set_body_string(BODY))
+                .expect(1)
+                .mount(&server)
+                .await;
+            debug!("started mock server on {}", server.address());
+
+            {
+                // Expect error result to be interpreted as an intermittent failure
+                assert_eq!(
+                    1,
+                    exec_task
+                        .tick2(sim_clock.now())
+                        .await
+                        .unwrap()
+                        .wait_for_tasks()
+                        .await
+                        .unwrap()
+                );
+                let exec_log = db_connection.get(execution_id).await.unwrap();
+
+                let (reason, found_expires_at) = assert_matches!(
+                    &exec_log.last_event().event,
+                    ExecutionEventInner::IntermittentFailure {
+                        expires_at,
+                        reason,
+                    }
+                    => (reason, *expires_at)
+                );
+                assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
+                assert!(
+                    reason.contains("wrong status code: 500"),
+                    "Unexpected {reason}"
+                );
+                server.verify().await;
+            }
+            // Noop until the timeout expires
+            assert_eq!(
+                0,
+                exec_task
+                    .tick2(sim_clock.now())
                     .await
-                    .unwrap(),
-                Ok(res) => res
+                    .unwrap()
+                    .wait_for_tasks()
+                    .await
+                    .unwrap()
             );
-            let wast_val = assert_matches!(res.fallible_ok(), Some(Some(wast_val)) => wast_val);
-            let val = assert_matches!(wast_val, WastVal::String(val) => val);
-            assert_eq!(BODY, val.deref());
+            sim_clock.move_time_forward(RETRY_EXP_BACKOFF);
+            server.reset().await;
+            if succeed_eventually {
+                // Reconfigure the server
+                Mock::given(method("GET"))
+                    .and(path("/"))
+                    .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
+                    .expect(1)
+                    .mount(&server)
+                    .await;
+                debug!("Reconfigured the server");
+            } // otherwise return 404
+
+            assert_eq!(
+                1,
+                exec_task
+                    .tick2(sim_clock.now())
+                    .await
+                    .unwrap()
+                    .wait_for_tasks()
+                    .await
+                    .unwrap()
+            );
+            let exec_log = db_connection.get(execution_id).await.unwrap();
+            let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionEventInner::Finished { result } => result);
+            let res = res.unwrap();
+            if succeed_eventually {
+                let wast_val = assert_matches!(res.fallible_ok(), Some(Some(wast_val)) => wast_val);
+                let val = assert_matches!(wast_val, WastVal::String(val) => val);
+                assert_eq!(BODY, val.deref());
+            } else {
+                let wast_val =
+                    assert_matches!(res.fallible_err(), Some(Some(wast_val)) => wast_val);
+                let val = assert_matches!(wast_val, WastVal::String(val) => val);
+                assert_eq!("wrong status code: 404", val.deref());
+            }
             // check types
             let (ok, err) = assert_matches!(res, SupportedFunctionResult::Fallible(WastValWithType{value: _,
                 r#type: TypeWrapper::Result{ok, err}}) => (ok, err));
@@ -671,7 +796,7 @@ pub(crate) mod tests {
             assert_eq!(Some(Box::new(TypeWrapper::String)), err);
             drop(db_connection);
             drop(db_pool);
-            exec_task.close().await;
+            drop(exec_task);
             db_task.close().await;
         }
     }

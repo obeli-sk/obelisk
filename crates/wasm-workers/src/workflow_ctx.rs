@@ -497,6 +497,7 @@ mod tests {
             events: Vec<HistoryEvent>,
             version: Version,
             execution_deadline: DateTime<Utc>,
+            _can_be_retired: bool,
         ) -> WorkerResult {
             let seed = execution_id.random_part();
             let mut ctx = WorkflowCtx::new(
@@ -582,14 +583,14 @@ mod tests {
             db_pool.connection(),
             expired_timers_watcher::TimersWatcherConfig {
                 tick_sleep: TICK_SLEEP,
-                clock_fn: sim_clock.clock_fn(),
+                clock_fn: sim_clock.get_clock_fn(),
             },
         )
         .unwrap();
         let workflow_exec_task = {
             let worker = Arc::new(WorkflowWorkerMock {
                 steps,
-                clock_fn: sim_clock.clock_fn(),
+                clock_fn: sim_clock.get_clock_fn(),
                 db_pool: db_pool.clone(),
                 phantom_data: PhantomData,
             });
@@ -598,7 +599,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                clock_fn: sim_clock.clock_fn(),
+                clock_fn: sim_clock.get_clock_fn(),
             };
             ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None)
         };
@@ -661,7 +662,7 @@ mod tests {
                     let child_exec_task = {
                         let worker = Arc::new(WorkflowWorkerMock {
                             steps: vec![],
-                            clock_fn: sim_clock.clock_fn(),
+                            clock_fn: sim_clock.get_clock_fn(),
                             db_pool: db_pool.clone(),
                             phantom_data: PhantomData,
                         });
@@ -670,7 +671,7 @@ mod tests {
                             batch_size: 1,
                             lock_expiry: Duration::from_secs(1),
                             tick_sleep: TICK_SLEEP,
-                            clock_fn: sim_clock.clock_fn(),
+                            clock_fn: sim_clock.get_clock_fn(),
                         };
                         ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None)
                     };

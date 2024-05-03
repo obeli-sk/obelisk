@@ -167,6 +167,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         events: Vec<HistoryEvent>,
         version: Version,
         execution_deadline: DateTime<Utc>,
+        _can_be_retired: bool,
     ) -> WorkerResult {
         #[derive(Debug, thiserror::Error)]
         enum RunError {
@@ -204,8 +205,8 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         return WorkerResult::Err(WorkerError::LimitReached(reason, version));
                     }
                     return WorkerResult::Err(WorkerError::IntermittentError {
-                        reason: StrVariant::Static("cannot instantiate"),
-                        err: err.into(),
+                        reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
+                        err: Some(err.into()),
                         version,
                     });
                 }
@@ -254,8 +255,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             };
             if let Err(err) = func.post_return_async(&mut store).await {
                 return Err(RunError::WorkerError(WorkerError::IntermittentError {
-                    reason: StrVariant::Static("wasm post function call error"),
-                    err: err.into(),
+                    reason: StrVariant::Arc(Arc::from(format!(
+                        "wasm post function call error - {err}"
+                    ))),
+                    err: Some(err.into()),
                     version: store.into_data().version,
                 }));
             }
@@ -290,8 +293,8 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             worker_result
                         } else  {
                             let err = WorkerError::IntermittentError {
-                                err,
-                                reason: StrVariant::Static("uncategorized error"),
+                                reason: StrVariant::Arc(Arc::from(format!("uncategorized function call error - {err}"))),
+                                err: Some(err),
                                 version,
                             };
                             info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an error");
@@ -542,12 +545,12 @@ mod tests {
         let mut db_task = DbTask::spawn_new(10);
         let db_pool = db_task.pool().unwrap();
 
-        let workflow_exec_task = spawn_workflow_sleep(db_pool.clone(), sim_clock.clock_fn());
+        let workflow_exec_task = spawn_workflow_sleep(db_pool.clone(), sim_clock.get_clock_fn());
         let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
             db_pool.connection(),
             expired_timers_watcher::TimersWatcherConfig {
                 tick_sleep: TICK_SLEEP,
-                clock_fn: sim_clock.clock_fn(),
+                clock_fn: sim_clock.get_clock_fn(),
             },
         )
         .unwrap();
@@ -586,7 +589,7 @@ mod tests {
         workflow_exec_task.close().await;
         sim_clock.move_time_forward(Duration::from_millis(u64::from(SLEEP_MILLIS)));
         // Restart worker
-        let workflow_exec_task = spawn_workflow_sleep(db_pool, sim_clock.clock_fn());
+        let workflow_exec_task = spawn_workflow_sleep(db_pool, sim_clock.get_clock_fn());
         let res = db_connection
             .wait_for_finished_result(execution_id, None)
             .await
