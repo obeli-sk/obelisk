@@ -900,13 +900,23 @@ mod tests {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[rstest::rstest(
+        worker_error => [
+            WorkerError::IntermittentError {
+                reason: StrVariant::Static("error reason"),
+                err: None,
+                version: Version::new(2),
+            },
+            WorkerError::IntermittentTimeout,
+        ]
+    )]
     #[tokio::test]
-    async fn child_execution_permanently_failed_should_notify_parent() {
+    async fn child_execution_permanently_failed_should_notify_parent(worker_error: WorkerError) {
+        const LOCK_EXPIRY: Duration = Duration::from_secs(1);
         set_up();
         let mut db_task = DbTask::spawn_new(1);
         let db_pool = db_task.pool().unwrap();
-        let created_at = now();
-        let clock_fn = move || created_at;
+        let sim_clock = SimClock::new(now());
 
         let parent_worker = Arc::new(SimpleWorker::with_single_result(
             WorkerResult::ChildExecutionRequest,
@@ -915,7 +925,7 @@ mod tests {
         db_pool
             .connection()
             .create(CreateRequest {
-                created_at,
+                created_at: sim_clock.now(),
                 execution_id: parent_execution_id,
                 ffqn: FFQN_SOME,
                 params: Params::default(),
@@ -930,13 +940,13 @@ mod tests {
             ExecConfig {
                 ffqns: vec![FFQN_SOME],
                 batch_size: 1,
-                lock_expiry: Duration::from_secs(1),
+                lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                clock_fn,
+                clock_fn: sim_clock.get_clock_fn(),
             },
             db_pool.clone(),
             parent_worker,
-            created_at,
+            sim_clock.now(),
         )
         .await;
 
@@ -945,7 +955,7 @@ mod tests {
         // executor does not append anything, this should have been written by the worker:
         {
             let child = CreateRequest {
-                created_at,
+                created_at: sim_clock.now(),
                 execution_id: child_execution_id,
                 ffqn: FFQN_CHILD,
                 params: Params::default(),
@@ -955,13 +965,13 @@ mod tests {
                 max_retries: 0,
             };
             let join_set = AppendRequest {
-                created_at,
+                created_at: sim_clock.now(),
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSet { join_set_id },
                 },
             };
             let child_exec_req = AppendRequest {
-                created_at,
+                created_at: sim_clock.now(),
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id,
@@ -970,11 +980,11 @@ mod tests {
                 },
             };
             let join_next = AppendRequest {
-                created_at,
+                created_at: sim_clock.now(),
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinNext {
                         join_set_id,
-                        lock_expires_at: created_at,
+                        lock_expires_at: sim_clock.now(),
                     },
                 },
             };
@@ -989,12 +999,18 @@ mod tests {
                 .await
                 .unwrap();
         }
+        let expected_child_err = match worker_error {
+            WorkerError::IntermittentError { .. } => {
+                FinishedExecutionError::PermanentFailure(StrVariant::Static("error reason"))
+            }
+            WorkerError::IntermittentTimeout => FinishedExecutionError::PermanentTimeout,
+            worker_error => {
+                unreachable!("unexpected {worker_error}")
+            }
+        };
+
         let child_worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
-            WorkerError::IntermittentError {
-                reason: StrVariant::Static("error reason"),
-                err: None,
-                version: Version::new(2),
-            },
+            worker_error,
         )));
 
         // execute the child
@@ -1002,32 +1018,38 @@ mod tests {
             ExecConfig {
                 ffqns: vec![FFQN_CHILD],
                 batch_size: 1,
-                lock_expiry: Duration::from_secs(1),
+                lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                clock_fn,
+                clock_fn: sim_clock.get_clock_fn(),
             },
             db_pool.clone(),
             child_worker,
-            created_at,
+            sim_clock.now(),
         )
         .await;
+        if expected_child_err == FinishedExecutionError::PermanentTimeout {
+            // In case of timeout, let the timers watcher handle it
+            sim_clock.move_time_forward(LOCK_EXPIRY);
+            let timers_watcher = expired_timers_watcher::TimersWatcherTask {
+                db_connection: db_pool.connection(),
+            };
+            timers_watcher.tick(sim_clock.now()).await.unwrap();
+        }
         let child_log = db_pool.connection().get(child_execution_id).await.unwrap();
         assert_eq!(PendingState::Finished, child_log.pending_state);
-        assert_matches!(
-            child_log.last_event(),
-            ExecutionEvent {
-                event: ExecutionEventInner::Finished{
-                    result: Err(FinishedExecutionError::PermanentFailure(_))
-                },
-                created_at: at,
-            } if *at == created_at
+        assert_eq!(
+            ExecutionEventInner::Finished {
+                result: Err(expected_child_err)
+            },
+            child_log.last_event().event
         );
         let parent_log = db_pool.connection().get(parent_execution_id).await.unwrap();
-        assert_eq!(
+        assert_matches!(
+            parent_log.pending_state,
             PendingState::PendingAt {
-                scheduled_at: created_at
-            },
-            parent_log.pending_state
+                scheduled_at
+            } if scheduled_at == sim_clock.now(),
+            "parent should be back to pending"
         );
         let (found_join_set_id, found_child_execution_id, found_result) = assert_matches!(
             parent_log.last_event(),
@@ -1042,7 +1064,7 @@ mod tests {
                     },
                 },
                 created_at: at,
-            } if *at == created_at
+            } if *at == sim_clock.now()
             => (*found_join_set_id, *found_child_execution_id, found_result)
         );
         assert_eq!(join_set_id, found_join_set_id);
@@ -1052,8 +1074,6 @@ mod tests {
         drop(db_pool);
         db_task.close().await;
     }
-
-    // TODO child_execution_permanently_timed_out_should_notify_parent
 
     #[derive(Clone, Debug)]
     struct SleepyWorker {
@@ -1209,6 +1229,4 @@ mod tests {
         drop(timers_watcher);
         db_task.close().await;
     }
-
-    // TODO: same for IntermittentTimeout - should be handled by TimersWatcherTask. Count retries.
 }

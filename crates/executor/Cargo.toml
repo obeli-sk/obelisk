@@ -32,6 +32,7 @@ test-utils.workspace = true
 
 anyhow.workspace = true
 madsim.workspace = true
+rstest.workspace = true
 
 [features]
 test = []
