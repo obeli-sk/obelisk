@@ -153,7 +153,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
 impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
     for WorkflowWorker<C, DB, P>
 {
-    fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+    fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
         self.exim.exported_functions()
     }
 

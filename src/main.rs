@@ -120,7 +120,7 @@ fn exec<DB: DbConnection + 'static>(
     let worker =
         Arc::new(AutoWorker::new_with_config(config, workflow_engine, activity_engine).unwrap());
     let exec_config = ExecConfig {
-        ffqns: worker.supported_functions().cloned().collect(),
+        ffqns: worker.exported_functions().cloned().collect(),
         batch_size: 1,
         lock_expiry: Duration::from_secs(1),
         tick_sleep: Duration::from_millis(1),

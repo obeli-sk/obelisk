@@ -108,10 +108,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         }
     }
 
-    fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+    fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
         (match self {
-            AutoWorker::WorkflowWorker(w) => Either::Left(w.supported_functions()),
-            AutoWorker::ActivityWorker(a) => Either::Right(a.supported_functions()),
+            AutoWorker::WorkflowWorker(w) => Either::Left(w.exported_functions()),
+            AutoWorker::ActivityWorker(a) => Either::Right(a.exported_functions()),
         })
         .into_iter()
     }

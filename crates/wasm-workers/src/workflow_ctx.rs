@@ -518,7 +518,7 @@ mod tests {
             WorkerResult::Ok(SupportedFunctionResult::None, workflow_ctx.version)
         }
 
-        fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+        fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
             Some(MOCK_FFQN_PTR).into_iter()
         }
     }

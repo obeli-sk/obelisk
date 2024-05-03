@@ -509,7 +509,7 @@ pub mod simple_worker {
             worker_result
         }
 
-        fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+        fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
             vec![FFQN_SOME_PTR, FFQN_CHILD_PTR].into_iter()
         }
     }
@@ -1076,7 +1076,7 @@ mod tests {
             WorkerResult::Ok(self.result.clone(), ctx.version)
         }
 
-        fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+        fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
             Some(FFQN_SOME_PTR).into_iter()
         }
     }

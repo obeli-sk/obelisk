@@ -117,7 +117,7 @@ impl<C: ClockFn> ActivityWorker<C> {
 
 #[async_trait]
 impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
-    fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+    fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
         self.exim.exported_functions()
     }
 

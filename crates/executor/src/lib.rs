@@ -69,6 +69,6 @@ pub mod worker {
     pub trait Worker: valuable::Valuable + Send + Sync + 'static {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult;
 
-        fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn>; // FIXME: Rename to `exported_functions`
+        fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn>;
     }
 }
