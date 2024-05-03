@@ -54,19 +54,20 @@ pub mod worker {
         Err(WorkerError),
     }
 
+    #[derive(Debug)]
+    pub struct WorkerContext {
+        pub execution_id: ExecutionId,
+        pub ffqn: FunctionFqn,
+        pub params: Params,
+        pub event_history: Vec<HistoryEvent>,
+        pub version: Version,
+        pub execution_deadline: DateTime<Utc>,
+        pub can_be_retried: bool,
+    }
+
     #[async_trait]
     pub trait Worker: valuable::Valuable + Send + Sync + 'static {
-        async fn run(
-            // TODO: extract params to a struct
-            &self,
-            execution_id: ExecutionId,
-            ffqn: FunctionFqn,
-            params: Params,
-            event_history: Vec<HistoryEvent>,
-            version: Version,
-            execution_deadline: DateTime<Utc>,
-            can_be_retried: bool,
-        ) -> WorkerResult;
+        async fn run(&self, ctx: WorkerContext) -> WorkerResult;
 
         fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn>; // FIXME: Rename to `exported_functions`
     }

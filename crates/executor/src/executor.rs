@@ -1,4 +1,4 @@
-use crate::worker::{FatalError, Worker, WorkerError, WorkerResult};
+use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{DbPool, ExecutionLog, LockedExecution};
@@ -280,17 +280,16 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             locked_execution.max_retries,
             locked_execution.retry_exp_backoff,
         );
-        let worker_result = worker
-            .run(
-                execution_id,
-                locked_execution.ffqn,
-                locked_execution.params,
-                locked_execution.event_history,
-                locked_execution.version,
-                execution_deadline,
-                can_be_retried.is_some(),
-            )
-            .await;
+        let ctx = WorkerContext {
+            execution_id,
+            ffqn: locked_execution.ffqn,
+            params: locked_execution.params,
+            event_history: locked_execution.event_history,
+            version: locked_execution.version,
+            execution_deadline,
+            can_be_retried: can_be_retried.is_some(),
+        };
+        let worker_result = worker.run(ctx).await;
         trace!(?worker_result, "Worker::run finished");
         match Self::worker_result_to_execution_event(
             execution_id,
@@ -456,12 +455,11 @@ impl Append {
 
 #[cfg(any(test, feature = "test"))]
 pub mod simple_worker {
-    use crate::worker::{Worker, WorkerResult};
+    use crate::worker::{Worker, WorkerContext, WorkerResult};
     use async_trait::async_trait;
-    use chrono::{DateTime, Utc};
     use concepts::{
         storage::{HistoryEvent, Version},
-        ExecutionId, FunctionFqn, Params,
+        FunctionFqn,
     };
     use indexmap::IndexMap;
     use std::sync::Arc;
@@ -502,21 +500,12 @@ pub mod simple_worker {
 
     #[async_trait]
     impl Worker for SimpleWorker {
-        async fn run(
-            &self,
-            _execution_id: ExecutionId,
-            _ffqn: FunctionFqn,
-            _params: Params,
-            eh: Vec<HistoryEvent>,
-            version: Version,
-            _execution_deadline: DateTime<Utc>,
-            _can_be_retried: bool,
-        ) -> WorkerResult {
+        async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             let (expected_version, (expected_eh, worker_result)) =
                 self.worker_results_rev.lock().unwrap().pop().unwrap();
-            trace!(%expected_version, %version, ?expected_eh, ?eh, "Running SimpleWorker");
-            assert_eq!(expected_version, version);
-            assert_eq!(expected_eh, eh);
+            trace!(%expected_version, version = %ctx.version, ?expected_eh, eh = ?ctx.event_history, "Running SimpleWorker");
+            assert_eq!(expected_version, ctx.version);
+            assert_eq!(expected_eh, ctx.event_history);
             worker_result
         }
 
@@ -1082,18 +1071,9 @@ mod tests {
 
     #[async_trait]
     impl Worker for SleepyWorker {
-        async fn run(
-            &self,
-            _execution_id: ExecutionId,
-            _ffqn: FunctionFqn,
-            _params: Params,
-            _events: Vec<HistoryEvent>,
-            version: Version,
-            _execution_deadline: DateTime<Utc>,
-            _can_be_retired: bool,
-        ) -> WorkerResult {
+        async fn run(&self, ctx: WorkerContext) -> WorkerResult {
             tokio::time::sleep(self.duration).await;
-            WorkerResult::Ok(self.result.clone(), version)
+            WorkerResult::Ok(self.result.clone(), ctx.version)
         }
 
         fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {

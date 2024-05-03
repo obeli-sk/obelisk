@@ -16,7 +16,7 @@ use concepts::{
     FunctionFqn, IfcFqnName, StrVariant,
 };
 use derivative::Derivative;
-use executor::worker::Worker;
+use executor::worker::{Worker, WorkerContext};
 use itertools::Either;
 use std::{marker::PhantomData, ops::Deref, sync::Arc, time::Duration};
 use utils::time::ClockFn;
@@ -101,41 +101,10 @@ fn supported_wasi_imports<'a>(mut imported_packages: impl Iterator<Item = &'a If
 impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
     for AutoWorker<C, DB, P>
 {
-    async fn run(
-        &self,
-        execution_id: concepts::ExecutionId,
-        ffqn: concepts::FunctionFqn,
-        params: concepts::Params,
-        event_history: Vec<concepts::storage::HistoryEvent>,
-        version: concepts::storage::Version,
-        execution_deadline: chrono::prelude::DateTime<chrono::prelude::Utc>,
-        can_be_retired: bool,
-    ) -> executor::worker::WorkerResult {
+    async fn run(&self, ctx: WorkerContext) -> executor::worker::WorkerResult {
         match self {
-            AutoWorker::WorkflowWorker(w) => {
-                w.run(
-                    execution_id,
-                    ffqn,
-                    params,
-                    event_history,
-                    version,
-                    execution_deadline,
-                    can_be_retired,
-                )
-                .await
-            }
-            AutoWorker::ActivityWorker(a) => {
-                a.run(
-                    execution_id,
-                    ffqn,
-                    params,
-                    event_history,
-                    version,
-                    execution_deadline,
-                    can_be_retired,
-                )
-                .await
-            }
+            AutoWorker::WorkflowWorker(w) => w.run(ctx).await,
+            AutoWorker::ActivityWorker(a) => a.run(ctx).await,
         }
     }
 

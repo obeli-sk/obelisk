@@ -433,11 +433,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> my_org::workflow_engine::host_
 mod tests {
     use crate::{workflow_ctx::WorkflowCtx, workflow_worker::JoinNextBlockingStrategy};
     use async_trait::async_trait;
-    use chrono::{DateTime, Utc};
     use concepts::{
         storage::{
             wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
-            JoinSetRequest, PendingState, Version,
+            JoinSetRequest, PendingState,
         },
         FinishedExecutionResult,
     };
@@ -447,7 +446,7 @@ mod tests {
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
-        worker::{Worker, WorkerResult},
+        worker::{Worker, WorkerContext, WorkerResult},
     };
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
@@ -489,41 +488,34 @@ mod tests {
     impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
         for WorkflowWorkerMock<C, DB, P>
     {
-        async fn run(
-            &self,
-            execution_id: ExecutionId,
-            _ffqn: FunctionFqn,
-            _params: Params,
-            events: Vec<HistoryEvent>,
-            version: Version,
-            execution_deadline: DateTime<Utc>,
-            _can_be_retired: bool,
-        ) -> WorkerResult {
-            let seed = execution_id.random_part();
-            let mut ctx = WorkflowCtx::new(
-                execution_id,
-                events,
+        async fn run(&self, ctx: WorkerContext) -> WorkerResult {
+            let seed = ctx.execution_id.random_part();
+            let mut workflow_ctx = WorkflowCtx::new(
+                ctx.execution_id,
+                ctx.event_history,
                 seed,
                 self.clock_fn.clone(),
                 JoinNextBlockingStrategy::default(),
                 self.db_pool.clone(),
-                version,
-                execution_deadline,
+                ctx.version,
+                ctx.execution_deadline,
                 Duration::ZERO,
                 0,
             );
             for step in &self.steps {
                 let res = match step {
-                    WorkflowStep::Sleep { millis } => ctx.sleep(*millis).await,
+                    WorkflowStep::Sleep { millis } => workflow_ctx.sleep(*millis).await,
                     WorkflowStep::Call { ffqn } => {
-                        ctx.call_imported_func(ffqn.clone(), &[], &mut []).await
+                        workflow_ctx
+                            .call_imported_func(ffqn.clone(), &[], &mut [])
+                            .await
                     }
                 };
                 if let Err(err) = res {
-                    return err.into_worker_result(ctx.version);
+                    return err.into_worker_result(workflow_ctx.version);
                 }
             }
-            WorkerResult::Ok(SupportedFunctionResult::None, ctx.version)
+            WorkerResult::Ok(SupportedFunctionResult::None, workflow_ctx.version)
         }
 
         fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {

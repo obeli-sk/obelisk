@@ -1,13 +1,12 @@
 use crate::workflow_ctx::{FunctionError, WorkflowCtx};
 use crate::{EngineConfig, WasmComponent, WasmFileError};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
-use concepts::storage::{DbConnection, DbPool, HistoryEvent, Version};
-use concepts::{ExecutionId, FunctionFqn, StrVariant};
-use concepts::{Params, SupportedFunctionResult};
+use concepts::storage::{DbConnection, DbPool, Version};
+use concepts::SupportedFunctionResult;
+use concepts::{FunctionFqn, StrVariant};
 use derivative::Derivative;
-use executor::worker::{FatalError, WorkerResult};
+use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::error::Error;
 use std::marker::PhantomData;
@@ -159,16 +158,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     }
 
     #[allow(clippy::too_many_lines)]
-    async fn run(
-        &self,
-        execution_id: ExecutionId,
-        ffqn: FunctionFqn,
-        params: Params,
-        events: Vec<HistoryEvent>,
-        version: Version,
-        execution_deadline: DateTime<Utc>,
-        _can_be_retired: bool,
-    ) -> WorkerResult {
+    async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         #[derive(Debug, thiserror::Error)]
         enum RunError {
             #[error(transparent)]
@@ -176,18 +166,18 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             #[error("wasm function call error: `{0}`")]
             FunctionCall(Box<dyn Error + Send + Sync>, Version),
         }
-        trace!("Params: {params:?}");
+        trace!("Params: {params:?}", params = ctx.params);
         let (instance, mut store) = {
-            let seed = execution_id.random_part();
-            let ctx = WorkflowCtx::new(
-                execution_id,
-                events,
+            let seed = ctx.execution_id.random_part();
+            let ctx = WorkflowCtx::new(//TODO: merge WorkerContext into
+                ctx.execution_id,
+                ctx.event_history,
                 seed,
                 self.config.clock_fn.clone(),
                 self.config.join_next_blocking_strategy,
                 self.config.db_pool.clone(),
-                version,
-                execution_deadline,
+                ctx.version,
+                ctx.execution_deadline,
                 self.config.child_retry_exp_backoff,
                 self.config.child_max_retries,
             );
@@ -219,13 +209,13 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 let mut exports = instance.exports(&mut store);
                 let mut exports_instance = exports.root();
                 let mut exports_instance = exports_instance
-                    .instance(&ffqn.ifc_fqn)
+                    .instance(&ctx.ffqn.ifc_fqn)
                     .expect("interface must be found");
                 exports_instance
-                    .func(&ffqn.function_name)
+                    .func(&ctx.ffqn.function_name)
                     .expect("function must be found")
             };
-            let params = match params.as_vals(func.params(&store)) {
+            let params = match ctx.params.as_vals(func.params(&store)) {
                 Ok(params) => params,
                 Err(err) => {
                     return Err(RunError::WorkerError(WorkerError::FatalError(
@@ -266,7 +256,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             Ok((result, store.into_data().version))
         };
         let started_at = (self.config.clock_fn)();
-        let deadline_duration = (execution_deadline - started_at)
+        let deadline_duration = (ctx.execution_deadline - started_at)
             .to_std()
             .unwrap_or_default();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
@@ -274,7 +264,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             res = call_function => {
                 match res {
                     Ok((supported_result, version)) => {
-                        debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished");
+                        debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline= %ctx.execution_deadline, "Finished");
                         WorkerResult::Ok(supported_result, version)
                     },
                     Err(RunError::FunctionCall(err, version)) => {
@@ -284,11 +274,11 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         {
                             let worker_result = err.clone().into_worker_result(version);
                             if let WorkerResult::Err(err) = &worker_result {
-                                info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a error");
+                                info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with a error");
                             } else if matches!(worker_result, WorkerResult::ChildExecutionRequest | WorkerResult::DelayRequest) {
-                                info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Interrupt requested");
+                                info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Interrupt requested");
                             } else {
-                                info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished successfuly");
+                                info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished successfuly");
                             }
                             worker_result
                         } else  {
@@ -297,7 +287,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                                 err: Some(err),
                                 version,
                             };
-                            info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an error");
+                            info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an error");
                             WorkerResult::Err(err)
 
                         }
@@ -306,7 +296,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 }
             },
             () = tokio::time::sleep(deadline_duration) => {
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
+                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
                 WorkerResult::Err(WorkerError::IntermittentTimeout)
             }
         }

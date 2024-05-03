@@ -1,11 +1,9 @@
 use crate::{EngineConfig, WasmComponent, WasmFileError};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ConfigId;
-use concepts::storage::{HistoryEvent, Version};
-use concepts::{ExecutionId, FunctionFqn, StrVariant};
-use concepts::{Params, SupportedFunctionResult};
-use executor::worker::{FatalError, WorkerResult};
+use concepts::SupportedFunctionResult;
+use concepts::{FunctionFqn, StrVariant};
+use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
@@ -124,18 +122,9 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
     }
 
     #[allow(clippy::too_many_lines)]
-    async fn run(
-        &self,
-        _execution_id: ExecutionId,
-        ffqn: FunctionFqn,
-        params: Params,
-        events: Vec<HistoryEvent>,
-        version: Version,
-        execution_deadline: DateTime<Utc>,
-        can_be_retried: bool,
-    ) -> WorkerResult {
-        trace!("Params: {params:?}");
-        assert!(events.is_empty());
+    async fn run(&self, ctx: WorkerContext) -> WorkerResult {
+        trace!("Params: {params:?}", params = ctx.params);
+        assert!(ctx.event_history.is_empty());
         let instance_and_store = self
             .recycled_instances
             .as_ref()
@@ -153,12 +142,12 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 Err(err) => {
                     let reason = err.to_string();
                     if reason.starts_with("maximum concurrent") {
-                        return WorkerResult::Err(WorkerError::LimitReached(reason, version));
+                        return WorkerResult::Err(WorkerError::LimitReached(reason, ctx.version));
                     }
                     return WorkerResult::Err(WorkerError::IntermittentError {
                         reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
                         err: Some(err.into()),
-                        version,
+                        version: ctx.version,
                     });
                 }
             }
@@ -169,18 +158,18 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 let mut exports = instance.exports(&mut store);
                 let mut exports_instance = exports.root();
                 let mut exports_instance = exports_instance
-                    .instance(&ffqn.ifc_fqn)
+                    .instance(&ctx.ffqn.ifc_fqn)
                     .expect("interface must be found");
                 exports_instance
-                    .func(&ffqn.function_name)
+                    .func(&ctx.ffqn.function_name)
                     .expect("function must be found")
             };
-            let params = match params.as_vals(func.params(&store)) {
+            let params = match ctx.params.as_vals(func.params(&store)) {
                 Ok(params) => params,
                 Err(err) => {
                     return WorkerResult::Err(WorkerError::FatalError(
                         FatalError::ParamsParsingError(err),
-                        version,
+                        ctx.version,
                     ));
                 }
             };
@@ -190,7 +179,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 return WorkerResult::Err(WorkerError::IntermittentError {
                     reason: StrVariant::Arc(Arc::from(format!("wasm function call error - {err}"))),
                     err: Some(err.into()),
-                    version,
+                    version: ctx.version,
                 });
             }; // guest panic exits here
             let result = match SupportedFunctionResult::new(
@@ -200,7 +189,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 Err(err) => {
                     return WorkerResult::Err(WorkerError::FatalError(
                         FatalError::ResultParsingError(err),
-                        version,
+                        ctx.version,
                     ))
                 }
             };
@@ -210,7 +199,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                         "wasm post function call error - {err}"
                     ))),
                     err: Some(err.into()),
-                    version,
+                    version: ctx.version,
                 });
             }
 
@@ -224,35 +213,33 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 let reason = StrVariant::Arc(Arc::from(format!(
                     "Execution returned an error result: `{exec_err:?}`"
                 )));
-                if can_be_retried {
+                if ctx.can_be_retried {
                     return WorkerResult::Err(WorkerError::IntermittentError {
                         reason,
                         err: None,
-                        version,
+                        version: ctx.version,
                     });
-                } else {
-                    info!("Not able to retry");
                 }
+                info!("Not able to retry");
             }
-
-            WorkerResult::Ok(result, version)
+            WorkerResult::Ok(result, ctx.version)
         });
         let started_at = (self.config.clock_fn)();
-        let deadline_delta = execution_deadline - started_at;
+        let deadline_delta = ctx.execution_deadline - started_at;
         let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         loop {
             tokio::select! {
                 res = &mut call_function => {
                     if let WorkerResult::Err(err) = &res {
-                        info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta, %execution_deadline, "Finished with an error");
+                        info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta, execution_deadline = %ctx.execution_deadline, "Finished with an error");
                     } else {
-                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta,  %execution_deadline, "Finished");
+                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta,  execution_deadline = %ctx.execution_deadline, "Finished");
                     }
                     return res;
                 },
                 ()   = tokio::time::sleep(self.config.timeout_sleep_unit) => {
                     if (self.config.clock_fn)() - started_at >= deadline_delta {
-                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta, %execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
+                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta, execution_deadline = %ctx.execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
                         return WorkerResult::Err(WorkerError::IntermittentTimeout);
                     }
                 }
@@ -292,7 +279,7 @@ pub(crate) mod tests {
     use crate::EngineConfig;
     use assert_matches::assert_matches;
     use concepts::{
-        storage::{CreateRequest, DbConnection, DbPool},
+        storage::{CreateRequest, DbConnection, DbPool, Version},
         ExecutionId, Params, SupportedFunctionResult,
     };
     use db_mem::inmemory_dao::DbTask;
@@ -432,19 +419,16 @@ pub(crate) mod tests {
         let join_handles = (0..tasks)
             .map(|_| {
                 let fibo_worker = fibo_worker.clone();
-                tokio::spawn(async move {
-                    fibo_worker
-                        .run(
-                            ExecutionId::generate(),
-                            FIBO_ACTIVITY_FFQN,
-                            Params::from_json_array(json!([fibo_input])).unwrap(),
-                            Vec::new(),
-                            Version::new(0),
-                            execution_deadline,
-                            false,
-                        )
-                        .await
-                })
+                let ctx = WorkerContext {
+                    execution_id: ExecutionId::generate(),
+                    ffqn: FIBO_ACTIVITY_FFQN,
+                    params: Params::from_json_array(json!([fibo_input])).unwrap(),
+                    event_history: Vec::new(),
+                    version: Version::new(0),
+                    execution_deadline,
+                    can_be_retried: false,
+                };
+                tokio::spawn(async move { fibo_worker.run(ctx).await })
             })
             .collect::<Vec<_>>();
         let mut limit_reached = 0;
@@ -618,18 +602,16 @@ pub(crate) mod tests {
             );
 
             let executed_at = now();
-            let WorkerResult::Err(err) = worker
-                .run(
-                    ExecutionId::generate(),
-                    SLEEP_LOOP_ACTIVITY_FFQN,
-                    Params::from_json_array(json!([sleep_millis, sleep_iterations])).unwrap(),
-                    Vec::new(),
-                    Version::new(0),
-                    executed_at + TIMEOUT,
-                    false,
-                )
-                .await
-            else {
+            let ctx = WorkerContext {
+                execution_id: ExecutionId::generate(),
+                ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
+                params: Params::from_json_array(json!([sleep_millis, sleep_iterations])).unwrap(),
+                event_history: Vec::new(),
+                version: Version::new(0),
+                execution_deadline: executed_at + TIMEOUT,
+                can_be_retried: false,
+            };
+            let WorkerResult::Err(err) = worker.run(ctx).await else {
                 panic!()
             };
             assert_matches!(err, WorkerError::IntermittentTimeout);
