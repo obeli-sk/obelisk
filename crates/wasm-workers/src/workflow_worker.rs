@@ -169,7 +169,8 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         trace!("Params: {params:?}", params = ctx.params);
         let (instance, mut store) = {
             let seed = ctx.execution_id.random_part();
-            let ctx = WorkflowCtx::new(//TODO: merge WorkerContext into
+            let ctx = WorkflowCtx::new(
+                //TODO: merge WorkerContext into
                 ctx.execution_id,
                 ctx.event_history,
                 seed,
