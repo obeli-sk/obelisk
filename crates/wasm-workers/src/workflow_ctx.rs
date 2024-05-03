@@ -8,7 +8,7 @@ use concepts::storage::{
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionResult};
-use executor::worker::{FatalError, WorkerError};
+use executor::worker::{FatalError, WorkerError, WorkerResult};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::fmt::Debug;
@@ -36,14 +36,15 @@ pub(crate) enum FunctionError {
 }
 
 impl FunctionError {
-    pub(crate) fn into_worker_error(self, version: Version) -> WorkerError {
+    pub(crate) fn into_worker_result(self, version: Version) -> WorkerResult {
         match self {
-            Self::NonDeterminismDetected(reason) => {
-                WorkerError::FatalError(FatalError::NonDeterminismDetected(reason), version)
-            }
-            Self::ChildExecutionRequest => WorkerError::ChildExecutionRequest,
-            Self::DelayRequest => WorkerError::DelayRequest,
-            Self::DbError(db_error) => WorkerError::DbError(db_error),
+            Self::NonDeterminismDetected(reason) => WorkerResult::Err(WorkerError::FatalError(
+                FatalError::NonDeterminismDetected(reason),
+                version,
+            )),
+            Self::ChildExecutionRequest => WorkerResult::ChildExecutionRequest,
+            Self::DelayRequest => WorkerResult::DelayRequest,
+            Self::DbError(db_error) => WorkerResult::Err(WorkerError::DbError(db_error)),
         }
     }
 }
@@ -518,10 +519,10 @@ mod tests {
                     }
                 };
                 if let Err(err) = res {
-                    return Err(err.into_worker_error(ctx.version));
+                    return err.into_worker_result(ctx.version);
                 }
             }
-            Ok((SupportedFunctionResult::None, ctx.version))
+            WorkerResult::Ok(SupportedFunctionResult::None, ctx.version)
         }
 
         fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {

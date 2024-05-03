@@ -5,7 +5,7 @@ use concepts::prefixed_ulid::ConfigId;
 use concepts::storage::{HistoryEvent, Version};
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use concepts::{Params, SupportedFunctionResult};
-use executor::worker::FatalError;
+use executor::worker::{FatalError, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
@@ -128,7 +128,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         events: Vec<HistoryEvent>,
         version: Version,
         execution_deadline: DateTime<Utc>,
-    ) -> Result<(SupportedFunctionResult, Version), WorkerError> {
+    ) -> WorkerResult {
         trace!("Params: {params:?}");
         assert!(events.is_empty());
         let instance_and_store = self
@@ -148,9 +148,9 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 Err(err) => {
                     let reason = err.to_string();
                     if reason.starts_with("maximum concurrent") {
-                        return Err(WorkerError::LimitReached(reason, version));
+                        return WorkerResult::Err(WorkerError::LimitReached(reason, version));
                     }
-                    return Err(WorkerError::IntermittentError {
+                    return WorkerResult::Err(WorkerError::IntermittentError {
                         reason: StrVariant::Static("cannot instantiate"),
                         err: err.into(),
                         version,
@@ -173,7 +173,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             let params = match params.as_vals(func.params(&store)) {
                 Ok(params) => params,
                 Err(err) => {
-                    return Err(WorkerError::FatalError(
+                    return WorkerResult::Err(WorkerError::FatalError(
                         FatalError::ParamsParsingError(err),
                         version,
                     ));
@@ -183,7 +183,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             let mut results = vec![Val::Bool(false); result_types.len()];
             if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
                 let err = err.into();
-                return Err(WorkerError::IntermittentError {
+                return WorkerResult::Err(WorkerError::IntermittentError {
                     reason: StrVariant::Arc(Arc::from(format!(
                         "wasm function call error: `{err}`"
                     ))),
@@ -196,14 +196,14 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             ) {
                 Ok(result) => result,
                 Err(err) => {
-                    return Err(WorkerError::FatalError(
+                    return WorkerResult::Err(WorkerError::FatalError(
                         FatalError::ResultParsingError(err),
                         version,
                     ))
                 }
             };
             if let Err(err) = func.post_return_async(&mut store).await {
-                return Err(WorkerError::IntermittentError {
+                return WorkerResult::Err(WorkerError::IntermittentError {
                     reason: StrVariant::Static("wasm post function call error"),
                     err: err.into(),
                     version,
@@ -214,7 +214,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 recycled_instances.lock().unwrap().push((instance, store));
             }
 
-            Ok((result, version))
+            WorkerResult::Ok(result, version)
         };
         let started_at = (self.config.clock_fn)();
         let deadline_duration = (execution_deadline - started_at)
@@ -224,7 +224,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         tokio::select! {
             res = call_function =>{
 
-                if let Err(err) = &res {
+                if let WorkerResult::Err(err) = &res {
                     info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an error");
                 } else {
                     debug!(duration = ?stopwatch.elapsed(), ?deadline_duration,  %execution_deadline, "Finished");
@@ -233,7 +233,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             },
             ()   = tokio::time::sleep(deadline_duration) => {
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
-                Err(WorkerError::IntermittentTimeout)
+                WorkerResult::Err(WorkerError::IntermittentTimeout)
             }
         }
     }
@@ -424,7 +424,10 @@ pub(crate) mod tests {
             .collect::<Vec<_>>();
         let mut limit_reached = 0;
         for jh in join_handles {
-            if matches!(jh.await.unwrap(), Err(WorkerError::LimitReached(..))) {
+            if matches!(
+                jh.await.unwrap(),
+                WorkerResult::Err(WorkerError::LimitReached(..))
+            ) {
                 limit_reached += 1;
             }
         }
@@ -586,7 +589,7 @@ pub(crate) mod tests {
             );
 
             let executed_at = now();
-            let err = worker
+            let WorkerResult::Err(err) = worker
                 .run(
                     ExecutionId::generate(),
                     SLEEP_LOOP_ACTIVITY_FFQN,
@@ -596,7 +599,9 @@ pub(crate) mod tests {
                     executed_at + TIMEOUT,
                 )
                 .await
-                .unwrap_err();
+            else {
+                panic!()
+            };
             assert_matches!(err, WorkerError::IntermittentTimeout);
         }
 

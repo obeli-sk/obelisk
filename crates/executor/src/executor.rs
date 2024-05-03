@@ -284,7 +284,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         mut intermittent_event_count: u32,
     ) -> Result<Option<Append>, DbError> {
         Ok(match worker_result {
-            Ok((result, new_version)) => {
+            WorkerResult::Ok(result, new_version) => {
                 let finished_res;
                 // FIXME: interpret fallible result only in activity worker
                 let primary_event = if let Some(exec_err) = result.fallible_err() {
@@ -328,11 +328,9 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     parent,
                 })
             }
-            Err(err) => {
+            WorkerResult::ChildExecutionRequest | WorkerResult::DelayRequest => None,
+            WorkerResult::Err(err) => {
                 let (primary_event, parent, version) = match err {
-                    WorkerError::ChildExecutionRequest | WorkerError::DelayRequest => {
-                        return Ok(None);
-                    }
                     WorkerError::IntermittentTimeout => {
                         info!("Intermittent timeout");
                         // Will be updated by `expired_timers_watcher`.
@@ -631,10 +629,10 @@ mod tests {
             },
             pool,
             exec_config,
-            Arc::new(SimpleWorker::with_single_result(Ok((
+            Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
                 SupportedFunctionResult::None,
                 Version::new(2),
-            )))),
+            ))),
             tick_fn,
         )
         .await;
@@ -664,10 +662,10 @@ mod tests {
             clock_fn,
         };
 
-        let worker = Arc::new(SimpleWorker::with_single_result(Ok((
+        let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
             SupportedFunctionResult::None,
             Version::new(2),
-        ))));
+        )));
         let exec_task =
             ExecTask::spawn_new(worker.clone(), exec_config.clone(), db_pool.clone(), None);
 
@@ -779,7 +777,7 @@ mod tests {
             tick_sleep: Duration::ZERO,
             clock_fn: sim_clock.clock_fn(),
         };
-        let worker = Arc::new(SimpleWorker::with_single_result(Err(
+        let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
                 reason: StrVariant::Static("fail"),
                 err: anyhow!("").into(),
@@ -822,7 +820,10 @@ mod tests {
         let worker = Arc::new(SimpleWorker {
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(4),
-                (vec![], Ok((SupportedFunctionResult::None, Version::new(4)))),
+                (
+                    vec![],
+                    WorkerResult::Ok(SupportedFunctionResult::None, Version::new(4)),
+                ),
             )]))),
         });
         // noop until `retry_exp_backoff` expires
@@ -879,7 +880,7 @@ mod tests {
             clock_fn,
         };
 
-        let worker = Arc::new(SimpleWorker::with_single_result(Ok((
+        let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
             SupportedFunctionResult::Fallible(WastValWithType {
                 r#type: TypeWrapper::Result {
                     ok: None,
@@ -888,7 +889,7 @@ mod tests {
                 value: WastVal::Result(Err(None)),
             }),
             Version::new(2),
-        ))));
+        )));
         let execution_log = create_and_tick(
             CreateAndTickConfig {
                 execution_id: ExecutionId::generate(),
@@ -922,7 +923,7 @@ mod tests {
                 Version::new(4),
                 (
                     vec![],
-                    Ok((
+                    WorkerResult::Ok(
                         SupportedFunctionResult::Fallible(WastValWithType {
                             r#type: TypeWrapper::Result {
                                 ok: None,
@@ -931,7 +932,7 @@ mod tests {
                             value: WastVal::Result(Ok(None)),
                         }),
                         Version::new(4),
-                    )),
+                    ),
                 ),
             )]))),
         });
@@ -988,7 +989,7 @@ mod tests {
             tick_sleep: Duration::ZERO,
             clock_fn,
         };
-        let worker = Arc::new(SimpleWorker::with_single_result(Ok((
+        let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
             SupportedFunctionResult::Fallible(WastValWithType {
                 r#type: TypeWrapper::Result {
                     ok: None,
@@ -997,7 +998,7 @@ mod tests {
                 value: WastVal::Result(Err(Some(WastVal::String("myerror".to_string()).into()))),
             }),
             Version::new(2),
-        ))));
+        )));
         let execution_log = create_and_tick(
             CreateAndTickConfig {
                 execution_id: ExecutionId::generate(),
@@ -1091,9 +1092,9 @@ mod tests {
         let created_at = now();
         let clock_fn = move || created_at;
 
-        let parent_worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
-            WorkerError::ChildExecutionRequest,
-        )));
+        let parent_worker = Arc::new(SimpleWorker::with_single_result(
+            WorkerResult::ChildExecutionRequest,
+        ));
         let parent_execution_id = ExecutionId::generate();
         db_pool
             .connection()
@@ -1264,7 +1265,7 @@ mod tests {
             _execution_deadline: DateTime<Utc>,
         ) -> WorkerResult {
             tokio::time::sleep(self.duration).await;
-            Ok((self.result.clone(), version))
+            WorkerResult::Ok(self.result.clone(), version)
         }
 
         fn supported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {

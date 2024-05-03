@@ -7,7 +7,7 @@ use concepts::storage::{DbConnection, DbPool, HistoryEvent, Version};
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use concepts::{Params, SupportedFunctionResult};
 use derivative::Derivative;
-use executor::worker::FatalError;
+use executor::worker::{FatalError, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::error::Error;
 use std::marker::PhantomData;
@@ -167,7 +167,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         events: Vec<HistoryEvent>,
         version: Version,
         execution_deadline: DateTime<Utc>,
-    ) -> Result<(SupportedFunctionResult, Version), WorkerError> {
+    ) -> WorkerResult {
         #[derive(Debug, thiserror::Error)]
         enum RunError {
             #[error(transparent)]
@@ -201,13 +201,13 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     let reason = err.to_string();
                     let version = store.into_data().version;
                     if reason.starts_with("maximum concurrent") {
-                        return Err(WorkerError::LimitReached(reason, version))?;
+                        return WorkerResult::Err(WorkerError::LimitReached(reason, version));
                     }
-                    return Err(WorkerError::IntermittentError {
+                    return WorkerResult::Err(WorkerError::IntermittentError {
                         reason: StrVariant::Static("cannot instantiate"),
                         err: err.into(),
                         version,
-                    })?;
+                    });
                 }
             };
             (instance, store)
@@ -272,20 +272,22 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 match res {
                     Ok((supported_result, version)) => {
                         debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished");
-                        Ok((supported_result, version))
+                        WorkerResult::Ok(supported_result, version)
                     },
                     Err(RunError::FunctionCall(err, version)) => {
                         if let Some(err) =  err
                             .source()
                             .and_then(|source| source.downcast_ref::<FunctionError>())
                         {
-                            let err = err.clone().into_worker_error(version);
-                            if matches!(err, WorkerError::ChildExecutionRequest | WorkerError::DelayRequest) {
-                                debug!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an interrupt");
-                            } else {
+                            let worker_result = err.clone().into_worker_result(version);
+                            if let WorkerResult::Err(err) = &worker_result {
                                 info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a error");
+                            } else if matches!(worker_result, WorkerResult::ChildExecutionRequest | WorkerResult::DelayRequest) {
+                                info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Interrupt requested");
+                            } else {
+                                info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished successfuly");
                             }
-                            Err(err)
+                            worker_result
                         } else  {
                             let err = WorkerError::IntermittentError {
                                 err,
@@ -293,16 +295,16 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                                 version,
                             };
                             info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an error");
-                            Err(err)
+                            WorkerResult::Err(err)
 
                         }
                     }
-                    Err(RunError::WorkerError(err)) => Err(err),
+                    Err(RunError::WorkerError(err)) => WorkerResult::Err(err),
                 }
             },
             () = tokio::time::sleep(deadline_duration) => {
                 debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
-                Err(WorkerError::IntermittentTimeout)
+                WorkerResult::Err(WorkerError::IntermittentTimeout)
             }
         }
     }

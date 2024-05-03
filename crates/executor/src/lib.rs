@@ -31,10 +31,6 @@ pub mod worker {
         IntermittentTimeout,
         #[error("fatal error: {0}")]
         FatalError(FatalError, Version),
-        #[error("child execution request")]
-        ChildExecutionRequest, // TODO: Move to OK part of `WorkerResult`
-        #[error("sleep request")]
-        DelayRequest, // TODO: Move to OK part of `WorkerResult`
         #[error(transparent)]
         DbError(DbError),
     }
@@ -49,7 +45,14 @@ pub mod worker {
         ResultParsingError(ResultParsingError), // FIXME: Add FFQN
     }
 
-    pub type WorkerResult = Result<(SupportedFunctionResult, Version), WorkerError>;
+    #[must_use]
+    #[derive(Debug)]
+    pub enum WorkerResult {
+        Ok(SupportedFunctionResult, Version),
+        ChildExecutionRequest,
+        DelayRequest,
+        Err(WorkerError),
+    }
 
     #[async_trait]
     pub trait Worker: valuable::Valuable + Send + Sync + 'static {
