@@ -292,6 +292,7 @@ impl ExecutionEventInner {
 #[derive(
     Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
 )]
+#[serde(tag = "type")]
 pub enum HistoryEvent {
     #[display(fmt = "Persist")]
     /// Must be created by the executor in [`PendingState::Locked`].
@@ -330,6 +331,7 @@ pub enum HistoryEvent {
 #[derive(
     Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
 )]
+#[serde(tag = "type")]
 pub enum JoinSetRequest {
     // Must be created by the executor in `PendingState::Locked`.
     #[display(fmt = "DelayRequest({delay_id})")]
@@ -345,6 +347,7 @@ pub enum JoinSetRequest {
 #[derive(
     Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
 )]
+#[serde(tag = "type")]
 pub enum JoinSetResponse {
     DelayFinished {
         delay_id: DelayId,

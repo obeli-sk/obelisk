@@ -94,6 +94,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> AutoWorker<C, DB, P> {
 }
 
 fn supported_wasi_imports<'a>(mut imported_packages: impl Iterator<Item = &'a IfcFqnName>) -> bool {
+    // FIXME Fail if both wasi and host imports are present
     imported_packages.all(|ifc| ifc.deref().starts_with("wasi:"))
 }
 
