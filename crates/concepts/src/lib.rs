@@ -8,6 +8,7 @@ use std::{
     hash::Hash,
     marker::PhantomData,
     ops::Deref,
+    str::FromStr,
     sync::Arc,
 };
 use val_json::{
@@ -131,7 +132,7 @@ pub struct Name<T> {
 
 impl<T> Name<T> {
     #[must_use]
-    pub fn new_owned(value: Arc<str>) -> Self {
+    pub fn new_arc(value: Arc<str>) -> Self {
         Self {
             value: StrVariant::Arc(value),
             phantom_data: PhantomData,
@@ -185,10 +186,10 @@ pub struct FunctionFqn {
 
 impl FunctionFqn {
     #[must_use]
-    pub fn new_owned(ifc_fqn: Arc<str>, function_name: Arc<str>) -> Self {
+    pub fn new_arc(ifc_fqn: Arc<str>, function_name: Arc<str>) -> Self {
         Self {
-            ifc_fqn: Name::new_owned(ifc_fqn),
-            function_name: Name::new_owned(function_name),
+            ifc_fqn: Name::new_arc(ifc_fqn),
+            function_name: Name::new_arc(function_name),
         }
     }
 
@@ -203,6 +204,18 @@ impl FunctionFqn {
     #[must_use]
     pub const fn new_static_tuple(tuple: (&'static str, &'static str)) -> Self {
         Self::new_static(tuple.0, tuple.1)
+    }
+}
+
+impl FromStr for FunctionFqn {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some((ifc_fqn, function_name)) = s.split_once('.') {
+            Ok(Self::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)))
+        } else {
+            Err("cannot find '.' delimiter")
+        }
     }
 }
 
@@ -225,7 +238,7 @@ impl Debug for FunctionFqn {
 
 impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(FunctionFqn::new_owned(
+        Ok(FunctionFqn::new_arc(
             Arc::from(u.arbitrary::<String>()?),
             Arc::from(u.arbitrary::<String>()?),
         ))

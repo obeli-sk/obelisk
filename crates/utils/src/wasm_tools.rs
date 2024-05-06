@@ -71,7 +71,7 @@ fn exported<'a>(
                         .collect::<Result<Arc<_>, _>>()
                         .map_err(|err| DecodeError::TypeNotSupported {
                             err,
-                            ffqn: FunctionFqn::new_owned(
+                            ffqn: FunctionFqn::new_arc(
                                 Arc::from(ifc_fqn),
                                 Arc::from(function_name),
                             ),
@@ -84,26 +84,23 @@ fn exported<'a>(
                             .transpose()
                             .map_err(|err| DecodeError::TypeNotSupported {
                                 err,
-                                ffqn: FunctionFqn::new_owned(
+                                ffqn: FunctionFqn::new_arc(
                                     Arc::from(ifc_fqn),
                                     Arc::from(function_name),
                                 ),
                             })
                     } else {
                         Err(DecodeError::MultiValueResultNotSupported(
-                            FunctionFqn::new_owned(Arc::from(ifc_fqn), Arc::from(function_name)),
+                            FunctionFqn::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)),
                         ))
                     }?;
-                    fns.insert(
-                        FnName::new_owned(Arc::from(function_name)),
-                        (params, result),
-                    );
+                    fns.insert(FnName::new_arc(Arc::from(function_name)), (params, result));
                 } else {
                     debug!("Ignoring export - not a ComponentFunc: {export:?}");
                 }
             }
             vec.push(PackageIfcFns {
-                ifc_fqn: IfcFqnName::new_owned(Arc::from(ifc_fqn)),
+                ifc_fqn: IfcFqnName::new_arc(Arc::from(ifc_fqn)),
                 fns,
             });
         } else {

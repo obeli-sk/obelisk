@@ -6,7 +6,6 @@ use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use executor::worker::Worker;
-use serde_json::json;
 use std::sync::Arc;
 use std::{marker::PhantomData, time::Duration};
 use utils::time::now;
@@ -35,6 +34,7 @@ async fn main() {
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     std::panic::set_hook(Box::new(utils::tracing_panic_hook));
+
     let db_pool = SqlitePool::new("obeli-sk.sqlite").await.unwrap();
     let activity_engine = activity_engine(EngineConfig::default());
     let workflow_engine = workflow_engine(EngineConfig::default());
@@ -53,32 +53,53 @@ async fn main() {
     )
     .unwrap();
 
-    let activity_task = exec(
-        StrVariant::Static(
-            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+    let wasm_tasks = vec![
+        exec(
+            StrVariant::Static(
+                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            ),
+            db_pool.clone(),
+            workflow_engine.clone(),
+            activity_engine.clone(),
         ),
-        db_pool.clone(),
-        workflow_engine.clone(),
-        activity_engine.clone(),
-    );
-    let workflow_task = exec(
-        StrVariant::Static(
-            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+        exec(
+            StrVariant::Static(
+                test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+            ),
+            db_pool.clone(),
+            workflow_engine,
+            activity_engine,
         ),
-        db_pool.clone(),
-        workflow_engine,
-        activity_engine,
-    );
+    ];
+
+    // parse input
+    let mut args = std::env::args().peekable();
+    args.next();
+    if args.peek().is_none() {
+        eprintln!("Two arguments expected: `function's fully qualified name` `parameters`");
+        eprintln!("Available functions:");
+        for (_, ffqns) in &wasm_tasks {
+            for ffqn in ffqns {
+                eprintln!("{}", ffqn);
+            }
+        }
+        return;
+    }
+    let ffqn = args.next().expect("first parameter must be function fully qualified name: namespace:package_name/interface_name[@version].function_name");
+    let ffqn = ffqn.parse().unwrap();
+    let params = args
+        .next()
+        .expect("second parameter must be parameters encoded as json array");
+    let params = serde_json::from_str(&params).unwrap();
+    let params = Params::from_json_array(params).unwrap();
+
     let db_connection = db_pool.connection();
-    let params = Params::from_json_array(json!(["neverssl.com", "/"])).unwrap();
     let execution_id = ExecutionId::generate();
     db_connection
         .create(CreateRequest {
             created_at: now(),
             execution_id,
-            ffqn: FunctionFqn::new_static_tuple(
-                test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET,
-            ),
+            ffqn,
             params,
             parent: None,
             scheduled_at: None,
@@ -93,8 +114,9 @@ async fn main() {
         .await
         .unwrap();
 
-    activity_task.close().await;
-    workflow_task.close().await;
+    for (task, _) in wasm_tasks {
+        task.close().await;
+    }
     timers_watcher.close().await;
     db_pool.close().await.unwrap();
 }
@@ -104,7 +126,7 @@ fn exec<DB: DbConnection + 'static>(
     db_pool: impl DbPool<DB> + 'static,
     workflow_engine: Arc<Engine>,
     activity_engine: Arc<Engine>,
-) -> ExecutorTaskHandle {
+) -> (ExecutorTaskHandle, Vec<FunctionFqn>) {
     let config = AutoConfig {
         wasm_path,
         config_id: ConfigId::generate(),
@@ -119,12 +141,16 @@ fn exec<DB: DbConnection + 'static>(
     };
     let worker =
         Arc::new(AutoWorker::new_with_config(config, workflow_engine, activity_engine).unwrap());
+    let ffqns = worker.exported_functions().cloned().collect::<Vec<_>>();
     let exec_config = ExecConfig {
-        ffqns: worker.exported_functions().cloned().collect(),
+        ffqns: ffqns.clone(),
         batch_size: 1,
         lock_expiry: Duration::from_secs(1),
         tick_sleep: Duration::from_millis(1),
         clock_fn: now,
     };
-    ExecTask::spawn_new(worker, exec_config, db_pool, None)
+    (
+        ExecTask::spawn_new(worker, exec_config, db_pool, None),
+        ffqns,
+    )
 }
