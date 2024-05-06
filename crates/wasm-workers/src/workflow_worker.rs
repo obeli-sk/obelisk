@@ -597,7 +597,7 @@ mod tests {
     #[tokio::test]
     async fn http_get() {
         use crate::activity_worker::tests::{
-            spawn_activity, wasmtime_nosim::HTTP_GET_ACTIVITY_FFQN,
+            spawn_activity, wasmtime_nosim::HTTP_GET_SUCCESSFUL_ACTIVITY,
         };
         use std::ops::Deref;
         use wiremock::{
@@ -607,7 +607,7 @@ mod tests {
 
         const BODY: &str = "ok";
         pub const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
-            FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::EXECUTE);
+            FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
 
         test_utils::set_up();
         let mut db_task = DbTask::spawn_new(1);
@@ -616,7 +616,7 @@ mod tests {
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            HTTP_GET_ACTIVITY_FFQN,
+            HTTP_GET_SUCCESSFUL_ACTIVITY,
         );
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
@@ -632,7 +632,8 @@ mod tests {
             .mount(&server)
             .await;
         debug!("started mock server on {}", server.address());
-        let params = Params::from_json_array(json!([server.address().port()])).unwrap();
+        let authority = format!("127.0.0.1:{}", server.address().port());
+        let params = Params::from_json_array(json!([authority, "/"])).unwrap();
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = now();
@@ -658,8 +659,9 @@ mod tests {
                 .unwrap(),
             Ok(res) => res
         );
-        let wast_val = assert_matches!(res.value(), Some(wast_val) => wast_val);
-        let val = assert_matches!(wast_val, WastVal::String(val) => val);
+        let val = assert_matches!(res.value(), Some(wast_val) => wast_val);
+        let val = assert_matches!(val, WastVal::Result(Ok(Some(val))) => val).deref();
+        let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
         drop(db_connection);
         drop(db_pool);

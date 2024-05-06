@@ -455,10 +455,9 @@ pub(crate) mod tests {
         pub const SLEEP_LOOP_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
             test_programs_sleep_activity_builder::exports::testing::sleep::sleep::SLEEP_LOOP,
         ); // sleep-loop: func(millis: u64, iterations: u32);
-        pub const HTTP_GET_ACTIVITY_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(
-            test_programs_http_get_activity_builder::exports::testing::http::http_get::GET,
+        pub const HTTP_GET_SUCCESSFUL_ACTIVITY :FunctionFqn = FunctionFqn::new_static_tuple(
+            test_programs_http_get_activity_builder::exports::testing::http::http_get::GET_SUCCESSFUL,
         );
-        // get: func(authority: string, path: string) -> result<string, string>;
 
         #[rstest::rstest]
         #[case(10, 100, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
@@ -629,9 +628,6 @@ pub(crate) mod tests {
             };
             const BODY: &str = "ok";
             const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
-            const HTTP_GET_SUCCESSFUL :FunctionFqn = FunctionFqn::new_static_tuple(
-                test_programs_http_get_activity_builder::exports::testing::http::http_get::GET_SUCCESSFUL,
-            );
             test_utils::set_up();
             let sim_clock = SimClock::new(now());
             let mut db_task = DbTask::spawn_new(1);
@@ -651,7 +647,7 @@ pub(crate) mod tests {
                 .unwrap(),
             );
             let exec_config = ExecConfig {
-                ffqns: vec![HTTP_GET_SUCCESSFUL],
+                ffqns: vec![HTTP_GET_SUCCESSFUL_ACTIVITY],
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
@@ -676,7 +672,7 @@ pub(crate) mod tests {
                 .create(CreateRequest {
                     created_at,
                     execution_id,
-                    ffqn: HTTP_GET_SUCCESSFUL,
+                    ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
                     params,
                     parent: None,
                     scheduled_at: None,

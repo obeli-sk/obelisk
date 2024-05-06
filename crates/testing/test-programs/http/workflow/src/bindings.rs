@@ -137,28 +137,6 @@ pub mod exports {
                 use super::super::super::super::_rt;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_execute_cabi<T: Guest>(arg0: i32) -> *mut u8 {
-                    #[cfg(target_arch = "wasm32")]
-                    _rt::run_ctors_once();
-                    let result0 = T::execute(arg0 as u16);
-                    let ptr1 = _RET_AREA.0.as_mut_ptr().cast::<u8>();
-                    let vec2 = (result0.into_bytes()).into_boxed_slice();
-                    let ptr2 = vec2.as_ptr().cast::<u8>();
-                    let len2 = vec2.len();
-                    ::core::mem::forget(vec2);
-                    *ptr1.add(4).cast::<usize>() = len2;
-                    *ptr1.add(0).cast::<*mut u8>() = ptr2.cast_mut();
-                    ptr1
-                }
-                #[doc(hidden)]
-                #[allow(non_snake_case)]
-                pub unsafe fn __post_return_execute<T: Guest>(arg0: *mut u8) {
-                    let l0 = *arg0.add(0).cast::<*mut u8>();
-                    let l1 = *arg0.add(4).cast::<usize>();
-                    _rt::cabi_dealloc(l0, l1, 1);
-                }
-                #[doc(hidden)]
-                #[allow(non_snake_case)]
                 pub unsafe fn _export_get_cabi<T: Guest>(
                     arg0: *mut u8,
                     arg1: usize,
@@ -212,9 +190,68 @@ pub mod exports {
                         }
                     }
                 }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_get_successful_cabi<T: Guest>(
+                    arg0: *mut u8,
+                    arg1: usize,
+                    arg2: *mut u8,
+                    arg3: usize,
+                ) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
+                    let len0 = arg1;
+                    let bytes0 = _rt::Vec::from_raw_parts(arg0.cast(), len0, len0);
+                    let len1 = arg3;
+                    let bytes1 = _rt::Vec::from_raw_parts(arg2.cast(), len1, len1);
+                    let result2 =
+                        T::get_successful(_rt::string_lift(bytes0), _rt::string_lift(bytes1));
+                    let ptr3 = _RET_AREA.0.as_mut_ptr().cast::<u8>();
+                    match result2 {
+                        Ok(e) => {
+                            *ptr3.add(0).cast::<u8>() = (0i32) as u8;
+                            let vec4 = (e.into_bytes()).into_boxed_slice();
+                            let ptr4 = vec4.as_ptr().cast::<u8>();
+                            let len4 = vec4.len();
+                            ::core::mem::forget(vec4);
+                            *ptr3.add(8).cast::<usize>() = len4;
+                            *ptr3.add(4).cast::<*mut u8>() = ptr4.cast_mut();
+                        }
+                        Err(e) => {
+                            *ptr3.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec5 = (e.into_bytes()).into_boxed_slice();
+                            let ptr5 = vec5.as_ptr().cast::<u8>();
+                            let len5 = vec5.len();
+                            ::core::mem::forget(vec5);
+                            *ptr3.add(8).cast::<usize>() = len5;
+                            *ptr3.add(4).cast::<*mut u8>() = ptr5.cast_mut();
+                        }
+                    };
+                    ptr3
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_get_successful<T: Guest>(arg0: *mut u8) {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    match l0 {
+                        0 => {
+                            let l1 = *arg0.add(4).cast::<*mut u8>();
+                            let l2 = *arg0.add(8).cast::<usize>();
+                            _rt::cabi_dealloc(l1, l2, 1);
+                        }
+                        _ => {
+                            let l3 = *arg0.add(4).cast::<*mut u8>();
+                            let l4 = *arg0.add(8).cast::<usize>();
+                            _rt::cabi_dealloc(l3, l4, 1);
+                        }
+                    }
+                }
                 pub trait Guest {
-                    fn execute(port: u16) -> _rt::String;
                     fn get(
+                        authority: _rt::String,
+                        path: _rt::String,
+                    ) -> Result<_rt::String, _rt::String>;
+                    fn get_successful(
                         authority: _rt::String,
                         path: _rt::String,
                     ) -> Result<_rt::String, _rt::String>;
@@ -224,14 +261,6 @@ pub mod exports {
                 macro_rules! __export_testing_http_workflow_workflow_cabi{
       ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
 
-        #[export_name = "testing:http-workflow/workflow#execute"]
-        unsafe extern "C" fn export_execute(arg0: i32,) -> *mut u8 {
-          $($path_to_types)*::_export_execute_cabi::<$ty>(arg0)
-        }
-        #[export_name = "cabi_post_testing:http-workflow/workflow#execute"]
-        unsafe extern "C" fn _post_return_execute(arg0: *mut u8,) {
-          $($path_to_types)*::__post_return_execute::<$ty>(arg0)
-        }
         #[export_name = "testing:http-workflow/workflow#get"]
         unsafe extern "C" fn export_get(arg0: *mut u8,arg1: usize,arg2: *mut u8,arg3: usize,) -> *mut u8 {
           $($path_to_types)*::_export_get_cabi::<$ty>(arg0, arg1, arg2, arg3)
@@ -239,6 +268,14 @@ pub mod exports {
         #[export_name = "cabi_post_testing:http-workflow/workflow#get"]
         unsafe extern "C" fn _post_return_get(arg0: *mut u8,) {
           $($path_to_types)*::__post_return_get::<$ty>(arg0)
+        }
+        #[export_name = "testing:http-workflow/workflow#get-successful"]
+        unsafe extern "C" fn export_get_successful(arg0: *mut u8,arg1: usize,arg2: *mut u8,arg3: usize,) -> *mut u8 {
+          $($path_to_types)*::_export_get_successful_cabi::<$ty>(arg0, arg1, arg2, arg3)
+        }
+        #[export_name = "cabi_post_testing:http-workflow/workflow#get-successful"]
+        unsafe extern "C" fn _post_return_get_successful(arg0: *mut u8,) {
+          $($path_to_types)*::__post_return_get_successful::<$ty>(arg0)
         }
       };);
     }
@@ -315,15 +352,15 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.24.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 339] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd9\x01\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 335] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd5\x01\x01A\x02\x01\
 A\x04\x01B\x04\x01j\x01s\x01s\x01@\x02\x09authoritys\x04paths\0\0\x04\0\x03get\x01\
 \x01\x04\0\x0eget-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\
-\x05\x01@\x01\x04port{\0s\x04\0\x07execute\x01\0\x01j\x01s\x01s\x01@\x02\x09auth\
-oritys\x04paths\0\x01\x04\0\x03get\x01\x02\x04\x01\x1etesting:http-workflow/work\
-flow\x05\x01\x04\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\
-\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.202.0\x10wit-\
-bindgen-rust\x060.24.0";
+\x04\x01j\x01s\x01s\x01@\x02\x09authoritys\x04paths\0\0\x04\0\x03get\x01\x01\x04\
+\0\x0eget-successful\x01\x01\x04\x01\x1etesting:http-workflow/workflow\x05\x01\x04\
+\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09produ\
+cers\x01\x0cprocessed-by\x02\x0dwit-component\x070.202.0\x10wit-bindgen-rust\x06\
+0.24.0";
 
 #[inline(never)]
 #[doc(hidden)]
