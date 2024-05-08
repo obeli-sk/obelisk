@@ -528,6 +528,7 @@ mod tests {
         ExecTask::spawn_new(worker, exec_config, db_pool, None)
     }
 
+    // TODO: test with JoinNextBlockingStrategy::Await
     #[tokio::test]
     async fn sleep_should_be_persisted_after_executor_restart() {
         const SLEEP_MILLIS: u32 = 100;

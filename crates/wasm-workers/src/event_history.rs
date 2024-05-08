@@ -105,7 +105,6 @@ impl EventHistory {
             }
             Some(poll_variant) => {
                 let commands = event_call.commands();
-                assert_eq!(commands.len(), 3);
                 let mut history_events = event_call
                     .append_to_db(
                         &db_connection,
@@ -118,12 +117,12 @@ impl EventHistory {
                     )
                     .await?;
                 self.events.append(&mut history_events);
-                // move the index forward by 3, the [`JoinSetResponse`] is found yet.
-                let old_idx = self.events_idx;
+                // move the index forward by n - 1, the last [`JoinSetResponse`] is found yet.
+                let expected_idx = self.events_idx + commands.len() - 1;
                 for command in commands.into_iter().peekable() {
                     self.find_matching_command(command)?;
                 }
-                assert_eq!(old_idx + 2, self.events_idx);
+                assert_eq!(expected_idx, self.events_idx);
                 poll_variant
             }
         };
