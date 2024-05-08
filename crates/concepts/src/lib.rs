@@ -174,28 +174,32 @@ pub struct IfcFqnMarker;
 pub type IfcFqnName = Name<IfcFqnMarker>; // namespace:name/ifc_name@version
 
 impl IfcFqnName {
+    #[must_use]
     pub fn namespace(&self) -> &str {
         self.deref().split_once(':').unwrap().0
     }
 
+    #[must_use]
     pub fn package_name(&self) -> &str {
         let after_colon = self.deref().split_once(':').unwrap().1;
         after_colon.split_once('/').unwrap().0
     }
 
+    #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.deref().split_once('@').map(|(_, version)| version)
     }
 
+    #[must_use]
     pub fn ifc_name(&self) -> &str {
         let after_colon = self.deref().split_once(':').unwrap().1;
         let after_slash = after_colon.split_once('/').unwrap().1;
         after_slash
             .split_once('@')
-            .map(|(ifc, _)| ifc)
-            .unwrap_or(after_slash)
+            .map_or(after_slash, |(ifc, _)| ifc)
     }
 
+    #[must_use]
     pub fn from_parts(
         namespace: &str,
         package_name: &str,

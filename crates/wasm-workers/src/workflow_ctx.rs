@@ -130,7 +130,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 EventCall::BlockingDelayRequest {
                     join_set_id,
                     delay_id,
-                    expires_at_if_new: (self.clock_fn)() + Duration::from_millis(millis as u64),
+                    expires_at_if_new: (self.clock_fn)() + Duration::from_millis(u64::from(millis)),
                 },
                 &self.db_pool,
                 &mut self.version,

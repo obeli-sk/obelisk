@@ -30,6 +30,7 @@ pub(crate) struct EventHistory {
 }
 
 impl EventHistory {
+    #[allow(clippy::too_many_lines)]
     pub(crate) async fn replay_or_interrupt<DB: DbConnection>(
         &mut self,
         event_call: EventCall,
@@ -167,6 +168,7 @@ impl EventHistory {
         Ok(Some(last.unwrap()))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn find_matching_command(
         &mut self,
         command: EventHistoryCommand,
@@ -259,7 +261,7 @@ impl EventHistory {
                                 error!(%child_execution_id,
                                     %join_set_id,
                                     "Child execution finished with an execution error, failing the parent");
-                                return Err(FunctionError::ChildExecutionError(err.clone()));
+                                Err(FunctionError::ChildExecutionError(err.clone()))
                             }
                         }
                     }
@@ -289,14 +291,12 @@ impl EventHistory {
                     _ => Ok(None), // no progress, still at JoinNext
                 }
             }
-            (command, found) => {
-                return Err(FunctionError::NonDeterminismDetected(StrVariant::Arc(
-                    Arc::from(format!(
-                        "unexpected command {command:?} not matching {found:?} at index {}",
-                        self.events_idx
-                    )),
-                )));
-            }
+            (command, found) => Err(FunctionError::NonDeterminismDetected(StrVariant::Arc(
+                Arc::from(format!(
+                    "unexpected command {command:?} not matching {found:?} at index {}",
+                    self.events_idx
+                )),
+            ))),
         }
     }
 
@@ -426,6 +426,7 @@ impl EventCall {
         }
     }
 
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn append_to_db(
         self,
         db_connection: &impl DbConnection,

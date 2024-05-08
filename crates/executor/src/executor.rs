@@ -395,7 +395,8 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     }
                     WorkerError::FatalError(FatalError::ChildExecutionError(err), version) => {
                         info!("Child finished with an execution error");
-                        let result = Err(FinishedExecutionError::PermanentFailure( // TODO: Add ErrId
+                        let result = Err(FinishedExecutionError::PermanentFailure(
+                            // TODO: Add ErrId
                             StrVariant::Arc(Arc::from(format!(
                                 "child finished with an execution error: {err:?}"
                             ))),

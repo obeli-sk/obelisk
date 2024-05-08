@@ -80,7 +80,7 @@ async fn main() {
         eprintln!("Available functions:");
         for (_, ffqns) in &wasm_tasks {
             for ffqn in ffqns {
-                eprintln!("{}", ffqn);
+                eprintln!("{ffqn}");
             }
         }
         return;
