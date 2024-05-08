@@ -10,5 +10,7 @@ interface workflow {
 
 world any {
     import testing:http/http-get;
+    import testing:http-obelisk-ext/http-get;
+    import my-org:workflow-engine/host-activities;
     export workflow;
 }

@@ -16,27 +16,25 @@ impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Compo
     }
 
     fn get_successful_concurrently(authorities: Vec<String>) -> Result<Vec<String>, String> {
-        // let join_set = bindings::my_org::workflow_engine::host_activities::join_set_joining_all();
-        let mut contents = Vec::with_capacity(authorities.len());
+        let join_set_id = bindings::my_org::workflow_engine::host_activities::new_join_set();
+        let length = authorities.len();
         for authority in authorities {
-            let res = crate::bindings::testing::http::http_get::get_successful(&authority, "/")?;
-            contents.push(res);
+            let _execution_id =
+                crate::bindings::testing::http_obelisk_ext::http_get::get_successful_future(
+                    &join_set_id,
+                    &authority,
+                    "/",
+                );
         }
-        Ok(contents)
+        let mut list = Vec::with_capacity(length);
+        for _ in 0..length {
+            // Mark the whole result as failed if any child execution fails.
+            let contents =
+                crate::bindings::testing::http_obelisk_ext::http_get::get_successful_await_next(
+                    &join_set_id,
+                )?;
+            list.push(contents);
+        }
+        Ok(list)
     }
-
-    /*
-
-        let join_set = bindings::my_org::workflow_engine::host_activities::join_set_joining_all();
-    let execution_id = crate::bindings::testing::http::http_get::get_future(
-        &join_set,
-        &format!("127.0.0.1:{port}"),
-        "/",
-    );
-    // join_set.is_ready(execution_id);
-    let res = crate::bindings::testing::http::http_get::get_blocking(&execution_id);
-    res.unwrap()
-
-
-    */
 }

@@ -7,6 +7,7 @@ use wasmtime::{component::Component, Engine};
 pub mod activity_worker;
 pub mod auto_worker;
 pub mod epoch_ticker;
+mod event_history;
 mod workflow_ctx;
 pub mod workflow_worker;
 

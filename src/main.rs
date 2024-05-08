@@ -35,7 +35,7 @@ async fn main() {
         .init();
     std::panic::set_hook(Box::new(utils::tracing_panic_hook));
 
-    let db_pool = SqlitePool::new("obeli-sk.sqlite").await.unwrap();
+    let db_pool = SqlitePool::new("obelisk.sqlite").await.unwrap();
     let activity_engine = activity_engine(EngineConfig::default());
     let workflow_engine = workflow_engine(EngineConfig::default());
 

@@ -29,7 +29,7 @@ pub enum FinishedExecutionError {
     #[error("non-determinism detected, reason: `{0}`")]
     NonDeterminismDetected(StrVariant),
     #[error("uncategorized error: `{0}`")]
-    PermanentFailure(StrVariant), // intermittent failure that is not retried (anymore)
+    PermanentFailure(StrVariant), // intermittent failure that is not retried (anymore) and cannot be mapped to the function result type
 }
 
 #[derive(Clone, Eq, derive_more::Display)]
@@ -172,6 +172,44 @@ impl<T> Borrow<str> for Name<T> {
 pub struct IfcFqnMarker;
 
 pub type IfcFqnName = Name<IfcFqnMarker>; // namespace:name/ifc_name@version
+
+impl IfcFqnName {
+    pub fn namespace(&self) -> &str {
+        self.deref().split_once(':').unwrap().0
+    }
+
+    pub fn package_name(&self) -> &str {
+        let after_colon = self.deref().split_once(':').unwrap().1;
+        after_colon.split_once('/').unwrap().0
+    }
+
+    pub fn version(&self) -> Option<&str> {
+        self.deref().split_once('@').map(|(_, version)| version)
+    }
+
+    pub fn ifc_name(&self) -> &str {
+        let after_colon = self.deref().split_once(':').unwrap().1;
+        let after_slash = after_colon.split_once('/').unwrap().1;
+        after_slash
+            .split_once('@')
+            .map(|(ifc, _)| ifc)
+            .unwrap_or(after_slash)
+    }
+
+    pub fn from_parts(
+        namespace: &str,
+        package_name: &str,
+        ifc_name: &str,
+        version: Option<&str>,
+    ) -> Self {
+        let mut str = format!("{namespace}:{package_name}/{ifc_name}");
+        if let Some(version) = version {
+            str += "@";
+            str += version;
+        }
+        Self::new_arc(Arc::from(str))
+    }
+}
 
 #[derive(Hash, Clone, PartialEq, Eq)]
 pub struct FnMarker;

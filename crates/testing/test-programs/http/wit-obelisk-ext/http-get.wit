@@ -1,0 +1,7 @@
+package testing:http-obelisk-ext;
+
+interface http-get {
+    get-successful-future: func(join-set-id: string, authority: string, path: string) -> string;
+
+    get-successful-await-next: func(join-set-id: string) -> result<string, string>;
+}

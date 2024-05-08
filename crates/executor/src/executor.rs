@@ -393,6 +393,16 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
+                    WorkerError::FatalError(FatalError::ChildExecutionError(err), version) => {
+                        info!("Child finished with an execution error");
+                        let result = Err(FinishedExecutionError::PermanentFailure( // TODO: Add ErrId
+                            StrVariant::Arc(Arc::from(format!(
+                                "child finished with an execution error: {err:?}"
+                            ))),
+                        ));
+                        let parent = parent.map(|(p, j)| (p, j, result.clone()));
+                        (ExecutionEventInner::Finished { result }, parent, version)
+                    }
                 };
                 Some(Append {
                     created_at: result_obtained_at,

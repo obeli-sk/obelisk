@@ -15,7 +15,7 @@ pub mod worker {
         async_trait, DateTime, Error, ExecutionId, FunctionFqn, HistoryEvent, Params,
         ParamsParsingError, ResultParsingError, SupportedFunctionResult, Utc, Version,
     };
-    use concepts::{storage::DbError, StrVariant};
+    use concepts::{storage::DbError, FinishedExecutionError, StrVariant};
 
     #[derive(Debug, thiserror::Error)]
     pub enum WorkerError {
@@ -43,6 +43,8 @@ pub mod worker {
         ParamsParsingError(ParamsParsingError), // FIXME: Add FFQN
         #[error("result cannot be parsed: {0}")]
         ResultParsingError(ResultParsingError), // FIXME: Add FFQN
+        #[error("child finished with an execution error: {0}")]
+        ChildExecutionError(FinishedExecutionError),
     }
 
     #[must_use]

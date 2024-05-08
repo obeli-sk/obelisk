@@ -2,4 +2,6 @@ package my-org:workflow-engine;
 
 interface host-activities {
     sleep: func(millis: u32);
+
+    new-join-set: func() -> string;
 }

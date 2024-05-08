@@ -88,8 +88,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                 continue;
             }
             trace!(
-                "Adding imported interface {ifc_fqn} to the linker",
-                ifc_fqn = import.ifc_fqn
+                ifc_fqn = %import.ifc_fqn,
+                "Adding imported interface to the linker",
             );
             if let Ok(mut linker_instance) = linker.instance(import.ifc_fqn.deref()) {
                 for function_name in import.fns.keys() {
@@ -110,7 +110,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                             Box::new(async move {
                                 Ok(store_ctx
                                     .data_mut()
-                                    .call_imported_func(ffqn, params, results)
+                                    .call_imported_fn(ffqn, params, results)
                                     .await?)
                             })
                         }
