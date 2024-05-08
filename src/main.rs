@@ -23,7 +23,11 @@ use wasmtime::Engine;
 async fn main() {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
-    tracing_subscriber::registry()
+    let enable_chrome_layer = std::env::var("CHROME_TRACE")
+        .ok()
+        .and_then(|val| val.parse::<bool>().ok())
+        .unwrap_or_default();
+    let builder = tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_thread_ids(true)
@@ -31,8 +35,17 @@ async fn main() {
                 .with_line_number(true)
                 .json(),
         )
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+        .with(tracing_subscriber::EnvFilter::from_default_env());
+    let _chrome_guard;
+    if enable_chrome_layer {
+        let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+            .trace_style(tracing_chrome::TraceStyle::Async)
+            .build();
+        _chrome_guard = guard;
+        builder.with(chrome_layer).init();
+    } else {
+        builder.init();
+    }
     std::panic::set_hook(Box::new(utils::tracing_panic_hook));
 
     let db_pool = SqlitePool::new("obelisk.sqlite").await.unwrap();

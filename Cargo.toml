@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-wasmtime.workspace = true                                # TODO: Remove
+wasmtime.workspace = true
 test-programs-http-get-activity-builder.workspace = true # TODO: Remove
 test-programs-http-get-workflow-builder.workspace = true # TODO: Remove
 
@@ -24,6 +24,7 @@ tokio = { workspace = true, features = [
     "macros",
     "rt-multi-thread",
 ] }
+tracing-chrome.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
 utils.workspace = true
