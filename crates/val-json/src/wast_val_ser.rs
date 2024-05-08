@@ -459,27 +459,26 @@ pub mod params {
         Deserializer,
     };
     use serde_json::Value;
-    use std::marker::PhantomData;
 
     // Visitor implementation that deserializes a JSON array into `Vec<WastVal>`.
-    struct SequenceVisitor<'a, V, I: ExactSizeIterator<Item = &'a TypeWrapper>> {
+    struct SequenceVisitor<'a, I: ExactSizeIterator<Item = &'a TypeWrapper>> {
         iterator: I,
         len: usize,
-        phantom_data: PhantomData<V>,
+        current_idx: usize,
     }
 
-    impl<'a, V, I: ExactSizeIterator<Item = &'a TypeWrapper>> SequenceVisitor<'a, V, I> {
+    impl<'a, I: ExactSizeIterator<Item = &'a TypeWrapper>> SequenceVisitor<'a, I> {
         fn new(iterator: I) -> Self {
             let len = iterator.len();
             Self {
                 iterator,
                 len,
-                phantom_data: PhantomData,
+                current_idx: 0,
             }
         }
     }
     impl<'a, 'de, I: ExactSizeIterator<Item = &'a TypeWrapper>> Visitor<'de>
-        for SequenceVisitor<'a, WastVal, I>
+        for SequenceVisitor<'a, I>
     {
         type Value = Vec<WastVal>;
 
@@ -494,7 +493,16 @@ pub mod params {
             use serde::de::Error;
             let mut vec = Vec::new();
             while let Some(ty) = self.iterator.next() {
-                if let Some(val) = seq.next_element_seed(WastValDeserialize(ty))? {
+                self.current_idx += 1; // parameters are usually indexed from 1.
+                if let Some(val) = seq
+                    .next_element_seed(WastValDeserialize(ty))
+                    .map_err(|err| {
+                        Error::custom(format_args!(
+                            "cannot parse {idx}-th parameter - `{err}`",
+                            idx = self.current_idx
+                        ))
+                    })?
+                {
                     vec.push(val);
                 } else {
                     Err(Error::invalid_length(vec.len(), &self))?;

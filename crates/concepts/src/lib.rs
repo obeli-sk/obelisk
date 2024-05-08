@@ -491,8 +491,8 @@ pub enum ParamsParsingError {
         idx: usize,
         err: TypeConversionError,
     },
-    #[error("error deserializing parameters - `{0}`")]
-    DeserializationError(#[from] serde_json::Error),
+    #[error(transparent)]
+    ParamsDeserializationError(#[from] serde_json::Error),
 }
 
 impl Params {
@@ -523,7 +523,7 @@ impl Params {
         param_types: Box<[Type]>,
     ) -> Result<Arc<[wasmtime::component::Val]>, ParamsParsingError> {
         match &self.0 {
-            ParamsInternal::Json(params) => {
+            ParamsInternal::Json(params @ Value::Array(_)) => {
                 let param_types = param_types
                     .into_vec()
                     .into_iter()
@@ -536,6 +536,7 @@ impl Params {
                     .map(Val::from)
                     .collect())
             }
+            ParamsInternal::Json(_) => unreachable!("only Value::Array can be constructed"),
             ParamsInternal::Vals { vals, .. } => Ok(vals.clone()),
             ParamsInternal::Empty => Ok(Arc::from([])),
         }
