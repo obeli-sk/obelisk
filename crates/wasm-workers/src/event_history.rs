@@ -12,7 +12,7 @@ use concepts::{FunctionFqn, Params, SupportedFunctionResult};
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, instrument, trace};
 use utils::time::ClockFn;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
@@ -86,6 +86,7 @@ impl EventHistory {
             };
         let poll_variant = match poll_variant {
             None => {
+                // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
                 let cloned_non_blocking = event_call.clone();
                 let mut history_events = event_call
                     .append_to_db(
@@ -130,7 +131,7 @@ impl EventHistory {
         if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Await {
             debug!(join_set_id = %poll_variant.join_set_id(),  "Waiting for {poll_variant}");
             while clock_fn() < self.execution_deadline {
-                if self.get_update(&db_connection).await?.is_some() {
+                if self.get_update(&db_connection, version).await?.is_some() {
                     if let Some(accept_resp) =
                         self.find_matching_command(poll_variant.as_command())?
                     {
@@ -168,7 +169,9 @@ impl EventHistory {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[instrument(skip(self), fields(events_idx = self.events_idx))]
     fn find_matching_command(
+        // FIXME: JoinSetResponse arrives before JoinNextBlocking
         &mut self,
         command: EventHistoryCommand,
     ) -> Result<Option<SupportedFunctionResult>, FunctionError> {
@@ -225,8 +228,7 @@ impl EventHistory {
                         },
                 },
             ) if join_set_id == *found_join_set_id && delay_id == *found_delay_id => {
-                trace!(%delay_id,
-                %join_set_id, "Matched JoinSetRequest::DelayRequest");
+                trace!(%delay_id, %join_set_id, "Matched JoinSetRequest::DelayRequest");
                 self.events_idx += 1;
                 // return delay id
                 Ok(Some(SupportedFunctionResult::Infallible(WastValWithType {
@@ -253,6 +255,7 @@ impl EventHistory {
                             },
                         join_set_id: following_join_set_id,
                     }) if join_set_id == *following_join_set_id => {
+                        trace!(%join_set_id, "Matched JoinNext & ChildExecutionFinished");
                         self.events_idx += 2;
                         match result {
                             Ok(result) => Ok(Some(result.clone())),
@@ -284,6 +287,7 @@ impl EventHistory {
                             },
                         join_set_id: following_join_set_id,
                     }) if join_set_id == *following_join_set_id => {
+                        trace!(%join_set_id, "Matched JoinNext & DelayFinished");
                         self.events_idx += 2;
                         Ok(Some(SupportedFunctionResult::None))
                     }
@@ -302,14 +306,13 @@ impl EventHistory {
     async fn get_update<DB: DbConnection>(
         &mut self,
         db_connection: &DB,
+        version: &mut Version,
     ) -> Result<Option<()>, DbError> {
-        let event_history = db_connection
-            .get(self.execution_id)
-            .await?
-            .event_history()
-            .collect::<Vec<_>>();
+        let exec_log = db_connection.get(self.execution_id).await?;
+        let event_history = exec_log.event_history().collect::<Vec<_>>();
         if event_history.len() > self.events.len() {
             self.events = event_history;
+            *version = exec_log.version;
             Ok(Some(()))
         } else {
             Ok(None)
