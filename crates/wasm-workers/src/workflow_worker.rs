@@ -343,6 +343,7 @@ mod tests {
         EngineConfig,
     };
     use assert_matches::assert_matches;
+    use chrono::DateTime;
     use concepts::storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState};
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
     use db_mem::inmemory_dao::DbTask;
@@ -367,11 +368,12 @@ mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
-    pub(crate) fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         wasm_path: &'static str,
         ffqn: FunctionFqn,
         clock_fn: impl ClockFn + 'static,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
     ) -> ExecutorTaskHandle {
         let workflow_engine = workflow_engine(EngineConfig::default());
         let worker = Arc::new(
@@ -381,7 +383,7 @@ mod tests {
                     db_pool: db_pool.clone(),
                     config_id: ConfigId::generate(),
                     clock_fn: clock_fn.clone(),
-                    join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
+                    join_next_blocking_strategy,
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
                     phantom_data: PhantomData,
@@ -409,6 +411,7 @@ mod tests {
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
             FIBO_WORKFLOW_FFQN,
             now,
+            JoinNextBlockingStrategy::default(),
         )
     }
 
@@ -611,6 +614,7 @@ mod tests {
             FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
 
         test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
         let mut db_task = DbTask::spawn_new(1);
         let db_pool = db_task.pool().unwrap();
 
@@ -618,12 +622,14 @@ mod tests {
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             HTTP_GET_SUCCESSFUL_ACTIVITY,
+            sim_clock.get_clock_fn(),
         );
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             HTTP_GET_WORKFLOW_FFQN,
-            now,
+            sim_clock.get_clock_fn(),
+            JoinNextBlockingStrategy::default(),
         );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -637,7 +643,7 @@ mod tests {
         let params = Params::from_json_array(json!([authority, "/"])).unwrap();
         // Create an execution.
         let execution_id = ExecutionId::generate();
-        let created_at = now();
+        let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
@@ -655,7 +661,7 @@ mod tests {
         // Check the result.
         let res = assert_matches!(
             db_connection
-                .wait_for_finished_result(execution_id, Some(Duration::from_secs(1)))
+                .wait_for_finished_result(execution_id, None)
                 .await
                 .unwrap(),
             Ok(res) => res
@@ -669,5 +675,102 @@ mod tests {
         activity_exec_task.close().await;
         workflow_exec_task.close().await;
         db_task.close().await;
+    }
+
+    #[cfg(not(madsim))]
+    #[tokio::test]
+    async fn http_get_concurrent_sqlite() {
+        // TODO : fixture, parametrize by JoinNextBlockingStrategy
+        use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
+
+        let (db_pool, _guard) = sqlite_pool().await;
+        http_get_concurrent(db_pool.clone()).await;
+        db_pool.close().await.unwrap();
+    }
+
+    async fn http_get_concurrent<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(db_pool: P) {
+        use crate::activity_worker::tests::{
+            spawn_activity, wasmtime_nosim::HTTP_GET_SUCCESSFUL_ACTIVITY,
+        };
+        use serde_json::Value;
+        use std::ops::Deref;
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+
+        const CONCURRENCY: usize = 1;
+        const BODY: &str = "ok";
+        pub const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
+            FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY);
+
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+
+        let activity_exec_task = spawn_activity(
+            db_pool.clone(),
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            HTTP_GET_SUCCESSFUL_ACTIVITY,
+            sim_clock.get_clock_fn(),
+        );
+        let workflow_exec_task = spawn_workflow(
+            db_pool.clone(),
+            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+            HTTP_GET_WORKFLOW_FFQN,
+            sim_clock.get_clock_fn(),
+            JoinNextBlockingStrategy::default(),
+        );
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
+            .mount(&server)
+            .await;
+        debug!("started mock server on {}", server.address());
+        let authority = format!("127.0.0.1:{}", server.address().port());
+
+        let vec = Value::Array(vec![Value::Array(vec![
+            Value::String(authority);
+            CONCURRENCY
+        ])]);
+
+        let params = Params::from_json_array(vec).unwrap();
+        // Create an execution.
+        let execution_id = ExecutionId::generate();
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id,
+                ffqn: HTTP_GET_WORKFLOW_FFQN,
+                params,
+                parent: None,
+                scheduled_at: None,
+                retry_exp_backoff: Duration::from_millis(10),
+                max_retries: 5, // retries enabled due to racy test
+            })
+            .await
+            .unwrap();
+        // Check the result.
+        let res = assert_matches!(
+            db_connection
+                .wait_for_finished_result(execution_id, None)
+                .await
+                .unwrap(),
+            Ok(res) => res
+        );
+        let val = assert_matches!(res.value(), Some(wast_val) => wast_val);
+        let val = assert_matches!(val, WastVal::Result(Ok(Some(val))) => val).deref();
+        let val = assert_matches!(val, WastVal::List(vec) => vec);
+        assert_eq!(CONCURRENCY, val.len());
+        for val in val {
+            let val = assert_matches!(val, WastVal::String(val) => val);
+            assert_eq!(BODY, val.deref());
+        }
+        drop(db_connection);
+        drop(db_pool);
+        activity_exec_task.close().await;
+        workflow_exec_task.close().await;
     }
 }

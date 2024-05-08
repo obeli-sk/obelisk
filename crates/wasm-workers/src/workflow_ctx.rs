@@ -99,7 +99,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         }
     }
 
-    #[allow(dead_code)] // False positive
     #[instrument(skip_all, fields(%ffqn))]
     pub(crate) async fn call_imported_fn(
         &mut self,
@@ -146,7 +145,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         u128::from_be_bytes(bytes)
     }
 
-    #[allow(dead_code)] // False positive
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), wasmtime::Error> {
         my_org::workflow_engine::host_activities::add_to_linker(linker, |state: &mut Self| state)
     }

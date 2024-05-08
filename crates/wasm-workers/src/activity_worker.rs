@@ -303,6 +303,7 @@ pub(crate) mod tests {
         db_pool: P,
         wasm_path: &'static str,
         ffqn: FunctionFqn,
+        clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
         let engine = activity_engine(EngineConfig::default());
         let worker = Arc::new(
@@ -311,7 +312,7 @@ pub(crate) mod tests {
                 ActivityConfig {
                     config_id: ConfigId::generate(),
                     recycled_instances: RecycleInstancesSetting::Disable,
-                    clock_fn: now,
+                    clock_fn: clock_fn.clone(),
                     timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
                 },
                 engine,
@@ -323,7 +324,7 @@ pub(crate) mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            clock_fn: now,
+            clock_fn,
         };
         ExecTask::spawn_new(worker, exec_config, db_pool, None)
     }
@@ -335,6 +336,7 @@ pub(crate) mod tests {
             db_pool,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             FIBO_ACTIVITY_FFQN,
+            now,
         )
     }
 
