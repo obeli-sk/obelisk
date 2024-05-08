@@ -280,9 +280,15 @@ impl Debug for FunctionFqn {
 
 impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let illegal = [':', '@', '.'];
+        let namespace = u.arbitrary::<String>()?.replace(illegal, "");
+        let pkg_name = u.arbitrary::<String>()?.replace(illegal, "");
+        let ifc_name = u.arbitrary::<String>()?.replace(illegal, "");
+        let fn_name = u.arbitrary::<String>()?.replace(illegal, "");
+
         Ok(FunctionFqn::new_arc(
-            Arc::from(u.arbitrary::<String>()?),
-            Arc::from(u.arbitrary::<String>()?),
+            Arc::from(format!("{namespace}:{pkg_name}/{ifc_name}")),
+            Arc::from(fn_name),
         ))
     }
 }

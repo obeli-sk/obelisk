@@ -279,7 +279,7 @@ mod tests {
     use utils::time::{now, ClockFn};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
-    const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+    const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
     const MOCK_FFQN_PTR: &FunctionFqn = &MOCK_FFQN;
 
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
