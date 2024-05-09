@@ -50,12 +50,12 @@ impl EventHistory {
                     | PollVariant::JoinNextDelay(join_set_id) => *join_set_id,
                 }
             }
-            fn as_command(&self) -> EventHistoryCommand {
+            fn as_key(&self) -> EventHistoryKey {
                 match self {
-                    PollVariant::JoinNextChild(join_set_id) => EventHistoryCommand::JoinNextChild {
+                    PollVariant::JoinNextChild(join_set_id) => EventHistoryKey::JoinNextChild {
                         join_set_id: *join_set_id,
                     },
-                    PollVariant::JoinNextDelay(join_set_id) => EventHistoryCommand::JoinNextDelay {
+                    PollVariant::JoinNextDelay(join_set_id) => EventHistoryKey::JoinNextDelay {
                         join_set_id: *join_set_id,
                     },
                 }
@@ -105,7 +105,7 @@ impl EventHistory {
                     .expect("non-blocking EventCall must return some response"));
             }
             Some(poll_variant) => {
-                let commands = event_call.commands();
+                let keys = event_call.as_keys();
                 let mut history_events = event_call
                     .append_to_db(
                         &db_connection,
@@ -119,9 +119,9 @@ impl EventHistory {
                     .await?;
                 self.events.append(&mut history_events);
                 // move the index forward by n - 1, the last [`JoinSetResponse`] is found yet.
-                let expected_idx = self.events_idx + commands.len() - 1;
-                for command in commands.into_iter().peekable() {
-                    self.find_matching_command(command)?;
+                let expected_idx = self.events_idx + keys.len() - 1;
+                for key in keys.into_iter().peekable() {
+                    self.find_eventy_by_key(key)?;
                 }
                 assert_eq!(expected_idx, self.events_idx);
                 poll_variant
@@ -132,9 +132,7 @@ impl EventHistory {
             debug!(join_set_id = %poll_variant.join_set_id(),  "Waiting for {poll_variant}");
             while clock_fn() < self.execution_deadline {
                 if self.get_update(&db_connection, version).await?.is_some() {
-                    if let Some(accept_resp) =
-                        self.find_matching_command(poll_variant.as_command())?
-                    {
+                    if let Some(accept_resp) = self.find_eventy_by_key(poll_variant.as_key())? {
                         debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
                         return Ok(accept_resp);
                     }
@@ -152,11 +150,11 @@ impl EventHistory {
         &mut self,
         event_call: &EventCall,
     ) -> Result<Option<SupportedFunctionResult>, FunctionError> {
-        let commands = event_call.commands();
-        assert!(!commands.is_empty());
+        let keys = event_call.as_keys();
+        assert!(!keys.is_empty());
         let mut last = None;
-        for (idx, command) in commands.into_iter().enumerate() {
-            last = self.find_matching_command(command)?;
+        for (idx, key) in keys.into_iter().enumerate() {
+            last = self.find_eventy_by_key(key)?;
             if last.is_none() {
                 assert_eq!(
                     idx, 0,
@@ -170,18 +168,18 @@ impl EventHistory {
 
     #[allow(clippy::too_many_lines)]
     #[instrument(skip(self), fields(events_idx = self.events_idx))]
-    fn find_matching_command(
+    fn find_eventy_by_key(
         // FIXME: JoinSetResponse arrives before JoinNextBlocking
         &mut self,
-        command: EventHistoryCommand,
+        key: EventHistoryKey,
     ) -> Result<Option<SupportedFunctionResult>, FunctionError> {
         let Some(found) = self.events.get(self.events_idx) else {
             return Ok(None);
         };
-        trace!("Finding match for {command:?}, {found:?}",);
-        match (command, found) {
+        trace!("Finding match for {key:?}, {found:?}",);
+        match (key, found) {
             (
-                EventHistoryCommand::CreateJoinSet { join_set_id },
+                EventHistoryKey::CreateJoinSet { join_set_id },
                 HistoryEvent::JoinSet {
                     join_set_id: found_join_set_id,
                 },
@@ -195,7 +193,7 @@ impl EventHistory {
                 })))
             }
             (
-                EventHistoryCommand::ChildExecutionRequest {
+                EventHistoryKey::ChildExecutionRequest {
                     join_set_id,
                     child_execution_id: execution_id,
                     ..
@@ -215,7 +213,7 @@ impl EventHistory {
                 })))
             }
             (
-                EventHistoryCommand::DelayRequest {
+                EventHistoryKey::DelayRequest {
                     join_set_id,
                     delay_id,
                 },
@@ -237,7 +235,7 @@ impl EventHistory {
                 })))
             }
             (
-                EventHistoryCommand::JoinNextChild { join_set_id },
+                EventHistoryKey::JoinNextChild { join_set_id },
                 HistoryEvent::JoinNext {
                     join_set_id: found_join_set_id,
                     ..
@@ -271,7 +269,7 @@ impl EventHistory {
                 }
             }
             (
-                EventHistoryCommand::JoinNextDelay { join_set_id },
+                EventHistoryKey::JoinNextDelay { join_set_id },
                 HistoryEvent::JoinNext {
                     join_set_id: found_join_set_id,
                     ..
@@ -294,9 +292,9 @@ impl EventHistory {
                     _ => Ok(None), // no progress, still at JoinNext
                 }
             }
-            (command, found) => Err(FunctionError::NonDeterminismDetected(StrVariant::Arc(
+            (key, found) => Err(FunctionError::NonDeterminismDetected(StrVariant::Arc(
                 Arc::from(format!(
-                    "unexpected command {command:?} not matching {found:?} at index {}",
+                    "unexpected key {key:?} not matching {found:?} at index {}",
                     self.events_idx
                 )),
             ))),
@@ -349,8 +347,7 @@ pub(crate) enum EventCall {
 }
 
 #[derive(Debug)]
-// TODO: Rename to EventHistoryKey
-enum EventHistoryCommand {
+enum EventHistoryKey {
     CreateJoinSet {
         join_set_id: JoinSetId,
     },
@@ -373,10 +370,10 @@ enum EventHistoryCommand {
 }
 
 impl EventCall {
-    fn commands(&self) -> Vec<EventHistoryCommand> {
+    fn as_keys(&self) -> Vec<EventHistoryKey> {
         match self {
             EventCall::CreateJoinSet { join_set_id } => {
-                vec![EventHistoryCommand::CreateJoinSet {
+                vec![EventHistoryKey::CreateJoinSet {
                     join_set_id: *join_set_id,
                 }]
             }
@@ -384,12 +381,12 @@ impl EventCall {
                 join_set_id,
                 child_execution_id,
                 ..
-            } => vec![EventHistoryCommand::ChildExecutionRequest {
+            } => vec![EventHistoryKey::ChildExecutionRequest {
                 join_set_id: *join_set_id,
                 child_execution_id: *child_execution_id,
             }],
             EventCall::BlockingChildJoinNext { join_set_id } => {
-                vec![EventHistoryCommand::JoinNextChild {
+                vec![EventHistoryKey::JoinNextChild {
                     join_set_id: *join_set_id,
                 }]
             }
@@ -398,14 +395,14 @@ impl EventCall {
                 child_execution_id,
                 ..
             } => vec![
-                EventHistoryCommand::CreateJoinSet {
+                EventHistoryKey::CreateJoinSet {
                     join_set_id: *join_set_id,
                 },
-                EventHistoryCommand::ChildExecutionRequest {
+                EventHistoryKey::ChildExecutionRequest {
                     join_set_id: *join_set_id,
                     child_execution_id: *child_execution_id,
                 },
-                EventHistoryCommand::JoinNextChild {
+                EventHistoryKey::JoinNextChild {
                     join_set_id: *join_set_id,
                 },
             ],
@@ -414,14 +411,14 @@ impl EventCall {
                 delay_id,
                 ..
             } => vec![
-                EventHistoryCommand::CreateJoinSet {
+                EventHistoryKey::CreateJoinSet {
                     join_set_id: *join_set_id,
                 },
-                EventHistoryCommand::DelayRequest {
+                EventHistoryKey::DelayRequest {
                     join_set_id: *join_set_id,
                     delay_id: *delay_id,
                 },
-                EventHistoryCommand::JoinNextDelay {
+                EventHistoryKey::JoinNextDelay {
                     join_set_id: *join_set_id,
                 },
             ],
