@@ -883,7 +883,7 @@ impl DbTask {
         &mut self,
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
-        version: Option<Version>,
+        appending_version: Option<Version>,
         event: ExecutionEventInner,
     ) -> Result<AppendResponse, SpecificError> {
         // Disallow `Created` event
@@ -897,16 +897,20 @@ impl DbTask {
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             return Err(SpecificError::NotFound);
         };
-        if let Some(version) = version {
-            if version != journal.version() {
-                return Err(SpecificError::VersionMismatch);
+        if let Some(appending_version) = appending_version {
+            let expected_version = journal.version();
+            if appending_version != expected_version {
+                return Err(SpecificError::VersionMismatch {
+                    appending_version,
+                    expected_version,
+                });
             }
         } else if !event.appendable_without_version() {
-            return Err(SpecificError::VersionMismatch);
+            return Err(SpecificError::VersionMissing);
         }
-        let version = journal.append(created_at, event)?;
+        let new_version = journal.append(created_at, event)?;
         self.index.update(execution_id, &self.journals);
-        Ok(version)
+        Ok(new_version)
     }
 
     fn get(&mut self, execution_id: ExecutionId) -> Result<ExecutionLog, SpecificError> {
@@ -945,7 +949,7 @@ impl DbTask {
         &mut self,
         batch: AppendBatch,
         execution_id: ExecutionId,
-        mut version: Version,
+        mut appending_version: Version,
     ) -> Result<AppendBatchResponse, SpecificError> {
         if batch.is_empty() {
             error!("Empty batch request");
@@ -968,13 +972,17 @@ impl DbTask {
         };
         let truncate_len_or_delete = journal.len();
         for req in batch {
-            if version != journal.version() {
+            let expected_version = journal.version();
+            if appending_version != expected_version {
                 self.rollback(truncate_len_or_delete, execution_id);
-                return Err(SpecificError::VersionMismatch);
+                return Err(SpecificError::VersionMismatch {
+                    appending_version,
+                    expected_version,
+                });
             }
             match journal.append(req.created_at, req.event) {
                 Ok(new_version) => {
-                    version = new_version;
+                    appending_version = new_version;
                 }
                 Err(err) => {
                     self.rollback(truncate_len_or_delete, execution_id);

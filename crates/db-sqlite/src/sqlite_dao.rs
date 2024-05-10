@@ -256,9 +256,13 @@ impl SqlitePool {
         execution_id: ExecutionId,
         appending_version: &Version,
     ) -> Result<(), SqliteError> {
-        if Self::get_next_version(tx, execution_id)? != *appending_version {
+        let expected_version = Self::get_next_version(tx, execution_id)?;
+        if expected_version != *appending_version {
             return Err(SqliteError::DbError(DbError::Specific(
-                SpecificError::VersionMismatch,
+                SpecificError::VersionMismatch {
+                    appending_version: appending_version.clone(),
+                    expected_version,
+                },
             )));
         }
         Ok(())
@@ -669,7 +673,7 @@ impl SqlitePool {
             }
             (event, None) if !event.appendable_without_version() => {
                 error!("Attempted to append an event without version: {event:?}");
-                return Err(DbError::Specific(SpecificError::VersionMismatch).into());
+                return Err(DbError::Specific(SpecificError::VersionMissing).into());
             }
             (event, appending_version) => {
                 if let Some(appending_version) = &appending_version {

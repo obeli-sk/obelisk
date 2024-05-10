@@ -190,7 +190,7 @@ impl EventHistory {
         history_events: impl IntoIterator<Item = HistoryEvent>,
     ) {
         events.extend(history_events.into_iter().map(|event| {
-            let resp = matches!(&event, HistoryEvent::JoinSetResponse { .. });
+            let resp = event.is_response();
             (
                 event,
                 if resp {

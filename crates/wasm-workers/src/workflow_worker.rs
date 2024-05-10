@@ -653,8 +653,8 @@ mod tests {
                 params,
                 parent: None,
                 scheduled_at: None,
-                retry_exp_backoff: Duration::from_millis(10),
-                max_retries: 5, // retries enabled due to racy test
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
             })
             .await
             .unwrap();
@@ -699,7 +699,7 @@ mod tests {
             Mock, MockServer, ResponseTemplate,
         };
 
-        const CONCURRENCY: usize = 5;
+        const CONCURRENCY: u32 = 5;
         const BODY: &str = "ok";
         pub const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY);
@@ -731,7 +731,7 @@ mod tests {
 
         let vec = Value::Array(vec![Value::Array(vec![
             Value::String(authority);
-            CONCURRENCY
+            CONCURRENCY as usize
         ])]);
 
         let params = Params::from_json_array(vec).unwrap();
@@ -747,8 +747,8 @@ mod tests {
                 params,
                 parent: None,
                 scheduled_at: None,
-                retry_exp_backoff: Duration::from_millis(10),
-                max_retries: 5, // retries enabled due to racy test
+                retry_exp_backoff: Duration::from_millis(0),
+                max_retries: CONCURRENCY - 1, // response can conflict with next ChildExecutionRequest
             })
             .await
             .unwrap();
@@ -763,7 +763,7 @@ mod tests {
         let val = assert_matches!(res.value(), Some(wast_val) => wast_val);
         let val = assert_matches!(val, WastVal::Result(Ok(Some(val))) => val).deref();
         let val = assert_matches!(val, WastVal::List(vec) => vec);
-        assert_eq!(CONCURRENCY, val.len());
+        assert_eq!(CONCURRENCY as usize, val.len());
         for val in val {
             let val = assert_matches!(val, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());

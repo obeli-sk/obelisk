@@ -252,7 +252,6 @@ impl ExecutionEventInner {
     }
 
     #[must_use]
-    // TODO: Remove if finished_child_watcher is implemented
     pub fn appendable_without_version(&self) -> bool {
         matches!(
             self,
@@ -328,6 +327,12 @@ pub enum HistoryEvent {
     },
 }
 
+impl HistoryEvent {
+    pub fn is_response(&self) -> bool {
+        matches!(self, HistoryEvent::JoinSetResponse { .. })
+    }
+}
+
 #[derive(
     Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
 )]
@@ -373,7 +378,12 @@ pub enum SpecificError {
     #[error("validation failed: {0}")]
     ValidationFailed(StrVariant),
     #[error("version mismatch")]
-    VersionMismatch,
+    VersionMismatch {
+        appending_version: Version,
+        expected_version: Version,
+    },
+    #[error("version missing")]
+    VersionMissing,
     #[error("not found")]
     NotFound,
     #[error("consistency error: `{0}`")]

@@ -1,7 +1,7 @@
 use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::JoinSetId;
-use concepts::storage::{DbPool, ExecutionLog, LockedExecution};
+use concepts::storage::{DbPool, ExecutionLog, LockedExecution, SpecificError};
 use concepts::FinishedExecutionResult;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, StrVariant};
 use concepts::{
@@ -23,6 +23,8 @@ use std::{
 use tokio::task::{AbortHandle, JoinHandle};
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::ClockFn;
+
+const MAX_VERSION_BUMP_RETRIES: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct ExecConfig<C: ClockFn> {
@@ -247,8 +249,8 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                             locked_execution,
                         )
                         .await;
-                        if let Err(err) = res {
-                            error!("Updating execution failed: {err:?}");
+                        if let Err(db_error) = res {
+                            error!("Execution will be timed out not writing `{db_error:?}`");
                         }
                         drop(permit);
                     }
@@ -291,19 +293,121 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         };
         let worker_result = worker.run(ctx).await;
         trace!(?worker_result, "Worker::run finished");
+        let result_obtained_at = clock_fn();
         match Self::worker_result_to_execution_event(
             execution_id,
             worker_result,
-            clock_fn(),
+            result_obtained_at,
             locked_execution.parent,
             can_be_retried,
         ) {
-            Ok(Some(append)) => {
+            Ok(Some(mut append)) => {
+                let db_connection = db_pool.connection();
                 trace!("Appending {append:?}");
-                append.append(&db_pool.connection()).await
+                let res = append.clone().append(&db_connection).await;
+                if let Err(DbError::Specific(SpecificError::VersionMismatch {
+                    mut appending_version,
+                    mut expected_version,
+                })) = res
+                {
+                    // If the execution log contains just new async responses, it
+                    // is safe to to re-apply the append with the version updated.
+                    for _ in 0..MAX_VERSION_BUMP_RETRIES {
+                        let exec_log = db_connection.get(execution_id).await?;
+                        trace!("Checking if only responses arrived since {appending_version} in {exec_log:?}");
+                        if exec_log
+                            .event_history()
+                            .skip(appending_version.0)
+                            .all(|event| event.is_response())
+                        {
+                            append.version = exec_log.version;
+                            trace!("Appending {append:?}");
+                            let res = append.clone().append(&db_connection).await;
+                            if let Err(DbError::Specific(SpecificError::VersionMismatch {
+                                appending_version: a,
+                                expected_version: e,
+                            })) = res
+                            {
+                                appending_version = a;
+                                expected_version = e;
+                            } else {
+                                return res;
+                            }
+                        } else {
+                            return Err(DbError::Specific(SpecificError::VersionMismatch {
+                                appending_version,
+                                expected_version,
+                            }));
+                        }
+                    }
+                    Err(DbError::Specific(SpecificError::VersionMismatch {
+                        appending_version,
+                        expected_version,
+                    }))
+                } else {
+                    res
+                }
             }
             Ok(None) => Ok(()),
-            Err(err) => Err(err),
+            Err(DbError::Specific(SpecificError::VersionMismatch {
+                mut appending_version,
+                mut expected_version,
+            })) => {
+                // If the execution log contains just new async responses, it
+                // is safe to mark it as failed so that it does not have to wait for timeout.
+                // An future optimization might attempt to restart the execution.
+                let db_connection = db_pool.connection();
+                for _ in 0..MAX_VERSION_BUMP_RETRIES {
+                    let exec_log = db_connection.get(execution_id).await?;
+                    trace!(
+                    "Checking if only responses arrived since {appending_version} in {exec_log:?}"
+                );
+                    if exec_log
+                        .event_history()
+                        .skip(appending_version.0)
+                        .all(|event| event.is_response())
+                    {
+                        let append = Self::worker_result_to_execution_event(
+                        execution_id,
+                        WorkerResult::Err(WorkerError::IntermittentError {
+                            err: None,
+                            reason: StrVariant::Static(
+                                "intermittent optimistic lock failure caused by JoinSetResponse",
+                            ),
+                            version: exec_log.version,
+                        }),
+                        result_obtained_at,
+                        locked_execution.parent,
+                        can_be_retried,
+                    )
+                    .expect("would only fail if sending DbError")
+                    .expect("would be None only if sending IntermittentTimeout");
+                        trace!("Appending {append:?}");
+                        let res = append.append(&db_pool.connection()).await;
+                        if let Err(DbError::Specific(SpecificError::VersionMismatch {
+                            appending_version: a,
+                            expected_version: e,
+                        })) = res
+                        {
+                            // loop again
+                            appending_version = a;
+                            expected_version = e;
+                        } else {
+                            return res;
+                        }
+                    } else {
+                        return Err(DbError::Specific(SpecificError::VersionMismatch {
+                            appending_version,
+                            expected_version,
+                        }));
+                    }
+                }
+                Err(DbError::Specific(SpecificError::VersionMismatch {
+                    appending_version,
+                    expected_version,
+                }))
+            }
+            Err(db_error) => Err(db_error),
         }
     }
 
@@ -339,8 +443,6 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         return Ok(None);
                     }
                     WorkerError::DbError(db_error) => {
-                        info!("Worker encountered db error: {db_error:?}");
-                        // FIXME: What to do? ExecutionEventInner::IntermittentFailure
                         return Err(db_error);
                     }
                     WorkerError::IntermittentError {
@@ -389,7 +491,9 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     WorkerError::FatalError(FatalError::ResultParsingError(err), version) => {
                         info!("Error parsing result - {err}");
                         let result = Err(FinishedExecutionError::PermanentFailure(
-                            StrVariant::Arc(Arc::from(format!("error parsing result: `{err}`, detail: {err:?}"))),
+                            StrVariant::Arc(Arc::from(format!(
+                                "error parsing result: `{err}`, detail: {err:?}"
+                            ))),
                         ));
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
@@ -418,7 +522,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Append {
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) primary_event: ExecutionEventInner,
