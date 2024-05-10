@@ -6,6 +6,8 @@ interface workflow {
     get-successful: func(authority: string, path: string) -> result<string, string>;
 
     get-successful-concurrently: func(authorities: list<string>) -> result<list<string>, string>;
+
+    get-successful-concurrently-stress: func(authority: string, path: string, concurrency: u32) -> result<list<string>, string>;
 }
 
 world any {

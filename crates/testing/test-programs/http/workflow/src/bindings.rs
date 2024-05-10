@@ -528,6 +528,100 @@ pub mod exports {
                         }
                     }
                 }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_get_successful_concurrently_stress_cabi<T: Guest>(
+                    arg0: *mut u8,
+                    arg1: usize,
+                    arg2: *mut u8,
+                    arg3: usize,
+                    arg4: i32,
+                ) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
+                    let len0 = arg1;
+                    let bytes0 = _rt::Vec::from_raw_parts(arg0.cast(), len0, len0);
+                    let len1 = arg3;
+                    let bytes1 = _rt::Vec::from_raw_parts(arg2.cast(), len1, len1);
+                    let result2 = T::get_successful_concurrently_stress(
+                        _rt::string_lift(bytes0),
+                        _rt::string_lift(bytes1),
+                        arg4 as u32,
+                    );
+                    let ptr3 = _RET_AREA.0.as_mut_ptr().cast::<u8>();
+                    match result2 {
+                        Ok(e) => {
+                            *ptr3.add(0).cast::<u8>() = (0i32) as u8;
+                            let vec5 = e;
+                            let len5 = vec5.len();
+                            let layout5 =
+                                _rt::alloc::Layout::from_size_align_unchecked(vec5.len() * 8, 4);
+                            let result5 = if layout5.size() != 0 {
+                                let ptr = _rt::alloc::alloc(layout5).cast::<u8>();
+                                if ptr.is_null() {
+                                    _rt::alloc::handle_alloc_error(layout5);
+                                }
+                                ptr
+                            } else {
+                                {
+                                    ::core::ptr::null_mut()
+                                }
+                            };
+                            for (i, e) in vec5.into_iter().enumerate() {
+                                let base = result5.add(i * 8);
+                                {
+                                    let vec4 = (e.into_bytes()).into_boxed_slice();
+                                    let ptr4 = vec4.as_ptr().cast::<u8>();
+                                    let len4 = vec4.len();
+                                    ::core::mem::forget(vec4);
+                                    *base.add(4).cast::<usize>() = len4;
+                                    *base.add(0).cast::<*mut u8>() = ptr4.cast_mut();
+                                }
+                            }
+                            *ptr3.add(8).cast::<usize>() = len5;
+                            *ptr3.add(4).cast::<*mut u8>() = result5;
+                        }
+                        Err(e) => {
+                            *ptr3.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec6 = (e.into_bytes()).into_boxed_slice();
+                            let ptr6 = vec6.as_ptr().cast::<u8>();
+                            let len6 = vec6.len();
+                            ::core::mem::forget(vec6);
+                            *ptr3.add(8).cast::<usize>() = len6;
+                            *ptr3.add(4).cast::<*mut u8>() = ptr6.cast_mut();
+                        }
+                    };
+                    ptr3
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_get_successful_concurrently_stress<T: Guest>(
+                    arg0: *mut u8,
+                ) {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    match l0 {
+                        0 => {
+                            let l3 = *arg0.add(4).cast::<*mut u8>();
+                            let l4 = *arg0.add(8).cast::<usize>();
+                            let base5 = l3;
+                            let len5 = l4;
+                            for i in 0..len5 {
+                                let base = base5.add(i * 8);
+                                {
+                                    let l1 = *base.add(0).cast::<*mut u8>();
+                                    let l2 = *base.add(4).cast::<usize>();
+                                    _rt::cabi_dealloc(l1, l2, 1);
+                                }
+                            }
+                            _rt::cabi_dealloc(base5, len5 * 8, 4);
+                        }
+                        _ => {
+                            let l6 = *arg0.add(4).cast::<*mut u8>();
+                            let l7 = *arg0.add(8).cast::<usize>();
+                            _rt::cabi_dealloc(l6, l7, 1);
+                        }
+                    }
+                }
                 pub trait Guest {
                     fn get(
                         authority: _rt::String,
@@ -540,38 +634,51 @@ pub mod exports {
                     fn get_successful_concurrently(
                         authorities: _rt::Vec<_rt::String>,
                     ) -> Result<_rt::Vec<_rt::String>, _rt::String>;
+                    fn get_successful_concurrently_stress(
+                        authority: _rt::String,
+                        path: _rt::String,
+                        concurrency: u32,
+                    ) -> Result<_rt::Vec<_rt::String>, _rt::String>;
                 }
                 #[doc(hidden)]
 
                 macro_rules! __export_testing_http_workflow_workflow_cabi{
-    ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
+  ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
 
-      #[export_name = "testing:http-workflow/workflow#get"]
-      unsafe extern "C" fn export_get(arg0: *mut u8,arg1: usize,arg2: *mut u8,arg3: usize,) -> *mut u8 {
-        $($path_to_types)*::_export_get_cabi::<$ty>(arg0, arg1, arg2, arg3)
-      }
-      #[export_name = "cabi_post_testing:http-workflow/workflow#get"]
-      unsafe extern "C" fn _post_return_get(arg0: *mut u8,) {
-        $($path_to_types)*::__post_return_get::<$ty>(arg0)
-      }
-      #[export_name = "testing:http-workflow/workflow#get-successful"]
-      unsafe extern "C" fn export_get_successful(arg0: *mut u8,arg1: usize,arg2: *mut u8,arg3: usize,) -> *mut u8 {
-        $($path_to_types)*::_export_get_successful_cabi::<$ty>(arg0, arg1, arg2, arg3)
-      }
-      #[export_name = "cabi_post_testing:http-workflow/workflow#get-successful"]
-      unsafe extern "C" fn _post_return_get_successful(arg0: *mut u8,) {
-        $($path_to_types)*::__post_return_get_successful::<$ty>(arg0)
-      }
-      #[export_name = "testing:http-workflow/workflow#get-successful-concurrently"]
-      unsafe extern "C" fn export_get_successful_concurrently(arg0: *mut u8,arg1: usize,) -> *mut u8 {
-        $($path_to_types)*::_export_get_successful_concurrently_cabi::<$ty>(arg0, arg1)
-      }
-      #[export_name = "cabi_post_testing:http-workflow/workflow#get-successful-concurrently"]
-      unsafe extern "C" fn _post_return_get_successful_concurrently(arg0: *mut u8,) {
-        $($path_to_types)*::__post_return_get_successful_concurrently::<$ty>(arg0)
-      }
-    };);
-  }
+    #[export_name = "testing:http-workflow/workflow#get"]
+    unsafe extern "C" fn export_get(arg0: *mut u8,arg1: usize,arg2: *mut u8,arg3: usize,) -> *mut u8 {
+      $($path_to_types)*::_export_get_cabi::<$ty>(arg0, arg1, arg2, arg3)
+    }
+    #[export_name = "cabi_post_testing:http-workflow/workflow#get"]
+    unsafe extern "C" fn _post_return_get(arg0: *mut u8,) {
+      $($path_to_types)*::__post_return_get::<$ty>(arg0)
+    }
+    #[export_name = "testing:http-workflow/workflow#get-successful"]
+    unsafe extern "C" fn export_get_successful(arg0: *mut u8,arg1: usize,arg2: *mut u8,arg3: usize,) -> *mut u8 {
+      $($path_to_types)*::_export_get_successful_cabi::<$ty>(arg0, arg1, arg2, arg3)
+    }
+    #[export_name = "cabi_post_testing:http-workflow/workflow#get-successful"]
+    unsafe extern "C" fn _post_return_get_successful(arg0: *mut u8,) {
+      $($path_to_types)*::__post_return_get_successful::<$ty>(arg0)
+    }
+    #[export_name = "testing:http-workflow/workflow#get-successful-concurrently"]
+    unsafe extern "C" fn export_get_successful_concurrently(arg0: *mut u8,arg1: usize,) -> *mut u8 {
+      $($path_to_types)*::_export_get_successful_concurrently_cabi::<$ty>(arg0, arg1)
+    }
+    #[export_name = "cabi_post_testing:http-workflow/workflow#get-successful-concurrently"]
+    unsafe extern "C" fn _post_return_get_successful_concurrently(arg0: *mut u8,) {
+      $($path_to_types)*::__post_return_get_successful_concurrently::<$ty>(arg0)
+    }
+    #[export_name = "testing:http-workflow/workflow#get-successful-concurrently-stress"]
+    unsafe extern "C" fn export_get_successful_concurrently_stress(arg0: *mut u8,arg1: usize,arg2: *mut u8,arg3: usize,arg4: i32,) -> *mut u8 {
+      $($path_to_types)*::_export_get_successful_concurrently_stress_cabi::<$ty>(arg0, arg1, arg2, arg3, arg4)
+    }
+    #[export_name = "cabi_post_testing:http-workflow/workflow#get-successful-concurrently-stress"]
+    unsafe extern "C" fn _post_return_get_successful_concurrently_stress(arg0: *mut u8,) {
+      $($path_to_types)*::__post_return_get_successful_concurrently_stress::<$ty>(arg0)
+    }
+  };);
+}
                 #[doc(hidden)]
                 pub(crate) use __export_testing_http_workflow_workflow_cabi;
                 #[repr(align(4))]
@@ -715,21 +822,22 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.24.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 641] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x87\x04\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 715] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd1\x04\x01A\x02\x01\
 A\x08\x01B\x04\x01j\x01s\x01s\x01@\x02\x09authoritys\x04paths\0\0\x04\0\x03get\x01\
 \x01\x04\0\x0eget-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\
 \x05\x01@\x03\x0bjoin-set-ids\x09authoritys\x04paths\0s\x04\0\x15get-successful-\
 future\x01\0\x01j\x01s\x01s\x01@\x01\x0bjoin-set-ids\0\x01\x04\0\x19get-successf\
 ul-await-next\x01\x02\x03\x01!testing:http-obelisk-ext/http-get\x05\x01\x01B\x04\
 \x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\0\0s\x04\0\x0cnew-join-set\x01\
-\x01\x03\x01&my-org:workflow-engine/host-activities\x05\x02\x01B\x08\x01j\x01s\x01\
+\x01\x03\x01&my-org:workflow-engine/host-activities\x05\x02\x01B\x0a\x01j\x01s\x01\
 s\x01@\x02\x09authoritys\x04paths\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-successf\
 ul\x01\x01\x01ps\x01j\x01\x02\x01s\x01@\x01\x0bauthorities\x02\0\x03\x04\0\x1bge\
-t-successful-concurrently\x01\x04\x04\x01\x1etesting:http-workflow/workflow\x05\x03\
-\x04\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09p\
-roducers\x01\x0cprocessed-by\x02\x0dwit-component\x070.202.0\x10wit-bindgen-rust\
-\x060.24.0";
+t-successful-concurrently\x01\x04\x01@\x03\x09authoritys\x04paths\x0bconcurrency\
+y\0\x03\x04\0\"get-successful-concurrently-stress\x01\x05\x04\x01\x1etesting:htt\
+p-workflow/workflow\x05\x03\x04\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\
+\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.\
+202.0\x10wit-bindgen-rust\x060.24.0";
 
 #[inline(never)]
 #[doc(hidden)]

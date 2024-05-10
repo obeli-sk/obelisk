@@ -685,36 +685,30 @@ mod tests {
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_strategy: JoinNextBlockingStrategy,
     ) {
-        let (guard, db_pool) = db.set_up().await;
-        http_get_concurrent_db(&db_pool, join_next_strategy).await;
-        db_pool.close().await.unwrap();
-        guard.close(db_pool).await;
-    }
-
-    #[cfg(not(madsim))]
-    async fn http_get_concurrent_db<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-        db_pool: &P,
-        join_next_strategy: JoinNextBlockingStrategy,
-    ) {
         use crate::activity_worker::tests::{
             spawn_activity, wasmtime_nosim::HTTP_GET_SUCCESSFUL_ACTIVITY,
         };
         use chrono::DateTime;
-        use serde_json::Value;
         use std::ops::Deref;
         use wiremock::{
             matchers::{method, path},
             Mock, MockServer, ResponseTemplate,
         };
 
-        const CONCURRENCY: u32 = 5;
+        let concurrency: u32 = std::env::var("CONCURRENCY")
+            .map(|c| c.parse::<u32>())
+            .ok()
+            .transpose()
+            .ok()
+            .flatten()
+            .unwrap_or(5);
         const BODY: &str = "ok";
-        pub const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
-            FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY);
+        const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
+            FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY_STRESS);
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-
+        let (guard, db_pool) = db.set_up().await;
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -736,13 +730,7 @@ mod tests {
             .await;
         debug!("started mock server on {}", server.address());
         let authority = format!("127.0.0.1:{}", server.address().port());
-
-        let vec = Value::Array(vec![Value::Array(vec![
-            Value::String(authority);
-            CONCURRENCY as usize
-        ])]);
-
-        let params = Params::from_json_array(vec).unwrap();
+        let params = Params::from_json_array(json!([authority, "/", concurrency])).unwrap();
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -756,7 +744,7 @@ mod tests {
                 parent: None,
                 scheduled_at: None,
                 retry_exp_backoff: Duration::from_millis(0),
-                max_retries: CONCURRENCY - 1, // response can conflict with next ChildExecutionRequest
+                max_retries: concurrency - 1, // response can conflict with next ChildExecutionRequest
             })
             .await
             .unwrap();
@@ -771,12 +759,15 @@ mod tests {
         let val = assert_matches!(res.value(), Some(wast_val) => wast_val);
         let val = assert_matches!(val, WastVal::Result(Ok(Some(val))) => val).deref();
         let val = assert_matches!(val, WastVal::List(vec) => vec);
-        assert_eq!(CONCURRENCY as usize, val.len());
+        assert_eq!(concurrency as usize, val.len());
         for val in val {
             let val = assert_matches!(val, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());
         }
         activity_exec_task.close().await;
         workflow_exec_task.close().await;
+        drop(db_connection);
+        db_pool.close().await.unwrap();
+        guard.close(db_pool).await;
     }
 }
