@@ -165,7 +165,7 @@ impl EventHistory {
                         }
                     }
                 }
-                // TODO: if start_index was at top, it should move forward to n - 1
+                // FIXME: perf: if start_from_index was at top, it should move forward to n - 1
                 poll_variant
             }
         };

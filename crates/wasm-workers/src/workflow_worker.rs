@@ -343,7 +343,6 @@ mod tests {
         EngineConfig,
     };
     use assert_matches::assert_matches;
-    use chrono::DateTime;
     use concepts::storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState};
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
     use db_mem::inmemory_dao::DbTask;
@@ -603,6 +602,7 @@ mod tests {
         use crate::activity_worker::tests::{
             spawn_activity, wasmtime_nosim::HTTP_GET_SUCCESSFUL_ACTIVITY,
         };
+        use chrono::DateTime;
         use std::ops::Deref;
         use wiremock::{
             matchers::{method, path},
@@ -678,19 +678,27 @@ mod tests {
     }
 
     #[cfg(not(madsim))]
+    #[rstest::rstest]
     #[tokio::test]
-    async fn http_get_concurrent_sqlite() {
-        // TODO : fixture, parametrize by JoinNextBlockingStrategy
+    async fn http_get_concurrent_sqlite(
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        join_next_strategy: JoinNextBlockingStrategy,
+    ) {
         use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
         let (db_pool, _guard) = sqlite_pool().await;
-        http_get_concurrent(db_pool.clone()).await;
+        http_get_concurrent(db_pool.clone(), join_next_strategy).await;
         db_pool.close().await.unwrap();
     }
 
-    async fn http_get_concurrent<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(db_pool: P) {
+    #[cfg(not(madsim))]
+    async fn http_get_concurrent<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+        db_pool: P,
+        join_next_strategy: JoinNextBlockingStrategy,
+    ) {
         use crate::activity_worker::tests::{
             spawn_activity, wasmtime_nosim::HTTP_GET_SUCCESSFUL_ACTIVITY,
         };
+        use chrono::DateTime;
         use serde_json::Value;
         use std::ops::Deref;
         use wiremock::{
@@ -717,7 +725,7 @@ mod tests {
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             HTTP_GET_WORKFLOW_FFQN,
             sim_clock.get_clock_fn(),
-            JoinNextBlockingStrategy::default(),
+            join_next_strategy,
         );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
