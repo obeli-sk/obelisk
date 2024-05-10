@@ -5,7 +5,7 @@ authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[dev-dependencies]
+[dependencies]
 concepts.workspace = true
 db-mem.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
@@ -15,6 +15,7 @@ utils.workspace = true
 
 arbitrary.workspace = true
 assert_matches.workspace = true
+async-trait.workspace = true
 chrono.workspace = true
 madsim.workspace = true
 serde_json.workspace = true

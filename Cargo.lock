@@ -749,6 +749,7 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "assert_matches",
+ "async-trait",
  "chrono",
  "concepts",
  "db-mem",
@@ -3020,6 +3021,7 @@ dependencies = [
  "concepts",
  "db-mem",
  "db-sqlite",
+ "db-tests",
  "derivative",
  "derive_more",
  "executor",

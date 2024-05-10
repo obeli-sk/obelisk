@@ -455,8 +455,10 @@ impl From<CreateRequest> for ExecutionEventInner {
     }
 }
 
+#[async_trait]
 pub trait DbPool<DB: DbConnection>: Send + Sync + Clone {
     fn connection(&self) -> DB;
+    async fn close(&self) -> Result<(), StrVariant>;
 }
 
 #[derive(Debug, thiserror::Error)]

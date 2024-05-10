@@ -508,10 +508,14 @@ impl Drop for DbTaskHandle {
 #[derive(Clone)]
 pub struct InMemoryPool(mpsc::Sender<DbRequest>);
 
+#[async_trait]
 impl DbPool<InMemoryDbConnection> for InMemoryPool {
-    #[allow(refining_impl_trait)]
     fn connection(&self) -> InMemoryDbConnection {
         InMemoryDbConnection(self.0.clone())
+    }
+
+    async fn close(&self) -> Result<(), StrVariant> {
+        Ok(())
     }
 }
 

@@ -680,19 +680,20 @@ mod tests {
     #[cfg(not(madsim))]
     #[rstest::rstest]
     #[tokio::test]
-    async fn http_get_concurrent_sqlite(
+    async fn http_get_concurrent(
+        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_strategy: JoinNextBlockingStrategy,
     ) {
-        use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
-        let (db_pool, _guard) = sqlite_pool().await;
-        http_get_concurrent(db_pool.clone(), join_next_strategy).await;
+        let (guard, db_pool) = db.set_up().await;
+        http_get_concurrent_db(&db_pool, join_next_strategy).await;
         db_pool.close().await.unwrap();
+        guard.close(db_pool).await;
     }
 
     #[cfg(not(madsim))]
-    async fn http_get_concurrent<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-        db_pool: P,
+    async fn http_get_concurrent_db<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+        db_pool: &P,
         join_next_strategy: JoinNextBlockingStrategy,
     ) {
         use crate::activity_worker::tests::{
@@ -775,8 +776,6 @@ mod tests {
             let val = assert_matches!(val, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());
         }
-        drop(db_connection);
-        drop(db_pool);
         activity_exec_task.close().await;
         workflow_exec_task.close().await;
     }

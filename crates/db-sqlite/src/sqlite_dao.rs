@@ -102,9 +102,17 @@ pub struct SqlitePool {
     pool: Pool,
 }
 
+#[async_trait]
 impl DbPool<SqlitePool> for SqlitePool {
     fn connection(&self) -> SqlitePool {
         self.clone()
+    }
+
+    async fn close(&self) -> Result<(), StrVariant> {
+        self.pool
+            .close()
+            .await
+            .map_err(|err| StrVariant::Arc(Arc::from(err.to_string())))
     }
 }
 
@@ -146,10 +154,6 @@ impl SqlitePool {
             .await?;
         Self::init(&pool).await?;
         Ok(Self { pool })
-    }
-
-    pub async fn close(&self) -> Result<(), SqliteError> {
-        Ok(self.pool.close().await?)
     }
 
     fn fetch_created_event(
@@ -1263,6 +1267,7 @@ pub mod tempfile {
 #[cfg(all(test, not(madsim)))] // async-sqlite attempts to spawn a system thread in simulation
 mod tests {
     use crate::sqlite_dao::tempfile::sqlite_pool;
+    use concepts::storage::DbPool;
     use db_tests_common::db_test_stubs;
     use test_utils::set_up;
 
