@@ -699,7 +699,7 @@ mod tests {
             Mock, MockServer, ResponseTemplate,
         };
 
-        const CONCURRENCY: usize = 1;
+        const CONCURRENCY: usize = 5;
         const BODY: &str = "ok";
         pub const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY);

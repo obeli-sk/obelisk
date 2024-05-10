@@ -19,7 +19,7 @@ use wasmtime::component::{Linker, Val};
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub(crate) enum FunctionError {
-    #[error("non deterministic execution: `{0}`")]
+    #[error("non deterministic execution: {0}")]
     NonDeterminismDetected(StrVariant),
     #[error("child request")]
     ChildExecutionRequest,
@@ -82,15 +82,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     ) -> Self {
         Self {
             execution_id,
-            event_history: EventHistory {
-                events,
-                events_idx: 0,
+            event_history: EventHistory::new(
                 execution_id,
+                events,
                 join_next_blocking_strategy,
                 execution_deadline,
-                child_retry_exp_backoff: retry_exp_backoff,
-                child_max_retries: max_retries,
-            },
+                retry_exp_backoff,
+                max_retries,
+            ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
             db_pool,
@@ -253,7 +252,7 @@ const SUFFIX_FN_START_ASYNC: &str = "-future";
 const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::{workflow_ctx::WorkflowCtx, workflow_worker::JoinNextBlockingStrategy};
     use async_trait::async_trait;
     use concepts::{
@@ -277,7 +276,7 @@ mod tests {
     use utils::time::{now, ClockFn};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
-    const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
+    pub const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
     const MOCK_FFQN_PTR: &FunctionFqn = &MOCK_FFQN;
 
     #[derive(Debug, Clone, arbitrary::Arbitrary)]

@@ -29,11 +29,12 @@ Please exercise caution if attempting to use it for production usage.
 # Planned features
 * Allow starting multiple child executions in parallel
 * ErrId that is passed back to parent, error detail
-* TUI
+* UI
+* Fatal error mapping to supported result types
 * Structured concurrency patterns (join, race)
 * WASM upgrades - disabling work stealing by executors with outdated wasm hashes
 * Params typecheck on creation, introspection of types of all functions in the system
-* Host function: generate a random value, store it in the event history
+* Host function: generate a random value, store it in the event history - wasi random,available for workflows as wel
 * Persistence using postgresql
 * Cancellation
 * Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
