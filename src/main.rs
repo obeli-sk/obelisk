@@ -20,6 +20,7 @@ use wasm_workers::{
 use wasmtime::Engine;
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
@@ -145,7 +146,7 @@ fn exec<DB: DbConnection + 'static>(
         config_id: ConfigId::generate(),
         activity_recycled_instances: RecycleInstancesSetting::Enable,
         clock_fn: now,
-        workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
+        workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
         workflow_db_pool: db_pool.clone(),
         workflow_child_retry_exp_backoff: Duration::from_millis(10),
         workflow_child_max_retries: 5,
