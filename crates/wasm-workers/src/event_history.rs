@@ -158,8 +158,11 @@ impl EventHistory {
                 let keys_len = keys.len();
                 for (idx, key) in keys.into_iter().enumerate() {
                     let res = self.process_event_by_key(key)?;
-                    if idx == keys_len - 1 && res.is_some() {
-                        return Ok(res.unwrap());
+                    if idx == keys_len - 1 {
+                        if let Some(res) = res {
+                            // Last key was replayed.
+                            return Ok(res);
+                        }
                     }
                 }
                 // TODO: if start_index was at top, it should move forward to n - 1
@@ -849,6 +852,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn start_async_respond_then_join_next() {
         const CHILD_RESP: SupportedFunctionResult =
             SupportedFunctionResult::Infallible(WastValWithType {
@@ -941,7 +945,7 @@ mod tests {
                         event: HistoryEvent::JoinSetResponse {
                             join_set_id,
                             response: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id: child_execution_id,
+                                child_execution_id,
                                 result: Ok(CHILD_RESP),
                             },
                         },
@@ -985,6 +989,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn create_two_non_blocking_childs_then_two_join_nexts() {
         const KID_A: SupportedFunctionResult =
             SupportedFunctionResult::Infallible(WastValWithType {

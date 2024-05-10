@@ -328,6 +328,7 @@ pub enum HistoryEvent {
 }
 
 impl HistoryEvent {
+    #[must_use]
     pub fn is_response(&self) -> bool {
         matches!(self, HistoryEvent::JoinSetResponse { .. })
     }

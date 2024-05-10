@@ -682,7 +682,6 @@ mod tests {
     async fn http_get_concurrent_sqlite() {
         // TODO : fixture, parametrize by JoinNextBlockingStrategy
         use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
-
         let (db_pool, _guard) = sqlite_pool().await;
         http_get_concurrent(db_pool.clone()).await;
         db_pool.close().await.unwrap();
