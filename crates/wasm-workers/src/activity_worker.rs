@@ -729,7 +729,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap()
             );
-            sim_clock.move_time_forward(RETRY_EXP_BACKOFF);
+            sim_clock.move_time_forward(RETRY_EXP_BACKOFF).await;
             server.reset().await;
             if succeed_eventually {
                 // Reconfigure the server

@@ -311,6 +311,7 @@ pub(crate) mod tests {
         for WorkflowWorkerMock<C, DB, P>
     {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
+            info!("Starting");
             let seed = ctx.execution_id.random_part();
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id,
@@ -334,9 +335,11 @@ pub(crate) mod tests {
                     }
                 };
                 if let Err(err) = res {
+                    info!("Sending {err}");
                     return err.into_worker_result(workflow_ctx.version);
                 }
             }
+            info!("Finishing");
             WorkerResult::Ok(SupportedFunctionResult::None, workflow_ctx.version)
         }
 
@@ -465,7 +468,7 @@ pub(crate) mod tests {
                 } => {
                     info!("Moving time to {expires_at} - {delay_id}");
                     assert!(delay_request_count > 0);
-                    sim_clock.move_time_to(*expires_at);
+                    sim_clock.move_time_to(*expires_at).await;
                     delay_request_count -= 1;
                 }
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
@@ -490,6 +493,7 @@ pub(crate) mod tests {
                         };
                         ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None)
                     };
+                    tokio::time::sleep(Duration::ZERO).await; // Hack that makes sure the other task has a chance to start
                     spawned_child_executors.push(child_exec_task);
                     child_execution_count -= 1;
                 }

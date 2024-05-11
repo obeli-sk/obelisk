@@ -932,7 +932,7 @@ mod tests {
         .executions
         .is_empty());
         // tick again to finish the execution
-        sim_clock.move_time_forward(retry_exp_backoff);
+        sim_clock.move_time_forward(retry_exp_backoff).await;
         tick_fn(exec_config, db_pool.clone(), worker, sim_clock.now()).await;
         let execution_log = {
             let db_connection = db_pool.connection();
@@ -1136,7 +1136,7 @@ mod tests {
         .await;
         if expected_child_err == FinishedExecutionError::PermanentTimeout {
             // In case of timeout, let the timers watcher handle it
-            sim_clock.move_time_forward(LOCK_EXPIRY);
+            sim_clock.move_time_forward(LOCK_EXPIRY).await;
             let timers_watcher = expired_timers_watcher::TimersWatcherTask {
                 db_connection: db_pool.connection(),
             };
@@ -1259,7 +1259,7 @@ mod tests {
         let mut first_execution_progress = executor.tick(sim_clock.now()).await.unwrap();
         assert_eq!(1, first_execution_progress.executions.len());
         // Started hanging, wait for lock expiry.
-        sim_clock.move_time_forward(lock_expiry);
+        sim_clock.move_time_forward(lock_expiry).await;
         // cleanup should be called
         let now_after_first_lock_expiry = sim_clock.now();
         {
@@ -1297,7 +1297,7 @@ mod tests {
             },
             execution_log.pending_state
         );
-        sim_clock.move_time_forward(timeout_duration);
+        sim_clock.move_time_forward(timeout_duration).await;
         let now_after_first_timeout = sim_clock.now();
         debug!(now = %now_after_first_timeout, "Second execution should hang again and result in a permanent timeout");
 
@@ -1305,7 +1305,7 @@ mod tests {
         assert_eq!(1, second_execution_progress.executions.len());
 
         // Started hanging, wait for lock expiry.
-        sim_clock.move_time_forward(lock_expiry);
+        sim_clock.move_time_forward(lock_expiry).await;
         // cleanup should be called
         let now_after_second_lock_expiry = sim_clock.now();
         debug!(now = %now_after_second_lock_expiry, "Expecting the second lock to be expired");
