@@ -242,7 +242,9 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
         version = locked_execution.version;
         locked_execution.run_id
     };
-    sim_clock.move_time_forward(Duration::from_millis(499)).await;
+    sim_clock
+        .move_time_forward(Duration::from_millis(499))
+        .await;
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Intermittent timeout");
@@ -258,7 +260,9 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             .await
             .unwrap();
     }
-    sim_clock.move_time_forward(lock_expiry - Duration::from_millis(100)).await;
+    sim_clock
+        .move_time_forward(lock_expiry - Duration::from_millis(100))
+        .await;
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock using exec2");
@@ -282,7 +286,9 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
     }
     // TODO: attempt to append an event requiring version without it.
 
-    sim_clock.move_time_forward(Duration::from_millis(100)).await;
+    sim_clock
+        .move_time_forward(Duration::from_millis(100))
+        .await;
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Lock again using exec1");
@@ -300,7 +306,9 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
         assert!(event_history.is_empty());
         version = current_version;
     }
-    sim_clock.move_time_forward(Duration::from_millis(700)).await;
+    sim_clock
+        .move_time_forward(Duration::from_millis(700))
+        .await;
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Attempt to lock using exec2  while in a lock");
@@ -335,7 +343,9 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
         assert!(event_history.is_empty());
         version = current_version;
     }
-    sim_clock.move_time_forward(Duration::from_millis(200)).await;
+    sim_clock
+        .move_time_forward(Duration::from_millis(200))
+        .await;
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Extend lock using exec1 and wrong run id should fail");
@@ -375,7 +385,9 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             .await
             .unwrap();
     }
-    sim_clock.move_time_forward(Duration::from_millis(200)).await;
+    sim_clock
+        .move_time_forward(Duration::from_millis(200))
+        .await;
     {
         let created_at = sim_clock.now();
         info!(now = %created_at, "Lock again");
@@ -408,7 +420,9 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             .await
             .unwrap();
     }
-    sim_clock.move_time_forward(Duration::from_millis(300)).await;
+    sim_clock
+        .move_time_forward(Duration::from_millis(300))
+        .await;
     {
         let created_at = sim_clock.now();
         debug!(now = %created_at, "Finish execution");
