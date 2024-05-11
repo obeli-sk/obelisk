@@ -345,7 +345,7 @@ mod tests {
     use assert_matches::assert_matches;
     use concepts::storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState};
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
-    use db_mem::inmemory_dao::DbTask;
+    use db_tests::Database;
     use executor::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
         expired_timers_watcher,
@@ -416,18 +416,15 @@ mod tests {
 
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity_mem() {
-        let mut db_task = DbTask::spawn_new(10);
-        let db_pool = db_task.pool().expect("must be open");
-        fibo_workflow_should_schedule_fibo_activity(db_pool).await;
-        db_task.close().await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
+        fibo_workflow_should_schedule_fibo_activity(db_pool.clone()).await;
+        db_pool.close().await.unwrap();
     }
 
     #[cfg(not(madsim))]
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity_sqlite() {
-        use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
-
-        let (db_pool, _guard) = sqlite_pool().await;
+        let (_guard, db_pool) = Database::Sqlite.set_up().await;
         fibo_workflow_should_schedule_fibo_activity(db_pool.clone()).await;
         db_pool.close().await.unwrap();
     }
@@ -536,8 +533,7 @@ mod tests {
         const SLEEP_MILLIS: u32 = 100;
         let _guard = test_utils::set_up();
         let sim_clock = SimClock::new(now());
-        let mut db_task = DbTask::spawn_new(10);
-        let db_pool = db_task.pool().unwrap();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
 
         let workflow_exec_task = spawn_workflow_sleep(db_pool.clone(), sim_clock.get_clock_fn());
         let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
@@ -583,7 +579,7 @@ mod tests {
         workflow_exec_task.close().await;
         sim_clock.move_time_forward(Duration::from_millis(u64::from(SLEEP_MILLIS)));
         // Restart worker
-        let workflow_exec_task = spawn_workflow_sleep(db_pool, sim_clock.get_clock_fn());
+        let workflow_exec_task = spawn_workflow_sleep(db_pool.clone(), sim_clock.get_clock_fn());
         let res = db_connection
             .wait_for_finished_result(execution_id, None)
             .await
@@ -593,7 +589,7 @@ mod tests {
         drop(db_connection);
         workflow_exec_task.close().await;
         timers_watcher_task.close().await;
-        db_task.close().await;
+        db_pool.close().await.unwrap();
     }
 
     #[cfg(not(madsim))]
@@ -615,8 +611,7 @@ mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let mut db_task = DbTask::spawn_new(1);
-        let db_pool = db_task.pool().unwrap();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
 
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
@@ -671,10 +666,9 @@ mod tests {
         let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!(BODY, val.deref());
         drop(db_connection);
-        drop(db_pool);
         activity_exec_task.close().await;
         workflow_exec_task.close().await;
-        db_task.close().await;
+        db_pool.close().await.unwrap();
     }
 
     #[cfg(not(madsim))]
@@ -694,6 +688,9 @@ mod tests {
             matchers::{method, path},
             Mock, MockServer, ResponseTemplate,
         };
+        const BODY: &str = "ok";
+        const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
+            FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY_STRESS);
 
         let concurrency: u32 = std::env::var("CONCURRENCY")
             .map(|c| c.parse::<u32>())
@@ -702,13 +699,10 @@ mod tests {
             .ok()
             .flatten()
             .unwrap_or(5);
-        const BODY: &str = "ok";
-        const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
-            FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY_STRESS);
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (guard, db_pool) = db.set_up().await;
+        let (_guard, db_pool) = db.set_up().await;
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -768,6 +762,5 @@ mod tests {
         workflow_exec_task.close().await;
         drop(db_connection);
         db_pool.close().await.unwrap();
-        guard.close(db_pool).await;
     }
 }

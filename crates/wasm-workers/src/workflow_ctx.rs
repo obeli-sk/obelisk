@@ -263,7 +263,7 @@ pub(crate) mod tests {
         FinishedExecutionResult,
     };
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
-    use db_mem::inmemory_dao::DbTask;
+    use db_tests::Database;
     use derivative::Derivative;
     use executor::{
         executor::{ExecConfig, ExecTask},
@@ -383,8 +383,7 @@ pub(crate) mod tests {
         steps: Vec<WorkflowStep>,
         sim_clock: SimClock,
     ) -> (Vec<HistoryEvent>, FinishedExecutionResult) {
-        let mut db_task = DbTask::spawn_new(10);
-        let db_pool = db_task.pool().expect("must be open");
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let mut child_execution_count = steps
             .iter()
             .filter(|step| matches!(step, WorkflowStep::Call { .. }))
@@ -461,14 +460,16 @@ pub(crate) mod tests {
             assert_eq!(1, req.len());
             match req.first().unwrap() {
                 JoinSetRequest::DelayRequest {
-                    delay_id: _,
+                    delay_id,
                     expires_at,
                 } => {
+                    info!("Moving time to {expires_at} - {delay_id}");
                     assert!(delay_request_count > 0);
                     sim_clock.move_time_to(*expires_at);
                     delay_request_count -= 1;
                 }
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
+                    info!("Executing child {child_execution_id}");
                     assert!(child_execution_count > 0);
                     let child_request = db_connection.get(*child_execution_id).await.unwrap();
                     assert_eq!(Some((execution_id, join_set_id)), child_request.parent());
@@ -499,13 +500,12 @@ pub(crate) mod tests {
         let execution_log = db_connection.get(execution_id).await.unwrap();
         assert_eq!(PendingState::Finished, execution_log.pending_state);
         drop(db_connection);
-        drop(db_pool);
         for child_task in spawned_child_executors {
             child_task.close().await;
         }
         workflow_exec_task.close().await;
         timers_watcher_task.close().await;
-        db_task.close().await;
+        db_pool.close().await.unwrap();
         (
             execution_log.event_history().collect(),
             execution_log.finished_result().unwrap().clone(),

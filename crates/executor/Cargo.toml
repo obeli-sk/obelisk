@@ -29,6 +29,7 @@ valuable.workspace = true
 db-mem.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
 test-utils.workspace = true
+db-tests.workspace = true
 
 anyhow.workspace = true
 madsim.workspace = true

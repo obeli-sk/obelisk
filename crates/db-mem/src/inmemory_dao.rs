@@ -11,38 +11,23 @@ use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::PendingState;
 use concepts::storage::{
     AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
-    DbConnectionError, DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer,
-    LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version,
+    DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, LockPendingResponse,
+    LockResponse, LockedExecution, SpecificError, Version,
 };
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
-use derivative::Derivative;
 use hashbrown::{HashMap, HashSet};
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::AbortHandle,
-};
-use tracing::{debug, info, instrument, trace, warn, Instrument, Level};
-use tracing::{error, info_span};
+use std::sync::Arc;
+use tracing::error;
+use tracing::instrument;
 
-pub struct InMemoryDbConnection(mpsc::Sender<DbRequest>);
+pub struct InMemoryDbConnection(Arc<tokio::sync::Mutex<DbTask>>);
 
 #[async_trait]
 impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request =
-            DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Create { req, resp_sender });
-        self.0
-            .send(request)
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
-        resp_receiver
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
-            .map_err(DbError::Specific)
+        self.0.lock().await.create(req).map_err(DbError::Specific)
     }
 
     #[instrument(skip_all)]
@@ -55,36 +40,19 @@ impl DbConnection for InMemoryDbConnection {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::General(GeneralRequest::LockPending {
+        Ok(self.0.lock().await.lock_pending(
             batch_size,
             pending_at_or_sooner,
-            ffqns,
+            &ffqns,
             created_at,
             executor_id,
             lock_expires_at,
-            resp_sender,
-        });
-        self.0
-            .send(request)
-            .await
-            .map_err(|_| DbConnectionError::SendError)?;
-        Ok(resp_receiver
-            .await
-            .map_err(|_| DbConnectionError::RecvError)?)
+        ))
     }
 
     #[instrument(skip_all)]
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::General(GeneralRequest::GetExpiredTimers { at, resp_sender });
-        self.0
-            .send(request)
-            .await
-            .map_err(|_| DbConnectionError::SendError)?;
-        Ok(resp_receiver
-            .await
-            .map_err(|_| DbConnectionError::RecvError)?)
+        Ok(self.0.lock().await.get_expired_timers(at))
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -97,23 +65,17 @@ impl DbConnection for InMemoryDbConnection {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse, DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Lock {
-            created_at,
-            execution_id,
-            run_id,
-            version,
-            executor_id,
-            lock_expires_at,
-            resp_sender,
-        });
         self.0
-            .send(request)
+            .lock()
             .await
-            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
-        resp_receiver
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .lock(
+                created_at,
+                execution_id,
+                run_id,
+                version,
+                executor_id,
+                lock_expires_at,
+            )
             .map_err(DbError::Specific)
     }
 
@@ -121,23 +83,13 @@ impl DbConnection for InMemoryDbConnection {
     async fn append(
         &self,
         execution_id: ExecutionId,
-        version: Option<Version>,
+        appending_version: Option<Version>,
         req: AppendRequest,
     ) -> Result<AppendResponse, DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Append {
-            execution_id,
-            version,
-            req,
-            resp_sender,
-        });
         self.0
-            .send(request)
+            .lock()
             .await
-            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
-        resp_receiver
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .append(req.created_at, execution_id, appending_version, req.event)
             .map_err(DbError::Specific)
     }
 
@@ -146,22 +98,12 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
-        version: Version,
+        appending_version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::AppendBatch {
-            batch,
-            execution_id,
-            version,
-            resp_sender,
-        });
         self.0
-            .send(request)
+            .lock()
             .await
-            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
-        resp_receiver
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .append_batch(batch, execution_id, appending_version)
             .map_err(DbError::Specific)
     }
 
@@ -173,21 +115,10 @@ impl DbConnection for InMemoryDbConnection {
         version: Version,
         child_req: CreateRequest,
     ) -> Result<AppendBatchResponse, DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::General(GeneralRequest::AppendBatchCreateChild {
-            batch,
-            execution_id,
-            version,
-            child_req,
-            resp_sender,
-        });
         self.0
-            .send(request)
+            .lock()
             .await
-            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
-        resp_receiver
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .append_batch_create_child(batch, execution_id, version, child_req)
             .map_err(DbError::Specific)
     }
 
@@ -199,38 +130,19 @@ impl DbConnection for InMemoryDbConnection {
         version: Version,
         parent: (ExecutionId, AppendRequest),
     ) -> Result<AppendBatchResponse, DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::General(GeneralRequest::AppendBatchRespondToParent {
-            batch,
-            execution_id,
-            version,
-            parent,
-            resp_sender,
-        });
         self.0
-            .send(request)
+            .lock()
             .await
-            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
-        resp_receiver
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .append_batch_respond_to_parent(batch, execution_id, version, parent)
             .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all, %execution_id)]
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
-        let (resp_sender, resp_receiver) = oneshot::channel();
-        let request = DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Get {
-            execution_id,
-            resp_sender,
-        });
         self.0
-            .send(request)
+            .lock()
             .await
-            .map_err(|_| DbError::Connection(DbConnectionError::SendError))?;
-        resp_receiver
-            .await
-            .map_err(|_| DbError::Connection(DbConnectionError::RecvError))?
+            .get(execution_id)
             .map_err(DbError::Specific)
     }
 }
@@ -376,137 +288,24 @@ mod index {
     }
 }
 
-#[derive(Debug, derive_more::Display)]
-enum DbRequest {
-    General(GeneralRequest),
-    ExecutionSpecific(ExecutionSpecificRequest),
-}
-
-#[derive(Derivative)]
-#[derivative(Debug)]
-#[derive(derive_more::Display)]
-enum ExecutionSpecificRequest {
-    #[display(fmt = "Create")]
-    Create {
-        req: CreateRequest,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendResponse, SpecificError>>,
-    },
-    #[display(fmt = "Lock(`{executor_id}`)")]
-    Lock {
-        created_at: DateTime<Utc>,
-        execution_id: ExecutionId,
-        run_id: RunId,
-        version: Version,
-        executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<LockResponse, SpecificError>>,
-    },
-    #[display(fmt = "Append({req})")]
-    Append {
-        execution_id: ExecutionId,
-        version: Option<Version>,
-        req: AppendRequest,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendResponse, SpecificError>>,
-    },
-    #[display(fmt = "AppendBatch")]
-    AppendBatch {
-        batch: Vec<AppendRequest>,
-        execution_id: ExecutionId,
-        version: Version,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
-    },
-    #[display(fmt = "Get")]
-    Get {
-        execution_id: ExecutionId,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<ExecutionLog, SpecificError>>,
-    },
-}
-
-#[derive(derive_more::Display, Derivative)]
-#[derivative(Debug)]
-enum GeneralRequest {
-    #[display(fmt = "LockPending(`{executor_id}`, {ffqns:?})")]
-    LockPending {
-        batch_size: usize,
-        pending_at_or_sooner: DateTime<Utc>,
-        ffqns: Vec<FunctionFqn>,
-        created_at: DateTime<Utc>,
-        executor_id: ExecutorId,
-        lock_expires_at: DateTime<Utc>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<LockPendingResponse>,
-    },
-    #[display(fmt = "GetExpiredTimers(`{at}`)")]
-    GetExpiredTimers {
-        at: DateTime<Utc>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Vec<ExpiredTimer>>,
-    },
-    #[display(fmt = "AppendBatchCreateChild")]
-    AppendBatchCreateChild {
-        batch: AppendBatch,
-        execution_id: ExecutionId,
-        version: Version,
-        child_req: CreateRequest,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
-    },
-    #[display(fmt = "AppendBatchRespondToParent")]
-    AppendBatchRespondToParent {
-        batch: AppendBatch,
-        execution_id: ExecutionId,
-        version: Version,
-        parent: (ExecutionId, AppendRequest),
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
-    },
-}
-
-pub struct DbTaskHandle {
-    client_to_store_req_sender: Option<mpsc::Sender<DbRequest>>,
-    abort_handle: AbortHandle,
-}
-
-impl DbTaskHandle {
-    #[deprecated]
-    #[must_use]
-    pub fn connection(&self) -> Option<impl DbConnection> {
-        self.client_to_store_req_sender
-            .clone()
-            .map(InMemoryDbConnection)
-    }
-
-    pub fn pool(&self) -> Option<InMemoryPool> {
-        self.client_to_store_req_sender.clone().map(InMemoryPool)
-    }
-
-    pub async fn close(&mut self) {
-        self.client_to_store_req_sender.take();
-        trace!("Gracefully closing");
-        while !self.abort_handle.is_finished() {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-        info!("Gracefully closed");
-    }
-}
-
-impl Drop for DbTaskHandle {
-    fn drop(&mut self) {
-        if self.abort_handle.is_finished() {
-            return;
-        }
-        warn!("Aborting the task");
-        self.abort_handle.abort();
-    }
-}
-
 #[derive(Clone)]
-pub struct InMemoryPool(mpsc::Sender<DbRequest>);
+pub struct InMemoryPool(Arc<tokio::sync::Mutex<DbTask>>);
+
+impl Default for InMemoryPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl InMemoryPool {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Arc::new(tokio::sync::Mutex::new(DbTask {
+            journals: BTreeMap::default(),
+            index: JournalsIndex::default(),
+        })))
+    }
+}
 
 #[async_trait]
 impl DbPool<InMemoryDbConnection> for InMemoryPool {
@@ -520,230 +319,25 @@ impl DbPool<InMemoryDbConnection> for InMemoryPool {
 }
 
 #[derive(Debug, Default)]
-pub struct DbTask {
+struct DbTask {
     journals: BTreeMap<ExecutionId, ExecutionJournal>,
     index: JournalsIndex,
 }
 
-impl ExecutionSpecificRequest {
-    fn execution_id(&self) -> ExecutionId {
-        match self {
-            Self::Lock { execution_id, .. }
-            | Self::Append { execution_id, .. }
-            | Self::AppendBatch { execution_id, .. }
-            | Self::Get { execution_id, .. } => *execution_id,
-            Self::Create { req, .. } => req.execution_id,
-        }
-    }
-}
-
-#[derive(Derivative)]
-#[derivative(Debug)]
-pub(crate) enum DbTickResponse {
-    LockPending {
-        payload: LockPendingResponse,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<LockPendingResponse>,
-    },
-    Lock {
-        payload: Result<LockResponse, SpecificError>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<LockResponse, SpecificError>>,
-    },
-    AppendResult {
-        payload: Result<AppendResponse, SpecificError>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendResponse, SpecificError>>,
-    },
-    AppendBatchResult {
-        payload: Result<AppendBatchResponse, SpecificError>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
-    },
-    Get {
-        payload: Result<ExecutionLog, SpecificError>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<ExecutionLog, SpecificError>>,
-    },
-    GetExpiredTimers {
-        payload: Vec<ExpiredTimer>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Vec<ExpiredTimer>>,
-    },
-    AppendBatchCreateChildResult {
-        payload: Result<AppendBatchResponse, SpecificError>,
-        #[derivative(Debug = "ignore")]
-        resp_sender: oneshot::Sender<Result<AppendBatchResponse, SpecificError>>,
-    },
-}
-
-impl DbTickResponse {
-    fn send_response(self) -> Result<(), ()> {
-        match self {
-            Self::LockPending {
-                resp_sender,
-                payload,
-            } => resp_sender.send(payload).map_err(|_| ()),
-            Self::Lock {
-                resp_sender,
-                payload,
-            } => resp_sender.send(payload).map_err(|_| ()),
-            Self::AppendResult {
-                resp_sender,
-                payload,
-            } => resp_sender.send(payload).map_err(|_| ()),
-            Self::AppendBatchResult {
-                resp_sender,
-                payload,
-            } => resp_sender.send(payload).map_err(|_| ()),
-            Self::Get {
-                payload,
-                resp_sender,
-            } => resp_sender.send(payload).map_err(|_| ()),
-            Self::GetExpiredTimers {
-                payload,
-                resp_sender,
-            } => resp_sender.send(payload).map_err(|_| ()),
-            Self::AppendBatchCreateChildResult {
-                payload,
-                resp_sender,
-            } => resp_sender.send(payload).map_err(|_| ()),
-        }
-    }
-}
-
 impl DbTask {
-    pub fn spawn_new(rpc_capacity: usize) -> DbTaskHandle {
-        let (client_to_store_req_sender, mut client_to_store_receiver) =
-            mpsc::channel::<DbRequest>(rpc_capacity);
-        let abort_handle = tokio::spawn(
-            async move {
-                info!("Spawned inmemory db task");
-                let mut task = Self {
-                    journals: BTreeMap::default(),
-                    index: JournalsIndex::default(),
-                };
-                while let Some(request) = client_to_store_receiver.recv().await {
-                    let resp = task.tick(request).send_response();
-                    if resp.is_err() {
-                        debug!("Failed to send back the response");
-                    }
-                }
-            }
-            .instrument(info_span!("inmemory_db_task")),
-        )
-        .abort_handle();
-        DbTaskHandle {
-            abort_handle,
-            client_to_store_req_sender: Some(client_to_store_req_sender),
-        }
-    }
-
-    #[cfg(any(test, feature = "test"))]
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            journals: BTreeMap::default(),
-            index: JournalsIndex::default(),
-        }
-    }
-
-    #[instrument(skip_all)]
-    pub(crate) fn tick(&mut self, request: DbRequest) -> DbTickResponse {
-        if tracing::enabled!(Level::TRACE)
-            || matches!(
-                request,
-                DbRequest::General(GeneralRequest::LockPending { .. })
-                    | DbRequest::ExecutionSpecific(ExecutionSpecificRequest::Get { .. })
-            )
-        {
-            match &request {
-                DbRequest::General(..) => trace!("Received {request:?}"),
-                DbRequest::ExecutionSpecific(specific) => trace!(
-                    execution_id = %specific.execution_id(),
-                    "Received {request:?}"
-                ),
-            }
-        } else {
-            match &request {
-                DbRequest::General(..) => {}
-                DbRequest::ExecutionSpecific(specific) => debug!(
-                    execution_id = %specific.execution_id(),
-                    "Received {request}"
-                ),
-            }
-        }
-        let resp = match request {
-            DbRequest::ExecutionSpecific(request) => self.handle_specific(request),
-            DbRequest::General(request) => self.handle_general(request),
-        };
-        trace!("Responding with {resp:?}");
-        resp
-    }
-
-    fn handle_general(&mut self, request: GeneralRequest) -> DbTickResponse {
-        match request {
-            GeneralRequest::LockPending {
-                batch_size,
-                pending_at_or_sooner,
-                ffqns,
-                created_at,
-                executor_id,
-                lock_expires_at,
-                resp_sender,
-            } => self.lock_pending(
-                batch_size,
-                pending_at_or_sooner,
-                &ffqns,
-                created_at,
-                executor_id,
-                lock_expires_at,
-                resp_sender,
-            ),
-            GeneralRequest::GetExpiredTimers {
-                at: before,
-                resp_sender,
-            } => DbTickResponse::GetExpiredTimers {
-                payload: self.get_expired_timers(before),
-                resp_sender,
-            },
-            GeneralRequest::AppendBatchCreateChild {
-                batch,
-                execution_id,
-                version,
-                child_req,
-                resp_sender,
-            } => DbTickResponse::AppendBatchCreateChildResult {
-                payload: self.append_batch_create_child(batch, execution_id, version, child_req),
-                resp_sender,
-            },
-            GeneralRequest::AppendBatchRespondToParent {
-                batch,
-                execution_id,
-                version,
-                parent,
-                resp_sender,
-            } => DbTickResponse::AppendBatchResult {
-                payload: self.append_batch_respond_to_parent(batch, execution_id, version, parent),
-                resp_sender,
-            },
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn lock_pending(
         &mut self,
         batch_size: usize,
-        expiring_before: DateTime<Utc>,
+        pending_at_or_sooner: DateTime<Utc>,
         ffqns: &[FunctionFqn],
         created_at: DateTime<Utc>,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
-        resp_sender: oneshot::Sender<LockPendingResponse>,
-    ) -> DbTickResponse {
-        let pending = self
-            .index
-            .fetch_pending(&self.journals, batch_size, expiring_before, ffqns);
+    ) -> LockPendingResponse {
+        let pending =
+            self.index
+                .fetch_pending(&self.journals, batch_size, pending_at_or_sooner, ffqns);
         let mut payload = Vec::with_capacity(pending.len());
         for (journal, scheduled_at) in pending {
             let item = LockedExecution {
@@ -776,64 +370,7 @@ impl DbTask {
             row.version = new_version;
             row.event_history.extend(new_event_history);
         }
-        DbTickResponse::LockPending {
-            payload,
-            resp_sender,
-        }
-    }
-
-    #[instrument(skip_all, fields(execution_id = %request.execution_id()))]
-    fn handle_specific(&mut self, request: ExecutionSpecificRequest) -> DbTickResponse {
-        match request {
-            ExecutionSpecificRequest::Create { req, resp_sender } => DbTickResponse::AppendResult {
-                resp_sender,
-                payload: self.create(req),
-            },
-            ExecutionSpecificRequest::Append {
-                execution_id,
-                version,
-                req,
-                resp_sender,
-            } => DbTickResponse::AppendResult {
-                resp_sender,
-                payload: self.append(req.created_at, execution_id, version, req.event),
-            },
-            ExecutionSpecificRequest::Lock {
-                created_at,
-                execution_id,
-                run_id,
-                version,
-                executor_id,
-                lock_expires_at,
-                resp_sender,
-            } => DbTickResponse::Lock {
-                resp_sender,
-                payload: self.lock(
-                    created_at,
-                    execution_id,
-                    run_id,
-                    version,
-                    executor_id,
-                    lock_expires_at,
-                ),
-            },
-            ExecutionSpecificRequest::AppendBatch {
-                batch: append,
-                execution_id,
-                version,
-                resp_sender,
-            } => DbTickResponse::AppendBatchResult {
-                payload: self.append_batch(append, execution_id, version),
-                resp_sender,
-            },
-            ExecutionSpecificRequest::Get {
-                execution_id,
-                resp_sender,
-            } => DbTickResponse::Get {
-                payload: self.get(execution_id),
-                resp_sender,
-            },
-        }
+        payload
     }
 
     fn create(&mut self, req: CreateRequest) -> Result<AppendResponse, SpecificError> {
@@ -1029,82 +566,5 @@ impl DbTask {
         let child_version = self.append_batch(batch, execution_id, version)?;
         self.append(parent_req.created_at, parent_exe, None, parent_req.event)?;
         Ok(child_version)
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-    use db_tests_common::db_test_stubs;
-    use test_utils::set_up;
-
-    #[tokio::test]
-    async fn lifecycle() {
-        set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.pool().unwrap().connection();
-        db_test_stubs::lifecycle(&db_connection).await;
-        drop(db_connection);
-        db_task.close().await;
-    }
-
-    #[tokio::test]
-    async fn expired_lock_should_be_found() {
-        set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.pool().unwrap().connection();
-        db_test_stubs::expired_lock_should_be_found(&db_connection).await;
-        drop(db_connection);
-        db_task.close().await;
-    }
-
-    #[tokio::test]
-    async fn append_batch_respond_to_parent() {
-        set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.pool().unwrap().connection();
-        db_test_stubs::append_batch_respond_to_parent(&db_connection).await;
-        drop(db_connection);
-        db_task.close().await;
-    }
-
-    #[tokio::test]
-    async fn lock_pending_should_sort_by_scheduled_at() {
-        set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.pool().unwrap().connection();
-        db_test_stubs::lock_pending_should_sort_by_scheduled_at(&db_connection).await;
-        drop(db_connection);
-        db_task.close().await;
-    }
-
-    #[tokio::test]
-    async fn lock_should_delete_from_pending() {
-        set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.pool().unwrap().connection();
-        db_test_stubs::lock_should_delete_from_pending(&db_connection).await;
-        drop(db_connection);
-        db_task.close().await;
-    }
-
-    #[tokio::test]
-    async fn get_expired_lock() {
-        set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.pool().unwrap().connection();
-        db_test_stubs::get_expired_lock(&db_connection).await;
-        drop(db_connection);
-        db_task.close().await;
-    }
-
-    #[tokio::test]
-    async fn get_expired_delay() {
-        set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_connection = db_task.pool().unwrap().connection();
-        db_test_stubs::get_expired_delay(&db_connection).await;
-        drop(db_connection);
-        db_task.close().await;
     }
 }

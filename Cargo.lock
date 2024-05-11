@@ -707,16 +707,12 @@ dependencies = [
  "async-trait",
  "chrono",
  "concepts",
- "db-tests-common",
  "derivative",
  "derive_more",
  "hashbrown 0.14.5",
- "madsim",
  "madsim-tokio",
- "test-utils",
  "thiserror",
  "tracing",
- "utils",
 ]
 
 [[package]]
@@ -729,18 +725,14 @@ dependencies = [
  "async-trait",
  "chrono",
  "concepts",
- "db-tests-common",
  "derivative",
  "derive_more",
- "madsim",
  "madsim-tokio",
  "rusqlite",
  "serde_json",
  "tempfile",
- "test-utils",
  "thiserror",
  "tracing",
- "utils",
 ]
 
 [[package]]
@@ -754,32 +746,11 @@ dependencies = [
  "concepts",
  "db-mem",
  "db-sqlite",
- "db-tests-common",
  "madsim",
  "madsim-tokio",
  "serde_json",
  "tempfile",
  "test-utils",
- "tracing",
- "utils",
-]
-
-[[package]]
-name = "db-tests-common"
-version = "0.1.0"
-dependencies = [
- "arbitrary",
- "assert_matches",
- "async-trait",
- "chrono",
- "concepts",
- "derivative",
- "derive_more",
- "hashbrown 0.14.5",
- "madsim",
- "madsim-tokio",
- "test-utils",
- "thiserror",
  "tracing",
  "utils",
 ]
@@ -985,6 +956,7 @@ dependencies = [
  "concepts",
  "db-mem",
  "db-sqlite",
+ "db-tests",
  "derivative",
  "derive_more",
  "indexmap 2.2.6",

@@ -643,7 +643,7 @@ mod tests {
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
     use concepts::{Params, SupportedFunctionResult};
-    use db_mem::inmemory_dao::DbTask;
+    use db_tests::Database;
     use indexmap::IndexMap;
     use simple_worker::FFQN_SOME;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
@@ -686,20 +686,17 @@ mod tests {
 
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based_mem() {
-        let mut db_task = DbTask::spawn_new(1);
-        let pool = db_task.pool().unwrap();
-        execute_simple_lifecycle_tick_based(pool).await;
-        db_task.close().await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
+        execute_simple_lifecycle_tick_based(db_pool.clone()).await;
+        db_pool.close().await.unwrap();
     }
 
     #[cfg(not(madsim))]
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based_sqlite() {
-        use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
-
-        let (pool, _guard) = sqlite_pool().await;
-        execute_simple_lifecycle_tick_based(pool.clone()).await;
-        pool.close().await.unwrap();
+        let (_guard, db_pool) = Database::Sqlite.set_up().await;
+        execute_simple_lifecycle_tick_based(db_pool.clone()).await;
+        db_pool.close().await.unwrap();
     }
 
     async fn execute_simple_lifecycle_tick_based<
@@ -752,8 +749,7 @@ mod tests {
         set_up();
         let created_at = now();
         let clock_fn = move || created_at;
-        let mut db_task = DbTask::spawn_new(1);
-        let db_pool = db_task.pool().unwrap();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             ffqns: vec![FFQN_SOME],
             batch_size: 1,
@@ -777,7 +773,7 @@ mod tests {
                 executed_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
             },
-            db_pool,
+            db_pool.clone(),
             exec_config,
             worker,
             |_, _, _, _| async {
@@ -787,7 +783,7 @@ mod tests {
         )
         .await;
         exec_task.close().await;
-        db_task.close().await;
+        db_pool.close().await.unwrap();
         assert_matches!(
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
@@ -837,7 +833,7 @@ mod tests {
             .await
             .unwrap();
         // execute!
-        tick(exec_config, db_pool.clone(), worker, config.executed_at).await;
+        tick(exec_config, db_pool, worker, config.executed_at).await;
         let execution_log = db_connection.get(config.execution_id).await.unwrap();
         debug!("Execution history after tick: {execution_log:?}");
         // check that DB contains Created and Locked events.
@@ -868,8 +864,7 @@ mod tests {
     async fn worker_error_should_trigger_an_execution_retry() {
         set_up();
         let sim_clock = SimClock::new(now());
-        let mut db_task = DbTask::spawn_new(1);
-        let db_pool = db_task.pool().unwrap();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             ffqns: vec![FFQN_SOME],
             batch_size: 1,
@@ -960,15 +955,13 @@ mod tests {
                 created_at: finished_at,
             } if *finished_at == sim_clock.now()
         );
-        drop(db_pool);
-        db_task.close().await;
+        db_pool.close().await.unwrap();
     }
 
     #[tokio::test]
     async fn worker_error_should_not_be_retried_if_no_retries_are_set() {
         set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_pool = db_task.pool().unwrap();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let created_at = now();
         let clock_fn = move || created_at;
         let exec_config = ExecConfig {
@@ -1011,8 +1004,7 @@ mod tests {
             => reason.to_string()
         );
         assert_eq!("error reason", reason);
-        drop(db_pool);
-        db_task.close().await;
+        db_pool.close().await.unwrap();
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1030,8 +1022,7 @@ mod tests {
     async fn child_execution_permanently_failed_should_notify_parent(worker_error: WorkerError) {
         const LOCK_EXPIRY: Duration = Duration::from_secs(1);
         set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_pool = db_task.pool().unwrap();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let sim_clock = SimClock::new(now());
 
         let parent_worker = Arc::new(SimpleWorker::with_single_result(
@@ -1187,8 +1178,7 @@ mod tests {
         assert_eq!(child_execution_id, found_child_execution_id);
         assert!(found_result.is_err());
 
-        drop(db_pool);
-        db_task.close().await;
+        db_pool.close().await.unwrap();
     }
 
     #[derive(Clone, Debug)]
@@ -1222,8 +1212,7 @@ mod tests {
     async fn hanging_lock_should_be_cleaned_and_execution_retried() {
         set_up();
         let sim_clock = SimClock::new(now());
-        let mut db_task = DbTask::spawn_new(1);
-        let db_pool = db_task.pool().unwrap();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let lock_expiry = Duration::from_millis(100);
         let exec_config = ExecConfig {
             ffqns: vec![FFQN_SOME],
@@ -1340,9 +1329,8 @@ mod tests {
             .is_finished());
 
         drop(db_connection);
-        drop(db_pool);
         drop(executor);
         drop(timers_watcher);
-        db_task.close().await;
+        db_pool.close().await.unwrap();
     }
 }

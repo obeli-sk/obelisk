@@ -1268,12 +1268,9 @@ pub mod tempfile {
 mod tests {
     use crate::sqlite_dao::tempfile::sqlite_pool;
     use concepts::storage::DbPool;
-    use db_tests_common::db_test_stubs;
-    use test_utils::set_up;
 
     #[tokio::test]
     async fn check_sqlite_version() {
-        test_utils::set_up();
         let (pool, _guard) = sqlite_pool().await;
         let version = pool
             .pool
@@ -1281,62 +1278,6 @@ mod tests {
             .await;
         let version: String = version.unwrap();
         assert_eq!("3.45.0", version);
-        pool.close().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn lifecycle() {
-        set_up();
-        let (pool, _guard) = sqlite_pool().await;
-        db_test_stubs::lifecycle(&pool).await;
-        pool.close().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn expired_lock_should_be_found() {
-        set_up();
-        let (pool, _guard) = sqlite_pool().await;
-        db_test_stubs::expired_lock_should_be_found(&pool).await;
-        pool.close().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn append_batch_respond_to_parent() {
-        set_up();
-        let (pool, _guard) = sqlite_pool().await;
-        db_test_stubs::append_batch_respond_to_parent(&pool).await;
-        pool.close().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn lock_pending_should_sort_by_scheduled_at() {
-        set_up();
-        let (pool, _guard) = sqlite_pool().await;
-        db_test_stubs::lock_pending_should_sort_by_scheduled_at(&pool).await;
-        pool.close().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn lock_should_delete_from_pending() {
-        set_up();
-        let (pool, _guard) = sqlite_pool().await;
-        db_test_stubs::lock_should_delete_from_pending(&pool).await;
-        pool.close().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn get_expired_lock() {
-        set_up();
-        let (pool, _guard) = sqlite_pool().await;
-        db_test_stubs::get_expired_lock(&pool).await;
-        pool.close().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn get_expired_delay() {
-        set_up();
-        let (pool, _guard) = sqlite_pool().await;
-        db_test_stubs::get_expired_delay(&pool).await;
         pool.close().await.unwrap();
     }
 }

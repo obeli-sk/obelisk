@@ -6,9 +6,8 @@ use concepts::storage::ExecutionLog;
 use concepts::storage::{AppendRequest, CreateRequest};
 use concepts::ExecutionId;
 use concepts::Params;
-use db_mem::inmemory_dao::DbTask;
-use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
-use db_tests_common::db_test_stubs::SOME_FFQN;
+use db_tests::Database;
+use db_tests::SOME_FFQN;
 use std::time::Duration;
 use test_utils::arbitrary::UnstructuredHolder;
 use test_utils::set_up;
@@ -42,8 +41,8 @@ async fn diff_proptest() {
     for (idx, step) in append_requests.iter().enumerate() {
         info!("{idx}: {step:?}");
     }
-    let mut db_mem_task = DbTask::spawn_new(1);
-    let mem_conn = db_mem_task.pool().unwrap().connection();
+    let (_mem_guard, db_mem_pool) = Database::Memory.set_up().await;
+    let mem_conn = db_mem_pool.connection();
     let mem_log = create_and_append(
         &mem_conn,
         execution_id,
@@ -51,12 +50,12 @@ async fn diff_proptest() {
         &append_requests,
     )
     .await;
-    drop(mem_conn);
-    db_mem_task.close().await;
-    let (sqlite_conn, _guard) = sqlite_pool().await;
+    db_mem_pool.close().await.unwrap();
+    let (_sqlite_guard, sqlite_pool) = Database::Sqlite.set_up().await;
+    let sqlite_conn = sqlite_pool.connection();
     let sqlite_log =
         create_and_append(&sqlite_conn, execution_id, create_req, &append_requests).await;
-    sqlite_conn.close().await.unwrap();
+    sqlite_pool.close().await.unwrap();
     println!(
         "Expected:\n{expected}\nActual:\n{actual}",
         expected = serde_json::to_string(&mem_log).unwrap(),

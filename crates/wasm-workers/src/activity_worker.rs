@@ -282,7 +282,7 @@ pub(crate) mod tests {
         storage::{CreateRequest, DbConnection, DbPool, Version},
         ExecutionId, Params, SupportedFunctionResult,
     };
-    use db_mem::inmemory_dao::DbTask;
+    use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use serde_json::json;
     use std::time::Duration;
@@ -343,10 +343,9 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn fibo_once() {
         test_utils::set_up();
-        let mut db_task = DbTask::spawn_new(1);
-        let db_pool = db_task.pool().unwrap();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
-        let exec_task = spawn_activity_fibo(db_pool);
+        let exec_task = spawn_activity_fibo(db_pool.clone());
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = now();
@@ -370,7 +369,7 @@ pub(crate) mod tests {
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
         exec_task.close().await;
-        db_task.close().await;
+        db_pool.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -475,8 +474,7 @@ pub(crate) mod tests {
             const LOCK_EXPIRY: Duration = Duration::from_millis(500);
             const TICK_SLEEP: Duration = Duration::from_millis(10);
             test_utils::set_up();
-            let mut db_task = DbTask::spawn_new(1);
-            let db_pool = db_task.pool().expect("must be open");
+            let (_guard, db_pool) = Database::Memory.set_up().await;
             let timers_watcher_task =
                 executor::expired_timers_watcher::TimersWatcherTask::spawn_new(
                     db_pool.connection(),
@@ -559,10 +557,9 @@ pub(crate) mod tests {
             assert!(stopwatch < LOCK_EXPIRY * 2);
 
             drop(db_connection);
-            drop(db_pool);
             timers_watcher_task.close().await;
             exec_task.close().await;
-            db_task.close().await;
+            db_pool.close().await.unwrap();
         }
 
         #[rstest::rstest]
@@ -632,8 +629,7 @@ pub(crate) mod tests {
             const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
             test_utils::set_up();
             let sim_clock = SimClock::new(now());
-            let mut db_task = DbTask::spawn_new(1);
-            let db_pool = db_task.pool().unwrap();
+            let (_guard, db_pool) = Database::Memory.set_up().await;
             let engine = activity_engine(EngineConfig::default());
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
@@ -775,9 +771,8 @@ pub(crate) mod tests {
             assert_eq!(Some(Box::new(TypeWrapper::String)), ok);
             assert_eq!(Some(Box::new(TypeWrapper::String)), err);
             drop(db_connection);
-            drop(db_pool);
             drop(exec_task);
-            db_task.close().await;
+            db_pool.close().await.unwrap();
         }
     }
 }

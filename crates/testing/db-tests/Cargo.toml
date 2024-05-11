@@ -9,7 +9,6 @@ rust-version.workspace = true
 concepts.workspace = true
 db-mem.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
-db-tests-common.workspace = true
 test-utils.workspace = true
 utils.workspace = true
 

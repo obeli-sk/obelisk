@@ -9,9 +9,11 @@ use concepts::{
     },
     ExecutionId, FunctionFqn, StrVariant,
 };
-use db_mem::inmemory_dao::{DbTask, DbTaskHandle, InMemoryPool};
+use db_mem::inmemory_dao::InMemoryPool;
 use db_sqlite::sqlite_dao::SqlitePool;
 use tempfile::NamedTempFile;
+
+pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
 
 pub enum Database {
     Memory,
@@ -19,30 +21,14 @@ pub enum Database {
 }
 
 pub enum DbGuard {
-    Memory(DbTaskHandle),
+    Memory,
     Sqlite(Option<NamedTempFile>),
-}
-
-impl DbGuard {
-    pub async fn close(self, db_pool: DbPoolEnum) {
-        drop(db_pool);
-        match self {
-            DbGuard::Memory(mut db_task) => {
-                db_task.close().await;
-            }
-            DbGuard::Sqlite(_) => {}
-        }
-    }
 }
 
 impl Database {
     pub async fn set_up(self) -> (DbGuard, DbPoolEnum) {
         match self {
-            Database::Memory => {
-                let db_task = DbTask::spawn_new(1);
-                let db_pool = db_task.pool().unwrap();
-                (DbGuard::Memory(db_task), DbPoolEnum::Memory(db_pool))
-            }
+            Database::Memory => (DbGuard::Memory, DbPoolEnum::Memory(InMemoryPool::new())),
             Database::Sqlite => {
                 use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
                 let (db_pool, guard) = sqlite_pool().await;

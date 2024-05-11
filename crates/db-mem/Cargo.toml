@@ -19,12 +19,5 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
-[dev-dependencies]
-db-tests-common.workspace = true
-test-utils.workspace = true
-utils.workspace = true
-
-madsim.workspace = true
-
 [lints]
 workspace = true

@@ -23,11 +23,6 @@ tracing.workspace = true
 tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
-db-tests-common.workspace = true
-test-utils.workspace = true
-utils.workspace = true
-
-madsim.workspace = true
 tempfile.workspace = true
 
 [features]

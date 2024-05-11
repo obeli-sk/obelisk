@@ -1,19 +1,169 @@
 use assert_matches::assert_matches;
 use chrono::DateTime;
 use concepts::prefixed_ulid::{DelayId, JoinSetId, RunId};
+use concepts::storage::DbPool;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
     JoinSetRequest, JoinSetResponse, SpecificError, Version,
 };
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
 use concepts::{storage::HistoryEvent, FinishedExecutionResult};
-use concepts::{FunctionFqn, Params, StrVariant};
+use concepts::{Params, StrVariant};
+use db_tests::Database;
+use db_tests::SOME_FFQN;
 use std::time::Duration;
+use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
 use tracing::{debug, info};
 use utils::time::now;
 
-pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+// TODO clean up after https://github.com/la10736/rstest/issues/252 is fixed
+#[tokio::test]
+async fn test_lifecycle_mem() {
+    set_up();
+    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let db_connection = db_pool.connection();
+    lifecycle(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[cfg(not(madsim))]
+#[tokio::test]
+async fn test_lifecycle_sqlite() {
+    set_up();
+    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let db_connection = db_pool.connection();
+    lifecycle(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_expired_lock_should_be_found_mem() {
+    set_up();
+    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let db_connection = db_pool.connection();
+    expired_lock_should_be_found(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[cfg(not(madsim))]
+#[tokio::test]
+async fn test_expired_lock_should_be_found_sqlite() {
+    set_up();
+    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let db_connection = db_pool.connection();
+    expired_lock_should_be_found(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_append_batch_respond_to_parent_mem() {
+    set_up();
+    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let db_connection = db_pool.connection();
+    append_batch_respond_to_parent(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[cfg(not(madsim))]
+#[tokio::test]
+async fn test_append_batch_respond_to_parent_sqlite() {
+    set_up();
+    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let db_connection = db_pool.connection();
+    append_batch_respond_to_parent(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_lock_pending_should_sort_by_scheduled_at_mem() {
+    set_up();
+    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let db_connection = db_pool.connection();
+    lock_pending_should_sort_by_scheduled_at(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[cfg(not(madsim))]
+#[tokio::test]
+async fn test_lock_pending_should_sort_by_scheduled_at_sqlite() {
+    set_up();
+    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let db_connection = db_pool.connection();
+    lock_pending_should_sort_by_scheduled_at(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_lock_should_delete_from_pending_mem() {
+    set_up();
+    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let db_connection = db_pool.connection();
+    lock_should_delete_from_pending(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[cfg(not(madsim))]
+#[tokio::test]
+async fn test_lock_should_delete_from_pending_sqlite() {
+    set_up();
+    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let db_connection = db_pool.connection();
+    lock_should_delete_from_pending(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_get_expired_lock_mem() {
+    set_up();
+    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let db_connection = db_pool.connection();
+    get_expired_lock(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[cfg(not(madsim))]
+#[tokio::test]
+async fn test_get_expired_lock_sqlite() {
+    set_up();
+    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let db_connection = db_pool.connection();
+    get_expired_lock(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_get_expired_delay_mem() {
+    set_up();
+    let (_guard, db_pool) = Database::Memory.set_up().await;
+    let db_connection = db_pool.connection();
+    get_expired_delay(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
+
+#[cfg(not(madsim))]
+#[tokio::test]
+async fn test_get_expired_delay_sqlite() {
+    set_up();
+    let (_guard, db_pool) = Database::Sqlite.set_up().await;
+    let db_connection = db_pool.connection();
+    get_expired_delay(&db_connection).await;
+    drop(db_connection);
+    db_pool.close().await.unwrap();
+}
 
 #[allow(clippy::too_many_lines)]
 pub async fn lifecycle(db_connection: &impl DbConnection) {

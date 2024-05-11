@@ -157,8 +157,9 @@ mod tests {
         workflow_worker::{workflow_engine, JoinNextBlockingStrategy},
         EngineConfig,
     };
+    use concepts::storage::DbPool;
     use concepts::{prefixed_ulid::ConfigId, StrVariant};
-    use db_mem::inmemory_dao::DbTask;
+    use db_tests::Database;
     use test_utils::set_up;
     use utils::time::now;
 
@@ -174,14 +175,14 @@ mod tests {
     #[tokio::test]
     async fn detection(#[case] file: &'static str, #[case] expected: Kind) {
         set_up();
-        let mut db_task = DbTask::spawn_new(1);
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let config = AutoConfig {
             wasm_path: StrVariant::Static(file),
             config_id: ConfigId::generate(),
             activity_recycled_instances: RecycleInstancesSetting::Disable,
             clock_fn: now,
             workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
-            workflow_db_pool: db_task.pool().unwrap(),
+            workflow_db_pool: db_pool.clone(),
             workflow_child_retry_exp_backoff: Duration::ZERO,
             workflow_child_max_retries: 0,
             timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
@@ -195,6 +196,6 @@ mod tests {
         .unwrap();
         assert_eq!(expected, worker.kind());
         drop(worker);
-        db_task.close().await;
+        db_pool.close().await.unwrap();
     }
 }

@@ -700,8 +700,10 @@ impl EventCall {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
+    use crate::event_history::{EventCall, EventHistory};
+    use crate::workflow_ctx::tests::MOCK_FFQN;
+    use crate::workflow_ctx::FunctionError;
+    use crate::workflow_worker::JoinNextBlockingStrategy;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::JoinSetId;
@@ -711,16 +713,12 @@ mod tests {
     };
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::{ExecutionId, Params, SupportedFunctionResult};
-    use db_mem::inmemory_dao::DbTask;
+    use db_tests::Database;
+    use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::info;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::{WastVal, WastValWithType};
-
-    use crate::event_history::{EventCall, EventHistory};
-    use crate::workflow_ctx::tests::MOCK_FFQN;
-    use crate::workflow_ctx::FunctionError;
-    use crate::workflow_worker::JoinNextBlockingStrategy;
 
     async fn load_event_history(
         db_connection: &impl DbConnection,
@@ -743,8 +741,7 @@ mod tests {
     async fn regular_join_next_child() {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let mut db_task = DbTask::spawn_new(10);
-        let db_pool = db_task.pool().expect("must be open");
+        let (_guard, db_pool) = Database::Memory.set_up().await;
 
         // Create an execution.
         let created_at = sim_clock.now();
@@ -847,8 +844,7 @@ mod tests {
         blocking_join_first(event_history, version).await.unwrap();
 
         drop(db_connection);
-        drop(db_pool);
-        db_task.close().await;
+        db_pool.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -895,8 +891,7 @@ mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let mut db_task = DbTask::spawn_new(10);
-        let db_pool = db_task.pool().expect("must be open");
+        let (_guard, db_pool) = Database::Memory.set_up().await;
 
         // Create an execution.
         let created_at = sim_clock.now();
@@ -984,8 +979,7 @@ mod tests {
         assert_eq!(CHILD_RESP, res);
 
         drop(db_connection);
-        drop(db_pool);
-        db_task.close().await;
+        db_pool.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -1060,8 +1054,7 @@ mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let mut db_task = DbTask::spawn_new(10);
-        let db_pool = db_task.pool().expect("must be open");
+        let (_guard, db_pool) = Database::Memory.set_up().await;
 
         // Create an execution.
         let created_at = sim_clock.now();
@@ -1177,7 +1170,6 @@ mod tests {
         assert_eq!(KID_B, res);
 
         drop(db_connection);
-        drop(db_pool);
-        db_task.close().await;
+        db_pool.close().await.unwrap();
     }
 }
