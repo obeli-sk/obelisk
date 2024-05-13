@@ -572,7 +572,7 @@ impl EventCall {
                     ffqn,
                     params,
                     parent: Some((execution_id, join_set_id)),
-                    scheduled_at: None,
+                    scheduled_at: created_at,
                     retry_exp_backoff: child_retry_exp_backoff,
                     max_retries: child_max_retries,
                 };
@@ -634,7 +634,7 @@ impl EventCall {
                     ffqn: ffqn.clone(),
                     params: params.clone(),
                     parent: Some((execution_id, join_set_id)),
-                    scheduled_at: None,
+                    scheduled_at: created_at,
                     retry_exp_backoff: child_retry_exp_backoff,
                     max_retries: child_max_retries,
                 };
@@ -748,7 +748,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
             })
@@ -893,7 +893,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
             })
@@ -1051,7 +1051,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
             })

@@ -16,7 +16,7 @@ use concepts::storage::{
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use hashbrown::{HashMap, HashSet};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::error;
 use tracing::instrument;
@@ -173,9 +173,7 @@ impl DbConnection for InMemoryDbConnection {
 }
 
 mod index {
-    use super::{
-        BTreeMap, BTreeSet, DateTime, ExecutionId, HashMap, HashSet, JoinSetId, PendingState, Utc,
-    };
+    use super::{BTreeMap, DateTime, ExecutionId, HashMap, HashSet, JoinSetId, PendingState, Utc};
     use crate::journal::ExecutionJournal;
     use concepts::prefixed_ulid::DelayId;
     use concepts::storage::{HistoryEvent, JoinSetRequest, JoinSetResponse};
@@ -183,7 +181,6 @@ mod index {
 
     #[derive(Debug, Default)]
     pub(super) struct JournalsIndex {
-        pending: BTreeSet<ExecutionId>,
         pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ExecutionId>>,
         pending_scheduled_rev: HashMap<ExecutionId, DateTime<Utc>>,
         #[allow(clippy::type_complexity)]
@@ -199,20 +196,15 @@ mod index {
             batch_size: usize,
             expiring_at_or_before: DateTime<Utc>,
             ffqns: &[concepts::FunctionFqn],
-        ) -> Vec<(&'a ExecutionJournal, Option<DateTime<Utc>>)> {
+        ) -> Vec<(&'a ExecutionJournal, DateTime<Utc>)> {
             let mut pending = self
-                .pending
-                .iter()
-                .map(|id| (journals.get(id).unwrap(), None))
+                .pending_scheduled
+                .range(..=expiring_at_or_before)
+                .flat_map(|(scheduled_at, ids)| {
+                    ids.iter()
+                        .map(|id| (journals.get(id).unwrap(), *scheduled_at))
+                })
                 .collect::<Vec<_>>();
-            pending.extend(
-                self.pending_scheduled
-                    .range(..=expiring_at_or_before)
-                    .flat_map(|(scheduled_at, ids)| {
-                        ids.iter()
-                            .map(|id| (journals.get(id).unwrap(), Some(*scheduled_at)))
-                    }),
-            );
             // filter by ffqn
             pending.retain(|(journal, _)| ffqns.contains(journal.ffqn()));
             pending.truncate(batch_size);
@@ -235,7 +227,6 @@ mod index {
             journals: &BTreeMap<ExecutionId, ExecutionJournal>,
         ) {
             // Remove the ID from the index (if exists)
-            self.pending.remove(&execution_id);
             if let Some(schedule) = self.pending_scheduled_rev.remove(&execution_id) {
                 let ids = self.pending_scheduled.get_mut(&schedule).unwrap();
                 ids.remove(&execution_id);
@@ -249,9 +240,6 @@ mod index {
             if let Some(journal) = journals.get(&execution_id) {
                 // Add it again if needed
                 match journal.pending_state {
-                    PendingState::PendingNow => {
-                        self.pending.insert(execution_id);
-                    }
                     PendingState::PendingAt { scheduled_at } => {
                         self.pending_scheduled
                             .entry(scheduled_at)

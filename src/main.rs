@@ -109,6 +109,7 @@ async fn main() {
 
     let db_connection = db_pool.connection();
     let execution_id = ExecutionId::generate();
+    let created_at = now();
     db_connection
         .create(CreateRequest {
             created_at: now(),
@@ -116,7 +117,7 @@ async fn main() {
             ffqn,
             params,
             parent: None,
-            scheduled_at: None,
+            scheduled_at: created_at,
             retry_exp_backoff: Duration::ZERO,
             max_retries: 5,
         })

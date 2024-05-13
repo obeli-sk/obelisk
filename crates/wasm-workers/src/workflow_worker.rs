@@ -451,7 +451,7 @@ mod tests {
                 ffqn: FIBO_WORKFLOW_FFQN,
                 params,
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
             })
@@ -555,7 +555,7 @@ mod tests {
                 ffqn: SLEEP_HOST_ACTIVITY_FFQN,
                 params,
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
             })
@@ -650,7 +650,7 @@ mod tests {
                 ffqn: HTTP_GET_WORKFLOW_FFQN,
                 params,
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
             })
@@ -739,7 +739,7 @@ mod tests {
                 ffqn: HTTP_GET_WORKFLOW_FFQN,
                 params,
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: created_at,
                 retry_exp_backoff: Duration::from_millis(0),
                 max_retries: concurrency - 1, // response can conflict with next ChildExecutionRequest
             })

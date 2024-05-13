@@ -164,7 +164,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     ffqn: FunctionFqn::new_static("", ""),
     params: Params::default(),
     parent: None,
-    scheduled_at: None,
+    scheduled_at: DateTime::from_timestamp_nanos(0),
     retry_exp_backoff: Duration::ZERO,
     max_retries: 0,
 };
@@ -199,13 +199,13 @@ pub enum ExecutionEventInner {
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
     // After optional expiry(`scheduled_at`) interpreted as pending.
-    #[display(fmt = "Created({ffqn}, `{scheduled_at:?}`)")]
+    #[display(fmt = "Created({ffqn}, `{scheduled_at}`)")]
     Created {
         ffqn: FunctionFqn,
         #[arbitrary(default)]
         params: Params,
         parent: Option<(ExecutionId, JoinSetId)>,
-        scheduled_at: Option<DateTime<Utc>>,
+        scheduled_at: DateTime<Utc>,
         retry_exp_backoff: Duration,
         max_retries: u32,
     },
@@ -399,7 +399,7 @@ pub struct LockedExecution {
     pub params: Params,
     pub event_history: Vec<HistoryEvent>,
     pub responses: Vec<JoinSetResponseEventOuter>,
-    pub scheduled_at: Option<DateTime<Utc>>,
+    pub scheduled_at: DateTime<Utc>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
     pub parent: Option<(ExecutionId, JoinSetId)>,
@@ -423,7 +423,7 @@ pub struct CreateRequest {
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub parent: Option<(ExecutionId, JoinSetId)>,
-    pub scheduled_at: Option<DateTime<Utc>>,
+    pub scheduled_at: DateTime<Utc>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
 }
@@ -622,7 +622,6 @@ pub enum ExpiredTimer {
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum PendingState {
-    PendingNow, // TODO: Merge into PendingAt, so that those executions do not outcompete others as their `scheduled_at` date will be set to unix epoch start.
     #[display(fmt = "Locked(`{lock_expires_at}`, {executor_id}, {run_id})")]
     Locked {
         executor_id: ExecutorId,
@@ -657,7 +656,6 @@ impl PendingState {
             )));
         }
         match self {
-            PendingState::PendingNow => Ok(LockKind::CreatingNewLock), // ok to lock
             PendingState::PendingAt { scheduled_at } => {
                 if *scheduled_at <= created_at {
                     // pending now, ok to lock

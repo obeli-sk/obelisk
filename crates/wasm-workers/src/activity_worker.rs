@@ -357,7 +357,7 @@ pub(crate) mod tests {
                 ffqn: FIBO_ACTIVITY_FFQN,
                 params,
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
             })
@@ -536,7 +536,7 @@ pub(crate) mod tests {
                     params: Params::from_json_array(json!([sleep_millis, sleep_iterations]))
                         .unwrap(),
                     parent: None,
-                    scheduled_at: None,
+                    scheduled_at: created_at,
                     retry_exp_backoff: Duration::ZERO,
                     max_retries: 0,
                 })
@@ -675,7 +675,7 @@ pub(crate) mod tests {
                     ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
                     params,
                     parent: None,
-                    scheduled_at: None,
+                    scheduled_at: created_at,
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
                 })

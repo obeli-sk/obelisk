@@ -196,7 +196,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
-            scheduled_at: None,
+            scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
         })
@@ -211,7 +211,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
-            scheduled_at: None,
+            scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
         })
@@ -480,7 +480,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection) {
                 ffqn: SOME_FFQN,
                 params: Params::default(),
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: sim_clock.now(),
                 retry_exp_backoff: RETRY_EXP_BACKOFF,
                 max_retries: MAX_RETRIES,
             })
@@ -545,7 +545,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
-            scheduled_at: None,
+            scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
         })
@@ -559,7 +559,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
-            scheduled_at: None,
+            scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
         })
@@ -609,7 +609,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(db_connection: &impl DbCon
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
-            scheduled_at: Some(sim_clock.now()),
+            scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
         })
@@ -625,7 +625,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(db_connection: &impl DbCon
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
-            scheduled_at: Some(sim_clock.now()),
+            scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
         })
@@ -641,7 +641,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(db_connection: &impl DbCon
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
-            scheduled_at: Some(sim_clock.now()),
+            scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
         })
@@ -677,7 +677,7 @@ pub async fn lock(db_connection: &impl DbConnection) {
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
-            scheduled_at: None,
+            scheduled_at: now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
         })
@@ -729,7 +729,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection) {
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
-            scheduled_at: None,
+            scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
         })
@@ -785,7 +785,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection) {
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
-            scheduled_at: None,
+            scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
         })

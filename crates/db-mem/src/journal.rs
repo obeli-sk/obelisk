@@ -22,9 +22,8 @@ pub struct ExecutionJournal {
 impl ExecutionJournal {
     #[must_use]
     pub fn new(req: CreateRequest) -> Self {
-        let pending_state = match req.scheduled_at {
-            Some(scheduled_at) => PendingState::PendingAt { scheduled_at },
-            None => PendingState::PendingNow,
+        let pending_state = PendingState::PendingAt {
+            scheduled_at: req.scheduled_at,
         };
         let event = ExecutionEvent {
             event: ExecutionEventInner::Created {
@@ -121,16 +120,14 @@ impl ExecutionJournal {
             .iter()
             .rev()
             .find_map(|event| match &event.event {
-                ExecutionEventInner::Created {
-                    scheduled_at: None, ..
+                ExecutionEventInner::Created { scheduled_at, .. } => {
+                    Some(PendingState::PendingAt {
+                        scheduled_at: *scheduled_at,
+                    })
                 }
-                | ExecutionEventInner::Unlocked => Some(PendingState::PendingNow),
 
-                ExecutionEventInner::Created {
-                    scheduled_at: Some(scheduled_at),
-                    ..
-                } => Some(PendingState::PendingAt {
-                    scheduled_at: *scheduled_at,
+                ExecutionEventInner::Unlocked => Some(PendingState::PendingAt {
+                    scheduled_at: event.created_at,
                 }),
 
                 ExecutionEventInner::Finished { .. } => Some(PendingState::Finished),

@@ -432,7 +432,7 @@ pub(crate) mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
             })

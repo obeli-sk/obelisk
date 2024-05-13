@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS t_join_set_response (
 
 /// Stores executions in state: `Pending`, `PendingAt`, `Locked`, and delay requests.
 /// State to column mapping:
-/// `Pending`, `PendingAt`:  `ffqn`
+/// `PendingAt`:  `ffqn`
 /// `Locked`:                `executor_id`, `run_id`, `intermittent_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>
 /// `BlockedByJoinSet`:      `join_set_id`
 const CREATE_TABLE_T_STATE: &str = r"
@@ -370,9 +370,7 @@ impl SqlitePool {
             ":join_set_id": event.join_set_id().map(|join_set_id| join_set_id.to_string()),
         })?;
         let next_version = Version::new(version.0 + 1);
-        let pending_state = scheduled_at.map_or(PendingState::PendingNow, |scheduled_at| {
-            PendingState::PendingAt { scheduled_at }
-        });
+        let pending_state = PendingState::PendingAt { scheduled_at };
         Self::update_index(
             tx,
             execution_id,
@@ -403,7 +401,7 @@ impl SqlitePool {
             })?;
         }
         match pending_state {
-            PendingState::PendingNow | PendingState::PendingAt { .. } => {
+            PendingState::PendingAt { .. } => {
                 let scheduled_at = if let PendingState::PendingAt { scheduled_at } = pending_state {
                     Some(*scheduled_at)
                 } else {
@@ -813,9 +811,12 @@ impl SqlitePool {
             ExecutionEventInner::Finished { .. } => {
                 IndexAction::PendingStateChanged(PendingState::Finished, appending_version)
             }
-            ExecutionEventInner::Unlocked => {
-                IndexAction::PendingStateChanged(PendingState::PendingNow, appending_version)
-            }
+            ExecutionEventInner::Unlocked => IndexAction::PendingStateChanged(
+                PendingState::PendingAt {
+                    scheduled_at: req.created_at,
+                },
+                appending_version,
+            ),
             ExecutionEventInner::HistoryEvent {
                 event:
                     HistoryEvent::JoinSet { .. }

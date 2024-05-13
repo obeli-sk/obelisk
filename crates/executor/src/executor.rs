@@ -720,7 +720,7 @@ mod tests {
                 ffqn: FFQN_SOME,
                 params: Params::default(),
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: config.created_at,
                 retry_exp_backoff: config.retry_exp_backoff,
                 max_retries: config.max_retries,
             })
@@ -933,7 +933,7 @@ mod tests {
                 ffqn: FFQN_SOME,
                 params: Params::default(),
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
             })
@@ -963,7 +963,7 @@ mod tests {
                 ffqn: FFQN_CHILD,
                 params: Params::default(),
                 parent: Some((parent_execution_id, join_set_id)),
-                scheduled_at: None,
+                scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
             };
@@ -1128,7 +1128,7 @@ mod tests {
                 ffqn: FFQN_SOME,
                 params: Params::default(),
                 parent: None,
-                scheduled_at: None,
+                scheduled_at: sim_clock.now(),
                 retry_exp_backoff: timeout_duration,
                 max_retries: 1,
             })
