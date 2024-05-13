@@ -2,8 +2,8 @@ use crate::event_history::{EventCall, EventHistory};
 use crate::workflow_worker::JoinNextBlockingStrategy;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
-use concepts::storage::HistoryEvent;
 use concepts::storage::{DbConnection, DbError, DbPool, Version};
+use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::{ExecutionId, FinishedExecutionError, IfcFqnName, StrVariant};
 use concepts::{FunctionFqn, Params};
 use executor::worker::{FatalError, WorkerError, WorkerResult};
@@ -70,7 +70,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
-        events: Vec<HistoryEvent>,
+        event_history: Vec<HistoryEvent>,
+        responses: Vec<JoinSetResponseEvent>,
         seed: u64,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -84,7 +85,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             execution_id,
             event_history: EventHistory::new(
                 execution_id,
-                events,
+                event_history,
+                responses,
                 join_next_blocking_strategy,
                 execution_deadline,
                 retry_exp_backoff,
@@ -316,6 +318,7 @@ pub(crate) mod tests {
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id,
                 ctx.event_history,
+                ctx.responses,
                 seed,
                 self.clock_fn.clone(),
                 JoinNextBlockingStrategy::default(),

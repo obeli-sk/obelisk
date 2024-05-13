@@ -158,7 +158,7 @@ fn exec<DB: DbConnection + 'static>(
     let ffqns = worker.exported_functions().cloned().collect::<Vec<_>>();
     let exec_config = ExecConfig {
         ffqns: ffqns.clone(),
-        batch_size: 1,
+        batch_size: 10,
         lock_expiry: Duration::from_secs(1),
         tick_sleep: Duration::from_millis(1),
         clock_fn: now,

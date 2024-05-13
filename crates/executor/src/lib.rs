@@ -15,7 +15,10 @@ pub mod worker {
         async_trait, DateTime, Error, ExecutionId, FunctionFqn, HistoryEvent, Params,
         ParamsParsingError, ResultParsingError, SupportedFunctionResult, Utc, Version,
     };
-    use concepts::{storage::DbError, FinishedExecutionError, StrVariant};
+    use concepts::{
+        storage::{DbError, JoinSetResponseEvent},
+        FinishedExecutionError, StrVariant,
+    };
 
     #[derive(Debug, thiserror::Error)]
     pub enum WorkerError {
@@ -62,6 +65,7 @@ pub mod worker {
         pub ffqn: FunctionFqn,
         pub params: Params,
         pub event_history: Vec<HistoryEvent>,
+        pub responses: Vec<JoinSetResponseEvent>,
         pub version: Version,
         pub execution_deadline: DateTime<Utc>,
         pub can_be_retried: bool,

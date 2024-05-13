@@ -729,6 +729,7 @@ dependencies = [
  "derive_more",
  "madsim-tokio",
  "rusqlite",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",

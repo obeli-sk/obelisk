@@ -24,6 +24,7 @@ use tracing::trace;
 pub struct ExecutionLog {
     pub execution_id: ExecutionId,
     pub events: Vec<ExecutionEvent>,
+    pub responses: Vec<JoinSetResponseEventOuter>,
     pub version: Version,
     pub pending_state: PendingState,
 }
@@ -141,9 +142,22 @@ impl Version {
 )]
 #[display(fmt = "{event}")]
 pub struct ExecutionEvent {
-    // TODO: Rename to ExecutionEventRow
     pub created_at: DateTime<Utc>,
     pub event: ExecutionEventInner,
+}
+
+/// Moves the execution to [`PendingState::PendingNow`] if it is currently blocked on `JoinNextBlocking`.
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct JoinSetResponseEventOuter {
+    pub created_at: DateTime<Utc>,
+    pub event: JoinSetResponseEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct JoinSetResponseEvent {
+    pub join_set_id: JoinSetId,
+    pub event: JoinSetResponse,
 }
 
 pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
@@ -180,8 +194,8 @@ pub const DUMMY_INTERMITTENT_FAILURE: ExecutionEventInner =
     Deserialize,
     IntoStaticStr,
 )]
+// TODO: Rename to ExecutionEvent
 pub enum ExecutionEventInner {
-    // TODO: Rename to ExecutionEvent
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
     // After optional expiry(`scheduled_at`) interpreted as pending.
@@ -252,19 +266,6 @@ impl ExecutionEventInner {
     }
 
     #[must_use]
-    pub fn appendable_without_version(&self) -> bool {
-        matches!(
-            self,
-            Self::HistoryEvent {
-                event: HistoryEvent::JoinSetResponse {
-                    response: JoinSetResponse::ChildExecutionFinished { .. },
-                    ..
-                }
-            }
-        )
-    }
-
-    #[must_use]
     pub fn variant(&self) -> &'static str {
         Into::<&'static str>::into(self)
     }
@@ -280,8 +281,7 @@ impl ExecutionEventInner {
                 event:
                     HistoryEvent::JoinSet { join_set_id }
                     | HistoryEvent::JoinSetRequest { join_set_id, .. }
-                    | HistoryEvent::JoinNext { join_set_id, .. }
-                    | HistoryEvent::JoinSetResponse { join_set_id, .. },
+                    | HistoryEvent::JoinNext { join_set_id, .. },
             } => Some(*join_set_id),
             _ => None,
         }
@@ -307,12 +307,6 @@ pub enum HistoryEvent {
         join_set_id: JoinSetId,
         request: JoinSetRequest,
     },
-    /// Moves the execution to [`PendingState::PendingNow`] if it is currently blocked on `JoinNextBlocking`.
-    #[display(fmt = "AsyncResponse({join_set_id}, {response})")]
-    JoinSetResponse {
-        join_set_id: JoinSetId,
-        response: JoinSetResponse,
-    },
     /// Must be created by the executor in [`PendingState::Locked`].
     /// Pending state is set to [`PendingState::BlockedByJoinSet`].
     /// When the response arrives at `resp_time`:
@@ -325,13 +319,6 @@ pub enum HistoryEvent {
         /// Set to a future time if the executor is keeping the execution warm waiting for the result.
         lock_expires_at: DateTime<Utc>,
     },
-}
-
-impl HistoryEvent {
-    #[must_use]
-    pub fn is_response(&self) -> bool {
-        matches!(self, HistoryEvent::JoinSetResponse { .. })
-    }
 }
 
 #[derive(
@@ -411,6 +398,7 @@ pub struct LockedExecution {
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub event_history: Vec<HistoryEvent>,
+    pub responses: Vec<JoinSetResponseEventOuter>,
     pub scheduled_at: Option<DateTime<Utc>>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
@@ -427,8 +415,6 @@ pub struct AppendRequest {
     pub created_at: DateTime<Utc>,
     pub event: ExecutionEventInner,
 }
-
-pub type AppendBatch = Vec<AppendRequest>;
 
 #[derive(Debug, Clone)]
 pub struct CreateRequest {
@@ -496,14 +482,22 @@ pub trait DbConnection: Send + Sync {
     async fn append(
         &self,
         execution_id: ExecutionId,
-        version: Option<Version>,
+        version: Version,
         req: AppendRequest,
     ) -> Result<AppendResponse, DbError>;
+
+    async fn append_response(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+        response_event: JoinSetResponseEvent,
+    ) -> Result<(), DbError>;
 
     /// Append one or more events to an existing execution log
     async fn append_batch(
         &self,
-        batch: AppendBatch,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbError>;
@@ -511,7 +505,8 @@ pub trait DbConnection: Send + Sync {
     /// Append one or more events to the parent execution log, and create new child execution log.
     async fn append_batch_create_child(
         &self,
-        batch: AppendBatch,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         version: Version,
         child_req: CreateRequest,
@@ -519,10 +514,12 @@ pub trait DbConnection: Send + Sync {
 
     async fn append_batch_respond_to_parent(
         &self,
-        batch: AppendBatch,
         execution_id: ExecutionId,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         version: Version,
-        parent: (ExecutionId, AppendRequest),
+        parent_execution_id: ExecutionId,
+        parent_response_event: JoinSetResponseEvent,
     ) -> Result<AppendBatchResponse, DbError>;
 
     /// Get execution log.
@@ -617,7 +614,6 @@ pub enum ExpiredTimer {
     },
     AsyncDelay {
         execution_id: ExecutionId,
-        version: Version,
         join_set_id: JoinSetId,
         delay_id: DelayId,
     },
@@ -626,7 +622,7 @@ pub enum ExpiredTimer {
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum PendingState {
-    PendingNow,
+    PendingNow, // TODO: Merge into PendingAt, so that those executions do not outcompete others as their `scheduled_at` date will be set to unix epoch start.
     #[display(fmt = "Locked(`{lock_expires_at}`, {executor_id}, {run_id})")]
     Locked {
         executor_id: ExecutorId,

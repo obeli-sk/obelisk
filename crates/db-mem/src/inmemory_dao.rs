@@ -8,12 +8,12 @@ use crate::journal::ExecutionJournal;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
-use concepts::storage::PendingState;
 use concepts::storage::{
-    AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
-    DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, LockPendingResponse,
-    LockResponse, LockedExecution, SpecificError, Version,
+    AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection, DbError,
+    DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, LockPendingResponse, LockResponse,
+    LockedExecution, SpecificError, Version,
 };
+use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use hashbrown::{HashMap, HashSet};
 use std::collections::{BTreeMap, BTreeSet};
@@ -83,7 +83,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn append(
         &self,
         execution_id: ExecutionId,
-        appending_version: Option<Version>,
+        appending_version: Version,
         req: AppendRequest,
     ) -> Result<AppendResponse, DbError> {
         self.0
@@ -96,21 +96,23 @@ impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all, %execution_id)]
     async fn append_batch(
         &self,
-        batch: Vec<AppendRequest>,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         appending_version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
             .lock()
             .await
-            .append_batch(batch, execution_id, appending_version)
+            .append_batch(created_at, batch, execution_id, appending_version)
             .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all, %execution_id)]
     async fn append_batch_create_child(
         &self,
-        batch: AppendBatch,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         version: Version,
         child_req: CreateRequest,
@@ -118,22 +120,31 @@ impl DbConnection for InMemoryDbConnection {
         self.0
             .lock()
             .await
-            .append_batch_create_child(batch, execution_id, version, child_req)
+            .append_batch_create_child(created_at, batch, execution_id, version, child_req)
             .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all, %execution_id)]
     async fn append_batch_respond_to_parent(
         &self,
-        batch: AppendBatch,
         execution_id: ExecutionId,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         version: Version,
-        parent: (ExecutionId, AppendRequest),
+        parent_execution_id: ExecutionId,
+        parent_response_event: JoinSetResponseEvent,
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
             .lock()
             .await
-            .append_batch_respond_to_parent(batch, execution_id, version, parent)
+            .append_batch_respond_to_parent(
+                execution_id,
+                created_at,
+                batch,
+                version,
+                parent_execution_id,
+                parent_response_event,
+            )
             .map_err(DbError::Specific)
     }
 
@@ -143,6 +154,20 @@ impl DbConnection for InMemoryDbConnection {
             .lock()
             .await
             .get(execution_id)
+            .map_err(DbError::Specific)
+    }
+
+    #[instrument(skip_all, %execution_id)]
+    async fn append_response(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+        response_event: JoinSetResponseEvent,
+    ) -> Result<(), DbError> {
+        self.0
+            .lock()
+            .await
+            .append_response(created_at, execution_id, response_event)
             .map_err(DbError::Specific)
     }
 }
@@ -162,8 +187,9 @@ mod index {
         pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ExecutionId>>,
         pending_scheduled_rev: HashMap<ExecutionId, DateTime<Utc>>,
         #[allow(clippy::type_complexity)]
-        locked: BTreeMap<DateTime<Utc>, HashMap<ExecutionId, Option<(JoinSetId, DelayId)>>>,
-        locked_rev: HashMap<ExecutionId, Vec<DateTime<Utc>>>,
+        // All open JoinSet Delays and Locks
+        timers: BTreeMap<DateTime<Utc>, HashMap<ExecutionId, Option<(JoinSetId, DelayId)>>>,
+        timers_rev: HashMap<ExecutionId, Vec<DateTime<Utc>>>,
     }
 
     impl JournalsIndex {
@@ -197,7 +223,7 @@ mod index {
             &self,
             at: DateTime<Utc>,
         ) -> impl Iterator<Item = (ExecutionId, Option<(JoinSetId, DelayId)>)> + '_ {
-            self.locked
+            self.timers
                 .range(..=at)
                 .flat_map(|(_scheduled_at, id_map)| id_map.iter())
                 .map(|(id, is_async_delay)| (*id, *is_async_delay))
@@ -214,9 +240,9 @@ mod index {
                 let ids = self.pending_scheduled.get_mut(&schedule).unwrap();
                 ids.remove(&execution_id);
             }
-            if let Some(schedules) = self.locked_rev.remove(&execution_id) {
+            if let Some(schedules) = self.timers_rev.remove(&execution_id) {
                 for schedule in schedules {
-                    let ids = self.locked.get_mut(&schedule).unwrap();
+                    let ids = self.timers.get_mut(&schedule).unwrap();
                     ids.remove(&execution_id);
                 }
             }
@@ -237,11 +263,11 @@ mod index {
                     PendingState::Locked {
                         lock_expires_at, ..
                     } => {
-                        self.locked
+                        self.timers
                             .entry(lock_expires_at)
                             .or_default()
                             .insert(execution_id, None);
-                        self.locked_rev
+                        self.timers_rev
                             .entry(execution_id)
                             .or_default()
                             .push(lock_expires_at);
@@ -249,7 +275,7 @@ mod index {
                     PendingState::BlockedByJoinSet { .. } | PendingState::Finished => {}
                 }
                 // Add all open async timers
-                let delay_req_resp = journal
+                let mut delay_req_resp = journal
                     .event_history()
                     .filter_map(|e| match e {
                         HistoryEvent::JoinSetRequest {
@@ -259,25 +285,27 @@ mod index {
                                     delay_id,
                                     expires_at,
                                 },
-                        } => Some(((join_set_id, delay_id), Some(expires_at))),
-                        HistoryEvent::JoinSetResponse {
-                            join_set_id,
-                            response: JoinSetResponse::DelayFinished { delay_id },
-                        } => Some(((join_set_id, delay_id), None)),
+                        } => Some(((join_set_id, delay_id), expires_at)),
                         _ => None,
                     })
-                    .collect::<HashMap<_, _>>()
-                    .into_iter()
-                    // Request must predate the response, so value with Some(expires_at) is an open timer
-                    .filter_map(|((join_set_id, delay_id), expires_at)| {
-                        expires_at.map(|expires_at| (join_set_id, delay_id, expires_at))
-                    });
-                for (join_set_id, delay_id, expires_at) in delay_req_resp {
-                    self.locked
+                    .collect::<HashMap<_, _>>();
+                // Keep only open
+                for responded in journal.responses.iter().filter_map(|e| {
+                    if let JoinSetResponse::DelayFinished { delay_id } = e.event.event {
+                        Some((e.event.join_set_id, delay_id))
+                    } else {
+                        None
+                    }
+                }) {
+                    delay_req_resp.remove(&responded);
+                }
+
+                for ((join_set_id, delay_id), expires_at) in delay_req_resp {
+                    self.timers
                         .entry(expires_at)
                         .or_default()
                         .insert(execution_id, Some((join_set_id, delay_id)));
-                    self.locked_rev
+                    self.timers_rev
                         .entry(execution_id)
                         .or_default()
                         .push(expires_at);
@@ -346,6 +374,7 @@ impl DbTask {
                 ffqn: journal.ffqn().clone(),
                 params: journal.params(),
                 event_history: Vec::default(), // updated later
+                responses: journal.responses.clone(),
                 scheduled_at,
                 retry_exp_backoff: journal.retry_exp_backoff(),
                 max_retries: journal.max_retries(),
@@ -413,7 +442,7 @@ impl DbTask {
             lock_expires_at,
             run_id,
         };
-        self.append(created_at, execution_id, Some(version), event)
+        self.append(created_at, execution_id, version, event)
             .map(|_| {
                 let journal = self.journals.get(&execution_id).unwrap();
                 (journal.event_history().collect(), journal.version())
@@ -424,7 +453,7 @@ impl DbTask {
         &mut self,
         created_at: DateTime<Utc>,
         execution_id: ExecutionId,
-        appending_version: Option<Version>,
+        appending_version: Version,
         event: ExecutionEventInner,
     ) -> Result<AppendResponse, SpecificError> {
         // Disallow `Created` event
@@ -438,16 +467,12 @@ impl DbTask {
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             return Err(SpecificError::NotFound);
         };
-        if let Some(appending_version) = appending_version {
-            let expected_version = journal.version();
-            if appending_version != expected_version {
-                return Err(SpecificError::VersionMismatch {
-                    appending_version,
-                    expected_version,
-                });
-            }
-        } else if !event.appendable_without_version() {
-            return Err(SpecificError::VersionMissing);
+        let expected_version = journal.version();
+        if appending_version != expected_version {
+            return Err(SpecificError::VersionMismatch {
+                appending_version,
+                expected_version,
+            });
         }
         let new_version = journal.append(created_at, event)?;
         self.index.update(execution_id, &self.journals);
@@ -469,7 +494,6 @@ impl DbTask {
             vec.push(match is_async_timer {
                 Some((join_set_id, delay_id)) => ExpiredTimer::AsyncDelay {
                     execution_id,
-                    version: journal.version(),
                     join_set_id,
                     delay_id,
                 },
@@ -488,7 +512,8 @@ impl DbTask {
 
     fn append_batch(
         &mut self,
-        batch: AppendBatch,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         mut appending_version: Version,
     ) -> Result<AppendBatchResponse, SpecificError> {
@@ -500,7 +525,7 @@ impl DbTask {
         }
         if batch
             .iter()
-            .any(|event| matches!(event.event, ExecutionEventInner::Created { .. }))
+            .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
         {
             error!("Cannot append `Created` event - use `create` instead");
             return Err(SpecificError::ValidationFailed(StrVariant::Static(
@@ -512,7 +537,7 @@ impl DbTask {
             return Err(SpecificError::NotFound);
         };
         let truncate_len_or_delete = journal.len();
-        for req in batch {
+        for event in batch {
             let expected_version = journal.version();
             if appending_version != expected_version {
                 self.rollback(truncate_len_or_delete, execution_id);
@@ -521,7 +546,7 @@ impl DbTask {
                     expected_version,
                 });
             }
-            match journal.append(req.created_at, req.event) {
+            match journal.append(created_at, event) {
                 Ok(new_version) => {
                     appending_version = new_version;
                 }
@@ -546,25 +571,42 @@ impl DbTask {
 
     fn append_batch_create_child(
         &mut self,
-        batch: AppendBatch,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         version: Version,
         child_req: CreateRequest,
     ) -> Result<AppendBatchResponse, SpecificError> {
-        let parent_version = self.append_batch(batch, execution_id, version)?;
+        let parent_version = self.append_batch(created_at, batch, execution_id, version)?;
         self.create(child_req)?;
         Ok(parent_version)
     }
 
     fn append_batch_respond_to_parent(
         &mut self,
-        batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         version: Version,
-        (parent_exe, parent_req): (ExecutionId, AppendRequest),
+        parent_execution_id: ExecutionId,
+        parent_response_event: JoinSetResponseEvent,
     ) -> Result<Version, SpecificError> {
-        let child_version = self.append_batch(batch, execution_id, version)?;
-        self.append(parent_req.created_at, parent_exe, None, parent_req.event)?;
+        let child_version = self.append_batch(created_at, batch, execution_id, version)?;
+        self.append_response(created_at, parent_execution_id, parent_response_event)?;
         Ok(child_version)
+    }
+
+    fn append_response(
+        &mut self,
+        created_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+        response_event: JoinSetResponseEvent,
+    ) -> Result<(), SpecificError> {
+        let Some(journal) = self.journals.get_mut(&execution_id) else {
+            return Err(SpecificError::NotFound);
+        };
+        journal.append_response(created_at, response_event);
+        self.index.update(execution_id, &self.journals);
+        Ok(())
     }
 }

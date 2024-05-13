@@ -3,11 +3,9 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::DbConnection;
 use concepts::storage::DbError;
+use concepts::storage::JoinSetResponseEvent;
 use concepts::{
-    storage::{
-        AppendRequest, DbConnectionError, ExecutionEventInner, ExpiredTimer, HistoryEvent,
-        JoinSetResponse,
-    },
+    storage::{DbConnectionError, ExecutionEventInner, ExpiredTimer, JoinSetResponse},
     FinishedExecutionError,
 };
 use std::{
@@ -164,26 +162,17 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
                 }
                 ExpiredTimer::AsyncDelay {
                     execution_id,
-                    version,
                     join_set_id,
                     delay_id,
                 } => {
-                    let event = ExecutionEventInner::HistoryEvent {
-                        event: HistoryEvent::JoinSetResponse {
-                            join_set_id,
-                            response: JoinSetResponse::DelayFinished { delay_id },
-                        },
-                    };
+                    let event = JoinSetResponse::DelayFinished { delay_id };
                     debug!(%execution_id, %join_set_id, %delay_id, "Appending DelayFinishedAsyncResponse");
                     let res = self
                         .db_connection
-                        .append(
+                        .append_response(
+                            executed_at,
                             execution_id,
-                            Some(version),
-                            AppendRequest {
-                                created_at: executed_at,
-                                event,
-                            },
+                            JoinSetResponseEvent { join_set_id, event },
                         )
                         .await;
                     if let Err(err) = res {

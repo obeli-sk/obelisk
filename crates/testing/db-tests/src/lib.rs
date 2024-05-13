@@ -3,9 +3,9 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
-        AppendBatch, AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest,
-        DbConnection, DbError, DbPool, ExecutionLog, ExpiredTimer, LockPendingResponse,
-        LockResponse, Version,
+        AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection, DbError,
+        DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent,
+        LockPendingResponse, LockResponse, Version,
     },
     ExecutionId, FunctionFqn, StrVariant,
 };
@@ -117,7 +117,7 @@ impl DbConnection for DbConnectionProxy {
     async fn append(
         &self,
         execution_id: ExecutionId,
-        version: Option<Version>,
+        version: Version,
         req: AppendRequest,
     ) -> Result<AppendResponse, DbError> {
         self.0.append(execution_id, version, req).await
@@ -125,34 +125,58 @@ impl DbConnection for DbConnectionProxy {
 
     async fn append_batch(
         &self,
-        batch: Vec<AppendRequest>,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
-        self.0.append_batch(batch, execution_id, version).await
+        self.0
+            .append_batch(created_at, batch, execution_id, version)
+            .await
     }
 
     async fn append_batch_create_child(
         &self,
-        batch: AppendBatch,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         version: Version,
         child_req: CreateRequest,
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
-            .append_batch_create_child(batch, execution_id, version, child_req)
+            .append_batch_create_child(created_at, batch, execution_id, version, child_req)
             .await
     }
 
     async fn append_batch_respond_to_parent(
         &self,
-        batch: AppendBatch,
         execution_id: ExecutionId,
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
         version: Version,
-        parent: (ExecutionId, AppendRequest),
+        parent_execution_id: ExecutionId,
+        parent_response_event: JoinSetResponseEvent,
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
-            .append_batch_respond_to_parent(batch, execution_id, version, parent)
+            .append_batch_respond_to_parent(
+                execution_id,
+                created_at,
+                batch,
+                version,
+                parent_execution_id,
+                parent_response_event,
+            )
+            .await
+    }
+
+    async fn append_response(
+        &self,
+        created_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+        response_event: JoinSetResponseEvent,
+    ) -> Result<(), DbError> {
+        self.0
+            .append_response(created_at, execution_id, response_event)
             .await
     }
 

@@ -1,14 +1,11 @@
 use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::JoinSetId;
-use concepts::storage::{DbPool, ExecutionLog, LockedExecution, SpecificError};
+use concepts::storage::{DbPool, ExecutionLog, JoinSetResponseEvent, LockedExecution};
 use concepts::FinishedExecutionResult;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, StrVariant};
 use concepts::{
-    storage::{
-        AppendRequest, DbConnection, DbError, ExecutionEventInner, HistoryEvent, JoinSetResponse,
-        Version,
-    },
+    storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
     FinishedExecutionError,
 };
 use derivative::Derivative;
@@ -23,8 +20,6 @@ use std::{
 use tokio::task::{AbortHandle, JoinHandle};
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::ClockFn;
-
-const MAX_VERSION_BUMP_RETRIES: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct ExecConfig<C: ClockFn> {
@@ -287,6 +282,11 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             ffqn: locked_execution.ffqn,
             params: locked_execution.params,
             event_history: locked_execution.event_history,
+            responses: locked_execution
+                .responses
+                .into_iter()
+                .map(|outer| outer.event)
+                .collect(),
             version: locked_execution.version,
             execution_deadline,
             can_be_retried: can_be_retried.is_some(),
@@ -300,114 +300,13 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             result_obtained_at,
             locked_execution.parent,
             can_be_retried,
-        ) {
-            Ok(Some(mut append)) => {
+        )? {
+            Some(append) => {
                 let db_connection = db_pool.connection();
                 trace!("Appending {append:?}");
-                let res = append.clone().append(&db_connection).await;
-                if let Err(DbError::Specific(SpecificError::VersionMismatch {
-                    mut appending_version,
-                    mut expected_version,
-                })) = res
-                {
-                    // If the execution log contains just new async responses, it
-                    // is safe to to re-apply the append with the version updated.
-                    for _ in 0..MAX_VERSION_BUMP_RETRIES {
-                        let exec_log = db_connection.get(execution_id).await?;
-                        trace!("Checking if only responses arrived since {appending_version} in {exec_log:?}");
-                        if exec_log
-                            .event_history()
-                            .skip(appending_version.0)
-                            .all(|event| event.is_response())
-                        {
-                            append.version = exec_log.version;
-                            trace!("Appending {append:?}");
-                            let res = append.clone().append(&db_connection).await;
-                            if let Err(DbError::Specific(SpecificError::VersionMismatch {
-                                appending_version: a,
-                                expected_version: e,
-                            })) = res
-                            {
-                                appending_version = a;
-                                expected_version = e;
-                            } else {
-                                return res;
-                            }
-                        } else {
-                            return Err(DbError::Specific(SpecificError::VersionMismatch {
-                                appending_version,
-                                expected_version,
-                            }));
-                        }
-                    }
-                    Err(DbError::Specific(SpecificError::VersionMismatch {
-                        appending_version,
-                        expected_version,
-                    }))
-                } else {
-                    res
-                }
+                append.clone().append(&db_connection).await
             }
-            Ok(None) => Ok(()),
-            Err(DbError::Specific(SpecificError::VersionMismatch {
-                mut appending_version,
-                mut expected_version,
-            })) => {
-                // If the execution log contains just new async responses, it
-                // is safe to mark it as failed so that it does not have to wait for timeout.
-                // An future optimization might attempt to restart the execution.
-                let db_connection = db_pool.connection();
-                for _ in 0..MAX_VERSION_BUMP_RETRIES {
-                    let exec_log = db_connection.get(execution_id).await?;
-                    trace!(
-                    "Checking if only responses arrived since {appending_version} in {exec_log:?}"
-                );
-                    if exec_log
-                        .event_history()
-                        .skip(appending_version.0)
-                        .all(|event| event.is_response())
-                    {
-                        let append = Self::worker_result_to_execution_event(
-                        execution_id,
-                        WorkerResult::Err(WorkerError::IntermittentError {
-                            err: None,
-                            reason: StrVariant::Static(
-                                "intermittent optimistic lock failure caused by JoinSetResponse",
-                            ),
-                            version: exec_log.version,
-                        }),
-                        result_obtained_at,
-                        locked_execution.parent,
-                        can_be_retried,
-                    )
-                    .expect("would only fail if sending DbError")
-                    .expect("would be None only if sending IntermittentTimeout");
-                        trace!("Appending {append:?}");
-                        let res = append.append(&db_pool.connection()).await;
-                        if let Err(DbError::Specific(SpecificError::VersionMismatch {
-                            appending_version: a,
-                            expected_version: e,
-                        })) = res
-                        {
-                            // loop again
-                            appending_version = a;
-                            expected_version = e;
-                        } else {
-                            return res;
-                        }
-                    } else {
-                        return Err(DbError::Specific(SpecificError::VersionMismatch {
-                            appending_version,
-                            expected_version,
-                        }));
-                    }
-                }
-                Err(DbError::Specific(SpecificError::VersionMismatch {
-                    appending_version,
-                    expected_version,
-                }))
-            }
-            Err(db_error) => Err(db_error),
+            None => Ok(()),
         }
     }
 
@@ -533,36 +432,31 @@ pub(crate) struct Append {
 
 impl Append {
     pub(crate) async fn append(self, db_connection: &impl DbConnection) -> Result<(), DbError> {
-        let primary_append = vec![AppendRequest {
-            created_at: self.created_at,
-            event: self.primary_event,
-        }];
         if let Some((parent_id, join_set_id, result)) = self.parent {
             db_connection
                 .append_batch_respond_to_parent(
-                    primary_append,
                     self.execution_id,
+                    self.created_at,
+                    vec![self.primary_event],
                     self.version,
-                    (
-                        parent_id,
-                        AppendRequest {
-                            created_at: self.created_at,
-                            event: ExecutionEventInner::HistoryEvent {
-                                event: HistoryEvent::JoinSetResponse {
-                                    join_set_id,
-                                    response: JoinSetResponse::ChildExecutionFinished {
-                                        child_execution_id: self.execution_id,
-                                        result,
-                                    },
-                                },
-                            },
+                    parent_id,
+                    JoinSetResponseEvent {
+                        join_set_id,
+                        event: JoinSetResponse::ChildExecutionFinished {
+                            child_execution_id: self.execution_id,
+                            result,
                         },
-                    ),
+                    },
                 )
                 .await?;
         } else {
             db_connection
-                .append_batch(primary_append, self.execution_id, self.version)
+                .append_batch(
+                    self.created_at,
+                    vec![self.primary_event],
+                    self.execution_id,
+                    self.version,
+                )
                 .await?;
         }
         Ok(())
@@ -1020,6 +914,8 @@ mod tests {
     )]
     #[tokio::test]
     async fn child_execution_permanently_failed_should_notify_parent(worker_error: WorkerError) {
+        use concepts::storage::JoinSetResponseEventOuter;
+
         const LOCK_EXPIRY: Duration = Duration::from_secs(1);
         set_up();
         let (_guard, db_pool) = Database::Memory.set_up().await;
@@ -1071,33 +967,25 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
             };
-            let join_set = AppendRequest {
-                created_at: sim_clock.now(),
-                event: ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinSet { join_set_id },
+            let join_set = ExecutionEventInner::HistoryEvent {
+                event: HistoryEvent::JoinSet { join_set_id },
+            };
+            let child_exec_req = ExecutionEventInner::HistoryEvent {
+                event: HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
                 },
             };
-            let child_exec_req = AppendRequest {
-                created_at: sim_clock.now(),
-                event: ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinSetRequest {
-                        join_set_id,
-                        request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
-                    },
-                },
-            };
-            let join_next = AppendRequest {
-                created_at: sim_clock.now(),
-                event: ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinNext {
-                        join_set_id,
-                        lock_expires_at: sim_clock.now(),
-                    },
+            let join_next = ExecutionEventInner::HistoryEvent {
+                event: HistoryEvent::JoinNext {
+                    join_set_id,
+                    lock_expires_at: sim_clock.now(),
                 },
             };
             db_pool
                 .connection()
                 .append_batch_create_child(
+                    sim_clock.now(),
                     vec![join_set, child_exec_req, join_next],
                     parent_execution_id,
                     Version::new(2),
@@ -1159,19 +1047,18 @@ mod tests {
             "parent should be back to pending"
         );
         let (found_join_set_id, found_child_execution_id, found_result) = assert_matches!(
-            parent_log.last_event(),
-            ExecutionEvent {
-                event: ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinSetResponse {
-                        join_set_id: found_join_set_id,
-                        response: JoinSetResponse::ChildExecutionFinished {
-                            child_execution_id: found_child_execution_id,
-                            result: found_result,
-                        },
-                    },
-                },
+            parent_log.responses.last(),
+            Some(JoinSetResponseEventOuter{
                 created_at: at,
-            } if *at == sim_clock.now()
+                event: JoinSetResponseEvent{
+                    join_set_id: found_join_set_id,
+                    event: JoinSetResponse::ChildExecutionFinished{
+                        child_execution_id: found_child_execution_id,
+                        result: found_result,
+                    }
+                }
+            })
+             if *at == sim_clock.now()
             => (*found_join_set_id, *found_child_execution_id, found_result)
         );
         assert_eq!(join_set_id, found_join_set_id);

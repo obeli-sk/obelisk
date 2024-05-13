@@ -173,6 +173,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 //TODO: merge WorkerContext into
                 ctx.execution_id,
                 ctx.event_history,
+                ctx.responses,
                 seed,
                 self.config.clock_fn.clone(),
                 self.config.join_next_blocking_strategy,

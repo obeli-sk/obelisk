@@ -1,11 +1,11 @@
 use assert_matches::assert_matches;
 use chrono::DateTime;
 use concepts::prefixed_ulid::{DelayId, JoinSetId, RunId};
-use concepts::storage::DbPool;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
-    JoinSetRequest, JoinSetResponse, SpecificError, Version,
+    JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, SpecificError, Version,
 };
+use concepts::storage::{DbPool, JoinSetResponseEvent};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
 use concepts::{storage::HistoryEvent, FinishedExecutionResult};
 use concepts::{Params, StrVariant};
@@ -103,22 +103,22 @@ async fn test_lock_pending_should_sort_by_scheduled_at_sqlite() {
 }
 
 #[tokio::test]
-async fn test_lock_should_delete_from_pending_mem() {
+async fn test_lock_mem() {
     set_up();
     let (_guard, db_pool) = Database::Memory.set_up().await;
     let db_connection = db_pool.connection();
-    lock_should_delete_from_pending(&db_connection).await;
+    lock(&db_connection).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
 
 #[cfg(not(madsim))]
 #[tokio::test]
-async fn test_lock_should_delete_from_pending_sqlite() {
+async fn test_lock_sqlite() {
     set_up();
     let (_guard, db_pool) = Database::Sqlite.set_up().await;
     let db_connection = db_pool.connection();
-    lock_should_delete_from_pending(&db_connection).await;
+    lock(&db_connection).await;
     drop(db_connection);
     db_pool.close().await.unwrap();
 }
@@ -256,7 +256,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
         };
 
         version = db_connection
-            .append(execution_id, Some(version), req)
+            .append(execution_id, version, req)
             .await
             .unwrap();
     }
@@ -373,7 +373,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             created_at,
         };
         version = db_connection
-            .append(execution_id, Some(version), req)
+            .append(execution_id, version, req)
             .await
             .unwrap();
         let req = AppendRequest {
@@ -381,7 +381,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             created_at,
         };
         version = db_connection
-            .append(execution_id, Some(version), req)
+            .append(execution_id, version, req)
             .await
             .unwrap();
     }
@@ -416,7 +416,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             created_at,
         };
         version = db_connection
-            .append(execution_id, Some(version), req)
+            .append(execution_id, version, req)
             .await
             .unwrap();
     }
@@ -433,7 +433,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             created_at,
         };
         version = db_connection
-            .append(execution_id, Some(version), req)
+            .append(execution_id, version, req)
             .await
             .unwrap();
     }
@@ -447,15 +447,20 @@ pub async fn lifecycle(db_connection: &impl DbConnection) {
             created_at,
         };
         let err = db_connection
-            .append(execution_id, Some(version), req)
+            .append(execution_id, version, req)
             .await
             .unwrap_err();
 
-        assert_eq!(
+        let msg = assert_matches!(
+            err,
             DbError::Specific(SpecificError::ValidationFailed(StrVariant::Static(
-                "already finished"
-            ))),
-            err
+                msg
+            )))
+            => msg
+        );
+        assert!(
+            msg.contains("already finished"),
+            "Message `{msg}` must contain text `already finished`"
         );
     }
 }
@@ -560,33 +565,37 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
         })
         .await
         .unwrap();
-    let child_resp = vec![AppendRequest {
-        created_at: sim_clock.now(),
-        event: ExecutionEventInner::Finished {
-            result: Ok(concepts::SupportedFunctionResult::None),
-        },
+    let child_resp = vec![ExecutionEventInner::Finished {
+        result: Ok(concepts::SupportedFunctionResult::None),
     }];
-    let parent_add = AppendRequest {
-        created_at: sim_clock.now(),
-        event: ExecutionEventInner::HistoryEvent {
-            event: HistoryEvent::JoinSetResponse {
-                join_set_id: JoinSetId::generate(),
-                response: JoinSetResponse::ChildExecutionFinished {
-                    child_execution_id: child_id,
-                    result: Ok(concepts::SupportedFunctionResult::None),
-                },
-            },
+    let parent_add = JoinSetResponseEvent {
+        join_set_id: JoinSetId::generate(),
+        event: JoinSetResponse::ChildExecutionFinished {
+            child_execution_id: child_id,
+            result: Ok(concepts::SupportedFunctionResult::None),
         },
     };
     db_connection
         .append_batch_respond_to_parent(
-            child_resp,
             child_id,
+            sim_clock.now(),
+            child_resp,
             child_version,
-            (parent_id, parent_add),
+            parent_id,
+            parent_add.clone(),
         )
         .await
         .unwrap();
+    let parent_exe = db_connection.get(parent_id).await.unwrap();
+    assert_eq!(1, parent_exe.responses.len());
+    let response = parent_exe.responses.get(0).unwrap();
+    assert_eq!(
+        *response,
+        JoinSetResponseEventOuter {
+            created_at: sim_clock.now(),
+            event: parent_add
+        }
+    );
 }
 
 pub async fn lock_pending_should_sort_by_scheduled_at(db_connection: &impl DbConnection) {
@@ -657,7 +666,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(db_connection: &impl DbCon
     assert_eq!(vec![older_id, newer_id, newest_id], locked_ids);
 }
 
-pub async fn lock_should_delete_from_pending(db_connection: &impl DbConnection) {
+pub async fn lock(db_connection: &impl DbConnection) {
     let execution_id = ExecutionId::generate();
     let executor_id = ExecutorId::generate();
     // Create
@@ -674,11 +683,11 @@ pub async fn lock_should_delete_from_pending(db_connection: &impl DbConnection) 
         })
         .await
         .unwrap();
-    // Append an event that does not change Pending state but must update the version in the `pending` table.
+    // Append an event that does not change Pending state but must update the version.
     let version = db_connection
         .append(
             execution_id,
-            Some(version),
+            version,
             AppendRequest {
                 created_at: now(),
                 event: ExecutionEventInner::HistoryEvent {
@@ -797,10 +806,10 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection) {
 
     let join_set_id = JoinSetId::generate();
     let delay_id = DelayId::generate();
-    let version = db_connection
+    db_connection
         .append(
             execution_id,
-            Some(version),
+            version,
             AppendRequest {
                 created_at: now(),
                 event: ExecutionEventInner::HistoryEvent {
@@ -833,7 +842,6 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection) {
     let actual = actual.pop().unwrap();
     let expected = ExpiredTimer::AsyncDelay {
         execution_id,
-        version,
         join_set_id,
         delay_id,
     };

@@ -1,7 +1,10 @@
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::JoinSetId;
-use concepts::storage::{CreateRequest, ExecutionEvent, ExecutionEventInner, HistoryEvent};
+use concepts::storage::{
+    CreateRequest, ExecutionEvent, ExecutionEventInner, HistoryEvent, JoinSetResponseEvent,
+    JoinSetResponseEventOuter,
+};
 use concepts::storage::{ExecutionLog, PendingState, SpecificError, Version};
 use concepts::ExecutionId;
 use concepts::{FunctionFqn, Params, StrVariant};
@@ -13,6 +16,7 @@ pub struct ExecutionJournal {
     pub execution_id: ExecutionId,
     pub pending_state: PendingState,
     pub execution_events: VecDeque<ExecutionEvent>,
+    pub responses: Vec<JoinSetResponseEventOuter>,
 }
 
 impl ExecutionJournal {
@@ -37,6 +41,7 @@ impl ExecutionJournal {
             execution_id: req.execution_id,
             pending_state,
             execution_events: VecDeque::from([event]),
+            responses: Vec::default(),
         }
     }
 
@@ -104,77 +109,86 @@ impl ExecutionJournal {
         Ok(self.version())
     }
 
+    pub fn append_response(&mut self, created_at: DateTime<Utc>, event: JoinSetResponseEvent) {
+        self.responses
+            .push(JoinSetResponseEventOuter { event, created_at });
+        // update the state
+        self.pending_state = self.calculate_pending_state();
+    }
+
     fn calculate_pending_state(&self) -> PendingState {
         self.execution_events
             .iter()
-            .enumerate()
             .rev()
-            .find_map(|(idx, event)| match (idx, &event.event) {
-                (
-                    _,
-                    ExecutionEventInner::Created {
-                        scheduled_at: None, ..
-                    }
-                    | ExecutionEventInner::Unlocked,
-                ) => Some(PendingState::PendingNow),
+            .find_map(|event| match &event.event {
+                ExecutionEventInner::Created {
+                    scheduled_at: None, ..
+                }
+                | ExecutionEventInner::Unlocked => Some(PendingState::PendingNow),
 
-                (
-                    _,
-                    ExecutionEventInner::Created {
-                        scheduled_at: Some(scheduled_at),
-                        ..
-                    },
-                ) => Some(PendingState::PendingAt {
+                ExecutionEventInner::Created {
+                    scheduled_at: Some(scheduled_at),
+                    ..
+                } => Some(PendingState::PendingAt {
                     scheduled_at: *scheduled_at,
                 }),
 
-                (_, ExecutionEventInner::Finished { .. }) => Some(PendingState::Finished),
+                ExecutionEventInner::Finished { .. } => Some(PendingState::Finished),
 
-                (
-                    _,
-                    ExecutionEventInner::Locked {
-                        executor_id,
-                        lock_expires_at,
-                        run_id,
-                    },
-                ) => Some(PendingState::Locked {
+                ExecutionEventInner::Locked {
+                    executor_id,
+                    lock_expires_at,
+                    run_id,
+                } => Some(PendingState::Locked {
                     executor_id: *executor_id,
                     lock_expires_at: *lock_expires_at,
                     run_id: *run_id,
                 }),
 
-                (
-                    _,
-                    ExecutionEventInner::IntermittentFailure { expires_at, .. }
-                    | ExecutionEventInner::IntermittentTimeout { expires_at, .. },
-                ) => Some(PendingState::PendingAt {
-                    scheduled_at: *expires_at,
-                }),
+                ExecutionEventInner::IntermittentFailure { expires_at, .. }
+                | ExecutionEventInner::IntermittentTimeout { expires_at, .. } => {
+                    Some(PendingState::PendingAt {
+                        scheduled_at: *expires_at,
+                    })
+                }
 
-                (
-                    idx,
-                    ExecutionEventInner::HistoryEvent {
-                        event:
-                            HistoryEvent::JoinNext {
-                                join_set_id: expected_join_set_id,
-                                lock_expires_at,
-                            },
-                        ..
-                    },
-                ) => {
-                    // Did the async response arrive?
-                    let resp = self.execution_events.iter().skip(idx + 1).find(|event| {
-                        matches!(event, ExecutionEvent {
-                                event:
-                                    ExecutionEventInner::HistoryEvent { event:
-                                        HistoryEvent::JoinSetResponse { join_set_id, .. },
-                                    .. },
-                                .. }
-                                if expected_join_set_id == join_set_id)
-                    });
-                    if let Some(resp) = resp {
+                ExecutionEventInner::HistoryEvent {
+                    event:
+                        HistoryEvent::JoinNext {
+                            join_set_id: expected_join_set_id,
+                            lock_expires_at,
+                        },
+                    ..
+                } => {
+                    let join_next_count = self
+                        .event_history()
+                        .filter(|e| {
+                            matches!(
+                                e,
+                                HistoryEvent::JoinNext {
+                                    join_set_id,
+                                    ..
+                                } if join_set_id == expected_join_set_id
+                            )
+                        })
+                        .count();
+                    assert!(join_next_count > 0);
+                    // Did the response arrive?
+                    let resp = self
+                        .responses
+                        .iter()
+                        .filter_map(|event| match event {
+                            JoinSetResponseEventOuter {
+                                event: JoinSetResponseEvent { join_set_id, .. },
+                                created_at,
+                            } if expected_join_set_id == join_set_id => Some(created_at),
+                            _ => None,
+                        })
+                        .skip(join_next_count - 1)
+                        .next();
+                    if let Some(created_at) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
-                        let scheduled_at = max(*lock_expires_at, resp.created_at);
+                        let scheduled_at = max(*lock_expires_at, *created_at);
                         Some(PendingState::PendingAt { scheduled_at })
                     } else {
                         Some(PendingState::BlockedByJoinSet {
@@ -249,6 +263,7 @@ impl ExecutionJournal {
             events: self.execution_events.iter().cloned().collect(),
             version: self.version(),
             pending_state: self.pending_state,
+            responses: self.responses.iter().cloned().collect(),
         }
     }
 

@@ -84,7 +84,7 @@ async fn create_and_append(
     version = db_connection.create(create_req).await.unwrap();
     for event in append_requests {
         match db_connection
-            .append(execution_id, Some(version.clone()), event.clone())
+            .append(execution_id, version.clone(), event.clone())
             .await
         {
             Ok(new_version) => version = new_version,

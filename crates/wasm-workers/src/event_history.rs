@@ -1,10 +1,12 @@
+use crate::event_history::ProcessingStatus::Processed;
+use crate::event_history::ProcessingStatus::Unprocessed;
 use crate::workflow_ctx::FunctionError;
 use crate::workflow_worker::JoinNextBlockingStrategy;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
-    JoinSetResponse, Version,
+    JoinSetResponse, JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
@@ -21,8 +23,7 @@ const DB_POLL_SLEEP: Duration = Duration::from_millis(50);
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum ProcessingStatus {
-    UnprocessedRequest,
-    UnprocessedResponse,
+    Unprocessed,
     Processed,
 }
 
@@ -33,35 +34,35 @@ pub(crate) struct EventHistory {
     execution_deadline: DateTime<Utc>,
     child_retry_exp_backoff: Duration,
     child_max_retries: u32,
-    events: Vec<(HistoryEvent, ProcessingStatus)>,
-    start_from_idx: usize,
+    event_history: Vec<(HistoryEvent, ProcessingStatus)>,
+    responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
+    // TODO: optimize using start_from_idx: usize,
 }
 
 impl EventHistory {
     pub(crate) fn new(
         execution_id: ExecutionId,
-        events: impl IntoIterator<
-            Item = HistoryEvent,
-            IntoIter = impl ExactSizeIterator<Item = HistoryEvent>,
-        >,
+        event_history: Vec<HistoryEvent>,
+        responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         execution_deadline: DateTime<Utc>,
         child_retry_exp_backoff: Duration,
         child_max_retries: u32,
     ) -> Self {
-        let events = events.into_iter();
         EventHistory {
             execution_id,
-            events: {
-                let mut vec = Vec::with_capacity(events.len());
-                Self::append_events(&mut vec, events);
-                vec
-            },
+            event_history: event_history
+                .into_iter()
+                .map(|event| (event, Unprocessed))
+                .collect(),
+            responses: responses
+                .into_iter()
+                .map(|event| (event, Unprocessed))
+                .collect(),
             join_next_blocking_strategy,
             execution_deadline,
             child_retry_exp_backoff,
             child_max_retries,
-            start_from_idx: 0,
         }
     }
 
@@ -123,6 +124,7 @@ impl EventHistory {
             };
         let poll_variant = match poll_variant {
             None => {
+                // events that cannot block
                 // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
                 let cloned_non_blocking = event_call.clone();
                 let history_events = event_call
@@ -136,10 +138,11 @@ impl EventHistory {
                         self.child_max_retries,
                     )
                     .await?;
-                Self::append_events(&mut self.events, history_events);
+                self.event_history
+                    .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
                 return Ok(self
                     .find_matching_atomic(&cloned_non_blocking)?
-                    .expect("non-blocking EventCall must return some response"));
+                    .expect("non-blocking EventCall must return the response"));
             }
             Some(poll_variant) => {
                 let keys = event_call.as_keys();
@@ -154,7 +157,8 @@ impl EventHistory {
                         self.child_max_retries,
                     )
                     .await?;
-                Self::append_events(&mut self.events, history_events);
+                self.event_history
+                    .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
                 let keys_len = keys.len();
                 for (idx, key) in keys.into_iter().enumerate() {
                     let res = self.process_event_by_key(key)?;
@@ -188,23 +192,6 @@ impl EventHistory {
         }
     }
 
-    fn append_events(
-        events: &mut Vec<(HistoryEvent, ProcessingStatus)>,
-        history_events: impl IntoIterator<Item = HistoryEvent>,
-    ) {
-        events.extend(history_events.into_iter().map(|event| {
-            let resp = event.is_response();
-            (
-                event,
-                if resp {
-                    ProcessingStatus::UnprocessedResponse
-                } else {
-                    ProcessingStatus::UnprocessedRequest
-                },
-            )
-        }));
-    }
-
     fn find_matching_atomic(
         &mut self,
         event_call: &EventCall,
@@ -217,7 +204,7 @@ impl EventHistory {
             if last.is_none() {
                 assert_eq!(
                     idx, 0,
-                    "EventCall must be processed in an all or nothing fashion"
+                    "EventCall must be processed in an all or be not found from the beginning"
                 );
                 return Ok(None);
             }
@@ -226,31 +213,35 @@ impl EventHistory {
     }
 
     fn next_unprocessed_request(&self) -> Option<(usize, &(HistoryEvent, ProcessingStatus))> {
-        self.events
+        // TODO: Remove ProcessingStatus from return value
+        self.event_history
             .iter()
             .enumerate()
-            .skip(self.start_from_idx)
-            .find(|(_, (_, status))| *status == ProcessingStatus::UnprocessedRequest)
+            .find(|(_, (_, status))| *status == Unprocessed)
     }
 
-    fn mark_next_unprocessed_response(&mut self, join_set_id: JoinSetId) -> Option<&HistoryEvent> {
+    fn mark_next_unprocessed_response(
+        &mut self,
+        parent_event_idx: usize, // needs to be marked as Processed as well
+        join_set_id: JoinSetId,
+    ) -> Option<&JoinSetResponseEvent> {
         if let Some(idx) = self
-            .events
+            .responses
             .iter()
             .enumerate()
-            .skip(self.start_from_idx)
             .find_map(|(idx, (event, status))| match (status, event) {
                 (
-                    ProcessingStatus::UnprocessedResponse,
-                    HistoryEvent::JoinSetResponse {
+                    Unprocessed,
+                    JoinSetResponseEvent {
                         join_set_id: found, ..
                     },
                 ) if *found == join_set_id => Some(idx),
                 _ => None,
             })
         {
-            self.events[idx].1 = ProcessingStatus::Processed;
-            Some(&self.events[idx].0)
+            self.event_history[parent_event_idx].1 = Processed;
+            self.responses[idx].1 = Processed;
+            Some(&self.responses[idx].0)
         } else {
             None
         }
@@ -273,13 +264,14 @@ impl EventHistory {
                 },
             ) if join_set_id == *found_join_set_id => {
                 trace!(%join_set_id, "Matched JoinSet");
-                self.events[found_idx].1 = ProcessingStatus::Processed;
+                self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
                 Ok(Some(SupportedFunctionResult::Infallible(WastValWithType {
                     r#type: TypeWrapper::String,
                     value: WastVal::String(join_set_id.to_string()),
                 })))
             }
+
             (
                 EventHistoryKey::ChildExecutionRequest {
                     join_set_id,
@@ -293,13 +285,14 @@ impl EventHistory {
             ) if join_set_id == *found_join_set_id && execution_id == *child_execution_id => {
                 trace!(%child_execution_id,
                 %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
-                self.events[found_idx].1 = ProcessingStatus::Processed;
+                self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::StartAsync`] , return execution id
                 Ok(Some(SupportedFunctionResult::Infallible(WastValWithType {
                     r#type: TypeWrapper::String,
                     value: WastVal::String(execution_id.to_string()),
                 })))
             }
+
             (
                 EventHistoryKey::DelayRequest {
                     join_set_id,
@@ -315,13 +308,14 @@ impl EventHistory {
                 },
             ) if join_set_id == *found_join_set_id && delay_id == *found_delay_id => {
                 trace!(%delay_id, %join_set_id, "Matched JoinSetRequest::DelayRequest");
-                self.events[found_idx].1 = ProcessingStatus::Processed;
+                self.event_history[found_idx].1 = Processed;
                 // return delay id
                 Ok(Some(SupportedFunctionResult::Infallible(WastValWithType {
                     r#type: TypeWrapper::String,
                     value: WastVal::String(delay_id.to_string()),
                 })))
             }
+
             (
                 EventHistoryKey::JoinNextChild { join_set_id },
                 HistoryEvent::JoinNext {
@@ -331,11 +325,9 @@ impl EventHistory {
             ) if join_set_id == *found_join_set_id => {
                 trace!(
                 %join_set_id, "Peeked at JoinNext - Child");
-                self.events[found_idx].1 = ProcessingStatus::Processed;
-                // TODO: Add support for conditions on JoinNext, skip unrelated responses
-                match self.mark_next_unprocessed_response(join_set_id) {
-                    Some(HistoryEvent::JoinSetResponse {
-                        response:
+                match self.mark_next_unprocessed_response(found_idx, join_set_id) {
+                    Some(JoinSetResponseEvent {
+                        event:
                             JoinSetResponse::ChildExecutionFinished {
                                 child_execution_id,
                                 result,
@@ -353,14 +345,11 @@ impl EventHistory {
                             }
                         }
                     }
-                    None => {
-                        // no progress, still at JoinNext,
-                        self.events[found_idx].1 = ProcessingStatus::UnprocessedRequest;
-                        Ok(None)
-                    }
+                    None => Ok(None), // no progress, still at JoinNext
                     _ => unreachable!(),
                 }
             }
+
             (
                 EventHistoryKey::JoinNextDelay { join_set_id },
                 HistoryEvent::JoinNext {
@@ -370,21 +359,21 @@ impl EventHistory {
             ) if join_set_id == *found_join_set_id => {
                 trace!(
                     %join_set_id, "Peeked at JoinNext - Delay");
-                match self.mark_next_unprocessed_response(join_set_id) {
-                    Some(HistoryEvent::JoinSetResponse {
-                        response:
+                match self.mark_next_unprocessed_response(found_idx, join_set_id) {
+                    Some(JoinSetResponseEvent {
+                        event:
                             JoinSetResponse::DelayFinished {
                                 delay_id: _, // Currently only a single blocking delay is supported, no need to match the id
                             },
                         ..
                     }) => {
                         trace!(%join_set_id, "Matched JoinNext & DelayFinished");
-                        self.events[found_idx].1 = ProcessingStatus::Processed;
                         Ok(Some(SupportedFunctionResult::None))
                     }
                     _ => Ok(None), // no progress, still at JoinNext
                 }
             }
+
             (key, found) => Err(FunctionError::NonDeterminismDetected(StrVariant::Arc(
                 Arc::from(format!(
                     "unexpected key {key:?} not matching {found:?} at index {found_idx}",
@@ -399,11 +388,30 @@ impl EventHistory {
         version: &mut Version,
     ) -> Result<Option<()>, DbError> {
         let exec_log = db_connection.get(self.execution_id).await?;
+        let mut updated = false;
         let event_history = exec_log.event_history().collect::<Vec<_>>();
-        let events_len = self.events.len();
-        if event_history.len() > events_len {
-            Self::append_events(&mut self.events, event_history.into_iter().skip(events_len));
+        if event_history.len() > self.event_history.len() {
+            updated = true;
+            self.event_history.extend(
+                event_history
+                    .into_iter()
+                    .skip(self.event_history.len())
+                    .into_iter()
+                    .map(|event| (event, Unprocessed)),
+            );
             *version = exec_log.version;
+        }
+        if exec_log.responses.len() > self.responses.len() {
+            updated = true;
+            self.responses.extend(
+                exec_log
+                    .responses
+                    .into_iter()
+                    .skip(self.responses.len())
+                    .map(|event| (event.event, Unprocessed)),
+            );
+        }
+        if updated {
             Ok(Some(()))
         } else {
             Ok(None)
@@ -540,7 +548,7 @@ impl EventCall {
                 };
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
                 *version = db_connection
-                    .append(execution_id, Some(version.clone()), join_set)
+                    .append(execution_id, version.clone(), join_set)
                     .await?;
                 Ok(history_events)
             }
@@ -556,10 +564,7 @@ impl EventCall {
                     request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
                 };
                 history_events.push(event.clone());
-                let child_exec_req = AppendRequest {
-                    created_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
-                };
+                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
                 let child = CreateRequest {
                     created_at,
@@ -574,6 +579,7 @@ impl EventCall {
 
                 *version = db_connection
                     .append_batch_create_child(
+                        created_at,
                         vec![child_exec_req],
                         execution_id,
                         version.clone(),
@@ -595,7 +601,7 @@ impl EventCall {
                 };
                 debug!(%join_set_id, "BlockingChildJoinNext: appending JoinNext");
                 *version = db_connection
-                    .append(execution_id, Some(version.clone()), join_next)
+                    .append(execution_id, version.clone(), join_next)
                     .await?;
                 Ok(history_events)
             }
@@ -608,28 +614,19 @@ impl EventCall {
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSet { join_set_id };
                 history_events.push(event.clone());
-                let join_set = AppendRequest {
-                    created_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
-                };
+                let join_set = ExecutionEventInner::HistoryEvent { event };
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
                 };
                 history_events.push(event.clone());
-                let child_exec_req = AppendRequest {
-                    created_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
-                };
+                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
                     lock_expires_at,
                 };
                 history_events.push(event.clone());
-                let join_next = AppendRequest {
-                    created_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
-                };
+                let join_next = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Appending JoinSet,ChildExecutionRequest,JoinNext");
                 let child = CreateRequest {
                     created_at,
@@ -643,6 +640,7 @@ impl EventCall {
                 };
                 *version = db_connection
                     .append_batch_create_child(
+                        created_at,
                         vec![join_set, child_exec_req, join_next],
                         execution_id,
                         version.clone(),
@@ -659,10 +657,7 @@ impl EventCall {
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSet { join_set_id };
                 history_events.push(event.clone());
-                let join_set = AppendRequest {
-                    created_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
-                };
+                let join_set = ExecutionEventInner::HistoryEvent { event };
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::DelayRequest {
@@ -671,22 +666,17 @@ impl EventCall {
                     },
                 };
                 history_events.push(event.clone());
-                let delay_req = AppendRequest {
-                    created_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
-                };
+                let delay_req = ExecutionEventInner::HistoryEvent { event };
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
                     lock_expires_at,
                 };
                 history_events.push(event.clone());
-                let join_next = AppendRequest {
-                    created_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
-                };
+                let join_next = ExecutionEventInner::HistoryEvent { event };
                 debug!(%delay_id, %join_set_id, "BlockingDelayRequest: appending JoinSet,DelayRequest,JoinNext");
                 *version = db_connection
                     .append_batch(
+                        created_at,
                         vec![join_set, delay_req, join_next],
                         execution_id,
                         version.clone(),
@@ -707,11 +697,10 @@ mod tests {
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::JoinSetId;
-    use concepts::storage::{
-        AppendRequest, DbConnection, DbError, ExecutionEventInner, HistoryEvent, JoinSetResponse,
-        Version,
-    };
     use concepts::storage::{CreateRequest, DbPool};
+    use concepts::storage::{
+        DbConnection, DbError, JoinSetResponse, JoinSetResponseEvent, Version,
+    };
     use concepts::{ExecutionId, Params, SupportedFunctionResult};
     use db_tests::Database;
     use std::time::Duration;
@@ -728,7 +717,12 @@ mod tests {
         let exec_log = db_connection.get(execution_id).await?;
         let event_history = EventHistory::new(
             execution_id,
-            exec_log.event_history().collect::<Vec<_>>(),
+            exec_log.event_history().collect(),
+            exec_log
+                .responses
+                .into_iter()
+                .map(|event| event.event)
+                .collect(),
             JoinNextBlockingStrategy::default(),
             execution_deadline,
             Duration::ZERO,
@@ -815,19 +809,14 @@ mod tests {
             FunctionError::ChildExecutionRequest
         );
         db_connection
-            .append(
+            .append_response(
+                sim_clock.now(),
                 execution_id,
-                None,
-                AppendRequest {
-                    created_at: sim_clock.now(),
-                    event: ExecutionEventInner::HistoryEvent {
-                        event: HistoryEvent::JoinSetResponse {
-                            join_set_id,
-                            response: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id,
-                                result: Ok(SupportedFunctionResult::None),
-                            },
-                        },
+                JoinSetResponseEvent {
+                    join_set_id,
+                    event: JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id,
+                        result: Ok(SupportedFunctionResult::None),
                     },
                 },
             )
@@ -931,19 +920,14 @@ mod tests {
 
         // append child response before issuing join_next
         db_connection
-            .append(
+            .append_response(
+                sim_clock.now(),
                 execution_id,
-                None,
-                AppendRequest {
-                    created_at: sim_clock.now(),
-                    event: ExecutionEventInner::HistoryEvent {
-                        event: HistoryEvent::JoinSetResponse {
-                            join_set_id,
-                            response: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id,
-                                result: Ok(CHILD_RESP),
-                            },
-                        },
+                JoinSetResponseEvent {
+                    join_set_id,
+                    event: JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id,
+                        result: Ok(CHILD_RESP),
                     },
                 },
             )
@@ -1099,38 +1083,28 @@ mod tests {
         );
         // append two responses
         db_connection
-            .append(
+            .append_response(
+                sim_clock.now(),
                 execution_id,
-                None,
-                AppendRequest {
-                    created_at: sim_clock.now(),
-                    event: ExecutionEventInner::HistoryEvent {
-                        event: HistoryEvent::JoinSetResponse {
-                            join_set_id,
-                            response: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id: child_execution_id_a,
-                                result: Ok(KID_A),
-                            },
-                        },
+                JoinSetResponseEvent {
+                    join_set_id,
+                    event: JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id: child_execution_id_a,
+                        result: Ok(KID_A),
                     },
                 },
             )
             .await
             .unwrap();
         db_connection
-            .append(
+            .append_response(
+                sim_clock.now(),
                 execution_id,
-                None,
-                AppendRequest {
-                    created_at: sim_clock.now(),
-                    event: ExecutionEventInner::HistoryEvent {
-                        event: HistoryEvent::JoinSetResponse {
-                            join_set_id,
-                            response: JoinSetResponse::ChildExecutionFinished {
-                                child_execution_id: child_execution_id_b,
-                                result: Ok(KID_B),
-                            },
-                        },
+                JoinSetResponseEvent {
+                    join_set_id,
+                    event: JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id: child_execution_id_b,
+                        result: Ok(KID_B),
                     },
                 },
             )
