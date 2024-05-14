@@ -27,6 +27,7 @@ enum ProcessingStatus {
     Processed,
 }
 
+#[allow(clippy::struct_field_names)]
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct EventHistory {
     execution_id: ExecutionId,
@@ -396,7 +397,6 @@ impl EventHistory {
                 event_history
                     .into_iter()
                     .skip(self.event_history.len())
-                    .into_iter()
                     .map(|event| (event, Unprocessed)),
             );
             *version = exec_log.version;

@@ -109,14 +109,13 @@ pub enum SqliteError {
 
 impl From<SqliteError> for DbError {
     fn from(err: SqliteError) -> Self {
-        match err {
-            SqliteError::DbError(err) => err,
-            _ => {
-                error!(backtrace = %std::backtrace::Backtrace::capture(), "Validation failed - {err:?}");
-                DbError::Specific(SpecificError::ValidationFailed(StrVariant::Arc(Arc::from(
-                    err.to_string(),
-                ))))
-            }
+        if let SqliteError::DbError(err) = err {
+            err
+        } else {
+            error!(backtrace = %std::backtrace::Backtrace::capture(), "Validation failed - {err:?}");
+            DbError::Specific(SpecificError::ValidationFailed(StrVariant::Arc(Arc::from(
+                err.to_string(),
+            ))))
         }
     }
 }
@@ -748,7 +747,7 @@ impl SqlitePool {
     fn append(
         tx: &Transaction,
         execution_id: ExecutionId,
-        req: AppendRequest,
+        req: &AppendRequest,
         appending_version: Version,
     ) -> Result<AppendResponse, SqliteError> {
         enum IndexAction {
@@ -894,7 +893,7 @@ impl SqlitePool {
     fn append_response(
         tx: &Transaction,
         execution_id: ExecutionId,
-        req: JoinSetResponseEventOuter,
+        req: &JoinSetResponseEventOuter,
     ) -> Result<(), SqliteError> {
         let mut stmt = tx.prepare(
             "INSERT INTO t_join_set_response (execution_id, created_at, json_value, join_set_id, delay_id, child_execution_id) \
@@ -960,7 +959,7 @@ impl SqlitePool {
                 let join_set_id = row.get::<_, JoinSetIdW>("join_set_id")?.0;
                 let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
                 Ok(JoinSetResponseEventOuter {
-                    event: JoinSetResponseEvent { event, join_set_id },
+                    event: JoinSetResponseEvent { join_set_id, event },
                     created_at,
                 })
             },
@@ -1114,7 +1113,7 @@ impl DbConnection for SqlitePool {
         }
         self.pool
             .transaction_write_with_span(
-                move |tx| Self::append(tx, execution_id, req, version),
+                move |tx| Self::append(tx, execution_id, &req, version),
                 Span::current(),
             )
             .await
@@ -1154,7 +1153,7 @@ impl DbConnection for SqlitePool {
                         version = Self::append(
                             tx,
                             execution_id,
-                            AppendRequest { event, created_at },
+                            &AppendRequest { created_at, event },
                             version,
                         )?;
                     }
@@ -1199,7 +1198,7 @@ impl DbConnection for SqlitePool {
                         version = Self::append(
                             tx,
                             execution_id,
-                            AppendRequest { event, created_at },
+                            &AppendRequest { created_at, event },
                             version,
                         )?;
                     }
@@ -1259,14 +1258,14 @@ impl DbConnection for SqlitePool {
                         version = Self::append(
                             tx,
                             execution_id,
-                            AppendRequest { event, created_at },
+                            &AppendRequest { created_at, event },
                             version,
                         )?;
                     }
                     Self::append_response(
                         tx,
                         parent_execution_id,
-                        JoinSetResponseEventOuter {
+                        &JoinSetResponseEventOuter {
                             created_at,
                             event: parent_response_event,
                         },
@@ -1314,16 +1313,15 @@ impl DbConnection for SqlitePool {
                         .into_iter()
                         .collect::<Result<Vec<_>, _>>()?;
                     let pending_state = Self::get_pending_state(&tx, execution_id)?
-                        .map(|it| it.0)
-                        .unwrap_or(PendingState::Finished); // Execution exists and was not found in `t_state` => Finished
+                        .map_or(PendingState::Finished, |it| it.0); // Execution exists and was not found in `t_state` => Finished
                     let version = Version::new(events.len());
                     let responses = Self::get_responses(&tx, execution_id)?;
                     Ok(ExecutionLog {
                         execution_id,
                         events,
+                        responses,
                         version,
                         pending_state,
-                        responses,
                     })
                 },
                 Span::current(),
@@ -1346,7 +1344,7 @@ impl DbConnection for SqlitePool {
                     Self::append_response(
                         &tx,
                         execution_id,
-                        JoinSetResponseEventOuter {
+                        &JoinSetResponseEventOuter {
                             created_at,
                             event: response_event,
                         },
@@ -1355,7 +1353,6 @@ impl DbConnection for SqlitePool {
                 Span::current(),
             )
             .await
-            .map(|_| ())
             .map_err(DbError::from)
     }
 

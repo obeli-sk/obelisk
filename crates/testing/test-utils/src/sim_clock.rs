@@ -17,21 +17,25 @@ impl SimClock {
     }
 
     pub async fn move_time_forward(&self, duration: Duration) {
-        let mut guard = self.current_time.lock().unwrap();
-        let old = *guard;
-        let new = old + duration;
-        *guard = new;
-        drop(guard);
+        let (old, new) = {
+            let mut guard = self.current_time.lock().unwrap();
+            let old = *guard;
+            let new = old + duration;
+            *guard = new;
+            (old, new)
+        };
         tokio::time::sleep(Duration::ZERO).await; // Hack that makes sure the other task have a chance to make progress.
         info!("Set clock from `{old}` to `{new}`");
     }
 
     pub async fn move_time_to(&self, new: DateTime<Utc>) {
-        let mut guard = self.current_time.lock().unwrap();
-        let old = *guard;
-        assert!(old <= new);
-        *guard = new;
-        drop(guard);
+        let (old, new) = {
+            let mut guard = self.current_time.lock().unwrap();
+            let old = *guard;
+            assert!(old <= new);
+            *guard = new;
+            (old, new)
+        };
         tokio::time::sleep(Duration::ZERO).await; // Hack that makes sure the other task have a chance to make progress.
         info!("Set clock from `{old}` to `{new}`");
     }

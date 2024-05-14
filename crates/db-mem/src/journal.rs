@@ -110,7 +110,7 @@ impl ExecutionJournal {
 
     pub fn append_response(&mut self, created_at: DateTime<Utc>, event: JoinSetResponseEvent) {
         self.responses
-            .push(JoinSetResponseEventOuter { event, created_at });
+            .push(JoinSetResponseEventOuter { created_at, event });
         // update the state
         self.pending_state = self.calculate_pending_state();
     }
@@ -181,8 +181,7 @@ impl ExecutionJournal {
                             } if expected_join_set_id == join_set_id => Some(created_at),
                             _ => None,
                         })
-                        .skip(join_next_count - 1)
-                        .next();
+                        .nth(join_next_count - 1);
                     if let Some(created_at) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
                         let scheduled_at = max(*lock_expires_at, *created_at);
@@ -260,7 +259,7 @@ impl ExecutionJournal {
             events: self.execution_events.iter().cloned().collect(),
             version: self.version(),
             pending_state: self.pending_state,
-            responses: self.responses.iter().cloned().collect(),
+            responses: self.responses.clone(),
         }
     }
 

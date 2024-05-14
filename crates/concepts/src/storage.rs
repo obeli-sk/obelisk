@@ -174,6 +174,7 @@ pub enum JoinSetResponse {
 }
 
 impl JoinSetResponse {
+    #[must_use]
     pub fn delay_id(&self) -> Option<DelayId> {
         if let JoinSetResponse::DelayFinished { delay_id } = self {
             Some(*delay_id)
@@ -182,6 +183,7 @@ impl JoinSetResponse {
         }
     }
 
+    #[must_use]
     pub fn child_execution_id(&self) -> Option<ExecutionId> {
         if let JoinSetResponse::ChildExecutionFinished {
             child_execution_id, ..

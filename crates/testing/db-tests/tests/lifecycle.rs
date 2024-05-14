@@ -533,6 +533,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
     let sim_clock = SimClock::new(now());
     let parent_id = ExecutionId::generate();
@@ -649,7 +650,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
     let parent_exe = db_connection.get(parent_id).await.unwrap();
     assert_eq!(2, parent_exe.responses.len());
     assert_eq!(
-        *parent_exe.responses.get(0).unwrap(),
+        *parent_exe.responses.first().unwrap(),
         JoinSetResponseEventOuter {
             created_at: sim_clock.now(),
             event: JoinSetResponseEvent {
