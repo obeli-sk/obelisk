@@ -266,6 +266,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         clock_fn: C,
         locked_execution: LockedExecution,
     ) -> Result<(), DbError> {
+        debug!("Worker::run starting");
         trace!(
             version = %locked_execution.version,
             params = ?locked_execution.params,

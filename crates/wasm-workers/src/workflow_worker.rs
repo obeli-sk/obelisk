@@ -258,9 +258,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             Ok((result, store.into_data().version))
         };
         let started_at = (self.config.clock_fn)();
-        let deadline_duration = (ctx.execution_deadline - started_at)
-            .to_std()
-            .unwrap_or_default();
+        let deadline_duration = (ctx.execution_deadline - started_at).to_std().unwrap();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! {
             res = call_function => {

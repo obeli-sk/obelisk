@@ -226,20 +226,22 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         });
         let started_at = (self.config.clock_fn)();
         let deadline_delta = ctx.execution_deadline - started_at;
+        let deadline_duration = deadline_delta.to_std().unwrap();
         let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         loop {
+            // loop to make the timeout testable with `SimClock`
             tokio::select! {
                 res = &mut call_function => {
                     if let WorkerResult::Err(err) = &res {
-                        info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta, execution_deadline = %ctx.execution_deadline, "Finished with an error");
+                        info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an error");
                     } else {
-                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta,  execution_deadline = %ctx.execution_deadline, "Finished");
+                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration,  execution_deadline = %ctx.execution_deadline, "Finished");
                     }
                     return res;
                 },
                 ()   = tokio::time::sleep(self.config.timeout_sleep_unit) => {
                     if (self.config.clock_fn)() - started_at >= deadline_delta {
-                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_delta, execution_deadline = %ctx.execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
+                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
                         return WorkerResult::Err(WorkerError::IntermittentTimeout);
                     }
                 }
