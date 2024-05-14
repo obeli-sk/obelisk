@@ -87,9 +87,48 @@ async fn main() {
     ];
 
     // parse input
-    let mut args = std::env::args().peekable();
+    let mut args = std::env::args();
     args.next();
-    if args.peek().is_none() {
+    let args = args.collect::<Vec<_>>();
+    if args.len() == 2 {
+        let ffqn = args.first().unwrap();
+        let ffqn = ffqn.parse().unwrap();
+        let params = args.get(1).unwrap();
+        let params = serde_json::from_str(params).unwrap();
+        let params = Params::from_json_array(params).unwrap();
+
+        let db_connection = db_pool.connection();
+        let execution_id = ExecutionId::generate();
+        let created_at = now();
+        db_connection
+            .create(CreateRequest {
+                created_at: now(),
+                execution_id,
+                ffqn,
+                params,
+                parent: None,
+                scheduled_at: created_at,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 5,
+            })
+            .await
+            .unwrap();
+
+        let _ = db_connection
+            .wait_for_finished_result(execution_id, None)
+            .await
+            .unwrap();
+
+        for (task, _) in wasm_tasks {
+            task.close().await;
+        }
+        timers_watcher.close().await;
+        db_pool.close().await.unwrap();
+    } else if args.is_empty() {
+        loop {
+            tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
+        }
+    } else {
         eprintln!("Two arguments expected: `function's fully qualified name` `parameters`");
         eprintln!("Available functions:");
         for (_, ffqns) in &wasm_tasks {
@@ -97,43 +136,7 @@ async fn main() {
                 eprintln!("{ffqn}");
             }
         }
-        return;
     }
-    let ffqn = args.next().expect("first parameter must be function fully qualified name: namespace:package_name/interface_name[@version].function_name");
-    let ffqn = ffqn.parse().unwrap();
-    let params = args
-        .next()
-        .expect("second parameter must be parameters encoded as json array");
-    let params = serde_json::from_str(&params).unwrap();
-    let params = Params::from_json_array(params).unwrap();
-
-    let db_connection = db_pool.connection();
-    let execution_id = ExecutionId::generate();
-    let created_at = now();
-    db_connection
-        .create(CreateRequest {
-            created_at: now(),
-            execution_id,
-            ffqn,
-            params,
-            parent: None,
-            scheduled_at: created_at,
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 5,
-        })
-        .await
-        .unwrap();
-
-    let _ = db_connection
-        .wait_for_finished_result(execution_id, None)
-        .await
-        .unwrap();
-
-    for (task, _) in wasm_tasks {
-        task.close().await;
-    }
-    timers_watcher.close().await;
-    db_pool.close().await.unwrap();
 }
 
 fn exec<DB: DbConnection + 'static>(
