@@ -536,9 +536,9 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection) {
 pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
     let sim_clock = SimClock::new(now());
     let parent_id = ExecutionId::generate();
-    let child_id = ExecutionId::generate();
+
     // Create parent
-    db_connection
+    let version = db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
             execution_id: parent_id,
@@ -551,49 +551,127 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
         })
         .await
         .unwrap();
-    // Create child
-    let child_version = db_connection
-        .create(CreateRequest {
-            created_at: sim_clock.now(),
-            execution_id: child_id,
-            ffqn: SOME_FFQN,
-            params: Params::default(),
-            parent: None,
-            scheduled_at: sim_clock.now(),
-            retry_exp_backoff: Duration::ZERO,
-            max_retries: 0,
-        })
-        .await
-        .unwrap();
-    let child_resp = vec![ExecutionEventInner::Finished {
-        result: Ok(concepts::SupportedFunctionResult::None),
-    }];
-    let parent_add = JoinSetResponseEvent {
-        join_set_id: JoinSetId::generate(),
-        event: JoinSetResponse::ChildExecutionFinished {
-            child_execution_id: child_id,
-            result: Ok(concepts::SupportedFunctionResult::None),
-        },
-    };
+    // Create joinset
+    let join_set_id = JoinSetId::generate();
     db_connection
-        .append_batch_respond_to_parent(
-            child_id,
-            sim_clock.now(),
-            child_resp,
-            child_version,
+        .append(
             parent_id,
-            parent_add.clone(),
+            version,
+            AppendRequest {
+                created_at: sim_clock.now(),
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSet { join_set_id },
+                },
+            },
         )
         .await
         .unwrap();
+
+    let child_a = {
+        // Create child 1
+        let child_id = ExecutionId::generate();
+        let parent_response = JoinSetResponseEvent {
+            join_set_id,
+            event: JoinSetResponse::ChildExecutionFinished {
+                child_execution_id: child_id,
+                result: Ok(concepts::SupportedFunctionResult::None),
+            },
+        };
+        let child_version = db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: child_id,
+                ffqn: SOME_FFQN,
+                params: Params::default(),
+                parent: None,
+                scheduled_at: sim_clock.now(),
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
+            .await
+            .unwrap();
+        let child_resp = vec![ExecutionEventInner::Finished {
+            result: Ok(concepts::SupportedFunctionResult::None),
+        }];
+        db_connection
+            .append_batch_respond_to_parent(
+                child_id,
+                sim_clock.now(),
+                child_resp,
+                child_version,
+                parent_id,
+                parent_response.clone(),
+            )
+            .await
+            .unwrap();
+        child_id
+    };
+    let child_b = {
+        // Create child 2
+        let child_id = ExecutionId::generate();
+        let parent_response = JoinSetResponseEvent {
+            join_set_id,
+            event: JoinSetResponse::ChildExecutionFinished {
+                child_execution_id: child_id,
+                result: Ok(concepts::SupportedFunctionResult::None),
+            },
+        };
+        let child_version = db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id: child_id,
+                ffqn: SOME_FFQN,
+                params: Params::default(),
+                parent: None,
+                scheduled_at: sim_clock.now(),
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
+            .await
+            .unwrap();
+        let child_resp = vec![ExecutionEventInner::Finished {
+            result: Ok(concepts::SupportedFunctionResult::None),
+        }];
+
+        db_connection
+            .append_batch_respond_to_parent(
+                child_id,
+                sim_clock.now(),
+                child_resp,
+                child_version,
+                parent_id,
+                parent_response.clone(),
+            )
+            .await
+            .unwrap();
+        child_id
+    };
     let parent_exe = db_connection.get(parent_id).await.unwrap();
-    assert_eq!(1, parent_exe.responses.len());
-    let response = parent_exe.responses.get(0).unwrap();
+    assert_eq!(2, parent_exe.responses.len());
     assert_eq!(
-        *response,
+        *parent_exe.responses.get(0).unwrap(),
         JoinSetResponseEventOuter {
             created_at: sim_clock.now(),
-            event: parent_add
+            event: JoinSetResponseEvent {
+                join_set_id,
+                event: JoinSetResponse::ChildExecutionFinished {
+                    child_execution_id: child_a,
+                    result: Ok(concepts::SupportedFunctionResult::None),
+                },
+            }
+        }
+    );
+    assert_eq!(
+        *parent_exe.responses.get(1).unwrap(),
+        JoinSetResponseEventOuter {
+            created_at: sim_clock.now(),
+            event: JoinSetResponseEvent {
+                join_set_id,
+                event: JoinSetResponse::ChildExecutionFinished {
+                    child_execution_id: child_b,
+                    result: Ok(concepts::SupportedFunctionResult::None),
+                },
+            }
         }
     );
 }

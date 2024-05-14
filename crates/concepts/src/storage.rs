@@ -160,6 +160,40 @@ pub struct JoinSetResponseEvent {
     pub event: JoinSetResponse,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, arbitrary::Arbitrary, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum JoinSetResponse {
+    DelayFinished {
+        delay_id: DelayId,
+    },
+    ChildExecutionFinished {
+        child_execution_id: ExecutionId,
+        #[arbitrary(value = Ok(SupportedFunctionResult::None))]
+        result: FinishedExecutionResult,
+    },
+}
+
+impl JoinSetResponse {
+    pub fn delay_id(&self) -> Option<DelayId> {
+        if let JoinSetResponse::DelayFinished { delay_id } = self {
+            Some(*delay_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn child_execution_id(&self) -> Option<ExecutionId> {
+        if let JoinSetResponse::ChildExecutionFinished {
+            child_execution_id, ..
+        } = self
+        {
+            Some(*child_execution_id)
+        } else {
+            None
+        }
+    }
+}
+
 pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     ffqn: FunctionFqn::new_static("", ""),
     params: Params::default(),
@@ -335,22 +369,6 @@ pub enum JoinSetRequest {
     // Must be created by the executor in `PendingState::Locked`.
     #[display(fmt = "ChildExecutionRequest({child_execution_id})")]
     ChildExecutionRequest { child_execution_id: ExecutionId },
-}
-
-#[derive(
-    Clone, Debug, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
-)]
-#[serde(tag = "type")]
-pub enum JoinSetResponse {
-    DelayFinished {
-        delay_id: DelayId,
-    },
-    #[display(fmt = "ChildExecutionAsyncResponse({child_execution_id})")]
-    ChildExecutionFinished {
-        child_execution_id: ExecutionId,
-        #[arbitrary(value = Ok(SupportedFunctionResult::None))]
-        result: FinishedExecutionResult,
-    },
 }
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq)]

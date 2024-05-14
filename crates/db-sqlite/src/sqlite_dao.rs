@@ -55,7 +55,9 @@ CREATE TABLE IF NOT EXISTS t_join_set_response (
     execution_id TEXT NOT NULL,
     json_value JSONB NOT NULL,
     join_set_id TEXT NOT NULL,
-    PRIMARY KEY (execution_id, join_set_id)
+    delay_id TEXT,
+    child_execution_id TEXT,
+    PRIMARY KEY (execution_id, join_set_id, delay_id, child_execution_id)
 );
 "; // TODO: index and order by created at
 
@@ -895,14 +897,16 @@ impl SqlitePool {
         req: JoinSetResponseEventOuter,
     ) -> Result<(), SqliteError> {
         let mut stmt = tx.prepare(
-            "INSERT INTO t_join_set_response (execution_id, created_at, json_value, join_set_id) \
-                    VALUES (:execution_id, :created_at, :json_value, :join_set_id)",
+            "INSERT INTO t_join_set_response (execution_id, created_at, json_value, join_set_id, delay_id, child_execution_id) \
+                    VALUES (:execution_id, :created_at, :json_value, :join_set_id, :delay_id, :child_execution_id)",
         )?;
         stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
             ":created_at": req.created_at,
             ":json_value": serde_json::to_value(&req.event.event).unwrap(),
             ":join_set_id": req.event.join_set_id.to_string(),
+            ":delay_id": req.event.event.delay_id().map(|id| id.to_string()),
+            ":child_execution_id": req.event.event.child_execution_id().map(|id|id.to_string()),
         })?;
 
         // if the execution is going to be unblocked by this response...
@@ -988,7 +992,6 @@ impl DbConnection for SqlitePool {
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError> {
-        trace!("lock_pending");
         let execution_ids_versions = self
             .pool
             .conn_with_err_and_span::<_, _, SqliteError>(
