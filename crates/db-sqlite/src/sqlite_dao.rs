@@ -17,7 +17,7 @@ use rusqlite::{
     types::{FromSql, FromSqlError},
     Connection, OptionalExtension, Transaction,
 };
-use std::{collections::VecDeque, path::Path, sync::Arc, time::Duration};
+use std::{cmp::max, collections::VecDeque, path::Path, sync::Arc, time::Duration};
 use tracing::{debug, error, info, instrument, trace, warn, Span};
 
 #[derive(Debug, Clone, Copy)]
@@ -383,7 +383,7 @@ impl SqlitePool {
         Ok(next_version)
     }
 
-    #[instrument(skip_all, fields(%execution_id, %pending_state, %next_version, purge))]
+    #[instrument(skip_all, fields(%execution_id, %pending_state, %next_version, purge, ?ffqn))]
     fn update_index(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -743,6 +743,27 @@ impl SqlitePool {
         })
     }
 
+    fn count_join_next(
+        tx: &Transaction,
+        execution_id: ExecutionId,
+        join_set_id: JoinSetId,
+    ) -> Result<u64, SqliteError> {
+        let mut stmt = tx.prepare(
+            "SELECT COUNT(*) as count FROM t_execution_log WHERE execution_id = :execution_id AND join_set_id = :join_set_id \
+            AND json_value->>'$.HistoryEvent.event.type' = :join_next",
+        )?;
+        Ok(stmt
+            .query_row(
+                named_params! {
+                    ":execution_id": execution_id.to_string(),
+                    ":join_set_id": join_set_id.to_string(),
+                    ":join_next": "JoinNext",// TODO extract to a column
+                },
+                |row| row.get("count"),
+            )
+            .map_err(async_sqlite::Error::Rusqlite)?)
+    }
+
     #[allow(clippy::too_many_lines)]
     fn append(
         tx: &Transaction,
@@ -751,25 +772,16 @@ impl SqlitePool {
         appending_version: Version,
     ) -> Result<AppendResponse, SqliteError> {
         enum IndexAction {
-            PendingStateChanged(PendingState, Version),
-            NoPendingStateChange(Option<DelayReq>, Version),
+            PendingStateChanged(PendingState),
+            NoPendingStateChange(Option<DelayReq>),
         }
         impl IndexAction {
             fn pending_state(&self) -> Option<&PendingState> {
-                if let IndexAction::PendingStateChanged(pending_state, _) = self {
+                if let IndexAction::PendingStateChanged(pending_state) = self {
                     Some(pending_state)
                 } else {
                     None
                 }
-            }
-            fn version(&self) -> &Version {
-                match self {
-                    Self::PendingStateChanged(_, version)
-                    | Self::NoPendingStateChange(_, version) => version,
-                }
-            }
-            fn next_version(&self) -> Version {
-                Version(self.version().0 + 1)
             }
         }
         let (_pending_state, expected_version) = Self::get_pending_state(tx, execution_id)?.ok_or(
@@ -778,6 +790,19 @@ impl SqlitePool {
             ))),
         )?;
         Self::check_expected_next_and_appending_version(&expected_version, &appending_version)?;
+
+        let mut stmt = tx.prepare(
+                    "INSERT INTO t_execution_log (execution_id, created_at, json_value, version, variant, join_set_id) \
+                    VALUES (:execution_id, :created_at, :json_value, :version, :variant, :join_set_id)")?;
+        stmt.execute(named_params! {
+            ":execution_id": execution_id.to_string(),
+            ":created_at": req.created_at,
+            ":json_value": serde_json::to_value(&req.event).unwrap(),
+            ":version": appending_version.0,
+            ":variant": req.event.variant(),
+            ":join_set_id": req.event.join_set_id().map(|join_set_id | join_set_id.to_string()),
+        })?;
+        // Calculate current pending state
 
         let index_action = match &req.event {
             ExecutionEventInner::Created { .. } => {
@@ -802,22 +827,18 @@ impl SqlitePool {
             }
             ExecutionEventInner::IntermittentFailure { expires_at, .. }
             | ExecutionEventInner::IntermittentTimeout { expires_at } => {
-                IndexAction::PendingStateChanged(
-                    PendingState::PendingAt {
-                        scheduled_at: *expires_at,
-                    },
-                    appending_version,
-                )
+                IndexAction::PendingStateChanged(PendingState::PendingAt {
+                    scheduled_at: *expires_at,
+                })
             }
             ExecutionEventInner::Finished { .. } => {
-                IndexAction::PendingStateChanged(PendingState::Finished, appending_version)
+                IndexAction::PendingStateChanged(PendingState::Finished)
             }
-            ExecutionEventInner::Unlocked => IndexAction::PendingStateChanged(
-                PendingState::PendingAt {
+            ExecutionEventInner::Unlocked => {
+                IndexAction::PendingStateChanged(PendingState::PendingAt {
                     scheduled_at: req.created_at,
-                },
-                appending_version,
-            ),
+                })
+            }
             ExecutionEventInner::HistoryEvent {
                 event:
                     HistoryEvent::JoinSet { .. }
@@ -826,7 +847,7 @@ impl SqlitePool {
                         ..
                     }
                     | HistoryEvent::Persist { .. },
-            } => IndexAction::NoPendingStateChange(None, appending_version),
+            } => IndexAction::NoPendingStateChange(None),
 
             ExecutionEventInner::HistoryEvent {
                 event:
@@ -838,14 +859,11 @@ impl SqlitePool {
                                 expires_at,
                             },
                     },
-            } => IndexAction::NoPendingStateChange(
-                Some(DelayReq {
-                    join_set_id: *join_set_id,
-                    delay_id: *delay_id,
-                    expires_at: *expires_at,
-                }),
-                appending_version,
-            ),
+            } => IndexAction::NoPendingStateChange(Some(DelayReq {
+                join_set_id: *join_set_id,
+                delay_id: *delay_id,
+                expires_at: *expires_at,
+            })),
 
             ExecutionEventInner::HistoryEvent {
                 event:
@@ -853,36 +871,40 @@ impl SqlitePool {
                         join_set_id,
                         lock_expires_at,
                     },
-            } => IndexAction::PendingStateChanged(
-                PendingState::BlockedByJoinSet {
-                    join_set_id: *join_set_id,
-                    lock_expires_at: *lock_expires_at,
-                },
-                appending_version,
-            ),
+            } => {
+                // Did the response arrive already?
+                let join_next_count = Self::count_join_next(tx, execution_id, *join_set_id)?;
+                let nth_response =
+                    Self::nth_response(tx, execution_id, *join_set_id, join_next_count - 1)?; // Skip n-1 rows
+                trace!("join_next_count: {join_next_count}, nth_response: {nth_response:?}");
+                assert!(join_next_count > 0);
+                if let Some(JoinSetResponseEventOuter {
+                    created_at: nth_created_at,
+                    ..
+                }) = nth_response
+                {
+                    // No need to block
+                    let scheduled_at = max(*lock_expires_at, nth_created_at);
+                    IndexAction::PendingStateChanged(PendingState::PendingAt { scheduled_at })
+                } else {
+                    IndexAction::PendingStateChanged(PendingState::BlockedByJoinSet {
+                        join_set_id: *join_set_id,
+                        lock_expires_at: *lock_expires_at,
+                    })
+                }
+            }
 
             ExecutionEventInner::CancelRequest => {
                 // FIXME
-                IndexAction::NoPendingStateChange(None, appending_version)
+                IndexAction::NoPendingStateChange(None)
             }
         };
-        let mut stmt = tx.prepare(
-                    "INSERT INTO t_execution_log (execution_id, created_at, json_value, version, variant, join_set_id) \
-                    VALUES (:execution_id, :created_at, :json_value, :version, :variant, :join_set_id)")?;
-        stmt.execute(named_params! {
-            ":execution_id": execution_id.to_string(),
-            ":created_at": req.created_at,
-            ":json_value": serde_json::to_value(&req.event).unwrap(),
-            ":version": index_action.version().0,
-            ":variant": req.event.variant(),
-            ":join_set_id": req.event.join_set_id().map(|join_set_id | join_set_id.to_string()),
-        })?;
-        let next_version = index_action.next_version();
+        let next_version = Version(appending_version.0 + 1);
         match index_action {
-            IndexAction::PendingStateChanged(pending_state, _) => {
+            IndexAction::PendingStateChanged(pending_state) => {
                 Self::update_index(&tx, execution_id, &pending_state, &next_version, true, None)?;
             }
-            IndexAction::NoPendingStateChange(delay_req, _) => {
+            IndexAction::NoPendingStateChange(delay_req) => {
                 Self::update_index_next_version(&tx, execution_id, &next_version, delay_req)?;
             }
         };
@@ -965,6 +987,37 @@ impl SqlitePool {
             },
         )?
         .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| SqliteError::Sqlite(err.into()))
+    }
+
+    fn nth_response(
+        tx: &Transaction,
+        execution_id: ExecutionId,
+        join_set_id: JoinSetId,
+        skip_rows: u64,
+    ) -> Result<Option<JoinSetResponseEventOuter>, SqliteError> {
+        tx.prepare(
+            "SELECT created_at, join_set_id, json_value FROM t_join_set_response WHERE \
+            execution_id = :execution_id AND join_set_id = :join_set_id ORDER BY created_at
+            LIMIT 1 OFFSET :offset",
+        )?
+        .query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":join_set_id": join_set_id.to_string(),
+                ":offset": skip_rows,
+            },
+            |row| {
+                let created_at: DateTime<Utc> = row.get("created_at")?;
+                let join_set_id = row.get::<_, JoinSetIdW>("join_set_id")?.0;
+                let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
+                Ok(JoinSetResponseEventOuter {
+                    event: JoinSetResponseEvent { join_set_id, event },
+                    created_at,
+                })
+            },
+        )
+        .optional()
         .map_err(|err| SqliteError::Sqlite(err.into()))
     }
 }
@@ -1359,7 +1412,6 @@ impl DbConnection for SqlitePool {
     /// Get currently expired locks and async timers (delay requests)
     #[instrument(skip(self))]
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
-        trace!("get_expired_timers");
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
             move |conn| {
                 let mut expired_timers = conn.prepare(
@@ -1402,6 +1454,9 @@ impl DbConnection for SqlitePool {
                         .collect::<Result<Vec<_>, _>>()?
                     );
 
+                if !expired_timers.is_empty() {
+                    debug!("get_expired_timers found {expired_timers:?}");
+                }
                 Ok(expired_timers)
             },
             Span::current(),

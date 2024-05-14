@@ -182,9 +182,9 @@ impl ExecutionJournal {
                             _ => None,
                         })
                         .nth(join_next_count - 1);
-                    if let Some(created_at) = resp {
+                    if let Some(nth_created_at) = resp {
                         // Original executor has a chance to continue, but after expiry any executor can pick up the execution.
-                        let scheduled_at = max(*lock_expires_at, *created_at);
+                        let scheduled_at = max(*lock_expires_at, *nth_created_at);
                         Some(PendingState::PendingAt { scheduled_at })
                     } else {
                         Some(PendingState::BlockedByJoinSet {
