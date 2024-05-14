@@ -49,7 +49,19 @@ async fn main() {
     }
     std::panic::set_hook(Box::new(utils::tracing_panic_hook));
 
-    let db_pool = SqlitePool::new("obelisk.sqlite").await.unwrap();
+    if std::env::var("DB")
+        .unwrap_or_default()
+        .eq_ignore_ascii_case("mem")
+    {
+        let db_pool = db_mem::inmemory_dao::InMemoryPool::new();
+        run(db_pool).await;
+    } else {
+        let db_pool = SqlitePool::new("obelisk.sqlite").await.unwrap();
+        run(db_pool).await;
+    }
+}
+
+async fn run<DB: DbConnection + 'static>(db_pool: impl DbPool<DB> + 'static) {
     let activity_engine = activity_engine(EngineConfig::default());
     let workflow_engine = workflow_engine(EngineConfig::default());
 
@@ -163,7 +175,7 @@ fn exec<DB: DbConnection + 'static>(
     let exec_config = ExecConfig {
         ffqns: ffqns.clone(),
         batch_size: 10,
-        lock_expiry: Duration::from_secs(1),
+        lock_expiry: Duration::from_secs(30),
         tick_sleep: Duration::from_millis(1),
         clock_fn: now,
     };
