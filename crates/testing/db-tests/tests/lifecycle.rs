@@ -3,7 +3,8 @@ use chrono::DateTime;
 use concepts::prefixed_ulid::{DelayId, JoinSetId, RunId};
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, ExpiredTimer,
-    JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, SpecificError, Version,
+    JoinSetRequest, JoinSetResponse, JoinSetResponseEventOuter, PendingState, SpecificError,
+    Version,
 };
 use concepts::storage::{DbPool, JoinSetResponseEvent};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
@@ -554,7 +555,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
         .unwrap();
     // Create joinset
     let join_set_id = JoinSetId::generate();
-    db_connection
+    let mut version = db_connection
         .append(
             parent_id,
             version,
@@ -569,15 +570,15 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
         .unwrap();
 
     let child_a = {
+        let parent_exe = db_connection.get(parent_id).await.unwrap();
+        assert_matches!(
+            parent_exe.pending_state,
+            PendingState::PendingAt {
+                scheduled_at
+            } if scheduled_at == sim_clock.now()
+        );
         // Create child 1
         let child_id = ExecutionId::generate();
-        let parent_response = JoinSetResponseEvent {
-            join_set_id,
-            event: JoinSetResponse::ChildExecutionFinished {
-                child_execution_id: child_id,
-                result: Ok(concepts::SupportedFunctionResult::None),
-            },
-        };
         let child_version = db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -591,32 +592,60 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
             })
             .await
             .unwrap();
-        let child_resp = vec![ExecutionEventInner::Finished {
-            result: Ok(concepts::SupportedFunctionResult::None),
-        }];
+        // Append JoinNext before receiving the response should make the parent BlockedByJoinSet
+        *&mut version = db_connection
+            .append(
+                parent_id,
+                version.clone(),
+                AppendRequest {
+                    created_at: sim_clock.now(),
+                    event: ExecutionEventInner::HistoryEvent {
+                        event: HistoryEvent::JoinNext {
+                            join_set_id,
+                            lock_expires_at: sim_clock.now(),
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let parent_exe = db_connection.get(parent_id).await.unwrap();
+        assert_matches!(
+            parent_exe.pending_state,
+            PendingState::BlockedByJoinSet { join_set_id: found_join_set_id, lock_expires_at }
+            if found_join_set_id == join_set_id && lock_expires_at == sim_clock.now()
+        );
+
+        // Append child response to unblock the parent
         db_connection
             .append_batch_respond_to_parent(
                 child_id,
                 sim_clock.now(),
-                child_resp,
+                vec![ExecutionEventInner::Finished {
+                    result: Ok(concepts::SupportedFunctionResult::None),
+                }],
                 child_version,
                 parent_id,
-                parent_response.clone(),
+                JoinSetResponseEvent {
+                    join_set_id,
+                    event: JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id: child_id,
+                        result: Ok(concepts::SupportedFunctionResult::None),
+                    },
+                },
             )
             .await
             .unwrap();
+
+        let parent_exe = db_connection.get(parent_id).await.unwrap();
+        assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
+        *&mut version = parent_exe.version;
+
         child_id
     };
     let child_b = {
         // Create child 2
         let child_id = ExecutionId::generate();
-        let parent_response = JoinSetResponseEvent {
-            join_set_id,
-            event: JoinSetResponse::ChildExecutionFinished {
-                child_execution_id: child_id,
-                result: Ok(concepts::SupportedFunctionResult::None),
-            },
-        };
         let child_version = db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -641,10 +670,37 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
                 child_resp,
                 child_version,
                 parent_id,
-                parent_response.clone(),
+                JoinSetResponseEvent {
+                    join_set_id,
+                    event: JoinSetResponse::ChildExecutionFinished {
+                        child_execution_id: child_id,
+                        result: Ok(concepts::SupportedFunctionResult::None),
+                    },
+                },
             )
             .await
             .unwrap();
+
+        // Append JoinNext after receiving the response should make the parent PendingAt
+        *&mut version = db_connection
+            .append(
+                parent_id,
+                version.clone(),
+                AppendRequest {
+                    created_at: sim_clock.now(),
+                    event: ExecutionEventInner::HistoryEvent {
+                        event: HistoryEvent::JoinNext {
+                            join_set_id,
+                            lock_expires_at: sim_clock.now(),
+                        },
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let parent_exe = db_connection.get(parent_id).await.unwrap();
+        assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
+
         child_id
     };
     let parent_exe = db_connection.get(parent_id).await.unwrap();
@@ -675,6 +731,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
             }
         }
     );
+    assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
 }
 
 pub async fn lock_pending_should_sort_by_scheduled_at(db_connection: &impl DbConnection) {
