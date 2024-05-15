@@ -1336,8 +1336,7 @@ impl DbConnection for SqlitePool {
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
         trace!("get");
         self.pool
-            // TODO: Read transaction
-            .transaction_write_with_span::<_, _, SqliteError>(
+            .transaction_read_with_span::<_, _, SqliteError>(
                 move |tx| {
                     let mut stmt = tx.prepare(
                         "SELECT created_at, json_value FROM t_execution_log WHERE \
