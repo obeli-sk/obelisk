@@ -141,7 +141,7 @@ impl DbConnection for DbConnectionProxy {
         batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         version: Version,
-        child_req: CreateRequest,
+        child_req: Vec<CreateRequest>,
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
             .append_batch_create_child(created_at, batch, execution_id, version, child_req)

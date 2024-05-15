@@ -115,7 +115,7 @@ impl DbConnection for InMemoryDbConnection {
         batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         version: Version,
-        child_req: CreateRequest,
+        child_req: Vec<CreateRequest>,
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
             .lock()
@@ -563,10 +563,12 @@ impl DbTask {
         batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         version: Version,
-        child_req: CreateRequest,
+        child_req: Vec<CreateRequest>,
     ) -> Result<AppendBatchResponse, SpecificError> {
         let parent_version = self.append_batch(created_at, batch, execution_id, version)?;
-        self.create(child_req)?;
+        for child_req in child_req {
+            self.create(child_req)?;
+        }
         Ok(parent_version)
     }
 

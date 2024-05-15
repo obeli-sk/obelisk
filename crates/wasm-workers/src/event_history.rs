@@ -31,7 +31,7 @@ enum ProcessingStatus {
 
 #[allow(clippy::struct_field_names)]
 #[cfg_attr(test, derive(Clone))]
-pub(crate) struct EventHistory {
+pub(crate) struct EventHistory<C: ClockFn> {
     execution_id: ExecutionId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     execution_deadline: DateTime<Utc>,
@@ -40,20 +40,20 @@ pub(crate) struct EventHistory {
     event_history: Vec<(HistoryEvent, ProcessingStatus)>,
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
+    clock_fn: C,
     // TODO: optimize using start_from_idx: usize,
 }
 
 #[cfg_attr(test, derive(Clone))]
 enum NonBlockingCache {
     StartAsync {
-        created_at: DateTime<Utc>,
         batch: Vec<ExecutionEventInner>,
         version: Version,
         child_req: CreateRequest,
     },
 }
 
-impl EventHistory {
+impl<C: ClockFn> EventHistory<C> {
     pub(crate) fn new(
         execution_id: ExecutionId,
         event_history: Vec<HistoryEvent>,
@@ -63,6 +63,7 @@ impl EventHistory {
         child_retry_exp_backoff: Duration,
         child_max_retries: u32,
         non_blocking_event_batching: NonBlockingEventBatching,
+        clock_fn: C,
     ) -> Self {
         EventHistory {
             execution_id,
@@ -82,6 +83,7 @@ impl EventHistory {
                 NonBlockingEventBatching::Disabled => None,
                 NonBlockingEventBatching::Enabled => Some(Vec::new()),
             },
+            clock_fn,
         }
     }
 
@@ -91,14 +93,13 @@ impl EventHistory {
         event_call: EventCall,
         db_connection: &DB,
         version: &mut Version,
-        clock_fn: &impl ClockFn,
     ) -> Result<SupportedFunctionResult, FunctionError> {
         trace!("replay_or_interrupt: {event_call:?}");
         if let Some(accept_resp) = self.find_matching_atomic(&event_call)? {
             return Ok(accept_resp);
         }
         // not found in the history, persisting the request
-        let created_at = clock_fn();
+        let created_at = (self.clock_fn)();
         let poll_variant = event_call.poll_variant();
         let lock_expires_at =
             if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
@@ -162,7 +163,7 @@ impl EventHistory {
 
         if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Await {
             debug!(join_set_id = %poll_variant.join_set_id(),  "Waiting for {poll_variant}");
-            while clock_fn() < self.execution_deadline {
+            while (self.clock_fn)() < self.execution_deadline {
                 if self.fetch_update(db_connection, version).await?.is_some() {
                     if let Some(accept_resp) = self.process_event_by_key(poll_variant.as_key())? {
                         debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
@@ -426,26 +427,34 @@ impl EventHistory {
     ) -> Result<(), DbError> {
         match &mut self.non_blocking_event_batch {
             Some(non_blocking_event_batch) if !non_blocking_event_batch.is_empty() => {
-                for non_blocking in non_blocking_event_batch.drain(..).collect::<Vec<_>>() {
+                let created_at = (self.clock_fn)();
+                let mut batches = Vec::with_capacity(non_blocking_event_batch.len());
+                let mut childs = Vec::with_capacity(non_blocking_event_batch.len());
+                let mut first_version = None;
+                for non_blocking in non_blocking_event_batch.drain(..) {
                     match non_blocking {
                         NonBlockingCache::StartAsync {
-                            created_at,
                             batch,
                             version,
                             child_req,
                         } => {
-                            db_connection
-                                .append_batch_create_child(
-                                    created_at,
-                                    batch,
-                                    self.execution_id,
-                                    version,
-                                    child_req,
-                                )
-                                .await?;
+                            if first_version.is_none() {
+                                first_version.replace(version);
+                            }
+                            childs.push(child_req);
+                            batches.extend(batch);
                         }
                     }
                 }
+                db_connection
+                    .append_batch_create_child(
+                        created_at,
+                        batches,
+                        self.execution_id,
+                        first_version.unwrap(),
+                        childs,
+                    )
+                    .await?;
             }
             _ => {}
         }
@@ -466,9 +475,8 @@ impl EventHistory {
     ) -> Result<Vec<HistoryEvent>, DbError> {
         match event_call {
             EventCall::CreateJoinSet { join_set_id } => {
-                let mut history_events = Vec::with_capacity(1);
                 let event = HistoryEvent::JoinSet { join_set_id };
-                history_events.push(event.clone());
+                let history_events = vec![event.clone()];
                 let join_set = AppendRequest {
                     created_at,
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -485,12 +493,11 @@ impl EventHistory {
                 child_execution_id,
                 params,
             } => {
-                let mut history_events = Vec::with_capacity(1);
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
                 };
-                history_events.push(event.clone());
+                let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
                 let child_req = CreateRequest {
@@ -506,7 +513,6 @@ impl EventHistory {
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
                         non_blocking_event_batch.push(NonBlockingCache::StartAsync {
-                            created_at,
                             batch: vec![child_exec_req],
                             version: version.clone(),
                             child_req,
@@ -521,7 +527,7 @@ impl EventHistory {
                                 vec![child_exec_req],
                                 execution_id,
                                 version.clone(),
-                                child_req,
+                                vec![child_req],
                             )
                             .await?
                     };
@@ -529,12 +535,11 @@ impl EventHistory {
             }
             EventCall::BlockingChildJoinNext { join_set_id } => {
                 self.flush_non_blocking_event_cache(db_connection).await?;
-                let mut history_events = Vec::with_capacity(1);
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
                     lock_expires_at,
                 };
-                history_events.push(event.clone());
+                let history_events = vec![event.clone()];
                 let join_next = AppendRequest {
                     created_at,
                     event: ExecutionEventInner::HistoryEvent { event },
@@ -585,7 +590,7 @@ impl EventHistory {
                         vec![join_set, child_exec_req, join_next],
                         execution_id,
                         version.clone(),
-                        child,
+                        vec![child],
                     )
                     .await?;
                 Ok(history_events)
@@ -797,14 +802,16 @@ mod tests {
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::info;
+    use utils::time::ClockFn;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::{WastVal, WastValWithType};
 
-    async fn load_event_history(
+    async fn load_event_history<C: ClockFn>(
         db_connection: &impl DbConnection,
         execution_id: ExecutionId,
         execution_deadline: DateTime<Utc>,
-    ) -> Result<(EventHistory, Version), DbError> {
+        clock_fn: C,
+    ) -> Result<(EventHistory<C>, Version), DbError> {
         let exec_log = db_connection.get(execution_id).await?;
         let event_history = EventHistory::new(
             execution_id,
@@ -819,6 +826,7 @@ mod tests {
             Duration::ZERO,
             0,
             NonBlockingEventBatching::default(),
+            clock_fn,
         );
         Ok((event_history, exec_log.version))
     }
@@ -847,16 +855,19 @@ mod tests {
             .await
             .unwrap();
 
-        let (event_history, version) =
-            load_event_history(&db_connection, execution_id, sim_clock.now())
-                .await
-                .unwrap();
+        let (event_history, version) = load_event_history(
+            &db_connection,
+            execution_id,
+            sim_clock.now(),
+            sim_clock.get_clock_fn(),
+        )
+        .await
+        .unwrap();
 
         let join_set_id = JoinSetId::generate();
         let child_execution_id = ExecutionId::generate();
 
-        let blocking_join_first = |mut event_history: EventHistory, mut version: Version| {
-            let sim_clock = sim_clock.clone();
+        let blocking_join_first = |mut event_history: EventHistory<_>, mut version: Version| {
             let db_pool = db_pool.clone();
             async move {
                 event_history
@@ -864,7 +875,6 @@ mod tests {
                         EventCall::CreateJoinSet { join_set_id },
                         &db_pool.connection(),
                         &mut version,
-                        &sim_clock.get_clock_fn(),
                     )
                     .await
                     .unwrap();
@@ -879,7 +889,6 @@ mod tests {
                         },
                         &db_pool.connection(),
                         &mut version,
-                        &sim_clock.get_clock_fn(),
                     )
                     .await
                     .unwrap();
@@ -888,7 +897,6 @@ mod tests {
                         EventCall::BlockingChildJoinNext { join_set_id },
                         &db_pool.connection(),
                         &mut version,
-                        &sim_clock.get_clock_fn(),
                     )
                     .await
             }
@@ -917,10 +925,14 @@ mod tests {
 
         info!("Second run");
 
-        let (event_history, version) =
-            load_event_history(&db_connection, execution_id, sim_clock.now())
-                .await
-                .unwrap();
+        let (event_history, version) = load_event_history(
+            &db_connection,
+            execution_id,
+            sim_clock.now(),
+            sim_clock.get_clock_fn(),
+        )
+        .await
+        .unwrap();
 
         blocking_join_first(event_history, version).await.unwrap();
 
@@ -937,10 +949,9 @@ mod tests {
                 value: WastVal::U8(1),
             });
 
-        async fn start_async<DB: DbConnection>(
-            event_history: &mut EventHistory,
+        async fn start_async<DB: DbConnection, C: ClockFn>(
+            event_history: &mut EventHistory<C>,
             version: &mut Version,
-            sim_clock: &SimClock,
             db_pool: &impl DbPool<DB>,
             join_set_id: JoinSetId,
             child_execution_id: ExecutionId,
@@ -950,7 +961,6 @@ mod tests {
                     EventCall::CreateJoinSet { join_set_id },
                     &db_pool.connection(),
                     version,
-                    &sim_clock.get_clock_fn(),
                 )
                 .await
                 .unwrap();
@@ -964,7 +974,6 @@ mod tests {
                     },
                     &db_pool.connection(),
                     version,
-                    &sim_clock.get_clock_fn(),
                 )
                 .await
                 .unwrap();
@@ -992,10 +1001,14 @@ mod tests {
             .await
             .unwrap();
 
-        let (mut event_history, mut version) =
-            load_event_history(&db_connection, execution_id, sim_clock.now())
-                .await
-                .unwrap();
+        let (mut event_history, mut version) = load_event_history(
+            &db_connection,
+            execution_id,
+            sim_clock.now(),
+            sim_clock.get_clock_fn(),
+        )
+        .await
+        .unwrap();
 
         let join_set_id = JoinSetId::generate();
         let child_execution_id = ExecutionId::generate();
@@ -1003,7 +1016,6 @@ mod tests {
         start_async(
             &mut event_history,
             &mut version,
-            &sim_clock,
             &db_pool,
             join_set_id,
             child_execution_id,
@@ -1028,15 +1040,18 @@ mod tests {
 
         info!("Second run");
 
-        let (mut event_history, mut version) =
-            load_event_history(&db_connection, execution_id, sim_clock.now())
-                .await
-                .unwrap();
+        let (mut event_history, mut version) = load_event_history(
+            &db_connection,
+            execution_id,
+            sim_clock.now(),
+            sim_clock.get_clock_fn(),
+        )
+        .await
+        .unwrap();
 
         start_async(
             &mut event_history,
             &mut version,
-            &sim_clock,
             &db_pool,
             join_set_id,
             child_execution_id,
@@ -1048,7 +1063,6 @@ mod tests {
                 EventCall::BlockingChildJoinNext { join_set_id },
                 &db_pool.connection(),
                 &mut version,
-                &sim_clock.get_clock_fn(),
             )
             .await
             .unwrap();
@@ -1072,10 +1086,9 @@ mod tests {
                 value: WastVal::U8(2),
             });
 
-        async fn blocking_join_first<DB: DbConnection>(
-            event_history: &mut EventHistory,
+        async fn blocking_join_first<DB: DbConnection, C: ClockFn>(
+            event_history: &mut EventHistory<C>,
             version: &mut Version,
-            sim_clock: &SimClock,
             db_pool: &impl DbPool<DB>,
             join_set_id: JoinSetId,
             child_execution_id_a: ExecutionId,
@@ -1086,7 +1099,6 @@ mod tests {
                     EventCall::CreateJoinSet { join_set_id },
                     &db_pool.connection(),
                     version,
-                    &sim_clock.get_clock_fn(),
                 )
                 .await
                 .unwrap();
@@ -1100,7 +1112,6 @@ mod tests {
                     },
                     &db_pool.connection(),
                     version,
-                    &sim_clock.get_clock_fn(),
                 )
                 .await
                 .unwrap();
@@ -1114,7 +1125,6 @@ mod tests {
                     },
                     &db_pool.connection(),
                     version,
-                    &sim_clock.get_clock_fn(),
                 )
                 .await
                 .unwrap();
@@ -1123,7 +1133,6 @@ mod tests {
                     EventCall::BlockingChildJoinNext { join_set_id },
                     &db_pool.connection(),
                     version,
-                    &sim_clock.get_clock_fn(),
                 )
                 .await
         }
@@ -1150,10 +1159,14 @@ mod tests {
             .await
             .unwrap();
 
-        let (mut event_history, mut version) =
-            load_event_history(&db_connection, execution_id, sim_clock.now())
-                .await
-                .unwrap();
+        let (mut event_history, mut version) = load_event_history(
+            &db_connection,
+            execution_id,
+            sim_clock.now(),
+            sim_clock.get_clock_fn(),
+        )
+        .await
+        .unwrap();
 
         let join_set_id = JoinSetId::generate();
         let child_execution_id_a = ExecutionId::generate();
@@ -1163,7 +1176,6 @@ mod tests {
             blocking_join_first(
                 &mut event_history,
                 &mut version,
-                &sim_clock,
                 &db_pool,
                 join_set_id,
                 child_execution_id_a,
@@ -1205,15 +1217,18 @@ mod tests {
 
         info!("Second run");
 
-        let (mut event_history, mut version) =
-            load_event_history(&db_connection, execution_id, sim_clock.now())
-                .await
-                .unwrap();
+        let (mut event_history, mut version) = load_event_history(
+            &db_connection,
+            execution_id,
+            sim_clock.now(),
+            sim_clock.get_clock_fn(),
+        )
+        .await
+        .unwrap();
 
         let res = blocking_join_first(
             &mut event_history,
             &mut version,
-            &sim_clock,
             &db_pool,
             join_set_id,
             child_execution_id_a,
@@ -1229,7 +1244,6 @@ mod tests {
                 EventCall::BlockingChildJoinNext { join_set_id },
                 &db_pool.connection(),
                 &mut version,
-                &sim_clock.get_clock_fn(),
             )
             .await
             .unwrap();

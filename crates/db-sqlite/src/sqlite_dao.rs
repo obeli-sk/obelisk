@@ -1226,7 +1226,7 @@ impl DbConnection for SqlitePool {
         batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         mut version: Version,
-        child_req: CreateRequest,
+        child_req: Vec<CreateRequest>,
     ) -> Result<AppendBatchResponse, DbError> {
         debug!("append_batch_create_child");
         trace!(?batch, ?child_req, "append_batch_create_child");
@@ -1256,7 +1256,9 @@ impl DbConnection for SqlitePool {
                             version,
                         )?;
                     }
-                    Self::create_inner(tx, child_req)?;
+                    for child_req in child_req {
+                        Self::create_inner(tx, child_req)?;
+                    }
                     Ok(version)
                 },
                 Span::current(),

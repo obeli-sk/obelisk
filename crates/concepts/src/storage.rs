@@ -522,14 +522,14 @@ pub trait DbConnection: Send + Sync {
         version: Version,
     ) -> Result<AppendBatchResponse, DbError>;
 
-    /// Append one or more events to the parent execution log, and create new child execution log.
+    /// Append one or more events to the parent execution log, and create zero or more child execution logs.
     async fn append_batch_create_child(
         &self,
         created_at: DateTime<Utc>,
         batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
         version: Version,
-        child_req: CreateRequest,
+        child_req: Vec<CreateRequest>,
     ) -> Result<AppendBatchResponse, DbError>;
 
     async fn append_batch_respond_to_parent(

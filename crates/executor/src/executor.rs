@@ -990,7 +990,7 @@ mod tests {
                     vec![join_set, child_exec_req, join_next],
                     parent_execution_id,
                     Version::new(2),
-                    child,
+                    vec![child],
                 )
                 .await
                 .unwrap();

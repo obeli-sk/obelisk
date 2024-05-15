@@ -58,7 +58,7 @@ wasmtime::component::bindgen!({
 
 pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     execution_id: ExecutionId,
-    event_history: EventHistory,
+    event_history: EventHistory<C>,
     rng: StdRng,
     pub(crate) clock_fn: C,
     db_pool: P,
@@ -93,6 +93,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 retry_exp_backoff,
                 max_retries,
                 non_blocking_event_batching,
+                clock_fn.clone(),
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -113,12 +114,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         let event_call = self.imported_fn_to_event_call(ffqn, params).expect("FIXME");
         let res = self
             .event_history
-            .replay_or_interrupt(
-                event_call,
-                &self.db_pool.connection(),
-                &mut self.version,
-                &self.clock_fn,
-            )
+            .replay_or_interrupt(event_call, &self.db_pool.connection(), &mut self.version)
             .await?;
         assert_eq!(results.len(), res.len(), "unexpected results length"); // FIXME: FunctionError
         for (idx, item) in res.value().into_iter().enumerate() {
@@ -141,7 +137,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 },
                 &self.db_pool.connection(),
                 &mut self.version,
-                &self.clock_fn,
             )
             .await?;
         Ok(())
@@ -249,7 +244,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> my_org::workflow_engine::host_
                 EventCall::CreateJoinSet { join_set_id },
                 &self.db_pool.connection(),
                 &mut self.version,
-                &self.clock_fn,
             )
             .await?;
         Ok(join_set_id.to_string())
