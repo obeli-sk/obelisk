@@ -593,10 +593,10 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
             .await
             .unwrap();
         // Append JoinNext before receiving the response should make the parent BlockedByJoinSet
-        *&mut version = db_connection
+        db_connection
             .append(
                 parent_id,
-                version.clone(),
+                version,
                 AppendRequest {
                     created_at: sim_clock.now(),
                     event: ExecutionEventInner::HistoryEvent {
@@ -639,7 +639,7 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
 
         let parent_exe = db_connection.get(parent_id).await.unwrap();
         assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
-        *&mut version = parent_exe.version;
+        version = parent_exe.version;
 
         child_id
     };
@@ -682,10 +682,10 @@ pub async fn append_batch_respond_to_parent(db_connection: &impl DbConnection) {
             .unwrap();
 
         // Append JoinNext after receiving the response should make the parent PendingAt
-        *&mut version = db_connection
+        db_connection
             .append(
                 parent_id,
-                version.clone(),
+                version,
                 AppendRequest {
                     created_at: sim_clock.now(),
                     event: ExecutionEventInner::HistoryEvent {

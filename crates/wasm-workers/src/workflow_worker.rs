@@ -32,29 +32,20 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
 }
 
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum JoinNextBlockingStrategy {
     /// Shut down the current runtime. When the `JoinSetResponse` is appended, workflow is reexecuted with a new `RunId`.
+    #[default]
     Interrupt,
     /// Keep the execution hot. Worker will poll the database until the execution lock expires.
     Await,
 }
 
-impl Default for JoinNextBlockingStrategy {
-    fn default() -> Self {
-        Self::Interrupt
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NonBlockingEventBatching {
+    #[default]
     Disabled,
     Enabled,
-}
-impl Default for NonBlockingEventBatching {
-    fn default() -> Self {
-        NonBlockingEventBatching::Disabled
-    }
 }
 
 #[derive(Clone, Derivative)]

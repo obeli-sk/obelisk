@@ -54,6 +54,7 @@ enum NonBlockingCache {
 }
 
 impl<C: ClockFn> EventHistory<C> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
         event_history: Vec<HistoryEvent>,
@@ -411,7 +412,7 @@ impl<C: ClockFn> EventHistory<C> {
         if self
             .non_blocking_event_batch
             .as_ref()
-            .map(|vec| vec.len())
+            .map(std::vec::Vec::len)
             .unwrap_or_default()
             >= MAX_NON_BLOCKING_CACHE_SIZE
         {
