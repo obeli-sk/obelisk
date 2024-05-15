@@ -111,7 +111,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         let event_call = self.imported_fn_to_event_call(ffqn, params).expect("FIXME");
         let res = self
             .event_history
-            .replay_or_interrupt(event_call, &self.db_pool, &mut self.version, &self.clock_fn)
+            .replay_or_interrupt(
+                event_call,
+                &self.db_pool.connection(),
+                &mut self.version,
+                &self.clock_fn,
+            )
             .await?;
         assert_eq!(results.len(), res.len(), "unexpected results length"); // FIXME: FunctionError
         for (idx, item) in res.value().into_iter().enumerate() {
@@ -132,7 +137,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     delay_id,
                     expires_at_if_new: (self.clock_fn)() + Duration::from_millis(u64::from(millis)),
                 },
-                &self.db_pool,
+                &self.db_pool.connection(),
                 &mut self.version,
                 &self.clock_fn,
             )
@@ -240,7 +245,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> my_org::workflow_engine::host_
         self.event_history
             .replay_or_interrupt(
                 EventCall::CreateJoinSet { join_set_id },
-                &self.db_pool,
+                &self.db_pool.connection(),
                 &mut self.version,
                 &self.clock_fn,
             )

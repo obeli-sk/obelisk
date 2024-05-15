@@ -5,8 +5,8 @@ use crate::workflow_worker::JoinNextBlockingStrategy;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{
-    AppendRequest, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
-    JoinSetResponse, JoinSetResponseEvent, Version,
+    AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse,
+    JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
@@ -71,7 +71,7 @@ impl EventHistory {
     pub(crate) async fn replay_or_interrupt<DB: DbConnection>(
         &mut self,
         event_call: EventCall,
-        db_pool: &impl DbPool<DB>,
+        db_connection: &DB,
         version: &mut Version,
         clock_fn: &impl ClockFn,
     ) -> Result<SupportedFunctionResult, FunctionError> {
@@ -116,7 +116,6 @@ impl EventHistory {
             EventCall::CreateJoinSet { .. } | EventCall::StartAsync { .. } => None, // continue the execution
         };
 
-        let db_connection = db_pool.connection();
         let lock_expires_at =
             if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
                 created_at
@@ -130,7 +129,7 @@ impl EventHistory {
                 let cloned_non_blocking = event_call.clone();
                 let history_events = event_call
                     .append_to_db(
-                        &db_connection,
+                        db_connection,
                         created_at,
                         lock_expires_at,
                         self.execution_id,
@@ -149,7 +148,7 @@ impl EventHistory {
                 let keys = event_call.as_keys();
                 let history_events = event_call
                     .append_to_db(
-                        &db_connection,
+                        db_connection,
                         created_at,
                         lock_expires_at,
                         self.execution_id,
@@ -178,7 +177,7 @@ impl EventHistory {
         if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Await {
             debug!(join_set_id = %poll_variant.join_set_id(),  "Waiting for {poll_variant}");
             while clock_fn() < self.execution_deadline {
-                if self.fetch_update(&db_connection, version).await?.is_some() {
+                if self.fetch_update(db_connection, version).await?.is_some() {
                     if let Some(accept_resp) = self.process_event_by_key(poll_variant.as_key())? {
                         debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
                         return Ok(accept_resp);
@@ -770,7 +769,7 @@ mod tests {
                 event_history
                     .replay_or_interrupt(
                         EventCall::CreateJoinSet { join_set_id },
-                        &db_pool,
+                        &db_pool.connection(),
                         &mut version,
                         &sim_clock.get_clock_fn(),
                     )
@@ -785,7 +784,7 @@ mod tests {
                             child_execution_id,
                             params: Params::default(),
                         },
-                        &db_pool,
+                        &db_pool.connection(),
                         &mut version,
                         &sim_clock.get_clock_fn(),
                     )
@@ -794,7 +793,7 @@ mod tests {
                 event_history
                     .replay_or_interrupt(
                         EventCall::BlockingChildJoinNext { join_set_id },
-                        &db_pool,
+                        &db_pool.connection(),
                         &mut version,
                         &sim_clock.get_clock_fn(),
                     )
@@ -856,7 +855,7 @@ mod tests {
             event_history
                 .replay_or_interrupt(
                     EventCall::CreateJoinSet { join_set_id },
-                    db_pool,
+                    &db_pool.connection(),
                     version,
                     &sim_clock.get_clock_fn(),
                 )
@@ -870,7 +869,7 @@ mod tests {
                         child_execution_id,
                         params: Params::default(),
                     },
-                    db_pool,
+                    &db_pool.connection(),
                     version,
                     &sim_clock.get_clock_fn(),
                 )
@@ -954,7 +953,7 @@ mod tests {
         let res = event_history
             .replay_or_interrupt(
                 EventCall::BlockingChildJoinNext { join_set_id },
-                &db_pool,
+                &db_pool.connection(),
                 &mut version,
                 &sim_clock.get_clock_fn(),
             )
@@ -992,7 +991,7 @@ mod tests {
             event_history
                 .replay_or_interrupt(
                     EventCall::CreateJoinSet { join_set_id },
-                    db_pool,
+                    &db_pool.connection(),
                     version,
                     &sim_clock.get_clock_fn(),
                 )
@@ -1006,7 +1005,7 @@ mod tests {
                         child_execution_id: child_execution_id_a,
                         params: Params::default(),
                     },
-                    db_pool,
+                    &db_pool.connection(),
                     version,
                     &sim_clock.get_clock_fn(),
                 )
@@ -1020,7 +1019,7 @@ mod tests {
                         child_execution_id: child_execution_id_b,
                         params: Params::default(),
                     },
-                    db_pool,
+                    &db_pool.connection(),
                     version,
                     &sim_clock.get_clock_fn(),
                 )
@@ -1029,7 +1028,7 @@ mod tests {
             event_history
                 .replay_or_interrupt(
                     EventCall::BlockingChildJoinNext { join_set_id },
-                    db_pool,
+                    &db_pool.connection(),
                     version,
                     &sim_clock.get_clock_fn(),
                 )
@@ -1135,7 +1134,7 @@ mod tests {
         let res = event_history
             .replay_or_interrupt(
                 EventCall::BlockingChildJoinNext { join_set_id },
-                &db_pool,
+                &db_pool.connection(),
                 &mut version,
                 &sim_clock.get_clock_fn(),
             )

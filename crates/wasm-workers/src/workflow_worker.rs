@@ -64,7 +64,6 @@ pub struct WorkflowConfig<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     config: WorkflowConfig<C, DB, P>,
     engine: Arc<Engine>,
-    // exported_ffqns_to_results_len: HashMap<FunctionFqn, usize>,
     linker: wasmtime::component::Linker<WorkflowCtx<C, DB, P>>,
     component: wasmtime::component::Component,
     exim: ExIm,
@@ -81,7 +80,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         let mut linker = wasmtime::component::Linker::new(&engine);
 
         // Mock imported functions
-
         for import in &wasm_component.exim.imports {
             if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
                 // Skip host-implemented functions
@@ -141,7 +139,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         Ok(Self {
             config,
             engine,
-            // exported_ffqns_to_results_len: wasm_component.exported_ffqns_to_results_len,
             linker,
             component: wasm_component.component,
             exim: wasm_component.exim,
