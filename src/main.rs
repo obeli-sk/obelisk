@@ -1,16 +1,19 @@
 use concepts::storage::DbConnection;
 use concepts::storage::{CreateRequest, DbPool};
 use concepts::{prefixed_ulid::ConfigId, StrVariant};
-use concepts::{ExecutionId, FunctionFqn, Params};
+use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use executor::worker::Worker;
 use std::sync::Arc;
 use std::{marker::PhantomData, time::Duration};
+use tracing::error;
 use utils::time::now;
+use val_json::wast_val::{WastVal, WastValWithType};
 use wasm_workers::activity_worker::TIMEOUT_SLEEP_UNIT;
 use wasm_workers::epoch_ticker::EpochTicker;
+use wasm_workers::workflow_worker::NonBlockingEventBatching;
 use wasm_workers::{
     activity_worker::{activity_engine, RecycleInstancesSetting},
     auto_worker::{AutoConfig, AutoWorker},
@@ -126,10 +129,27 @@ async fn run<DB: DbConnection + 'static>(db_pool: impl DbPool<DB> + 'static) {
             .await
             .unwrap();
 
-        let _ = db_connection
+        let res = db_connection
             .wait_for_finished_result(execution_id, None)
             .await
             .unwrap();
+
+        let duration = (now() - created_at).to_std().unwrap();
+        match res {
+            Ok(
+                SupportedFunctionResult::None
+                | SupportedFunctionResult::Infallible(_)
+                | SupportedFunctionResult::Fallible(WastValWithType {
+                    value: WastVal::Result(Ok(_)),
+                    ..
+                }),
+            ) => {
+                error!("Finished OK in {duration:?}");
+            }
+            _ => {
+                error!("Finished with an error in {duration:?} - {res:?}");
+            }
+        }
 
         for (task, _) in wasm_tasks {
             task.close().await;
@@ -167,6 +187,7 @@ fn exec<DB: DbConnection + 'static>(
         workflow_child_retry_exp_backoff: Duration::from_millis(10),
         workflow_child_max_retries: 5,
         timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
+        non_blocking_event_batching: NonBlockingEventBatching::Enabled,
         phantom_data: PhantomData,
     };
     let worker =

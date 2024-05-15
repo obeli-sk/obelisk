@@ -6,7 +6,9 @@
 
 use crate::{
     activity_worker::{ActivityConfig, ActivityWorker, RecycleInstancesSetting},
-    workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig, WorkflowWorker},
+    workflow_worker::{
+        JoinNextBlockingStrategy, NonBlockingEventBatching, WorkflowConfig, WorkflowWorker,
+    },
     WasmComponent, WasmFileError,
 };
 use async_trait::async_trait;
@@ -35,6 +37,7 @@ pub struct AutoConfig<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     pub workflow_child_retry_exp_backoff: Duration,
     pub workflow_child_max_retries: u32,
     pub timeout_sleep_unit: Duration,
+    pub non_blocking_event_batching: NonBlockingEventBatching,
     #[derivative(Debug = "ignore")]
     pub phantom_data: PhantomData<DB>,
 }
@@ -78,6 +81,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> AutoWorker<C, DB, P> {
                 db_pool: config.workflow_db_pool,
                 child_retry_exp_backoff: config.workflow_child_retry_exp_backoff,
                 child_max_retries: config.workflow_child_max_retries,
+                non_blocking_event_batching: config.non_blocking_event_batching,
                 phantom_data: PhantomData,
             };
             WorkflowWorker::new_with_config(wasm_component, config, workflow_engine)
@@ -154,7 +158,7 @@ mod tests {
     use crate::{
         activity_worker::{activity_engine, RecycleInstancesSetting, TIMEOUT_SLEEP_UNIT},
         auto_worker::Kind,
-        workflow_worker::{workflow_engine, JoinNextBlockingStrategy},
+        workflow_worker::{workflow_engine, JoinNextBlockingStrategy, NonBlockingEventBatching},
         EngineConfig,
     };
     use concepts::storage::DbPool;
@@ -186,6 +190,7 @@ mod tests {
             workflow_child_retry_exp_backoff: Duration::ZERO,
             workflow_child_max_retries: 0,
             timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
+            non_blocking_event_batching: NonBlockingEventBatching::default(),
             phantom_data: PhantomData,
         };
         let worker = AutoWorker::new_with_config(

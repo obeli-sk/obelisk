@@ -1,5 +1,5 @@
 use crate::event_history::{EventCall, EventHistory};
-use crate::workflow_worker::JoinNextBlockingStrategy;
+use crate::workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{DbConnection, DbError, DbPool, Version};
@@ -80,6 +80,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         execution_deadline: DateTime<Utc>,
         retry_exp_backoff: Duration,
         max_retries: u32,
+        non_blocking_event_batching: NonBlockingEventBatching,
     ) -> Self {
         Self {
             execution_id,
@@ -91,6 +92,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 execution_deadline,
                 retry_exp_backoff,
                 max_retries,
+                non_blocking_event_batching,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -260,7 +262,10 @@ const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::{workflow_ctx::WorkflowCtx, workflow_worker::JoinNextBlockingStrategy};
+    use crate::{
+        workflow_ctx::WorkflowCtx,
+        workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching},
+    };
     use async_trait::async_trait;
     use concepts::{
         storage::{
@@ -332,6 +337,7 @@ pub(crate) mod tests {
                 ctx.execution_deadline,
                 Duration::ZERO,
                 0,
+                NonBlockingEventBatching::default(),
             );
             for step in &self.steps {
                 let res = match step {

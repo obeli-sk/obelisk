@@ -360,6 +360,21 @@ impl SupportedFunctionResult {
     }
 
     #[must_use]
+    pub fn fallible_result(&self) -> Option<Result<Option<&WastVal>, Option<&WastVal>>> {
+        match self {
+            SupportedFunctionResult::Fallible(WastValWithType {
+                value: WastVal::Result(Ok(ok)),
+                ..
+            }) => Some(Ok(ok.as_deref())),
+            SupportedFunctionResult::Fallible(WastValWithType {
+                value: WastVal::Result(Err(err)),
+                ..
+            }) => Some(Err(err.as_deref())),
+            _ => None,
+        }
+    }
+
+    #[must_use]
     pub fn value(&self) -> Option<&WastVal> {
         match self {
             SupportedFunctionResult::None => None,

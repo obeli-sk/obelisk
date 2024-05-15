@@ -46,6 +46,17 @@ impl Default for JoinNextBlockingStrategy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NonBlockingEventBatching {
+    Disabled,
+    Enabled,
+}
+impl Default for NonBlockingEventBatching {
+    fn default() -> Self {
+        NonBlockingEventBatching::Disabled
+    }
+}
+
 #[derive(Clone, Derivative)]
 #[derivative(Debug)]
 pub struct WorkflowConfig<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
@@ -56,6 +67,7 @@ pub struct WorkflowConfig<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     pub db_pool: P,
     pub child_retry_exp_backoff: Duration,
     pub child_max_retries: u32,
+    pub non_blocking_event_batching: NonBlockingEventBatching,
     #[derivative(Debug = "ignore")]
     pub phantom_data: PhantomData<DB>,
 }
@@ -179,6 +191,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 ctx.execution_deadline,
                 self.config.child_retry_exp_backoff,
                 self.config.child_max_retries,
+                self.config.non_blocking_event_batching,
             );
             let mut store = Store::new(&self.engine, ctx);
             let instance = match self
@@ -381,6 +394,7 @@ mod tests {
                     join_next_blocking_strategy,
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
+                    non_blocking_event_batching: NonBlockingEventBatching::default(),
                     phantom_data: PhantomData,
                 },
                 workflow_engine,
@@ -506,6 +520,7 @@ mod tests {
                     join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
+                    non_blocking_event_batching: NonBlockingEventBatching::default(),
                     phantom_data: PhantomData,
                 },
                 workflow_engine,

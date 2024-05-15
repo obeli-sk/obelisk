@@ -2,6 +2,7 @@ use crate::event_history::ProcessingStatus::Processed;
 use crate::event_history::ProcessingStatus::Unprocessed;
 use crate::workflow_ctx::FunctionError;
 use crate::workflow_worker::JoinNextBlockingStrategy;
+use crate::workflow_worker::NonBlockingEventBatching;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{
@@ -19,7 +20,8 @@ use utils::time::ClockFn;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 
-const DB_POLL_SLEEP: Duration = Duration::from_millis(50);
+const FETCH_HISTORY_LOOP_SLEEP: Duration = Duration::from_millis(50);
+const MAX_NON_BLOCKING_CACHE_SIZE: usize = 50;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum ProcessingStatus {
@@ -37,7 +39,18 @@ pub(crate) struct EventHistory {
     child_max_retries: u32,
     event_history: Vec<(HistoryEvent, ProcessingStatus)>,
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
+    non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     // TODO: optimize using start_from_idx: usize,
+}
+
+#[cfg_attr(test, derive(Clone))]
+enum NonBlockingCache {
+    StartAsync {
+        created_at: DateTime<Utc>,
+        batch: Vec<ExecutionEventInner>,
+        version: Version,
+        child_req: CreateRequest,
+    },
 }
 
 impl EventHistory {
@@ -49,6 +62,7 @@ impl EventHistory {
         execution_deadline: DateTime<Utc>,
         child_retry_exp_backoff: Duration,
         child_max_retries: u32,
+        non_blocking_event_batching: NonBlockingEventBatching,
     ) -> Self {
         EventHistory {
             execution_id,
@@ -64,6 +78,10 @@ impl EventHistory {
             execution_deadline,
             child_retry_exp_backoff,
             child_max_retries,
+            non_blocking_event_batch: match non_blocking_event_batching {
+                NonBlockingEventBatching::Disabled => None,
+                NonBlockingEventBatching::Enabled => Some(Vec::new()),
+            },
         }
     }
 
@@ -75,47 +93,13 @@ impl EventHistory {
         version: &mut Version,
         clock_fn: &impl ClockFn,
     ) -> Result<SupportedFunctionResult, FunctionError> {
-        #[derive(derive_more::Display)]
-        enum PollVariant {
-            JoinNextChild(JoinSetId),
-            JoinNextDelay(JoinSetId),
-        }
-        impl PollVariant {
-            fn join_set_id(&self) -> JoinSetId {
-                match self {
-                    PollVariant::JoinNextChild(join_set_id)
-                    | PollVariant::JoinNextDelay(join_set_id) => *join_set_id,
-                }
-            }
-            fn as_key(&self) -> EventHistoryKey {
-                match self {
-                    PollVariant::JoinNextChild(join_set_id) => EventHistoryKey::JoinNextChild {
-                        join_set_id: *join_set_id,
-                    },
-                    PollVariant::JoinNextDelay(join_set_id) => EventHistoryKey::JoinNextDelay {
-                        join_set_id: *join_set_id,
-                    },
-                }
-            }
-        }
         trace!("replay_or_interrupt: {event_call:?}");
         if let Some(accept_resp) = self.find_matching_atomic(&event_call)? {
             return Ok(accept_resp);
         }
         // not found in the history, persisting the request
         let created_at = clock_fn();
-        let poll_variant = match &event_call {
-            // Blocking calls can be polled for JoinSetResponse
-            EventCall::BlockingChildExecutionRequest { join_set_id, .. }
-            | EventCall::BlockingChildJoinNext { join_set_id } => {
-                Some(PollVariant::JoinNextChild(*join_set_id))
-            }
-            EventCall::BlockingDelayRequest { join_set_id, .. } => {
-                Some(PollVariant::JoinNextDelay(*join_set_id))
-            }
-            EventCall::CreateJoinSet { .. } | EventCall::StartAsync { .. } => None, // continue the execution
-        };
-
+        let poll_variant = event_call.poll_variant();
         let lock_expires_at =
             if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
                 created_at
@@ -127,8 +111,9 @@ impl EventHistory {
                 // events that cannot block
                 // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
                 let cloned_non_blocking = event_call.clone();
-                let history_events = event_call
+                let history_events = self
                     .append_to_db(
+                        event_call,
                         db_connection,
                         created_at,
                         lock_expires_at,
@@ -146,8 +131,9 @@ impl EventHistory {
             }
             Some(poll_variant) => {
                 let keys = event_call.as_keys();
-                let history_events = event_call
+                let history_events = self
                     .append_to_db(
+                        event_call,
                         db_connection,
                         created_at,
                         lock_expires_at,
@@ -183,7 +169,7 @@ impl EventHistory {
                         return Ok(accept_resp);
                     }
                 }
-                tokio::time::sleep(DB_POLL_SLEEP).await;
+                tokio::time::sleep(FETCH_HISTORY_LOOP_SLEEP).await;
             }
         }
         match poll_variant {
@@ -416,6 +402,257 @@ impl EventHistory {
             Ok(None)
         }
     }
+
+    async fn flush_non_blocking_event_cache_if_full<DB: DbConnection>(
+        &mut self,
+        db_connection: &DB,
+    ) -> Result<(), DbError> {
+        if self
+            .non_blocking_event_batch
+            .as_ref()
+            .map(|vec| vec.len())
+            .unwrap_or_default()
+            >= MAX_NON_BLOCKING_CACHE_SIZE
+        {
+            self.flush_non_blocking_event_cache(db_connection).await
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn flush_non_blocking_event_cache<DB: DbConnection>(
+        &mut self,
+        db_connection: &DB,
+    ) -> Result<(), DbError> {
+        match &mut self.non_blocking_event_batch {
+            Some(non_blocking_event_batch) if !non_blocking_event_batch.is_empty() => {
+                for non_blocking in non_blocking_event_batch.drain(..).collect::<Vec<_>>() {
+                    match non_blocking {
+                        NonBlockingCache::StartAsync {
+                            created_at,
+                            batch,
+                            version,
+                            child_req,
+                        } => {
+                            db_connection
+                                .append_batch_create_child(
+                                    created_at,
+                                    batch,
+                                    self.execution_id,
+                                    version,
+                                    child_req,
+                                )
+                                .await?;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    async fn append_to_db<DB: DbConnection>(
+        &mut self,
+        event_call: EventCall,
+        db_connection: &DB,
+        created_at: DateTime<Utc>,
+        lock_expires_at: DateTime<Utc>,
+        execution_id: ExecutionId,
+        version: &mut Version,
+        child_retry_exp_backoff: Duration,
+        child_max_retries: u32,
+    ) -> Result<Vec<HistoryEvent>, DbError> {
+        match event_call {
+            EventCall::CreateJoinSet { join_set_id } => {
+                let mut history_events = Vec::with_capacity(1);
+                let event = HistoryEvent::JoinSet { join_set_id };
+                history_events.push(event.clone());
+                let join_set = AppendRequest {
+                    created_at,
+                    event: ExecutionEventInner::HistoryEvent { event },
+                };
+                debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
+                *version = db_connection
+                    .append(execution_id, version.clone(), join_set)
+                    .await?;
+                Ok(history_events)
+            }
+            EventCall::StartAsync {
+                ffqn,
+                join_set_id,
+                child_execution_id,
+                params,
+            } => {
+                let mut history_events = Vec::with_capacity(1);
+                let event = HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                };
+                history_events.push(event.clone());
+                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
+                debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
+                let child_req = CreateRequest {
+                    created_at,
+                    execution_id: child_execution_id,
+                    ffqn,
+                    params,
+                    parent: Some((execution_id, join_set_id)),
+                    scheduled_at: created_at,
+                    retry_exp_backoff: child_retry_exp_backoff,
+                    max_retries: child_max_retries,
+                };
+                *version =
+                    if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
+                        non_blocking_event_batch.push(NonBlockingCache::StartAsync {
+                            created_at,
+                            batch: vec![child_exec_req],
+                            version: version.clone(),
+                            child_req,
+                        });
+                        self.flush_non_blocking_event_cache_if_full(db_connection)
+                            .await?;
+                        Version::new(version.0 + 1)
+                    } else {
+                        db_connection
+                            .append_batch_create_child(
+                                created_at,
+                                vec![child_exec_req],
+                                execution_id,
+                                version.clone(),
+                                child_req,
+                            )
+                            .await?
+                    };
+                Ok(history_events)
+            }
+            EventCall::BlockingChildJoinNext { join_set_id } => {
+                self.flush_non_blocking_event_cache(db_connection).await?;
+                let mut history_events = Vec::with_capacity(1);
+                let event = HistoryEvent::JoinNext {
+                    join_set_id,
+                    lock_expires_at,
+                };
+                history_events.push(event.clone());
+                let join_next = AppendRequest {
+                    created_at,
+                    event: ExecutionEventInner::HistoryEvent { event },
+                };
+                debug!(%join_set_id, "BlockingChildJoinNext: appending JoinNext");
+                *version = db_connection
+                    .append(execution_id, version.clone(), join_next)
+                    .await?;
+                Ok(history_events)
+            }
+            EventCall::BlockingChildExecutionRequest {
+                ffqn,
+                join_set_id,
+                child_execution_id,
+                params,
+            } => {
+                self.flush_non_blocking_event_cache(db_connection).await?;
+                let mut history_events = Vec::with_capacity(3);
+                let event = HistoryEvent::JoinSet { join_set_id };
+                history_events.push(event.clone());
+                let join_set = ExecutionEventInner::HistoryEvent { event };
+                let event = HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                };
+                history_events.push(event.clone());
+                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
+                let event = HistoryEvent::JoinNext {
+                    join_set_id,
+                    lock_expires_at,
+                };
+                history_events.push(event.clone());
+                let join_next = ExecutionEventInner::HistoryEvent { event };
+                debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Appending JoinSet,ChildExecutionRequest,JoinNext");
+                let child = CreateRequest {
+                    created_at,
+                    execution_id: child_execution_id,
+                    ffqn: ffqn.clone(),
+                    params: params.clone(),
+                    parent: Some((execution_id, join_set_id)),
+                    scheduled_at: created_at,
+                    retry_exp_backoff: child_retry_exp_backoff,
+                    max_retries: child_max_retries,
+                };
+                *version = db_connection
+                    .append_batch_create_child(
+                        created_at,
+                        vec![join_set, child_exec_req, join_next],
+                        execution_id,
+                        version.clone(),
+                        child,
+                    )
+                    .await?;
+                Ok(history_events)
+            }
+            EventCall::BlockingDelayRequest {
+                join_set_id,
+                delay_id,
+                expires_at_if_new,
+            } => {
+                self.flush_non_blocking_event_cache(db_connection).await?;
+                let mut history_events = Vec::with_capacity(3);
+                let event = HistoryEvent::JoinSet { join_set_id };
+                history_events.push(event.clone());
+                let join_set = ExecutionEventInner::HistoryEvent { event };
+                let event = HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request: JoinSetRequest::DelayRequest {
+                        delay_id,
+                        expires_at: expires_at_if_new,
+                    },
+                };
+                history_events.push(event.clone());
+                let delay_req = ExecutionEventInner::HistoryEvent { event };
+                let event = HistoryEvent::JoinNext {
+                    join_set_id,
+                    lock_expires_at,
+                };
+                history_events.push(event.clone());
+                let join_next = ExecutionEventInner::HistoryEvent { event };
+                debug!(%delay_id, %join_set_id, "BlockingDelayRequest: appending JoinSet,DelayRequest,JoinNext");
+                *version = db_connection
+                    .append_batch(
+                        created_at,
+                        vec![join_set, delay_req, join_next],
+                        execution_id,
+                        version.clone(),
+                    )
+                    .await?;
+                Ok(history_events)
+            }
+        }
+    }
+}
+
+#[derive(derive_more::Display)]
+enum PollVariant {
+    JoinNextChild(JoinSetId),
+    JoinNextDelay(JoinSetId),
+}
+impl PollVariant {
+    fn join_set_id(&self) -> JoinSetId {
+        match self {
+            PollVariant::JoinNextChild(join_set_id) | PollVariant::JoinNextDelay(join_set_id) => {
+                *join_set_id
+            }
+        }
+    }
+    fn as_key(&self) -> EventHistoryKey {
+        match self {
+            PollVariant::JoinNextChild(join_set_id) => EventHistoryKey::JoinNextChild {
+                join_set_id: *join_set_id,
+            },
+            PollVariant::JoinNextDelay(join_set_id) => EventHistoryKey::JoinNextDelay {
+                join_set_id: *join_set_id,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -444,6 +681,22 @@ pub(crate) enum EventCall {
         delay_id: DelayId,
         expires_at_if_new: DateTime<Utc>,
     },
+}
+
+impl EventCall {
+    fn poll_variant(&self) -> Option<PollVariant> {
+        match &self {
+            // Blocking calls can be polled for JoinSetResponse
+            EventCall::BlockingChildExecutionRequest { join_set_id, .. }
+            | EventCall::BlockingChildJoinNext { join_set_id } => {
+                Some(PollVariant::JoinNextChild(*join_set_id))
+            }
+            EventCall::BlockingDelayRequest { join_set_id, .. } => {
+                Some(PollVariant::JoinNextDelay(*join_set_id))
+            }
+            EventCall::CreateJoinSet { .. } | EventCall::StartAsync { .. } => None, // continue the execution
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -524,167 +777,6 @@ impl EventCall {
             ],
         }
     }
-
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    async fn append_to_db(
-        self,
-        db_connection: &impl DbConnection,
-        created_at: DateTime<Utc>,
-        lock_expires_at: DateTime<Utc>,
-        execution_id: ExecutionId,
-        version: &mut Version,
-        child_retry_exp_backoff: Duration,
-        child_max_retries: u32,
-    ) -> Result<Vec<HistoryEvent>, DbError> {
-        match self {
-            EventCall::CreateJoinSet { join_set_id } => {
-                let mut history_events = Vec::with_capacity(1);
-                let event = HistoryEvent::JoinSet { join_set_id };
-                history_events.push(event.clone());
-                let join_set = AppendRequest {
-                    created_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
-                };
-                debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
-                *version = db_connection
-                    .append(execution_id, version.clone(), join_set)
-                    .await?;
-                Ok(history_events)
-            }
-            EventCall::StartAsync {
-                ffqn,
-                join_set_id,
-                child_execution_id,
-                params,
-            } => {
-                let mut history_events = Vec::with_capacity(1);
-                let event = HistoryEvent::JoinSetRequest {
-                    join_set_id,
-                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
-                };
-                history_events.push(event.clone());
-                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
-                debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
-                let child = CreateRequest {
-                    created_at,
-                    execution_id: child_execution_id,
-                    ffqn,
-                    params,
-                    parent: Some((execution_id, join_set_id)),
-                    scheduled_at: created_at,
-                    retry_exp_backoff: child_retry_exp_backoff,
-                    max_retries: child_max_retries,
-                };
-
-                *version = db_connection
-                    .append_batch_create_child(
-                        created_at,
-                        vec![child_exec_req],
-                        execution_id,
-                        version.clone(),
-                        child,
-                    )
-                    .await?;
-                Ok(history_events)
-            }
-            EventCall::BlockingChildJoinNext { join_set_id } => {
-                let mut history_events = Vec::with_capacity(1);
-                let event = HistoryEvent::JoinNext {
-                    join_set_id,
-                    lock_expires_at,
-                };
-                history_events.push(event.clone());
-                let join_next = AppendRequest {
-                    created_at,
-                    event: ExecutionEventInner::HistoryEvent { event },
-                };
-                debug!(%join_set_id, "BlockingChildJoinNext: appending JoinNext");
-                *version = db_connection
-                    .append(execution_id, version.clone(), join_next)
-                    .await?;
-                Ok(history_events)
-            }
-            EventCall::BlockingChildExecutionRequest {
-                ffqn,
-                join_set_id,
-                child_execution_id,
-                params,
-            } => {
-                let mut history_events = Vec::with_capacity(3);
-                let event = HistoryEvent::JoinSet { join_set_id };
-                history_events.push(event.clone());
-                let join_set = ExecutionEventInner::HistoryEvent { event };
-                let event = HistoryEvent::JoinSetRequest {
-                    join_set_id,
-                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
-                };
-                history_events.push(event.clone());
-                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
-                let event = HistoryEvent::JoinNext {
-                    join_set_id,
-                    lock_expires_at,
-                };
-                history_events.push(event.clone());
-                let join_next = ExecutionEventInner::HistoryEvent { event };
-                debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Appending JoinSet,ChildExecutionRequest,JoinNext");
-                let child = CreateRequest {
-                    created_at,
-                    execution_id: child_execution_id,
-                    ffqn: ffqn.clone(),
-                    params: params.clone(),
-                    parent: Some((execution_id, join_set_id)),
-                    scheduled_at: created_at,
-                    retry_exp_backoff: child_retry_exp_backoff,
-                    max_retries: child_max_retries,
-                };
-                *version = db_connection
-                    .append_batch_create_child(
-                        created_at,
-                        vec![join_set, child_exec_req, join_next],
-                        execution_id,
-                        version.clone(),
-                        child,
-                    )
-                    .await?;
-                Ok(history_events)
-            }
-            EventCall::BlockingDelayRequest {
-                join_set_id,
-                delay_id,
-                expires_at_if_new,
-            } => {
-                let mut history_events = Vec::with_capacity(3);
-                let event = HistoryEvent::JoinSet { join_set_id };
-                history_events.push(event.clone());
-                let join_set = ExecutionEventInner::HistoryEvent { event };
-                let event = HistoryEvent::JoinSetRequest {
-                    join_set_id,
-                    request: JoinSetRequest::DelayRequest {
-                        delay_id,
-                        expires_at: expires_at_if_new,
-                    },
-                };
-                history_events.push(event.clone());
-                let delay_req = ExecutionEventInner::HistoryEvent { event };
-                let event = HistoryEvent::JoinNext {
-                    join_set_id,
-                    lock_expires_at,
-                };
-                history_events.push(event.clone());
-                let join_next = ExecutionEventInner::HistoryEvent { event };
-                debug!(%delay_id, %join_set_id, "BlockingDelayRequest: appending JoinSet,DelayRequest,JoinNext");
-                *version = db_connection
-                    .append_batch(
-                        created_at,
-                        vec![join_set, delay_req, join_next],
-                        execution_id,
-                        version.clone(),
-                    )
-                    .await?;
-                Ok(history_events)
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -692,7 +784,7 @@ mod tests {
     use crate::event_history::{EventCall, EventHistory};
     use crate::workflow_ctx::tests::MOCK_FFQN;
     use crate::workflow_ctx::FunctionError;
-    use crate::workflow_worker::JoinNextBlockingStrategy;
+    use crate::workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching};
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::JoinSetId;
@@ -726,6 +818,7 @@ mod tests {
             execution_deadline,
             Duration::ZERO,
             0,
+            NonBlockingEventBatching::default(),
         );
         Ok((event_history, exec_log.version))
     }
