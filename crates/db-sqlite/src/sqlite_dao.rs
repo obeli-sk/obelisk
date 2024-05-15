@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS t_execution_log (
     version INTEGER NOT NULL,
     variant TEXT NOT NULL,
     join_set_id TEXT,
+    history_event_type TEXT GENERATED ALWAYS AS (json_value->>'$.HistoryEvent.event.type') STORED,
     PRIMARY KEY (execution_id, version)
 );
 ";
@@ -750,14 +751,14 @@ impl SqlitePool {
     ) -> Result<u64, SqliteError> {
         let mut stmt = tx.prepare(
             "SELECT COUNT(*) as count FROM t_execution_log WHERE execution_id = :execution_id AND join_set_id = :join_set_id \
-            AND json_value->>'$.HistoryEvent.event.type' = :join_next",
+            AND history_event_type = :join_next",
         )?;
         Ok(stmt
             .query_row(
                 named_params! {
                     ":execution_id": execution_id.to_string(),
                     ":join_set_id": join_set_id.to_string(),
-                    ":join_next": "JoinNext",// TODO extract to a column
+                    ":join_next": "JoinNext",
                 },
                 |row| row.get("count"),
             )
