@@ -625,9 +625,14 @@ impl SqlitePool {
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockedExecution, SqliteError> {
         debug!("lock_inner");
-        Self::check_next_version(tx, execution_id, &appending_version)?;
-        let (pending_state, _) = Self::get_pending_state(tx, execution_id)?
-            .ok_or(DbError::Specific(SpecificError::NotFound))?;
+        let (pending_state, expected_version) = Self::get_pending_state(tx, execution_id)?
+            .ok_or_else(|| {
+                debug!("Execution does not exist or is already finished");
+                SqliteError::DbError(DbError::Specific(SpecificError::ValidationFailed(
+                    StrVariant::Static("execution does not exist or is already finished"),
+                )))
+            })?;
+        Self::check_expected_next_and_appending_version(&expected_version, &appending_version)?;
         pending_state
             .can_append_lock(created_at, executor_id, run_id, lock_expires_at)
             .map_err(DbError::Specific)?;
@@ -785,11 +790,32 @@ impl SqlitePool {
                 }
             }
         }
-        let (_pending_state, expected_version) = Self::get_pending_state(tx, execution_id)?.ok_or(
-            SqliteError::DbError(DbError::Specific(SpecificError::ValidationFailed(
-                StrVariant::Static("execution does not exist or is already finished"),
-            ))),
-        )?;
+
+        if let ExecutionEventInner::Locked {
+            executor_id,
+            run_id,
+            lock_expires_at,
+        } = &req.event
+        {
+            let locked = Self::lock_inner(
+                &tx,
+                req.created_at,
+                execution_id,
+                *run_id,
+                appending_version,
+                *executor_id,
+                *lock_expires_at,
+            )?;
+            return Ok(locked.version);
+        }
+
+        let (_pending_state, expected_version) = Self::get_pending_state(tx, execution_id)?
+            .ok_or_else(|| {
+                debug!("Execution does not exist or is already finished");
+                SqliteError::DbError(DbError::Specific(SpecificError::ValidationFailed(
+                    StrVariant::Static("execution does not exist or is already finished"),
+                )))
+            })?;
         Self::check_expected_next_and_appending_version(&expected_version, &appending_version)?;
 
         let mut stmt = tx.prepare(
@@ -810,21 +836,8 @@ impl SqlitePool {
                 unreachable!("handled in the caller")
             }
 
-            ExecutionEventInner::Locked {
-                executor_id,
-                run_id,
-                lock_expires_at,
-            } => {
-                let locked = Self::lock_inner(
-                    &tx,
-                    req.created_at,
-                    execution_id,
-                    *run_id,
-                    appending_version,
-                    *executor_id,
-                    *lock_expires_at,
-                )?;
-                return Ok(locked.version);
+            ExecutionEventInner::Locked { .. } => {
+                unreachable!("handled above")
             }
             ExecutionEventInner::IntermittentFailure { expires_at, .. }
             | ExecutionEventInner::IntermittentTimeout { expires_at } => {

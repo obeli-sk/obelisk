@@ -2,6 +2,7 @@
 
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
+use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
 use concepts::storage::{AppendRequest, CreateRequest};
 use concepts::ExecutionId;
@@ -11,8 +12,6 @@ use db_tests::SOME_FFQN;
 use std::time::Duration;
 use test_utils::arbitrary::UnstructuredHolder;
 use test_utils::set_up;
-use tracing::debug;
-use tracing::info;
 use utils::time::now;
 
 #[tokio::test]
@@ -31,15 +30,30 @@ async fn diff_proptest() {
         retry_exp_backoff: Duration::ZERO,
         max_retries: 0,
     };
-    let append_requests = (0..unstructured.int_in_range(5..=10).unwrap())
-        .map(|_| AppendRequest {
-            event: unstructured.arbitrary().unwrap(),
-            created_at: now(),
-        })
-        .collect::<Vec<_>>();
-    info!("Creating: {create_req:?}");
+    let mut append_requests = vec![];
+    while append_requests.is_empty() {
+        append_requests = (0..unstructured.int_in_range(5..=10).unwrap())
+            .map(|_| AppendRequest {
+                event: unstructured.arbitrary().unwrap(),
+                created_at: now(),
+            })
+            .filter_map(|req| {
+                // filter out Create requests
+                if let AppendRequest {
+                    event: ExecutionEventInner::Created { .. },
+                    ..
+                } = req
+                {
+                    None
+                } else {
+                    Some(req)
+                }
+            })
+            .collect::<Vec<_>>();
+    }
+    println!("Creating: {create_req:?}");
     for (idx, step) in append_requests.iter().enumerate() {
-        info!("{idx}: {step:?}");
+        println!("{idx}: {step:?}");
     }
     let (_mem_guard, db_mem_pool) = Database::Memory.set_up().await;
     let mem_conn = db_mem_pool.connection();
@@ -57,7 +71,7 @@ async fn diff_proptest() {
         create_and_append(&sqlite_conn, execution_id, create_req, &append_requests).await;
     sqlite_pool.close().await.unwrap();
     println!(
-        "Expected:\n{expected}\nActual:\n{actual}",
+        "Expected (mem):\n{expected}\nActual (sqlite):\n{actual}",
         expected = serde_json::to_string(&mem_log).unwrap(),
         actual = serde_json::to_string(&sqlite_log).unwrap()
     );
@@ -88,7 +102,7 @@ async fn create_and_append(
             .await
         {
             Ok(new_version) => version = new_version,
-            Err(err) => debug!("Ignoring {err:?}"),
+            Err(err) => println!("Ignoring {err:?}"),
         }
     }
     db_connection.get(execution_id).await.unwrap()
