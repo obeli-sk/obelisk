@@ -9,6 +9,8 @@ rust-version.workspace = true
 wasmtime.workspace = true
 test-programs-http-get-activity-builder.workspace = true # TODO: Remove
 test-programs-http-get-workflow-builder.workspace = true # TODO: Remove
+test-programs-fibo-activity-builder.workspace = true     # TODO: Remove
+test-programs-fibo-workflow-builder.workspace = true     # TODO: Remove
 
 concepts.workspace = true
 db-mem.workspace = true

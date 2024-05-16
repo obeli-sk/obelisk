@@ -64,6 +64,7 @@ async fn main() {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run<DB: DbConnection + 'static>(db_pool: impl DbPool<DB> + 'static) {
     let activity_engine = activity_engine(EngineConfig::default());
     let workflow_engine = workflow_engine(EngineConfig::default());
@@ -95,6 +96,18 @@ async fn run<DB: DbConnection + 'static>(db_pool: impl DbPool<DB> + 'static) {
             StrVariant::Static(
                 test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             ),
+            db_pool.clone(),
+            workflow_engine.clone(),
+            activity_engine.clone(),
+        ),
+        exec(
+            StrVariant::Static(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
+            db_pool.clone(),
+            workflow_engine.clone(),
+            activity_engine.clone(),
+        ),
+        exec(
+            StrVariant::Static(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW),
             db_pool.clone(),
             workflow_engine,
             activity_engine,
@@ -196,7 +209,7 @@ fn exec<DB: DbConnection + 'static>(
     let exec_config = ExecConfig {
         ffqns: ffqns.clone(),
         batch_size: 10,
-        lock_expiry: Duration::from_secs(30),
+        lock_expiry: Duration::from_secs(1),
         tick_sleep: Duration::from_millis(1),
         clock_fn: now,
     };

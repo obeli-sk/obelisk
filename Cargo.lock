@@ -1732,6 +1732,8 @@ dependencies = [
  "executor",
  "madsim-tokio",
  "serde_json",
+ "test-programs-fibo-activity-builder",
+ "test-programs-fibo-workflow-builder",
  "test-programs-http-get-activity-builder",
  "test-programs-http-get-workflow-builder",
  "tracing",
