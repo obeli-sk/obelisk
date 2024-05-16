@@ -29,12 +29,12 @@ Please exercise caution if attempting to use it for production usage.
 
 # Planned features
 * UI
+* OpenAPI binding generator
 * Fatal error mapping to supported result types, e.g. permanent timeout to a numeric or string representation.
-* Structured concurrency patterns (join, race)
 * WASM upgrades - disabling work stealing by executors with outdated wasm hashes
 * Params typecheck on creation, introspection of types of all functions in the system
 * Host function: generate a random value, store it in the event history - wasi random,available for workflows as wel
-* Cancellation
+* Cancellation with recursion
 * Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
 * Labels restricting workflows/activities to executors
 * ErrId that is passed back to parent, error detail
