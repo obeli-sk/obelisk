@@ -171,7 +171,7 @@ wit-component = "0.206.0"
 wit-parser = "0.206.0"
 
 [patch.crates-io]
-async-sqlite = { git = "https://github.com/tomasol/async-sqlite", rev = "a981b1a8b4f4393bf4a17c3dd15426362fe061a7" } # rusqlite 0.31.0, sqlite 3.45
+async-sqlite = { git = "https://github.com/tomasol/async-sqlite", rev = "fe2d8d704eb45b61f2bf0af772ce24c72a033c14" } # rusqlite 0.31.0, sqlite 3.45
 getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" } # madsim
 
 [workspace.lints]
