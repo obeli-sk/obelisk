@@ -21,7 +21,6 @@ use utils::time::ClockFn;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 
-const FETCH_HISTORY_LOOP_SLEEP: Duration = Duration::from_millis(50);
 const MAX_NON_BLOCKING_CACHE_SIZE: usize = 50;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -177,7 +176,7 @@ impl<C: ClockFn> EventHistory<C> {
                         return Ok(accept_resp);
                     }
                 }
-                tokio::time::sleep(FETCH_HISTORY_LOOP_SLEEP).await;
+                tokio::task::yield_now().await;
             }
         } else {
             debug!(join_set_id = %poll_variant.join_set_id(),  "Interrupting on {poll_variant:?}");

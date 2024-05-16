@@ -209,7 +209,7 @@ fn exec<DB: DbConnection + 'static>(
     let exec_config = ExecConfig {
         ffqns: ffqns.clone(),
         batch_size: 10,
-        lock_expiry: Duration::from_secs(1),
+        lock_expiry: Duration::from_secs(10),
         tick_sleep: Duration::from_millis(1),
         clock_fn: now,
     };
