@@ -12,6 +12,7 @@ use concepts::storage::{
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionResult};
+use executor::worker::WorkerResult;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,6 +42,7 @@ pub(crate) struct EventHistory<C: ClockFn> {
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     clock_fn: C,
+    timeout_error: Arc<std::sync::Mutex<WorkerResult>>,
     // TODO: optimize using start_from_idx: usize,
 }
 
@@ -65,6 +67,7 @@ impl<C: ClockFn> EventHistory<C> {
         child_max_retries: u32,
         non_blocking_event_batching: NonBlockingEventBatching,
         clock_fn: C,
+        timeout_error: Arc<std::sync::Mutex<WorkerResult>>,
     ) -> Self {
         EventHistory {
             execution_id,
@@ -85,6 +88,7 @@ impl<C: ClockFn> EventHistory<C> {
                 NonBlockingEventBatching::Enabled => Some(Vec::new()),
             },
             clock_fn,
+            timeout_error,
         }
     }
 
@@ -100,11 +104,11 @@ impl<C: ClockFn> EventHistory<C> {
             return Ok(accept_resp);
         }
         // not found in the history, persisting the request
-        let created_at = (self.clock_fn)();
+        let called_at = (self.clock_fn)();
         let poll_variant = event_call.poll_variant();
         let lock_expires_at =
             if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
-                created_at
+                called_at
             } else {
                 self.execution_deadline
             };
@@ -117,7 +121,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .append_to_db(
                         event_call,
                         db_connection,
-                        created_at,
+                        called_at,
                         lock_expires_at,
                         self.execution_id,
                         version,
@@ -137,7 +141,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .append_to_db(
                         event_call,
                         db_connection,
-                        created_at,
+                        called_at,
                         lock_expires_at,
                         self.execution_id,
                         version,
@@ -161,22 +165,23 @@ impl<C: ClockFn> EventHistory<C> {
                 poll_variant
             }
         };
-
         if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Await {
-            debug!(join_set_id = %poll_variant.join_set_id(),  "Waiting for {poll_variant}");
-            while (self.clock_fn)() < self.execution_deadline {
+            // JoinNext was written, loop until `workflow_worker`
+            debug!(join_set_id = %poll_variant.join_set_id(),  "Waiting for {poll_variant:?}");
+            *self.timeout_error.lock().unwrap() = poll_variant.as_worker_result();
+            let key = poll_variant.as_key();
+            loop {
                 if self.fetch_update(db_connection, version).await?.is_some() {
-                    if let Some(accept_resp) = self.process_event_by_key(poll_variant.as_key())? {
+                    if let Some(accept_resp) = self.process_event_by_key(key)? {
                         debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
                         return Ok(accept_resp);
                     }
                 }
                 tokio::time::sleep(FETCH_HISTORY_LOOP_SLEEP).await;
             }
-        }
-        match poll_variant {
-            PollVariant::JoinNextChild(_) => Err(FunctionError::ChildExecutionRequest),
-            PollVariant::JoinNextDelay(_) => Err(FunctionError::DelayRequest),
+        } else {
+            debug!(join_set_id = %poll_variant.join_set_id(),  "Interrupting on {poll_variant:?}");
+            Err(poll_variant.as_function_error())
         }
     }
 
@@ -636,7 +641,7 @@ impl<C: ClockFn> EventHistory<C> {
     }
 }
 
-#[derive(derive_more::Display)]
+#[derive(Debug)]
 enum PollVariant {
     JoinNextChild(JoinSetId),
     JoinNextDelay(JoinSetId),
@@ -657,6 +662,20 @@ impl PollVariant {
             PollVariant::JoinNextDelay(join_set_id) => EventHistoryKey::JoinNextDelay {
                 join_set_id: *join_set_id,
             },
+        }
+    }
+
+    fn as_function_error(&self) -> FunctionError {
+        match self {
+            PollVariant::JoinNextChild(_) => FunctionError::ChildExecutionRequest,
+            PollVariant::JoinNextDelay(_) => FunctionError::DelayRequest,
+        }
+    }
+
+    fn as_worker_result(&self) -> WorkerResult {
+        match self {
+            PollVariant::JoinNextChild(_) => WorkerResult::ChildExecutionRequest,
+            PollVariant::JoinNextDelay(_) => WorkerResult::DelayRequest,
         }
     }
 }
@@ -705,7 +724,7 @@ impl EventCall {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum EventHistoryKey {
     CreateJoinSet {
         join_set_id: JoinSetId,
@@ -800,6 +819,8 @@ mod tests {
     };
     use concepts::{ExecutionId, Params, SupportedFunctionResult};
     use db_tests::Database;
+    use executor::worker::{WorkerError, WorkerResult};
+    use std::sync::Arc;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use tracing::info;
@@ -828,6 +849,9 @@ mod tests {
             0,
             NonBlockingEventBatching::default(),
             clock_fn,
+            Arc::new(std::sync::Mutex::new(WorkerResult::Err(
+                WorkerError::IntermittentTimeout,
+            ))),
         );
         Ok((event_history, exec_log.version))
     }

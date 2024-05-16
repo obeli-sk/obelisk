@@ -167,6 +167,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             FunctionCall(Box<dyn Error + Send + Sync>, Version),
         }
         trace!("Params: {params:?}", params = ctx.params);
+        let timeout_error = Arc::new(std::sync::Mutex::new(WorkerResult::Err(
+            WorkerError::IntermittentTimeout,
+        )));
         let (instance, mut store) = {
             let seed = ctx.execution_id.random_part();
             let ctx = WorkflowCtx::new(
@@ -183,6 +186,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 self.config.child_retry_exp_backoff,
                 self.config.child_max_retries,
                 self.config.non_blocking_event_batching,
+                timeout_error.clone(),
             );
             let mut store = Store::new(&self.engine, ctx);
             let instance = match self
@@ -297,8 +301,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 }
             },
             () = tokio::time::sleep(deadline_duration) => {
-                debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
-                WorkerResult::Err(WorkerError::IntermittentTimeout)
+                let worker_result = std::mem::replace(&mut *timeout_error.lock().unwrap(), WorkerResult::Err(WorkerError::IntermittentTimeout));
+                info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.config.clock_fn)(), "Timing out with {worker_result:?}");
+                worker_result
             }
         }
     }

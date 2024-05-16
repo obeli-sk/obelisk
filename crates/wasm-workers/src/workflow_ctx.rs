@@ -81,6 +81,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         retry_exp_backoff: Duration,
         max_retries: u32,
         non_blocking_event_batching: NonBlockingEventBatching,
+        timeout_error: Arc<std::sync::Mutex<WorkerResult>>,
     ) -> Self {
         Self {
             execution_id,
@@ -94,6 +95,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 max_retries,
                 non_blocking_event_batching,
                 clock_fn.clone(),
+                timeout_error,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -274,7 +276,7 @@ pub(crate) mod tests {
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
-        worker::{Worker, WorkerContext, WorkerResult},
+        worker::{Worker, WorkerContext, WorkerError, WorkerResult},
     };
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
@@ -332,6 +334,9 @@ pub(crate) mod tests {
                 Duration::ZERO,
                 0,
                 NonBlockingEventBatching::default(),
+                Arc::new(std::sync::Mutex::new(WorkerResult::Err(
+                    WorkerError::IntermittentTimeout,
+                ))),
             );
             for step in &self.steps {
                 let res = match step {
