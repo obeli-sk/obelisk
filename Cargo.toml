@@ -125,7 +125,7 @@ indexmap = "2.1"
 insta = "1.38.0"
 itertools = "0.12.1"
 lazy_static = "1.4"
-madsim = "0.2.27"
+madsim = "0.2.28"
 rand = "0.8.5"
 rusqlite = { version = "0.31.0" }
 rstest = "0.18.2"
@@ -171,6 +171,7 @@ wit-component = "0.206.0"
 wit-parser = "0.206.0"
 
 [patch.crates-io]
+madsim = { git = "https://github.com/tomasol/madsim", rev = "4232484d49b036cf68b56220ccac3e8e060bb9c7" }
 async-sqlite = { git = "https://github.com/tomasol/async-sqlite", rev = "fe2d8d704eb45b61f2bf0af772ce24c72a033c14" } # rusqlite 0.31.0, sqlite 3.45
 getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" } # madsim
 

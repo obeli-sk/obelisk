@@ -1570,9 +1570,8 @@ dependencies = [
 
 [[package]]
 name = "madsim"
-version = "0.2.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4d58385da6b81328e3e3ccb60426c0da8069a547d9979e2b11aae831089a37c"
+version = "0.2.28"
+source = "git+https://github.com/tomasol/madsim?rev=4232484d49b036cf68b56220ccac3e8e060bb9c7#4232484d49b036cf68b56220ccac3e8e060bb9c7"
 dependencies = [
  "ahash",
  "async-channel",
@@ -1602,8 +1601,7 @@ dependencies = [
 [[package]]
 name = "madsim-macros"
 version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3d248e97b1a48826a12c3828d921e8548e714394bf17274dd0a93910dc946e1"
+source = "git+https://github.com/tomasol/madsim?rev=4232484d49b036cf68b56220ccac3e8e060bb9c7#4232484d49b036cf68b56220ccac3e8e060bb9c7"
 dependencies = [
  "darling 0.14.4",
  "proc-macro2",

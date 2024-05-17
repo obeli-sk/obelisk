@@ -1,5 +1,3 @@
-#![cfg(not(madsim))] // Madsim does not work with `async-sqlite`
-
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionEventInner;
