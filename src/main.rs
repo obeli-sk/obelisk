@@ -22,16 +22,46 @@ use wasm_workers::{
 };
 use wasmtime::Engine;
 
+fn is_env_true(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .and_then(|val| val.parse::<bool>().ok())
+        .unwrap_or_default()
+}
+
+#[cfg(feature = "tokio-console")]
+fn tokio_console_layer<S>() -> Option<impl tracing_subscriber::Layer<S>>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    if is_env_true("TOKIO_CONSOLE") {
+        use tracing_subscriber::Layer;
+        Some(
+            console_subscriber::spawn().with_filter(
+                tracing_subscriber::filter::Targets::new()
+                    .with_target("tokio", tracing::Level::TRACE)
+                    .with_target("runtime", tracing::Level::TRACE),
+            ),
+        )
+    } else {
+        None
+    }
+}
+
+#[cfg(not(feature = "tokio-console"))]
+fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
+    None
+}
+
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
-    let enable_chrome_layer = std::env::var("CHROME_TRACE")
-        .ok()
-        .and_then(|val| val.parse::<bool>().ok())
-        .unwrap_or_default();
-    let builder = tracing_subscriber::registry()
+
+    let _chrome_guard;
+    tracing_subscriber::registry()
+        .with(tokio_console_layer())
         .with(
             tracing_subscriber::fmt::layer()
                 .with_thread_ids(true)
@@ -39,17 +69,18 @@ async fn main() {
                 .with_line_number(true)
                 .json(),
         )
-        .with(tracing_subscriber::EnvFilter::from_default_env());
-    let _chrome_guard;
-    if enable_chrome_layer {
-        let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
-            .trace_style(tracing_chrome::TraceStyle::Async)
-            .build();
-        _chrome_guard = guard;
-        builder.with(chrome_layer).init();
-    } else {
-        builder.init();
-    }
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .with(if is_env_true("CHROME_TRACE") {
+            let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+                .trace_style(tracing_chrome::TraceStyle::Async)
+                .build();
+            _chrome_guard = guard;
+            Some(chrome_layer)
+        } else {
+            None
+        })
+        .init();
+
     std::panic::set_hook(Box::new(utils::tracing_panic_hook));
 
     if std::env::var("DB")

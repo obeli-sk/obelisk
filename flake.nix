@@ -32,6 +32,7 @@
               nixpkgs-fmt
               pkg-config
               rustToolchain
+              tokio-console
               wasm-tools
             ];
           };

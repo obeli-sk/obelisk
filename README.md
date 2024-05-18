@@ -51,10 +51,10 @@ Otherwise:
 cargo install cargo-component
 ```
 
-## Building
+## Running
 
 ```sh
-cargo build --workspace
+RUSTFLAGS="--cfg tracing_unstable --cfg tokio_unstable" cargo run --all-features
 ```
 
 ## Running Tests

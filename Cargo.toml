@@ -19,6 +19,7 @@ executor.workspace = true
 val-json.workspace = true
 wasm-workers.workspace = true
 
+console-subscriber = { workspace = true, optional = true }
 serde_json.workspace = true
 tokio = { workspace = true, features = [
     "sync",
@@ -35,6 +36,7 @@ valuable.workspace = true
 
 [features]
 parallel-compilation = ["wasmtime/parallel-compilation"]
+tokio-console = ["dep:console-subscriber"]
 
 [lints]
 workspace = true
@@ -112,6 +114,7 @@ async-trait = "0.1"
 cargo_metadata = "0.18"
 cfg-if = "1.0.0"
 chrono = { version = "0.4.34", features = ["arbitrary", "serde"] }
+console-subscriber = "0.2.0"
 criterion = "0.5"
 derivative = "2.2.0"
 derive_more = "0.99.17"
@@ -140,6 +143,7 @@ tokio = { version = "0.2.25", package = "madsim-tokio", features = [
     "rt",
     "time",
     "macros",
+    "tracing",
 ] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-chrome = "0.7.1"
