@@ -15,13 +15,15 @@ async-trait.workspace = true
 chrono.workspace = true
 derivative.workspace = true
 derive_more.workspace = true
+hashbrown.workspace = true
+itertools.workspace = true
 rusqlite.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

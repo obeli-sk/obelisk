@@ -9,17 +9,20 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection, DbError,
-    DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, LockPendingResponse, LockResponse,
-    LockedExecution, SpecificError, Version,
+    AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
+    DbConnectionError, DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer,
+    JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, SpecificError,
+    Version,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use hashbrown::{HashMap, HashSet};
+use itertools::Either;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tracing::error;
+use tokio::sync::oneshot;
 use tracing::instrument;
+use tracing::{debug, error};
 
 pub struct InMemoryDbConnection(Arc<tokio::sync::Mutex<DbTask>>);
 
@@ -155,6 +158,25 @@ impl DbConnection for InMemoryDbConnection {
             .await
             .get(execution_id)
             .map_err(DbError::Specific)
+    }
+
+    async fn next_response(
+        &self,
+        execution_id: ExecutionId,
+        join_set_id: JoinSetId,
+        expected_idx: usize,
+    ) -> Result<JoinSetResponseEventOuter, DbError> {
+        let either = self
+            .0
+            .lock()
+            .await
+            .next_response(execution_id, join_set_id, expected_idx)?;
+        match either {
+            Either::Left(resp) => Ok(resp),
+            Either::Right(receiver) => receiver
+                .await
+                .map_err(|_| DbError::Connection(DbConnectionError::RecvError)),
+        }
     }
 
     #[instrument(skip_all, %execution_id)]
@@ -598,5 +620,32 @@ impl DbTask {
         journal.append_response(created_at, response_event);
         self.index.update(execution_id, &self.journals);
         Ok(())
+    }
+
+    fn next_response(
+        &mut self,
+        execution_id: ExecutionId,
+        join_set_id: JoinSetId,
+        expected_idx: usize,
+    ) -> Result<
+        Either<JoinSetResponseEventOuter, oneshot::Receiver<JoinSetResponseEventOuter>>,
+        DbError,
+    > {
+        debug!("next_response");
+        let Some(journal) = self.journals.get_mut(&execution_id) else {
+            return Err(DbError::Specific(SpecificError::NotFound));
+        };
+        if let Some(resp) = journal.responses.get(expected_idx) {
+            Ok(Either::Left(resp.clone()))
+        } else {
+            assert_eq!(
+                expected_idx,
+                journal.responses.len(),
+                "next_response: invalid `expected_idx`, can only wait for the next response"
+            );
+            let (sender, receiver) = oneshot::channel();
+            journal.response_subscribers.insert(join_set_id, sender);
+            Ok(Either::Right(receiver))
+        }
     }
 }

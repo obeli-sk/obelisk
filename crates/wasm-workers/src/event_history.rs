@@ -104,14 +104,13 @@ impl<C: ClockFn> EventHistory<C> {
         }
         // not found in the history, persisting the request
         let called_at = (self.clock_fn)();
-        let poll_variant = event_call.poll_variant();
         let lock_expires_at =
             if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
                 called_at
             } else {
                 self.execution_deadline
             };
-        let poll_variant = match poll_variant {
+        let poll_variant = match event_call.poll_variant() {
             None => {
                 // events that cannot block
                 // TODO: Add speculative batching (avoid writing non-blocking responses immediately) to improve performance
@@ -165,18 +164,34 @@ impl<C: ClockFn> EventHistory<C> {
             }
         };
         if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Await {
-            // JoinNext was written, loop until `workflow_worker`
-            debug!(join_set_id = %poll_variant.join_set_id(),  "Waiting for {poll_variant:?}");
+            // JoinNext was written, wait for next response.
+            let join_set_id = poll_variant.join_set_id();
+            debug!(%join_set_id,  "Waiting for {poll_variant:?}");
             *self.timeout_error.lock().unwrap() = poll_variant.as_worker_result();
             let key = poll_variant.as_key();
-            loop {
-                if self.fetch_update(db_connection, version).await?.is_some() {
-                    if let Some(accept_resp) = self.process_event_by_key(key)? {
-                        debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
-                        return Ok(accept_resp);
-                    }
-                }
-                tokio::task::yield_now().await;
+            let current_count = self
+                .responses
+                .iter()
+                .filter(|(resp, _)| {
+                    matches!(
+                        resp,
+                        JoinSetResponseEvent {
+                            join_set_id: found,
+                            ..
+                        }
+                        if *found == join_set_id
+                    )
+                })
+                .count();
+            let next_response = db_connection
+                .next_response(self.execution_id, join_set_id, current_count)
+                .await?;
+            self.responses.push((next_response.event, Unprocessed));
+            if let Some(accept_resp) = self.process_event_by_key(key)? {
+                debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
+                Ok(accept_resp)
+            } else {
+                unimplemented!("join set conditions are not implemented");
             }
         } else {
             debug!(join_set_id = %poll_variant.join_set_id(),  "Interrupting on {poll_variant:?}");
@@ -371,41 +386,6 @@ impl<C: ClockFn> EventHistory<C> {
                     "unexpected key {key:?} not matching {found:?} at index {found_idx}",
                 )),
             ))),
-        }
-    }
-
-    async fn fetch_update<DB: DbConnection>(
-        &mut self,
-        db_connection: &DB,
-        version: &mut Version,
-    ) -> Result<Option<()>, DbError> {
-        let exec_log = db_connection.get(self.execution_id).await?;
-        let mut updated = false;
-        let event_history = exec_log.event_history().collect::<Vec<_>>();
-        if event_history.len() > self.event_history.len() {
-            updated = true;
-            self.event_history.extend(
-                event_history
-                    .into_iter()
-                    .skip(self.event_history.len())
-                    .map(|event| (event, Unprocessed)),
-            );
-            *version = exec_log.version;
-        }
-        if exec_log.responses.len() > self.responses.len() {
-            updated = true;
-            self.responses.extend(
-                exec_log
-                    .responses
-                    .into_iter()
-                    .skip(self.responses.len())
-                    .map(|event| (event.event, Unprocessed)),
-            );
-        }
-        if updated {
-            Ok(Some(()))
-        } else {
-            Ok(None)
         }
     }
 

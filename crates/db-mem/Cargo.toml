@@ -15,6 +15,7 @@ chrono.workspace = true
 derivative.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
+itertools.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

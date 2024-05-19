@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    prefixed_ulid::{ExecutorId, RunId},
+    prefixed_ulid::{ExecutorId, JoinSetId, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection, DbError,
         DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent,
-        LockPendingResponse, LockResponse, Version,
+        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Version,
     },
     ExecutionId, FunctionFqn, StrVariant,
 };
@@ -182,5 +182,16 @@ impl DbConnection for DbConnectionProxy {
 
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
         self.0.get(execution_id).await
+    }
+
+    async fn next_response(
+        &self,
+        execution_id: ExecutionId,
+        join_set_id: JoinSetId,
+        expected_idx: usize,
+    ) -> Result<JoinSetResponseEventOuter, DbError> {
+        self.0
+            .next_response(execution_id, join_set_id, expected_idx)
+            .await
     }
 }

@@ -10,6 +10,7 @@ use concepts::ExecutionId;
 use concepts::{FunctionFqn, Params, StrVariant};
 use std::cmp::max;
 use std::{collections::VecDeque, time::Duration};
+use tokio::sync::oneshot;
 
 #[derive(Debug)]
 pub struct ExecutionJournal {
@@ -17,6 +18,8 @@ pub struct ExecutionJournal {
     pub pending_state: PendingState,
     pub execution_events: VecDeque<ExecutionEvent>,
     pub responses: Vec<JoinSetResponseEventOuter>,
+    pub response_subscribers:
+        hashbrown::HashMap<JoinSetId, oneshot::Sender<JoinSetResponseEventOuter>>,
 }
 
 impl ExecutionJournal {
@@ -41,6 +44,7 @@ impl ExecutionJournal {
             pending_state,
             execution_events: VecDeque::from([event]),
             responses: Vec::default(),
+            response_subscribers: hashbrown::HashMap::default(),
         }
     }
 
@@ -108,11 +112,20 @@ impl ExecutionJournal {
         Ok(self.version())
     }
 
-    pub fn append_response(&mut self, created_at: DateTime<Utc>, event: JoinSetResponseEvent) {
-        self.responses
-            .push(JoinSetResponseEventOuter { created_at, event });
+    pub fn append_response(
+        &mut self,
+        created_at: DateTime<Utc>,
+        event: JoinSetResponseEvent,
+    ) {
+        let join_set_id = event.join_set_id;
+        let event = JoinSetResponseEventOuter { created_at, event };
+        self.responses.push(event.clone());
         // update the state
         self.pending_state = self.calculate_pending_state();
+        let subscriber = self.response_subscribers.remove(&join_set_id);
+        if let Some(subscriber) = subscriber {
+            let _ = subscriber.send(event);
+        }
     }
 
     fn calculate_pending_state(&self) -> PendingState {

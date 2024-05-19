@@ -140,6 +140,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     if is_closing_inner.load(Ordering::Relaxed) {
                         return;
                     }
+                    // FIXME: Replace with a subscription
                     tokio::time::sleep(tick_sleep).await;
                 }
             }
