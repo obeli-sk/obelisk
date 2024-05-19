@@ -622,6 +622,7 @@ impl DbTask {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     fn next_response(
         &mut self,
         execution_id: ExecutionId,
@@ -635,12 +636,17 @@ impl DbTask {
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             return Err(DbError::Specific(SpecificError::NotFound));
         };
-        if let Some(resp) = journal.responses.get(expected_idx) {
-            Ok(Either::Left(resp.clone()))
+        let join_set_responses = journal
+            .responses
+            .iter()
+            .filter(|resp| resp.event.join_set_id == join_set_id)
+            .collect::<Vec<_>>();
+        if let Some(resp) = join_set_responses.get(expected_idx) {
+            Ok(Either::Left((*resp).clone()))
         } else {
             assert_eq!(
                 expected_idx,
-                journal.responses.len(),
+                join_set_responses.len(),
                 "next_response: invalid `expected_idx`, can only wait for the next response"
             );
             let (sender, receiver) = oneshot::channel();

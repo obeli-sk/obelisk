@@ -23,7 +23,7 @@ use val_json::wast_val::{WastVal, WastValWithType};
 
 const MAX_NON_BLOCKING_CACHE_SIZE: usize = 50;
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum ProcessingStatus {
     Unprocessed,
     Processed,
@@ -186,12 +186,15 @@ impl<C: ClockFn> EventHistory<C> {
             let next_response = db_connection
                 .next_response(self.execution_id, join_set_id, current_count)
                 .await?;
+            debug!("Got next response {next_response:?}");
+            assert_eq!(join_set_id, next_response.event.join_set_id);
             self.responses.push((next_response.event, Unprocessed));
+            trace!("Responses: {:?}", self.responses);
             if let Some(accept_resp) = self.process_event_by_key(key)? {
                 debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
                 Ok(accept_resp)
             } else {
-                unimplemented!("join set conditions are not implemented");
+                unimplemented!("JoinSet conditions are not implemented");
             }
         } else {
             debug!(join_set_id = %poll_variant.join_set_id(),  "Interrupting on {poll_variant:?}");
@@ -262,7 +265,7 @@ impl<C: ClockFn> EventHistory<C> {
         let Some((found_idx, (found_request_event, _))) = self.next_unprocessed_request() else {
             return Ok(None);
         };
-        trace!("Finding match for {key:?}, {found_request_event:?}",);
+        trace!("Finding match for {key:?}, [{found_idx}] {found_request_event:?}");
         match (key, found_request_event) {
             (
                 EventHistoryKey::CreateJoinSet { join_set_id },
@@ -290,8 +293,7 @@ impl<C: ClockFn> EventHistory<C> {
                     request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
                 },
             ) if join_set_id == *found_join_set_id && execution_id == *child_execution_id => {
-                trace!(%child_execution_id,
-                %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
+                trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::StartAsync`] , return execution id
                 Ok(Some(SupportedFunctionResult::Infallible(WastValWithType {
