@@ -112,11 +112,7 @@ impl ExecutionJournal {
         Ok(self.version())
     }
 
-    pub fn append_response(
-        &mut self,
-        created_at: DateTime<Utc>,
-        event: JoinSetResponseEvent,
-    ) {
+    pub fn append_response(&mut self, created_at: DateTime<Utc>, event: JoinSetResponseEvent) {
         let join_set_id = event.join_set_id;
         let event = JoinSetResponseEventOuter { created_at, event };
         self.responses.push(event.clone());
