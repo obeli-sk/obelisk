@@ -1,0 +1,8 @@
+package testing:fibo-obelisk-ext;
+
+interface fibo {
+
+    fibo-future: func(join-set-id: string, n: u8) -> string;
+
+    fibo-await-next: func(join-set-id: string) -> u64;
+}

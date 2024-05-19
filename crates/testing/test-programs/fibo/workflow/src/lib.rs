@@ -29,6 +29,18 @@ impl crate::bindings::exports::testing::fibo_workflow::workflow::Guest for Compo
         }
         last
     }
+
+    fn fiboa_concurrent(n: u8, iterations: u32) -> u64 {
+        let join_set_id = bindings::my_org::workflow_engine::host_activities::new_join_set();
+        for _ in 0..iterations {
+            crate::bindings::testing::fibo_obelisk_ext::fibo::fibo_future(&join_set_id, n);
+        }
+        let mut last = 0;
+        for _ in 0..iterations {
+            last = crate::bindings::testing::fibo_obelisk_ext::fibo::fibo_await_next(&join_set_id);
+        }
+        last
+    }
 }
 
 impl crate::bindings::exports::testing::fibo_workflow::workflow_nesting::Guest for Component {

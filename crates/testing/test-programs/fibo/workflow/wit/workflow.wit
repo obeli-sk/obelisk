@@ -3,6 +3,7 @@ package testing:fibo-workflow;
 interface workflow {
     fibow: func(n: u8, iterations: u32) -> u64;
     fiboa: func(n: u8, iterations: u32) -> u64;
+    fiboa-concurrent: func(n: u8, iterations: u32) -> u64;
 }
 
 interface workflow-nesting {
@@ -11,6 +12,8 @@ interface workflow-nesting {
 
 world any {
     import testing:fibo/fibo;
+    import my-org:workflow-engine/host-activities;
+    import testing:fibo-obelisk-ext/fibo;
     export workflow;
     import workflow;
     export workflow-nesting;

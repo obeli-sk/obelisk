@@ -25,6 +25,15 @@ ExIm {
                         U64,
                     ),
                 ),
+                fiboa-concurrent: (
+                    [
+                        U8,
+                        U32,
+                    ],
+                    Some(
+                        U64,
+                    ),
+                ),
             },
         },
         PackageIfcFns {
@@ -56,6 +65,39 @@ ExIm {
             },
         },
         PackageIfcFns {
+            ifc_fqn: my-org:workflow-engine/host-activities,
+            fns: {
+                new-join-set: (
+                    [],
+                    Some(
+                        String,
+                    ),
+                ),
+            },
+        },
+        PackageIfcFns {
+            ifc_fqn: testing:fibo-obelisk-ext/fibo,
+            fns: {
+                fibo-future: (
+                    [
+                        String,
+                        U8,
+                    ],
+                    Some(
+                        String,
+                    ),
+                ),
+                fibo-await-next: (
+                    [
+                        String,
+                    ],
+                    Some(
+                        U64,
+                    ),
+                ),
+            },
+        },
+        PackageIfcFns {
             ifc_fqn: testing:fibo-workflow/workflow,
             fns: {
                 fibow: (
@@ -73,6 +115,7 @@ ExIm {
     exported_functions: [
         testing:fibo-workflow/workflow.fibow,
         testing:fibo-workflow/workflow.fiboa,
+        testing:fibo-workflow/workflow.fiboa-concurrent,
         testing:fibo-workflow/workflow-nesting.fibo-nested-workflow,
     ],
 }
