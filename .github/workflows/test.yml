@@ -37,14 +37,14 @@ jobs:
       - name: Load nix store
         run: nix develop --command echo
       - name: Build tests
-        run: nix develop --command cargo nextest run --workspace --all-features --no-run
         env:
           RUSTFLAGS: "--cfg tracing_unstable"
+        run: nix develop --command cargo nextest run --workspace --all-features --no-run
       - name: cargo test
-        run: nix develop --command cargo nextest run --workspace --all-features  --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
+        run: nix develop --command cargo nextest run --workspace --all-features  --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
@@ -70,14 +70,15 @@ jobs:
       - name: Load nix store
         run: nix develop --command echo
       - name: Build tests
-        run: nix develop --command cargo nextest run --workspace --no-run
         env:
           RUSTFLAGS: "--cfg madsim --cfg tracing_unstable"
+        run: nix develop --command cargo nextest run --workspace --no-run
       - name: cargo test
-        run: nix develop --command cargo nextest run --workspace --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
         env:
           RUSTFLAGS: "--cfg madsim --cfg tracing_unstable"
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
+          MADSIM_ALLOW_SYSTEM_THREAD: "1"
+        run: nix develop --command cargo nextest run --workspace --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
