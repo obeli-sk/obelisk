@@ -54,15 +54,15 @@ cargo install cargo-component
 ## Running
 
 ```sh
-RUSTFLAGS="--cfg tracing_unstable --cfg tokio_unstable" cargo run --all-features
+cargo run --features parallel-compilation
 ```
 
 ## Running Tests
 ```sh
-cargo test --workspace
+cargo nextest run --workspace --target-dir=target/debug/nosim
 ```
 
 ### Deterministic tests using madsim simulator
 ```sh
-RUSTFLAGS="--cfg madsim --cfg tracing_unstable" cargo test --workspace
+MADSIM_ALLOW_SYSTEM_THREAD=1 RUSTFLAGS="--cfg madsim --cfg tracing_unstable" cargo nextest run --workspace --target-dir=target/debug/madsim
 ```
