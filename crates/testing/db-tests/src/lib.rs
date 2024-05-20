@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
-    prefixed_ulid::{ExecutorId, JoinSetId, RunId},
+    prefixed_ulid::{ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection, DbError,
         DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent,
@@ -184,14 +184,11 @@ impl DbConnection for DbConnectionProxy {
         self.0.get(execution_id).await
     }
 
-    async fn next_response(
+    async fn next_responses(
         &self,
         execution_id: ExecutionId,
-        join_set_id: JoinSetId,
-        expected_idx: usize,
-    ) -> Result<JoinSetResponseEventOuter, DbError> {
-        self.0
-            .next_response(execution_id, join_set_id, expected_idx)
-            .await
+        start_idx: usize,
+    ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
+        self.0.next_responses(execution_id, start_idx).await
     }
 }

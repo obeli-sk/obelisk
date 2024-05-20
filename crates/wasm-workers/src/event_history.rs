@@ -169,79 +169,27 @@ impl<C: ClockFn> EventHistory<C> {
             debug!(%join_set_id,  "Waiting for {poll_variant:?}");
             *self.timeout_error.lock().unwrap() = poll_variant.as_worker_result();
             let key = poll_variant.as_key();
-            let current_count = self
-                .responses
-                .iter()
-                .filter(|(resp, _)| {
-                    matches!(
-                        resp,
-                        JoinSetResponseEvent {
-                            join_set_id: found,
-                            ..
-                        }
-                        if *found == join_set_id
-                    )
-                })
-                .count();
-            // Try to fetch as many unprocessed responses at once as possible.
-            if self.fetch_update(db_connection, version).await?.is_some() {
+
+            // Subscribe to the next response.
+            loop {
+                let next_responses = db_connection
+                    .next_responses(self.execution_id, self.responses.len())
+                    .await?;
+                trace!("Got next responses {next_responses:?}");
+                self.responses.extend(
+                    next_responses
+                        .into_iter()
+                        .map(|outer| (outer.event, Unprocessed)),
+                );
+                trace!("All responses: {:?}", self.responses);
                 if let Some(accept_resp) = self.process_event_by_key(key)? {
                     debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
                     return Ok(accept_resp);
                 }
             }
-            // Subscribe to the next response.
-            let next_response = db_connection
-                .next_response(self.execution_id, join_set_id, current_count)
-                .await?;
-            debug!("Got next response {next_response:?}");
-            assert_eq!(join_set_id, next_response.event.join_set_id);
-            self.responses.push((next_response.event, Unprocessed));
-            trace!("Responses: {:?}", self.responses);
-            if let Some(accept_resp) = self.process_event_by_key(key)? {
-                debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
-                Ok(accept_resp)
-            } else {
-                unimplemented!("JoinSet conditions are not implemented");
-            }
         } else {
             debug!(join_set_id = %poll_variant.join_set_id(),  "Interrupting on {poll_variant:?}");
             Err(poll_variant.as_function_error())
-        }
-    }
-
-    async fn fetch_update<DB: DbConnection>(
-        &mut self,
-        db_connection: &DB,
-        version: &mut Version,
-    ) -> Result<Option<()>, DbError> {
-        let exec_log = db_connection.get(self.execution_id).await?;
-        let mut updated = false;
-        let event_history = exec_log.event_history().collect::<Vec<_>>();
-        if event_history.len() > self.event_history.len() {
-            updated = true;
-            self.event_history.extend(
-                event_history
-                    .into_iter()
-                    .skip(self.event_history.len())
-                    .map(|event| (event, Unprocessed)),
-            );
-            *version = exec_log.version;
-        }
-        if exec_log.responses.len() > self.responses.len() {
-            updated = true;
-            self.responses.extend(
-                exec_log
-                    .responses
-                    .into_iter()
-                    .skip(self.responses.len())
-                    .map(|event| (event.event, Unprocessed)),
-            );
-        }
-        if updated {
-            Ok(Some(()))
-        } else {
-            Ok(None)
         }
     }
 

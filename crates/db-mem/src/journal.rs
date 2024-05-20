@@ -18,8 +18,7 @@ pub struct ExecutionJournal {
     pub pending_state: PendingState,
     pub execution_events: VecDeque<ExecutionEvent>,
     pub responses: Vec<JoinSetResponseEventOuter>,
-    pub response_subscribers:
-        hashbrown::HashMap<JoinSetId, oneshot::Sender<JoinSetResponseEventOuter>>,
+    pub response_subscriber: Option<oneshot::Sender<JoinSetResponseEventOuter>>,
 }
 
 impl ExecutionJournal {
@@ -44,7 +43,7 @@ impl ExecutionJournal {
             pending_state,
             execution_events: VecDeque::from([event]),
             responses: Vec::default(),
-            response_subscribers: hashbrown::HashMap::default(),
+            response_subscriber: None,
         }
     }
 
@@ -113,13 +112,11 @@ impl ExecutionJournal {
     }
 
     pub fn append_response(&mut self, created_at: DateTime<Utc>, event: JoinSetResponseEvent) {
-        let join_set_id = event.join_set_id;
         let event = JoinSetResponseEventOuter { created_at, event };
         self.responses.push(event.clone());
         // update the state
         self.pending_state = self.calculate_pending_state();
-        let subscriber = self.response_subscribers.remove(&join_set_id);
-        if let Some(subscriber) = subscriber {
+        if let Some(subscriber) = self.response_subscriber.take() {
             let _ = subscriber.send(event);
         }
     }

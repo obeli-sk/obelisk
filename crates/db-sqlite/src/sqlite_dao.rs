@@ -130,9 +130,7 @@ impl From<rusqlite::Error> for SqliteError {
 }
 
 type ResponseSubscribers = Arc<
-    std::sync::Mutex<
-        hashbrown::HashMap<(ExecutionId, JoinSetId), oneshot::Sender<JoinSetResponseEventOuter>>,
-    >,
+    std::sync::Mutex<hashbrown::HashMap<ExecutionId, oneshot::Sender<JoinSetResponseEventOuter>>>,
 >;
 
 #[derive(Clone)]
@@ -989,10 +987,7 @@ impl SqlitePool {
                 ":delay_id": delay_id.to_string(),
             })?;
         }
-        Ok(response_subscribers
-            .lock()
-            .unwrap()
-            .remove(&(execution_id, join_set_id)))
+        Ok(response_subscribers.lock().unwrap().remove(&execution_id))
     }
 
     fn get_responses(
@@ -1010,33 +1005,6 @@ impl SqlitePool {
             |row| {
                 let created_at: DateTime<Utc> = row.get("created_at")?;
                 let join_set_id = row.get::<_, JoinSetIdW>("join_set_id")?.0;
-                let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
-                Ok(JoinSetResponseEventOuter {
-                    event: JoinSetResponseEvent { join_set_id, event },
-                    created_at,
-                })
-            },
-        )?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| SqliteError::Sqlite(err.into()))
-    }
-
-    fn get_responses_by_join_set_id(
-        tx: &Transaction,
-        execution_id: ExecutionId,
-        join_set_id: JoinSetId,
-    ) -> Result<Vec<JoinSetResponseEventOuter>, SqliteError> {
-        tx.prepare(
-            "SELECT created_at, json_value FROM t_join_set_response WHERE \
-                execution_id = :execution_id AND join_set_id = :join_set_id ORDER BY created_at",
-        )?
-        .query_map(
-            named_params! {
-                ":execution_id": execution_id.to_string(),
-                ":join_set_id": join_set_id.to_string(),
-            },
-            |row| {
-                let created_at: DateTime<Utc> = row.get("created_at")?;
                 let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
                 Ok(JoinSetResponseEventOuter {
                     event: JoinSetResponseEvent { join_set_id, event },
@@ -1076,6 +1044,35 @@ impl SqlitePool {
             },
         )
         .optional()
+        .map_err(|err| SqliteError::Sqlite(err.into()))
+    }
+
+    fn get_responses_with_offset(
+        tx: &Transaction,
+        execution_id: ExecutionId,
+        skip_rows: usize,
+    ) -> Result<Vec<JoinSetResponseEventOuter>, SqliteError> {
+        tx.prepare(
+            "SELECT created_at, join_set_id, json_value FROM t_join_set_response WHERE \
+            execution_id = :execution_id ORDER BY created_at
+            LIMIT -1 OFFSET :offset",
+        )?
+        .query_map(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":offset": skip_rows,
+            },
+            |row| {
+                let created_at: DateTime<Utc> = row.get("created_at")?;
+                let join_set_id = row.get::<_, JoinSetIdW>("join_set_id")?.0;
+                let event = row.get::<_, JsonWrapper<JoinSetResponse>>("json_value")?.0;
+                Ok(JoinSetResponseEventOuter {
+                    event: JoinSetResponseEvent { join_set_id, event },
+                    created_at,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|err| SqliteError::Sqlite(err.into()))
     }
 }
@@ -1454,36 +1451,28 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn next_response(
+    async fn next_responses(
         &self,
         execution_id: ExecutionId,
-        join_set_id: JoinSetId,
-        expected_idx: usize,
-    ) -> Result<JoinSetResponseEventOuter, DbError> {
-        debug!("next_response");
+        start_idx: usize,
+    ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
+        debug!("next_responses");
         let response_subscribers = self.response_subscribers.clone();
         match self
             .pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
-                    let join_set_responses =
-                        Self::get_responses_by_join_set_id(&tx, execution_id, join_set_id)?;
-                    let len = join_set_responses.len();
-                    if let Some(response) = join_set_responses.into_iter().skip(expected_idx).next()
-                    {
-                        Ok(itertools::Either::Left(response))
-                    } else {
-                        assert_eq!(
-                            expected_idx, len,
-                            "next_response: invalid `expected_idx`, can only wait for the next response"
-                        );
+                    let responses = Self::get_responses_with_offset(&tx, execution_id, start_idx)?;
+                    if responses.is_empty() {
                         // cannot race as we have the transaction write lock
                         let (sender, receiver) = oneshot::channel();
                         response_subscribers
                             .lock()
                             .unwrap()
-                            .insert((execution_id, join_set_id), sender); // Last subscriber wins, old Sender is dropped
+                            .insert(execution_id, sender);
                         Ok(itertools::Either::Right(receiver))
+                    } else {
+                        Ok(itertools::Either::Left(responses))
                     }
                 },
                 Span::current(),
@@ -1494,6 +1483,7 @@ impl DbConnection for SqlitePool {
             itertools::Either::Left(resp) => Ok(resp),
             itertools::Either::Right(receiver) => receiver
                 .await
+                .map(|resp| vec![resp])
                 .map_err(|_| DbError::Connection(DbConnectionError::RecvError)),
         }
     }

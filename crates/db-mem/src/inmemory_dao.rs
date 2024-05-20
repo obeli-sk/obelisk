@@ -160,21 +160,21 @@ impl DbConnection for InMemoryDbConnection {
             .map_err(DbError::Specific)
     }
 
-    async fn next_response(
+    async fn next_responses(
         &self,
         execution_id: ExecutionId,
-        join_set_id: JoinSetId,
-        expected_idx: usize,
-    ) -> Result<JoinSetResponseEventOuter, DbError> {
+        start_idx: usize,
+    ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
         let either = self
             .0
             .lock()
             .await
-            .next_response(execution_id, join_set_id, expected_idx)?;
+            .next_responses(execution_id, start_idx)?;
         match either {
             Either::Left(resp) => Ok(resp),
             Either::Right(receiver) => receiver
                 .await
+                .map(|it| vec![it])
                 .map_err(|_| DbError::Connection(DbConnectionError::RecvError)),
         }
     }
@@ -623,34 +623,31 @@ impl DbTask {
     }
 
     #[instrument(skip(self))]
-    fn next_response(
+    fn next_responses(
         &mut self,
         execution_id: ExecutionId,
-        join_set_id: JoinSetId,
-        expected_idx: usize,
+        start_idx: usize,
     ) -> Result<
-        Either<JoinSetResponseEventOuter, oneshot::Receiver<JoinSetResponseEventOuter>>,
+        Either<Vec<JoinSetResponseEventOuter>, oneshot::Receiver<JoinSetResponseEventOuter>>,
         DbError,
     > {
         debug!("next_response");
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             return Err(DbError::Specific(SpecificError::NotFound));
         };
-        let join_set_responses = journal
-            .responses
-            .iter()
-            .filter(|resp| resp.event.join_set_id == join_set_id)
-            .collect::<Vec<_>>();
-        if let Some(resp) = join_set_responses.get(expected_idx) {
-            Ok(Either::Left((*resp).clone()))
+        let res_len = journal.responses.len();
+        if res_len > start_idx {
+            Ok(Either::Left(
+                journal.responses.iter().skip(start_idx).cloned().collect(),
+            ))
         } else {
             assert_eq!(
-                expected_idx,
-                join_set_responses.len(),
-                "next_response: invalid `expected_idx`, can only wait for the next response"
+                start_idx,
+                res_len,
+                "next_responses: invalid `start_idx`({start_idx}) must be >= responses length ({res_len})"
             );
             let (sender, receiver) = oneshot::channel();
-            journal.response_subscribers.insert(join_set_id, sender);
+            journal.response_subscriber = Some(sender);
             Ok(Either::Right(receiver))
         }
     }

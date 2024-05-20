@@ -550,13 +550,12 @@ pub trait DbConnection: Send + Sync {
     /// Create a new execution log
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError>;
 
-    /// Only one subscriber per JoinSet is supported. Parameter `expected_idx` must be at most be equal to current size of JoinSet responses.
-    async fn next_response(
+    /// Only one subscriber per JoinSet is supported. Parameter `start_idx` must be at most be equal to current size of JoinSet responses.
+    async fn next_responses(
         &self,
         execution_id: ExecutionId,
-        join_set_id: JoinSetId,
-        expected_idx: usize,
-    ) -> Result<JoinSetResponseEventOuter, DbError>;
+        start_idx: usize,
+    ) -> Result<Vec<JoinSetResponseEventOuter>, DbError>;
 
     async fn wait_for_finished_result(
         &self,
