@@ -385,6 +385,7 @@ impl<C: ClockFn> EventHistory<C> {
     async fn flush_non_blocking_event_cache_if_full<DB: DbConnection>(
         &mut self,
         db_connection: &DB,
+        created_at: DateTime<Utc>,
     ) -> Result<(), DbError> {
         if self
             .non_blocking_event_batch
@@ -393,7 +394,8 @@ impl<C: ClockFn> EventHistory<C> {
             .unwrap_or_default()
             >= MAX_NON_BLOCKING_CACHE_SIZE
         {
-            self.flush_non_blocking_event_cache(db_connection).await
+            self.flush_non_blocking_event_cache(db_connection, created_at)
+                .await
         } else {
             Ok(())
         }
@@ -402,10 +404,10 @@ impl<C: ClockFn> EventHistory<C> {
     async fn flush_non_blocking_event_cache<DB: DbConnection>(
         &mut self,
         db_connection: &DB,
+        created_at: DateTime<Utc>,
     ) -> Result<(), DbError> {
         match &mut self.non_blocking_event_batch {
             Some(non_blocking_event_batch) if !non_blocking_event_batch.is_empty() => {
-                let created_at = (self.clock_fn)();
                 let mut batches = Vec::with_capacity(non_blocking_event_batch.len());
                 let mut childs = Vec::with_capacity(non_blocking_event_batch.len());
                 let mut first_version = None;
@@ -495,7 +497,7 @@ impl<C: ClockFn> EventHistory<C> {
                             version: version.clone(),
                             child_req,
                         });
-                        self.flush_non_blocking_event_cache_if_full(db_connection)
+                        self.flush_non_blocking_event_cache_if_full(db_connection, created_at)
                             .await?;
                         Version::new(version.0 + 1)
                     } else {
@@ -512,7 +514,8 @@ impl<C: ClockFn> EventHistory<C> {
                 Ok(history_events)
             }
             EventCall::BlockingChildJoinNext { join_set_id } => {
-                self.flush_non_blocking_event_cache(db_connection).await?;
+                self.flush_non_blocking_event_cache(db_connection, created_at)
+                    .await?;
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
                     lock_expires_at,
@@ -534,7 +537,8 @@ impl<C: ClockFn> EventHistory<C> {
                 child_execution_id,
                 params,
             } => {
-                self.flush_non_blocking_event_cache(db_connection).await?;
+                self.flush_non_blocking_event_cache(db_connection, created_at)
+                    .await?;
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSet { join_set_id };
                 history_events.push(event.clone());
@@ -578,7 +582,8 @@ impl<C: ClockFn> EventHistory<C> {
                 delay_id,
                 expires_at_if_new,
             } => {
-                self.flush_non_blocking_event_cache(db_connection).await?;
+                self.flush_non_blocking_event_cache(db_connection, created_at)
+                    .await?;
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSet { join_set_id };
                 history_events.push(event.clone());
