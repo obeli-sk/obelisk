@@ -228,6 +228,7 @@ impl SqlitePool {
         let pool = PoolBuilder::new()
             .path(path)
             .journal_mode(JournalMode::Wal)
+            .num_conns(1)
             .open()
             .await?;
         Self::init(&pool).await?;
