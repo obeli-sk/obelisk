@@ -184,11 +184,11 @@ impl DbConnection for DbConnectionProxy {
         self.0.get(execution_id).await
     }
 
-    async fn next_responses(
+    async fn subscribe_to_next_responses(
         &self,
         execution_id: ExecutionId,
         start_idx: usize,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
-        self.0.next_responses(execution_id, start_idx).await
+        self.0.subscribe_to_next_responses(execution_id, start_idx).await
     }
 }

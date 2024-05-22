@@ -551,7 +551,7 @@ pub trait DbConnection: Send + Sync {
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError>;
 
     /// Only one subscriber per JoinSet is supported. Parameter `start_idx` must be at most be equal to current size of JoinSet responses.
-    async fn next_responses(
+    async fn subscribe_to_next_responses(
         &self,
         execution_id: ExecutionId,
         start_idx: usize,

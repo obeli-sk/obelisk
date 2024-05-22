@@ -1452,7 +1452,7 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn next_responses(
+    async fn subscribe_to_next_responses(
         &self,
         execution_id: ExecutionId,
         start_idx: usize,

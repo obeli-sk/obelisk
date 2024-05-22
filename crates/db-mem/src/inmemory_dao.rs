@@ -160,7 +160,7 @@ impl DbConnection for InMemoryDbConnection {
             .map_err(DbError::Specific)
     }
 
-    async fn next_responses(
+    async fn subscribe_to_next_responses(
         &self,
         execution_id: ExecutionId,
         start_idx: usize,
@@ -169,7 +169,7 @@ impl DbConnection for InMemoryDbConnection {
             .0
             .lock()
             .await
-            .next_responses(execution_id, start_idx)?;
+            .subscribe_to_next_responses(execution_id, start_idx)?;
         match either {
             Either::Left(resp) => Ok(resp),
             Either::Right(receiver) => receiver
@@ -623,7 +623,7 @@ impl DbTask {
     }
 
     #[instrument(skip(self))]
-    fn next_responses(
+    fn subscribe_to_next_responses(
         &mut self,
         execution_id: ExecutionId,
         start_idx: usize,

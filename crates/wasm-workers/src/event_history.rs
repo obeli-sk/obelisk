@@ -173,7 +173,7 @@ impl<C: ClockFn> EventHistory<C> {
             // Subscribe to the next response.
             loop {
                 let next_responses = db_connection
-                    .next_responses(self.execution_id, self.responses.len())
+                    .subscribe_to_next_responses(self.execution_id, self.responses.len())
                     .await?;
                 trace!("Got next responses {next_responses:?}");
                 self.responses.extend(
