@@ -2,10 +2,17 @@ use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use tracing::info;
+use utils::time::now;
 
 #[derive(Clone)]
 pub struct SimClock {
     current_time: Arc<std::sync::Mutex<DateTime<Utc>>>,
+}
+
+impl Default for SimClock {
+    fn default() -> Self {
+        Self::new(now())
+    }
 }
 
 impl SimClock {

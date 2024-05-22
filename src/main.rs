@@ -89,7 +89,7 @@ async fn main() {
         .unwrap_or_default()
         .eq_ignore_ascii_case("mem")
     {
-        let db_pool = db_mem::inmemory_dao::InMemoryPool::new();
+        let db_pool = db_mem::inmemory_dao::InMemoryPool::new(now);
         run(db_pool).await;
     } else {
         let db_pool = SqlitePool::new("obelisk.sqlite").await.unwrap();
@@ -163,7 +163,7 @@ async fn run<DB: DbConnection + 'static>(db_pool: impl DbPool<DB> + 'static) {
         let created_at = now();
         db_connection
             .create(CreateRequest {
-                created_at: now(),
+                created_at,
                 execution_id,
                 ffqn,
                 params,

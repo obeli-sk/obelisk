@@ -480,7 +480,7 @@ pub trait DbConnection: Send + Sync {
         &self,
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,
-        ffqns: Vec<FunctionFqn>,
+        ffqns: Vec<FunctionFqn>, //TODO: &[FunctionFqn]
         created_at: DateTime<Utc>,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
@@ -570,6 +570,9 @@ pub trait DbConnection: Send + Sync {
             .expect("pending state was checked")
             .clone())
     }
+
+    /// Attempt to subscribe to pending executions. Database that does not support subscriptions will return `Ok(None)`
+    async fn subscribe_to_pending(&self, ffqns: &[FunctionFqn]) -> Result<Option<()>, DbError>;
 
     async fn wait_for_pending_state(
         &self,

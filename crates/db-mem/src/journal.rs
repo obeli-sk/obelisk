@@ -13,12 +13,12 @@ use std::{collections::VecDeque, time::Duration};
 use tokio::sync::oneshot;
 
 #[derive(Debug)]
-pub struct ExecutionJournal {
-    pub execution_id: ExecutionId,
-    pub pending_state: PendingState,
-    pub execution_events: VecDeque<ExecutionEvent>,
-    pub responses: Vec<JoinSetResponseEventOuter>,
-    pub response_subscriber: Option<oneshot::Sender<JoinSetResponseEventOuter>>,
+pub(crate) struct ExecutionJournal {
+    pub(crate) execution_id: ExecutionId,
+    pub(crate) pending_state: PendingState,
+    pub(crate) execution_events: VecDeque<ExecutionEvent>,
+    pub(crate) responses: Vec<JoinSetResponseEventOuter>,
+    pub(crate) response_subscriber: Option<oneshot::Sender<JoinSetResponseEventOuter>>,
 }
 
 impl ExecutionJournal {

@@ -837,7 +837,7 @@ mod tests {
     async fn regular_join_next_child() {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
 
         // Create an execution.
         let created_at = sim_clock.now();
@@ -983,7 +983,7 @@ mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
 
         // Create an execution.
         let created_at = sim_clock.now();
@@ -1141,7 +1141,7 @@ mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
 
         // Create an execution.
         let created_at = sim_clock.now();

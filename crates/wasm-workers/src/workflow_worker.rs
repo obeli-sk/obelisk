@@ -358,7 +358,6 @@ mod tests {
     use serde_json::json;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
-    use utils::time::now;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -410,28 +409,31 @@ mod tests {
 
     pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
+        clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
         spawn_workflow(
             db_pool,
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
             FIBO_WORKFLOW_FFQN,
-            now,
+            clock_fn,
             JoinNextBlockingStrategy::default(),
         )
     }
 
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity_mem() {
-        let (_guard, db_pool) = Database::Memory.set_up().await;
-        fibo_workflow_should_schedule_fibo_activity(db_pool.clone()).await;
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
+        fibo_workflow_should_schedule_fibo_activity(db_pool.clone(), sim_clock).await;
         db_pool.close().await.unwrap();
     }
 
     #[cfg(not(madsim))]
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity_sqlite() {
-        let (_guard, db_pool) = Database::Sqlite.set_up().await;
-        fibo_workflow_should_schedule_fibo_activity(db_pool.clone()).await;
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool) = Database::Sqlite.set_up(sim_clock.get_clock_fn()).await;
+        fibo_workflow_should_schedule_fibo_activity(db_pool.clone(), sim_clock).await;
         db_pool.close().await.unwrap();
     }
 
@@ -440,13 +442,14 @@ mod tests {
         P: DbPool<DB> + 'static,
     >(
         db_pool: P,
+        sim_clock: SimClock,
     ) {
         const INPUT_ITERATIONS: u32 = 1;
         let _guard = test_utils::set_up();
-        let workflow_exec_task = spawn_workflow_fibo(db_pool.clone());
+        let workflow_exec_task = spawn_workflow_fibo(db_pool.clone(), sim_clock.get_clock_fn());
         // Create an execution.
         let execution_id = ExecutionId::from_parts(0, 0);
-        let created_at = now();
+        let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
         let params = Params::from_json_array(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
         db_connection
@@ -462,7 +465,7 @@ mod tests {
             })
             .await
             .unwrap();
-        // Should end as BlockedByJoinSet
+        info!("Should end as BlockedByJoinSet");
         wait_for_pending_state_fn(
             &db_connection,
             execution_id,
@@ -478,8 +481,8 @@ mod tests {
         .await
         .unwrap();
 
-        // Execution should call the activity and finish
-        let activity_exec_task = spawn_activity_fibo(db_pool.clone());
+        info!("Execution should call the activity and finish");
+        let activity_exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn());
 
         let res = db_connection
             .wait_for_finished_result(execution_id, None)
@@ -539,8 +542,8 @@ mod tests {
     async fn sleep_should_be_persisted_after_executor_restart() {
         const SLEEP_MILLIS: u32 = 100;
         let _guard = test_utils::set_up();
-        let sim_clock = SimClock::new(now());
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
 
         let workflow_exec_task = spawn_workflow_sleep(db_pool.clone(), sim_clock.get_clock_fn());
         let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
@@ -620,7 +623,7 @@ mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
 
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
@@ -711,7 +714,7 @@ mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool) = db.set_up().await;
+        let (_guard, db_pool) = db.set_up(sim_clock.get_clock_fn()).await;
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,

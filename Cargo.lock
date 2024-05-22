@@ -802,6 +802,7 @@ dependencies = [
  "madsim-tokio",
  "thiserror",
  "tracing",
+ "utils",
 ]
 
 [[package]]

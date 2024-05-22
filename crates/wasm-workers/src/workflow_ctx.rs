@@ -281,7 +281,7 @@ pub(crate) mod tests {
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::info;
-    use utils::time::{now, ClockFn};
+    use utils::time::ClockFn;
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
@@ -383,13 +383,14 @@ pub(crate) mod tests {
                 .map(std::result::Result::unwrap)
                 .collect::<Vec<_>>()
         };
-        let created_at = now();
+        let sim_clock = SimClock::default();
+        let created_at = sim_clock.now();
         info!(now = %created_at, "Generated steps: {steps:?}");
         let execution_id = ExecutionId::generate();
         info!("first execution");
-        let first = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
+        let first = execute_steps(execution_id, steps.clone(), sim_clock.clone()).await;
         info!("second execution");
-        let second = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
+        let second = execute_steps(execution_id, steps.clone(), sim_clock).await;
         assert_eq!(first, second);
     }
 
@@ -399,7 +400,7 @@ pub(crate) mod tests {
         steps: Vec<WorkflowStep>,
         sim_clock: SimClock,
     ) -> (Vec<HistoryEvent>, FinishedExecutionResult) {
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
         let mut child_execution_count = steps
             .iter()
             .filter(|step| matches!(step, WorkflowStep::Call { .. }))

@@ -10,6 +10,7 @@ use db_tests::SOME_FFQN;
 use std::time::Duration;
 use test_utils::arbitrary::UnstructuredHolder;
 use test_utils::set_up;
+use test_utils::sim_clock::SimClock;
 use utils::time::now;
 
 #[tokio::test]
@@ -53,7 +54,8 @@ async fn diff_proptest() {
     for (idx, step) in append_requests.iter().enumerate() {
         println!("{idx}: {step:?}");
     }
-    let (_mem_guard, db_mem_pool) = Database::Memory.set_up().await;
+    let sim_clock = SimClock::default();
+    let (_mem_guard, db_mem_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
     let mem_conn = db_mem_pool.connection();
     let mem_log = create_and_append(
         &mem_conn,
@@ -63,7 +65,7 @@ async fn diff_proptest() {
     )
     .await;
     db_mem_pool.close().await.unwrap();
-    let (_sqlite_guard, sqlite_pool) = Database::Sqlite.set_up().await;
+    let (_sqlite_guard, sqlite_pool) = Database::Sqlite.set_up(sim_clock.get_clock_fn()).await;
     let sqlite_conn = sqlite_pool.connection();
     let sqlite_log =
         create_and_append(&sqlite_conn, execution_id, create_req, &append_requests).await;

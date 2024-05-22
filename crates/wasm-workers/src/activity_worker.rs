@@ -288,7 +288,7 @@ pub(crate) mod tests {
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
     use serde_json::json;
     use std::time::Duration;
-    use test_utils::env_or_default;
+    use test_utils::{env_or_default, sim_clock::SimClock};
     use utils::time::now;
     use val_json::{
         type_wrapper::TypeWrapper,
@@ -333,24 +333,26 @@ pub(crate) mod tests {
 
     pub(crate) fn spawn_activity_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
+        clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
         spawn_activity(
             db_pool,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             FIBO_ACTIVITY_FFQN,
-            now,
+            clock_fn,
         )
     }
 
     #[tokio::test]
     async fn fibo_once() {
         test_utils::set_up();
-        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
         let db_connection = db_pool.connection();
-        let exec_task = spawn_activity_fibo(db_pool.clone());
+        let exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn());
         // Create an execution.
         let execution_id = ExecutionId::generate();
-        let created_at = now();
+        let created_at = sim_clock.now();
         let params = Params::from_json_array(json!([FIBO_10_INPUT])).unwrap();
         db_connection
             .create(CreateRequest {
@@ -477,7 +479,7 @@ pub(crate) mod tests {
             const LOCK_EXPIRY: Duration = Duration::from_millis(500);
             const TICK_SLEEP: Duration = Duration::from_millis(10);
             test_utils::set_up();
-            let (_guard, db_pool) = Database::Memory.set_up().await;
+            let (_guard, db_pool) = Database::Memory.set_up(now).await;
             let timers_watcher_task =
                 executor::expired_timers_watcher::TimersWatcherTask::spawn_new(
                     db_pool.connection(),
@@ -632,8 +634,8 @@ pub(crate) mod tests {
             const BODY: &str = "ok";
             const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
             test_utils::set_up();
-            let sim_clock = SimClock::new(now());
-            let (_guard, db_pool) = Database::Memory.set_up().await;
+            let sim_clock = SimClock::default();
+            let (_guard, db_pool) = Database::Memory.set_up(now).await;
             let engine = activity_engine(EngineConfig::default());
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
