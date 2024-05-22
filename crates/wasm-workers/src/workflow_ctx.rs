@@ -399,7 +399,7 @@ pub(crate) mod tests {
         steps: Vec<WorkflowStep>,
         sim_clock: SimClock,
     ) -> (Vec<HistoryEvent>, FinishedExecutionResult) {
-        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let mut child_execution_count = steps
             .iter()
             .filter(|step| matches!(step, WorkflowStep::Call { .. }))

@@ -179,7 +179,7 @@ mod tests {
     #[tokio::test]
     async fn detection(#[case] file: &'static str, #[case] expected: Kind) {
         set_up();
-        let (_guard, db_pool) = Database::Memory.set_up(now).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let config = AutoConfig {
             wasm_path: StrVariant::Static(file),
             config_id: ConfigId::generate(),

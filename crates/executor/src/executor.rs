@@ -21,13 +21,11 @@ use tokio::task::{AbortHandle, JoinHandle};
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::ClockFn;
 
-const TICK_SLEEP_ON_SUBSCRIPTION_FAIL: Duration = Duration::from_millis(100);
-
 #[derive(Debug, Clone)]
 pub struct ExecConfig<C: ClockFn> {
     pub ffqns: Vec<FunctionFqn>,
     pub lock_expiry: Duration,
-    pub tick_sleep: Duration, // FIXME: delete
+    pub tick_sleep: Duration,
     pub batch_size: u32,
     pub clock_fn: C, // Used for obtaining current time when the execution finishes.
 }
@@ -141,20 +139,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     if is_closing_inner.load(Ordering::Relaxed) {
                         return;
                     }
-                    // FIXME: subscribe to close channel, race!
-                    match task
-                        .db_pool
-                        .connection()
-                        .subscribe_to_pending(&task.config.ffqns)
-                        .await
-                    {
-                        Ok(Some(())) => {}
-                        Ok(None) => tokio::time::sleep(TICK_SLEEP_ON_SUBSCRIPTION_FAIL).await,
-                        Err(err) => {
-                            warn!("Subscribe to pending failed - {err:?}");
-                            tokio::time::sleep(TICK_SLEEP_ON_SUBSCRIPTION_FAIL).await;
-                        }
-                    }
+                    tokio::time::sleep(task.config.tick_sleep).await;
                 }
             }
             .instrument(span),
@@ -597,7 +582,7 @@ mod tests {
     async fn execute_simple_lifecycle_tick_based_mem() {
         let created_at = now();
         let clock_fn = move || created_at;
-        let (_guard, db_pool) = Database::Memory.set_up(clock_fn).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         execute_simple_lifecycle_tick_based(db_pool.clone(), clock_fn).await;
         db_pool.close().await.unwrap();
     }
@@ -607,7 +592,7 @@ mod tests {
     async fn execute_simple_lifecycle_tick_based_sqlite() {
         let created_at = now();
         let clock_fn = move || created_at;
-        let (_guard, db_pool) = Database::Sqlite.set_up(clock_fn).await;
+        let (_guard, db_pool) = Database::Sqlite.set_up().await;
         execute_simple_lifecycle_tick_based(db_pool.clone(), clock_fn).await;
         db_pool.close().await.unwrap();
     }
@@ -663,7 +648,7 @@ mod tests {
         set_up();
         let created_at = now();
         let clock_fn = move || created_at;
-        let (_guard, db_pool) = Database::Memory.set_up(clock_fn).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             ffqns: vec![FFQN_SOME],
             batch_size: 1,
@@ -778,7 +763,7 @@ mod tests {
     async fn worker_error_should_trigger_an_execution_retry() {
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             ffqns: vec![FFQN_SOME],
             batch_size: 1,
@@ -877,7 +862,7 @@ mod tests {
         set_up();
         let created_at = now();
         let clock_fn = move || created_at;
-        let (_guard, db_pool) = Database::Memory.set_up(clock_fn).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             ffqns: vec![FFQN_SOME],
             batch_size: 1,
@@ -939,7 +924,7 @@ mod tests {
         const LOCK_EXPIRY: Duration = Duration::from_secs(1);
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
 
         let parent_worker = Arc::new(SimpleWorker::with_single_result(
             WorkerResult::ChildExecutionRequest,
@@ -1119,7 +1104,7 @@ mod tests {
     async fn hanging_lock_should_be_cleaned_and_execution_retried() {
         set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let lock_expiry = Duration::from_millis(100);
         let exec_config = ExecConfig {
             ffqns: vec![FFQN_SOME],

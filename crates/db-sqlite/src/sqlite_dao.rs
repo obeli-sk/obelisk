@@ -1577,11 +1577,6 @@ impl DbConnection for SqlitePool {
         .await
         .map_err(DbError::from)
     }
-
-    async fn subscribe_to_pending(&self, _ffqns: &[FunctionFqn]) -> Result<Option<()>, DbError> {
-        trace!("subscribe_to_pending");
-        Ok(None)
-    }
 }
 
 #[cfg(any(test, feature = "tempfile"))]

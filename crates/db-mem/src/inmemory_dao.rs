@@ -21,14 +21,13 @@ use itertools::Either;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::oneshot;
+use tracing::instrument;
 use tracing::{debug, error};
-use tracing::{instrument, trace};
-use utils::time::ClockFn;
 
-pub struct InMemoryDbConnection<C: ClockFn>(Arc<tokio::sync::Mutex<DbTask<C>>>);
+pub struct InMemoryDbConnection(Arc<tokio::sync::Mutex<DbTask>>);
 
 #[async_trait]
-impl<C: ClockFn> DbConnection for InMemoryDbConnection<C> {
+impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
         self.0.lock().await.create(req).map_err(DbError::Specific)
@@ -193,10 +192,6 @@ impl<C: ClockFn> DbConnection for InMemoryDbConnection<C> {
             .append_response(created_at, execution_id, response_event)
             .map_err(DbError::Specific)
     }
-
-    async fn subscribe_to_pending(&self, ffqns: &[FunctionFqn]) -> Result<Option<()>, DbError> {
-        self.0.lock().await.subscribe_to_pending(ffqns).await
-    }
 }
 
 mod index {
@@ -331,23 +326,21 @@ mod index {
 }
 
 #[derive(Clone)]
-pub struct InMemoryPool<C: ClockFn>(Arc<tokio::sync::Mutex<DbTask<C>>>);
+pub struct InMemoryPool(Arc<tokio::sync::Mutex<DbTask>>);
 
-impl<C: ClockFn> InMemoryPool<C> {
+impl InMemoryPool {
     #[must_use]
-    pub fn new(clock_fn: C) -> Self {
+    pub fn new() -> Self {
         Self(Arc::new(tokio::sync::Mutex::new(DbTask {
             journals: BTreeMap::default(),
             index: JournalsIndex::default(),
-            pending_subscribers: Default::default(),
-            clock_fn,
         })))
     }
 }
 
 #[async_trait]
-impl<C: ClockFn> DbPool<InMemoryDbConnection<C>> for InMemoryPool<C> {
-    fn connection(&self) -> InMemoryDbConnection<C> {
+impl DbPool<InMemoryDbConnection> for InMemoryPool {
+    fn connection(&self) -> InMemoryDbConnection {
         InMemoryDbConnection(self.0.clone())
     }
 
@@ -357,15 +350,12 @@ impl<C: ClockFn> DbPool<InMemoryDbConnection<C>> for InMemoryPool<C> {
 }
 
 #[derive(Debug, Default)]
-struct DbTask<C: ClockFn> {
+struct DbTask {
     journals: BTreeMap<ExecutionId, ExecutionJournal>,
     index: JournalsIndex,
-    pending_subscribers:
-        hashbrown::HashMap<FunctionFqn, Arc<std::sync::Mutex<Option<oneshot::Sender<()>>>>>,
-    clock_fn: C, // Used for `subscribe_to_pending`
 }
 
-impl<C: ClockFn> DbTask<C> {
+impl DbTask {
     #[allow(clippy::too_many_arguments)]
     fn lock_pending(
         &mut self,
@@ -649,22 +639,5 @@ impl<C: ClockFn> DbTask<C> {
             journal.response_subscriber = Some(sender);
             Ok(Either::Right(receiver))
         }
-    }
-
-    async fn subscribe_to_pending(&mut self, ffqns: &[FunctionFqn]) -> Result<Option<()>, DbError> {
-        trace!("subscribe_to_pending");
-        // either there is a pending result now, or subscribe to its change
-
-        // let (sender, receiver) = oneshot::channel();
-        // let arc = Arc::new(std::sync::Mutex::new(Some(sender)));
-        // for ffqn in ffqns {
-        //     self.pending_subscribers.insert(ffqn.clone(), arc.clone());
-        // }
-        // if receiver.await.is_ok() {
-        //     Ok(Some(()))
-        // } else {
-        //     error!("Pending sender was dropped");
-        Ok(None)
-        // }
     }
 }

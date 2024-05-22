@@ -12,7 +12,6 @@ use concepts::{
 use db_mem::inmemory_dao::InMemoryPool;
 use db_sqlite::sqlite_dao::SqlitePool;
 use tempfile::NamedTempFile;
-use utils::time::ClockFn;
 
 pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
 
@@ -27,12 +26,9 @@ pub enum DbGuard {
 }
 
 impl Database {
-    pub async fn set_up<C: ClockFn>(self, clock_fn: C) -> (DbGuard, DbPoolEnum<C>) {
+    pub async fn set_up(self) -> (DbGuard, DbPoolEnum) {
         match self {
-            Database::Memory => (
-                DbGuard::Memory,
-                DbPoolEnum::Memory(InMemoryPool::new(clock_fn)),
-            ),
+            Database::Memory => (DbGuard::Memory, DbPoolEnum::Memory(InMemoryPool::new())),
             Database::Sqlite => {
                 use db_sqlite::sqlite_dao::tempfile::sqlite_pool;
                 let (db_pool, guard) = sqlite_pool().await;
@@ -43,13 +39,13 @@ impl Database {
 }
 
 #[derive(Clone)]
-pub enum DbPoolEnum<C: ClockFn> {
-    Memory(InMemoryPool<C>),
+pub enum DbPoolEnum {
+    Memory(InMemoryPool),
     Sqlite(SqlitePool),
 }
 
 #[async_trait]
-impl<C: ClockFn + 'static> DbPool<DbConnectionProxy> for DbPoolEnum<C> {
+impl DbPool<DbConnectionProxy> for DbPoolEnum {
     fn connection(&self) -> DbConnectionProxy {
         match self {
             DbPoolEnum::Memory(pool) => DbConnectionProxy(Box::new(pool.connection())),
@@ -196,9 +192,5 @@ impl DbConnection for DbConnectionProxy {
         self.0
             .subscribe_to_next_responses(execution_id, start_idx)
             .await
-    }
-
-    async fn subscribe_to_pending(&self, ffqns: &[FunctionFqn]) -> Result<Option<()>, DbError> {
-        self.0.subscribe_to_pending(ffqns).await
     }
 }

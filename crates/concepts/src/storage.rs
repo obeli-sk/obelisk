@@ -571,9 +571,6 @@ pub trait DbConnection: Send + Sync {
             .clone())
     }
 
-    /// Attempt to subscribe to pending executions. Database that does not support subscriptions will return `Ok(None)`
-    async fn subscribe_to_pending(&self, ffqns: &[FunctionFqn]) -> Result<Option<()>, DbError>;
-
     async fn wait_for_pending_state(
         &self,
         execution_id: ExecutionId,

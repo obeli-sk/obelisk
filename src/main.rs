@@ -89,7 +89,7 @@ async fn main() {
         .unwrap_or_default()
         .eq_ignore_ascii_case("mem")
     {
-        let db_pool = db_mem::inmemory_dao::InMemoryPool::new(now);
+        let db_pool = db_mem::inmemory_dao::InMemoryPool::new();
         run(db_pool).await;
     } else {
         let db_pool = SqlitePool::new("obelisk.sqlite").await.unwrap();

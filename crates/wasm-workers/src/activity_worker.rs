@@ -347,7 +347,7 @@ pub(crate) mod tests {
     async fn fibo_once() {
         test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
         let exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn());
         // Create an execution.
@@ -479,7 +479,7 @@ pub(crate) mod tests {
             const LOCK_EXPIRY: Duration = Duration::from_millis(500);
             const TICK_SLEEP: Duration = Duration::from_millis(10);
             test_utils::set_up();
-            let (_guard, db_pool) = Database::Memory.set_up(now).await;
+            let (_guard, db_pool) = Database::Memory.set_up().await;
             let timers_watcher_task =
                 executor::expired_timers_watcher::TimersWatcherTask::spawn_new(
                     db_pool.connection(),
@@ -635,7 +635,7 @@ pub(crate) mod tests {
             const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
             test_utils::set_up();
             let sim_clock = SimClock::default();
-            let (_guard, db_pool) = Database::Memory.set_up(now).await;
+            let (_guard, db_pool) = Database::Memory.set_up().await;
             let engine = activity_engine(EngineConfig::default());
             let worker = Arc::new(
                 ActivityWorker::new_with_config(

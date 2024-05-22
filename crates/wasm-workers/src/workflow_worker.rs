@@ -423,7 +423,7 @@ mod tests {
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity_mem() {
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
         fibo_workflow_should_schedule_fibo_activity(db_pool.clone(), sim_clock).await;
         db_pool.close().await.unwrap();
     }
@@ -432,7 +432,7 @@ mod tests {
     #[tokio::test]
     async fn fibo_workflow_should_schedule_fibo_activity_sqlite() {
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Sqlite.set_up(sim_clock.get_clock_fn()).await;
+        let (_guard, db_pool) = Database::Sqlite.set_up().await;
         fibo_workflow_should_schedule_fibo_activity(db_pool.clone(), sim_clock).await;
         db_pool.close().await.unwrap();
     }
@@ -543,7 +543,7 @@ mod tests {
         const SLEEP_MILLIS: u32 = 100;
         let _guard = test_utils::set_up();
         let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
 
         let workflow_exec_task = spawn_workflow_sleep(db_pool.clone(), sim_clock.get_clock_fn());
         let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
@@ -623,7 +623,7 @@ mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool) = Database::Memory.set_up(sim_clock.get_clock_fn()).await;
+        let (_guard, db_pool) = Database::Memory.set_up().await;
 
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
@@ -714,7 +714,7 @@ mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
-        let (_guard, db_pool) = db.set_up(sim_clock.get_clock_fn()).await;
+        let (_guard, db_pool) = db.set_up().await;
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
