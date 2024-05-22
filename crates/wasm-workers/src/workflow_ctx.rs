@@ -281,7 +281,7 @@ pub(crate) mod tests {
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::info;
-    use utils::time::ClockFn;
+    use utils::time::{now, ClockFn};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
@@ -383,14 +383,13 @@ pub(crate) mod tests {
                 .map(std::result::Result::unwrap)
                 .collect::<Vec<_>>()
         };
-        let sim_clock = SimClock::default();
-        let created_at = sim_clock.now();
+        let created_at = now();
         info!(now = %created_at, "Generated steps: {steps:?}");
         let execution_id = ExecutionId::generate();
         info!("first execution");
-        let first = execute_steps(execution_id, steps.clone(), sim_clock.clone()).await;
+        let first = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
         info!("second execution");
-        let second = execute_steps(execution_id, steps.clone(), sim_clock).await;
+        let second = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
         assert_eq!(first, second);
     }
 
