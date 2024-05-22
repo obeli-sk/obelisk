@@ -107,7 +107,7 @@ impl ExecutionJournal {
         self.execution_events
             .push_back(ExecutionEvent { created_at, event });
         // update the state
-        self.pending_state = self.calculate_pending_state();
+        self.update_pending_state();
         Ok(self.version())
     }
 
@@ -115,10 +115,14 @@ impl ExecutionJournal {
         let event = JoinSetResponseEventOuter { created_at, event };
         self.responses.push(event.clone());
         // update the state
-        self.pending_state = self.calculate_pending_state();
+        self.update_pending_state();
         if let Some(subscriber) = self.response_subscriber.take() {
             let _ = subscriber.send(event);
         }
+    }
+
+    fn update_pending_state(&mut self) {
+        self.pending_state = self.calculate_pending_state();
     }
 
     fn calculate_pending_state(&self) -> PendingState {
@@ -271,6 +275,6 @@ impl ExecutionJournal {
 
     pub fn truncate_and_update_pending_state(&mut self, len: usize) {
         self.execution_events.truncate(len);
-        self.pending_state = self.calculate_pending_state();
+        self.update_pending_state();
     }
 }
