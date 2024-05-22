@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -191,6 +193,17 @@ impl DbConnection for DbConnectionProxy {
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
         self.0
             .subscribe_to_next_responses(execution_id, start_idx)
+            .await
+    }
+
+    async fn subscribe_to_pending(
+        &self,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: &[FunctionFqn],
+        max_wait: Duration,
+    ) {
+        self.0
+            .subscribe_to_pending(pending_at_or_sooner, ffqns, max_wait)
             .await
     }
 }

@@ -571,6 +571,18 @@ pub trait DbConnection: Send + Sync {
             .clone())
     }
 
+    /// Best effort for subscribe to pending executions.
+    /// Return imediately if there are pending notifications at `pending_at_or_sooner`.
+    /// Implementation must return not later than at expiry date, which is: `pending_at_or_sooner` + `max_wait`.
+    /// Timers that expire until the expiry date can be disregarded.
+    /// Databases that do not support subscriptions should wait for `max_wait`.
+    async fn subscribe_to_pending(
+        &self,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: &[FunctionFqn],
+        max_wait: Duration,
+    );
+
     async fn wait_for_pending_state(
         &self,
         execution_id: ExecutionId,
@@ -585,7 +597,7 @@ pub trait DbConnection: Send + Sync {
                     debug!(%execution_id, "Found: {expected_pending_state}");
                     return Ok(execution_log);
                 }
-                tokio::time::sleep(Duration::from_millis(1)).await;
+                tokio::time::sleep(Duration::from_millis(1)).await; // TODO: Switch to subscription-based approach
             }
         };
 

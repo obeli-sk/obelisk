@@ -20,7 +20,8 @@ use hashbrown::{HashMap, HashSet};
 use itertools::Either;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tokio::sync::oneshot;
+use std::time::Duration;
+use tokio::sync::{mpsc, oneshot};
 use tracing::instrument;
 use tracing::{debug, error};
 
@@ -170,6 +171,7 @@ impl DbConnection for InMemoryDbConnection {
             .lock()
             .await
             .subscribe_to_next_responses(execution_id, start_idx)?;
+        // unlock
         match either {
             Either::Left(resp) => Ok(resp),
             Either::Right(receiver) => receiver
@@ -191,6 +193,30 @@ impl DbConnection for InMemoryDbConnection {
             .await
             .append_response(created_at, execution_id, response_event)
             .map_err(DbError::Specific)
+    }
+
+    async fn subscribe_to_pending(
+        &self,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: &[FunctionFqn],
+        max_wait: Duration,
+    ) {
+        let either = self
+            .0
+            .lock()
+            .await
+            .subscribe_to_pending(pending_at_or_sooner, ffqns)
+            .await;
+        // unlock
+        match either {
+            Either::Left(()) => {} // Got results imediately
+            Either::Right(mut receiver) => {
+                tokio::select! {
+                    _ = receiver.recv() => {} // Got results eventually
+                    _ = tokio::time::sleep(max_wait) => {} // Timeout
+                }
+            }
+        }
     }
 }
 
@@ -334,6 +360,7 @@ impl InMemoryPool {
         Self(Arc::new(tokio::sync::Mutex::new(DbTask {
             journals: BTreeMap::default(),
             index: JournalsIndex::default(),
+            ffqn_to_pending_subscription: hashbrown::HashMap::default(),
         })))
     }
 }
@@ -353,6 +380,7 @@ impl DbPool<InMemoryDbConnection> for InMemoryPool {
 struct DbTask {
     journals: BTreeMap<ExecutionId, ExecutionJournal>,
     index: JournalsIndex,
+    ffqn_to_pending_subscription: hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>,
 }
 
 impl DbTask {
@@ -411,6 +439,7 @@ impl DbTask {
                 "execution is already initialized",
             )));
         }
+        let subscription = self.ffqn_to_pending_subscription.get(&req.ffqn);
         let mut journal = ExecutionJournal::new(CreateRequest {
             created_at: req.created_at,
             execution_id: req.execution_id,
@@ -428,6 +457,9 @@ impl DbTask {
             old_val.is_none(),
             "journals cannot contain the new execution"
         );
+        if let Some(subscription) = subscription {
+            let _ = subscription.try_send(());
+        }
         Ok(version)
     }
 
@@ -479,6 +511,11 @@ impl DbTask {
         }
         let new_version = journal.append(created_at, event)?;
         self.index.update(journal);
+        if matches!(journal.pending_state, PendingState::PendingAt { .. }) {
+            if let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn()) {
+                let _ = subscription.try_send(());
+            }
+        }
         Ok(new_version)
     }
 
@@ -535,7 +572,6 @@ impl DbTask {
                 "Cannot append `Created` event - use `create` instead",
             )));
         }
-
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             return Err(SpecificError::NotFound);
         };
@@ -565,6 +601,11 @@ impl DbTask {
         }
         let version = journal.version();
         self.index.update(journal);
+        if matches!(journal.pending_state, PendingState::PendingAt { .. }) {
+            if let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn()) {
+                let _ = subscription.try_send(());
+            }
+        }
         Ok(version)
     }
 
@@ -608,6 +649,11 @@ impl DbTask {
         };
         journal.append_response(created_at, response_event);
         self.index.update(journal);
+        if matches!(journal.pending_state, PendingState::PendingAt { .. }) {
+            if let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn()) {
+                let _ = subscription.try_send(());
+            }
+        }
         Ok(())
     }
 
@@ -639,5 +685,25 @@ impl DbTask {
             journal.response_subscriber = Some(sender);
             Ok(Either::Right(receiver))
         }
+    }
+
+    async fn subscribe_to_pending(
+        &mut self,
+        pending_at_or_sooner: DateTime<Utc>,
+        ffqns: &[FunctionFqn],
+    ) -> Either<(), mpsc::Receiver<()>> {
+        if !self
+            .index
+            .fetch_pending(&self.journals, 1, pending_at_or_sooner, ffqns)
+            .is_empty()
+        {
+            return Either::Left(());
+        }
+        let (sender, receiver) = mpsc::channel(1);
+        for ffqn in ffqns {
+            self.ffqn_to_pending_subscription
+                .insert(ffqn.clone(), sender.clone());
+        }
+        Either::Right(receiver)
     }
 }

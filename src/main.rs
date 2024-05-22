@@ -243,7 +243,7 @@ fn exec<DB: DbConnection + 'static>(
         ffqns: ffqns.clone(),
         batch_size: 10,
         lock_expiry: Duration::from_secs(10),
-        tick_sleep: Duration::from_millis(5),
+        tick_sleep: Duration::from_millis(200),
         clock_fn: now,
     };
     (

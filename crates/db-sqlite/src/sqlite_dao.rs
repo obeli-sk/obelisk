@@ -1577,6 +1577,16 @@ impl DbConnection for SqlitePool {
         .await
         .map_err(DbError::from)
     }
+
+    async fn subscribe_to_pending(
+        &self,
+        _pending_at_or_sooner: DateTime<Utc>,
+        _ffqns: &[FunctionFqn],
+        max_wait: Duration,
+    ) {
+        tokio::time::sleep(max_wait).await;
+        //TODO
+    }
 }
 
 #[cfg(any(test, feature = "tempfile"))]

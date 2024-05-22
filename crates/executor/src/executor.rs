@@ -136,10 +136,17 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                 loop {
                     let res = task.tick(clock_fn()).await;
                     Self::log_err_if_new(res, &mut old_err);
+                    task.db_pool
+                        .connection()
+                        .subscribe_to_pending(
+                            (task.config.clock_fn)(),
+                            &task.config.ffqns,
+                            task.config.tick_sleep,
+                        )
+                        .await;
                     if is_closing_inner.load(Ordering::Relaxed) {
                         return;
                     }
-                    tokio::time::sleep(task.config.tick_sleep).await;
                 }
             }
             .instrument(span),
