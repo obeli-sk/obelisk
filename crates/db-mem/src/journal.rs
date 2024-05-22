@@ -269,7 +269,7 @@ impl ExecutionJournal {
         }
     }
 
-    pub fn truncate(&mut self, len: usize) {
+    pub fn truncate_and_update_pending_state(&mut self, len: usize) {
         self.execution_events.truncate(len);
         self.pending_state = self.calculate_pending_state();
     }

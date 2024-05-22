@@ -248,11 +248,7 @@ mod index {
                 .map(|(id, is_async_delay)| (*id, *is_async_delay))
         }
 
-        pub(super) fn update(
-            &mut self,
-            execution_id: ExecutionId,
-            journals: &BTreeMap<ExecutionId, ExecutionJournal>,
-        ) {
+        fn purge(&mut self, execution_id: ExecutionId) {
             // Remove the ID from the index (if exists)
             if let Some(schedule) = self.pending_scheduled_rev.remove(&execution_id) {
                 let ids = self.pending_scheduled.get_mut(&schedule).unwrap();
@@ -264,68 +260,71 @@ mod index {
                     ids.remove(&execution_id);
                 }
             }
-            if let Some(journal) = journals.get(&execution_id) {
-                // Add it again if needed
-                match journal.pending_state {
-                    PendingState::PendingAt { scheduled_at } => {
-                        self.pending_scheduled
-                            .entry(scheduled_at)
-                            .or_default()
-                            .insert(execution_id);
-                        self.pending_scheduled_rev
-                            .insert(execution_id, scheduled_at);
-                    }
-                    PendingState::Locked {
-                        lock_expires_at, ..
-                    } => {
-                        self.timers
-                            .entry(lock_expires_at)
-                            .or_default()
-                            .insert(execution_id, None);
-                        self.timers_rev
-                            .entry(execution_id)
-                            .or_default()
-                            .push(lock_expires_at);
-                    }
-                    PendingState::BlockedByJoinSet { .. } | PendingState::Finished => {}
-                }
-                // Add all open async timers
-                let mut delay_req_resp = journal
-                    .event_history()
-                    .filter_map(|e| match e {
-                        HistoryEvent::JoinSetRequest {
-                            join_set_id,
-                            request:
-                                JoinSetRequest::DelayRequest {
-                                    delay_id,
-                                    expires_at,
-                                },
-                        } => Some(((join_set_id, delay_id), expires_at)),
-                        _ => None,
-                    })
-                    .collect::<HashMap<_, _>>();
-                // Keep only open
-                for responded in journal.responses.iter().filter_map(|e| {
-                    if let JoinSetResponse::DelayFinished { delay_id } = e.event.event {
-                        Some((e.event.join_set_id, delay_id))
-                    } else {
-                        None
-                    }
-                }) {
-                    delay_req_resp.remove(&responded);
-                }
+        }
 
-                for ((join_set_id, delay_id), expires_at) in delay_req_resp {
-                    self.timers
-                        .entry(expires_at)
+        pub(super) fn update(&mut self, journal: &mut ExecutionJournal) {
+            let execution_id = journal.execution_id;
+            self.purge(execution_id);
+            // Add it again if needed
+            match journal.pending_state {
+                PendingState::PendingAt { scheduled_at } => {
+                    self.pending_scheduled
+                        .entry(scheduled_at)
                         .or_default()
-                        .insert(execution_id, Some((join_set_id, delay_id)));
+                        .insert(execution_id);
+                    self.pending_scheduled_rev
+                        .insert(execution_id, scheduled_at);
+                }
+                PendingState::Locked {
+                    lock_expires_at, ..
+                } => {
+                    self.timers
+                        .entry(lock_expires_at)
+                        .or_default()
+                        .insert(execution_id, None);
                     self.timers_rev
                         .entry(execution_id)
                         .or_default()
-                        .push(expires_at);
+                        .push(lock_expires_at);
                 }
-            } // else do nothing - rolling back creation
+                PendingState::BlockedByJoinSet { .. } | PendingState::Finished => {}
+            }
+            // Add all open async timers
+            let mut delay_req_resp = journal
+                .event_history()
+                .filter_map(|e| match e {
+                    HistoryEvent::JoinSetRequest {
+                        join_set_id,
+                        request:
+                            JoinSetRequest::DelayRequest {
+                                delay_id,
+                                expires_at,
+                            },
+                    } => Some(((join_set_id, delay_id), expires_at)),
+                    _ => None,
+                })
+                .collect::<HashMap<_, _>>();
+            // Keep only open
+            for responded in journal.responses.iter().filter_map(|e| {
+                if let JoinSetResponse::DelayFinished { delay_id } = e.event.event {
+                    Some((e.event.join_set_id, delay_id))
+                } else {
+                    None
+                }
+            }) {
+                delay_req_resp.remove(&responded);
+            }
+
+            for ((join_set_id, delay_id), expires_at) in delay_req_resp {
+                self.timers
+                    .entry(expires_at)
+                    .or_default()
+                    .insert(execution_id, Some((join_set_id, delay_id)));
+                self.timers_rev
+                    .entry(execution_id)
+                    .or_default()
+                    .push(expires_at);
+            }
             trace!("Journal index updated: {self:?}");
         }
     }
@@ -340,8 +339,7 @@ impl<C: ClockFn> InMemoryPool<C> {
         Self(Arc::new(tokio::sync::Mutex::new(DbTask {
             journals: BTreeMap::default(),
             index: JournalsIndex::default(),
-            pending_subscribers: Vec::default(),
-            pending_subscribers_set: hashbrown::HashSet::new(),
+            pending_subscribers: Default::default(),
             clock_fn,
         })))
     }
@@ -362,8 +360,8 @@ impl<C: ClockFn> DbPool<InMemoryDbConnection<C>> for InMemoryPool<C> {
 struct DbTask<C: ClockFn> {
     journals: BTreeMap<ExecutionId, ExecutionJournal>,
     index: JournalsIndex,
-    pending_subscribers: Vec<(Vec<FunctionFqn>, oneshot::Sender<()>)>,
-    pending_subscribers_set: hashbrown::HashSet<FunctionFqn>,
+    pending_subscribers:
+        hashbrown::HashMap<FunctionFqn, Arc<std::sync::Mutex<Option<oneshot::Sender<()>>>>>,
     clock_fn: C, // Used for `subscribe_to_pending`
 }
 
@@ -423,7 +421,7 @@ impl<C: ClockFn> DbTask<C> {
                 "execution is already initialized",
             )));
         }
-        let journal = ExecutionJournal::new(CreateRequest {
+        let mut journal = ExecutionJournal::new(CreateRequest {
             created_at: req.created_at,
             execution_id: req.execution_id,
             ffqn: req.ffqn,
@@ -434,12 +432,12 @@ impl<C: ClockFn> DbTask<C> {
             max_retries: req.max_retries,
         });
         let version = journal.version();
+        self.index.update(&mut journal);
         let old_val = self.journals.insert(req.execution_id, journal);
         assert!(
             old_val.is_none(),
             "journals cannot contain the new execution"
         );
-        self.index.update(req.execution_id, &self.journals);
         Ok(version)
     }
 
@@ -490,7 +488,7 @@ impl<C: ClockFn> DbTask<C> {
             });
         }
         let new_version = journal.append(created_at, event)?;
-        self.index.update(execution_id, &self.journals);
+        self.index.update(journal);
         Ok(new_version)
     }
 
@@ -551,11 +549,13 @@ impl<C: ClockFn> DbTask<C> {
         let Some(journal) = self.journals.get_mut(&execution_id) else {
             return Err(SpecificError::NotFound);
         };
-        let truncate_len_or_delete = journal.len();
+        let truncate_len = journal.len();
         for event in batch {
             let expected_version = journal.version();
             if appending_version != expected_version {
-                self.rollback(truncate_len_or_delete, execution_id);
+                // Rollback
+                journal.truncate_and_update_pending_state(truncate_len);
+                self.index.update(journal);
                 return Err(SpecificError::VersionMismatch {
                     appending_version,
                     expected_version,
@@ -566,22 +566,16 @@ impl<C: ClockFn> DbTask<C> {
                     appending_version = new_version;
                 }
                 Err(err) => {
-                    self.rollback(truncate_len_or_delete, execution_id);
+                    // Rollback
+                    journal.truncate_and_update_pending_state(truncate_len);
+                    self.index.update(journal);
                     return Err(err);
                 }
             }
         }
         let version = journal.version();
-        self.index.update(execution_id, &self.journals);
+        self.index.update(journal);
         Ok(version)
-    }
-
-    fn rollback(&mut self, truncate_len: usize, execution_id: ExecutionId) {
-        self.journals
-            .get_mut(&execution_id)
-            .unwrap()
-            .truncate(truncate_len);
-        self.index.update(execution_id, &self.journals);
     }
 
     fn append_batch_create_child(
@@ -623,7 +617,7 @@ impl<C: ClockFn> DbTask<C> {
             return Err(SpecificError::NotFound);
         };
         journal.append_response(created_at, response_event);
-        self.index.update(execution_id, &self.journals);
+        self.index.update(journal);
         Ok(())
     }
 
@@ -657,8 +651,20 @@ impl<C: ClockFn> DbTask<C> {
         }
     }
 
-    async fn subscribe_to_pending(&self, _ffqns: &[FunctionFqn]) -> Result<Option<()>, DbError> {
+    async fn subscribe_to_pending(&mut self, ffqns: &[FunctionFqn]) -> Result<Option<()>, DbError> {
         trace!("subscribe_to_pending");
+        // either there is a pending result now, or subscribe to its change
+
+        // let (sender, receiver) = oneshot::channel();
+        // let arc = Arc::new(std::sync::Mutex::new(Some(sender)));
+        // for ffqn in ffqns {
+        //     self.pending_subscribers.insert(ffqn.clone(), arc.clone());
+        // }
+        // if receiver.await.is_ok() {
+        //     Ok(Some(()))
+        // } else {
+        //     error!("Pending sender was dropped");
         Ok(None)
+        // }
     }
 }
