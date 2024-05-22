@@ -6,7 +6,7 @@ Job scheduler/ WASM runner.
 This is a pre-release.
 This repo contains backend code for local development and testing.
 The software doesn't have backward compatibility guarantees for CLI nor database format.
-Please exercise caution if attempting to use it for production usage.
+Please exercise caution if attempting to use it for production.
 
 ## Features
 * *Activities* that must be idempotent
