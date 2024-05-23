@@ -133,6 +133,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     phantom_data: PhantomData,
                 };
                 let mut old_err = None;
+                let ffqns: Arc<[FunctionFqn]> = Arc::from(task.config.ffqns.clone());
                 loop {
                     let res = task.tick(clock_fn()).await;
                     Self::log_err_if_new(res, &mut old_err);
@@ -140,7 +141,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         .connection()
                         .subscribe_to_pending(
                             (task.config.clock_fn)(),
-                            &task.config.ffqns,
+                            ffqns.clone(),
                             task.config.tick_sleep,
                         )
                         .await;

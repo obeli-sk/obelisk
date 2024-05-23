@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt::Debug;
+use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoStaticStr;
 use tracing::debug;
@@ -256,7 +257,8 @@ pub enum ExecutionEventInner {
     },
     /// Returns execution to [`PendingState::PendingNow`] state
     /// without timing out. This can happen when the executor is running
-    /// out of resources like [`WorkerError::LimitReached`]
+    /// out of resources like [`WorkerError::LimitReached`] or when
+    /// the executor is shutting down.
     Unlocked,
     // Created by the executor holding last lock.
     // Processed by a scheduler.
@@ -550,7 +552,8 @@ pub trait DbConnection: Send + Sync {
     /// Create a new execution log
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError>;
 
-    /// Only one subscriber per JoinSet is supported. Parameter `start_idx` must be at most be equal to current size of JoinSet responses.
+    /// Get notified when a new response arrives.
+    /// Parameter `start_idx` must be at most be equal to current size of responses in the execution log.
     async fn subscribe_to_next_responses(
         &self,
         execution_id: ExecutionId,
@@ -579,7 +582,7 @@ pub trait DbConnection: Send + Sync {
     async fn subscribe_to_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
-        ffqns: &[FunctionFqn],
+        ffqns: Arc<[FunctionFqn]>,
         max_wait: Duration,
     );
 

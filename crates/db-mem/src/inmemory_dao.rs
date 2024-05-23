@@ -198,7 +198,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn subscribe_to_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
-        ffqns: &[FunctionFqn],
+        ffqns: Arc<[FunctionFqn]>,
         max_wait: Duration,
     ) {
         let either = self
@@ -457,8 +457,10 @@ impl DbTask {
             old_val.is_none(),
             "journals cannot contain the new execution"
         );
-        if let Some(subscription) = subscription {
-            let _ = subscription.try_send(());
+        if req.scheduled_at <= req.created_at {
+            if let Some(subscription) = subscription {
+                let _ = subscription.try_send(());
+            }
         }
         Ok(version)
     }
@@ -690,17 +692,17 @@ impl DbTask {
     async fn subscribe_to_pending(
         &mut self,
         pending_at_or_sooner: DateTime<Utc>,
-        ffqns: &[FunctionFqn],
+        ffqns: Arc<[FunctionFqn]>,
     ) -> Either<(), mpsc::Receiver<()>> {
         if !self
             .index
-            .fetch_pending(&self.journals, 1, pending_at_or_sooner, ffqns)
+            .fetch_pending(&self.journals, 1, pending_at_or_sooner, &ffqns)
             .is_empty()
         {
             return Either::Left(());
         }
         let (sender, receiver) = mpsc::channel(1);
-        for ffqn in ffqns {
+        for ffqn in ffqns.as_ref() {
             self.ffqn_to_pending_subscription
                 .insert(ffqn.clone(), sender.clone());
         }

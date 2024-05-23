@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -199,7 +199,7 @@ impl DbConnection for DbConnectionProxy {
     async fn subscribe_to_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
-        ffqns: &[FunctionFqn],
+        ffqns: Arc<[FunctionFqn]>,
         max_wait: Duration,
     ) {
         self.0
