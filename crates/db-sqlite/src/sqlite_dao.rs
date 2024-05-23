@@ -283,8 +283,8 @@ impl CombinedState {
             }
         }?;
         Ok(Self {
-            next_version,
             pending_state,
+            next_version,
             ffqn,
         })
     }
@@ -1739,7 +1739,7 @@ impl DbConnection for SqlitePool {
         }
         tokio::select! {
             _ = receiver.recv() => {} // Got results eventually
-            _ = tokio::time::sleep(max_wait) => {} // Timeout
+            () = tokio::time::sleep(max_wait) => {} // Timeout
         }
     }
 }

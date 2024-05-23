@@ -205,15 +205,14 @@ impl DbConnection for InMemoryDbConnection {
             .0
             .lock()
             .await
-            .subscribe_to_pending(pending_at_or_sooner, ffqns)
-            .await;
+            .subscribe_to_pending(pending_at_or_sooner, &ffqns);
         // unlock
         match either {
             Either::Left(()) => {} // Got results imediately
             Either::Right(mut receiver) => {
                 tokio::select! {
                     _ = receiver.recv() => {} // Got results eventually
-                    _ = tokio::time::sleep(max_wait) => {} // Timeout
+                    () = tokio::time::sleep(max_wait) => {} // Timeout
                 }
             }
         }
@@ -353,6 +352,12 @@ mod index {
 
 #[derive(Clone)]
 pub struct InMemoryPool(Arc<tokio::sync::Mutex<DbTask>>);
+
+impl Default for InMemoryPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl InMemoryPool {
     #[must_use]
@@ -689,20 +694,20 @@ impl DbTask {
         }
     }
 
-    async fn subscribe_to_pending(
+    fn subscribe_to_pending(
         &mut self,
         pending_at_or_sooner: DateTime<Utc>,
-        ffqns: Arc<[FunctionFqn]>,
+        ffqns: &[FunctionFqn],
     ) -> Either<(), mpsc::Receiver<()>> {
         if !self
             .index
-            .fetch_pending(&self.journals, 1, pending_at_or_sooner, &ffqns)
+            .fetch_pending(&self.journals, 1, pending_at_or_sooner, ffqns)
             .is_empty()
         {
             return Either::Left(());
         }
         let (sender, receiver) = mpsc::channel(1);
-        for ffqn in ffqns.as_ref() {
+        for ffqn in ffqns {
             self.ffqn_to_pending_subscription
                 .insert(ffqn.clone(), sender.clone());
         }

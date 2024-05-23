@@ -204,6 +204,6 @@ impl DbConnection for DbConnectionProxy {
     ) {
         self.0
             .subscribe_to_pending(pending_at_or_sooner, ffqns, max_wait)
-            .await
+            .await;
     }
 }
