@@ -16,5 +16,7 @@ world any {
     import testing:fibo-obelisk-ext/fibo;
     export workflow;
     import workflow;
+
+    import workflow-nesting;
     export workflow-nesting;
 }

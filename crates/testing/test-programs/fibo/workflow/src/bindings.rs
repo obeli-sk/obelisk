@@ -218,6 +218,34 @@ pub mod testing {
                 }
             }
         }
+
+        #[allow(dead_code, clippy::all)]
+        pub mod workflow_nesting {
+            #[used]
+            #[doc(hidden)]
+            #[cfg(target_arch = "wasm32")]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+            use super::super::super::_rt;
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn fibo_nested_workflow(n: u8) -> u64 {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "testing:fibo-workflow/workflow-nesting")]
+                    extern "C" {
+                        #[link_name = "fibo-nested-workflow"]
+                        fn wit_import(_: i32) -> i64;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: i32) -> i64 {
+                        unreachable!()
+                    }
+                    let ret = wit_import(_rt::as_i32(&n));
+                    ret as u64
+                }
+            }
+        }
     }
 }
 #[allow(dead_code)]
@@ -470,21 +498,23 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.24.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 680] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xae\x04\x01A\x02\x01\
-A\x0c\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:fibo/fib\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 759] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xfd\x04\x01A\x02\x01\
+A\x0e\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:fibo/fib\
 o\x05\0\x01B\x04\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\0\0s\x04\0\x0c\
 new-join-set\x01\x01\x03\x01&my-org:workflow-engine/host-activities\x05\x01\x01B\
 \x04\x01@\x02\x0bjoin-set-ids\x01n}\0s\x04\0\x0bfibo-future\x01\0\x01@\x01\x0bjo\
 in-set-ids\0w\x04\0\x0ffibo-await-next\x01\x01\x03\x01\x1dtesting:fibo-obelisk-e\
 xt/fibo\x05\x02\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\
 \0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x03\x01\x1etesting:fibo-workfl\
-ow/workflow\x05\x03\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\
-\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1etesting:fibo-\
-workflow/workflow\x05\x04\x01B\x02\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workfl\
-ow\x01\0\x04\x01&testing:fibo-workflow/workflow-nesting\x05\x05\x04\x01\x19testi\
-ng:fibo-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cp\
-rocessed-by\x02\x0dwit-component\x070.202.0\x10wit-bindgen-rust\x060.24.0";
+ow/workflow\x05\x03\x01B\x02\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\
+\0\x03\x01&testing:fibo-workflow/workflow-nesting\x05\x04\x01B\x04\x01@\x02\x01n\
+}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-con\
+current\x01\0\x04\x01\x1etesting:fibo-workflow/workflow\x05\x05\x01B\x02\x01@\x01\
+\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x04\x01&testing:fibo-workflow/work\
+flow-nesting\x05\x06\x04\x01\x19testing:fibo-workflow/any\x04\0\x0b\x09\x01\0\x03\
+any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.202.0\x10\
+wit-bindgen-rust\x060.24.0";
 
 #[inline(never)]
 #[doc(hidden)]

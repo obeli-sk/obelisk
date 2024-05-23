@@ -98,12 +98,11 @@ ExIm {
             },
         },
         PackageIfcFns {
-            ifc_fqn: testing:fibo-workflow/workflow,
+            ifc_fqn: testing:fibo-workflow/workflow-nesting,
             fns: {
-                fibow: (
+                fibo-nested-workflow: (
                     [
                         U8,
-                        U32,
                     ],
                     Some(
                         U64,
