@@ -108,50 +108,6 @@ pub mod testing {
     }
 }
 #[allow(dead_code)]
-pub mod wasi {
-    #[allow(dead_code)]
-    pub mod cli {
-        #[allow(dead_code, clippy::all)]
-        pub mod run {
-            #[used]
-            #[doc(hidden)]
-            #[cfg(target_arch = "wasm32")]
-            static __FORCE_SECTION_REF: fn() =
-                super::super::super::__link_custom_section_describing_imports;
-            use super::super::super::_rt;
-            #[allow(unused_unsafe, clippy::all)]
-            /// Run the program.
-            pub fn run() -> Result<(), ()> {
-                unsafe {
-                    #[cfg(target_arch = "wasm32")]
-                    #[link(wasm_import_module = "wasi:cli/run@0.2.0")]
-                    extern "C" {
-                        #[link_name = "run"]
-                        fn wit_import() -> i32;
-                    }
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import() -> i32 {
-                        unreachable!()
-                    }
-                    let ret = wit_import();
-                    match ret {
-                        0 => {
-                            let e = ();
-                            Ok(e)
-                        }
-                        1 => {
-                            let e = ();
-                            Err(e)
-                        }
-                        _ => _rt::invalid_enum_discriminant(),
-                    }
-                }
-            }
-        }
-    }
-}
-#[allow(dead_code)]
 pub mod exports {
     #[allow(dead_code)]
     pub mod testing {
@@ -179,37 +135,25 @@ pub mod exports {
                     _rt::run_ctors_once();
                     T::sleep_activity(arg0 as u32);
                 }
-                #[doc(hidden)]
-                #[allow(non_snake_case)]
-                pub unsafe fn _export_run_cabi<T: Guest>() {
-                    #[cfg(target_arch = "wasm32")]
-                    _rt::run_ctors_once();
-                    T::run();
-                }
                 pub trait Guest {
                     fn sleep_host_activity(millis: u32);
                     fn sleep_activity(millis: u32);
-                    fn run();
                 }
                 #[doc(hidden)]
 
                 macro_rules! __export_testing_sleep_workflow_workflow_cabi{
-    ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
+      ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
 
-      #[export_name = "testing:sleep-workflow/workflow#sleep-host-activity"]
-      unsafe extern "C" fn export_sleep_host_activity(arg0: i32,) {
-        $($path_to_types)*::_export_sleep_host_activity_cabi::<$ty>(arg0)
-      }
-      #[export_name = "testing:sleep-workflow/workflow#sleep-activity"]
-      unsafe extern "C" fn export_sleep_activity(arg0: i32,) {
-        $($path_to_types)*::_export_sleep_activity_cabi::<$ty>(arg0)
-      }
-      #[export_name = "testing:sleep-workflow/workflow#run"]
-      unsafe extern "C" fn export_run() {
-        $($path_to_types)*::_export_run_cabi::<$ty>()
-      }
-    };);
-  }
+        #[export_name = "testing:sleep-workflow/workflow#sleep-host-activity"]
+        unsafe extern "C" fn export_sleep_host_activity(arg0: i32,) {
+          $($path_to_types)*::_export_sleep_host_activity_cabi::<$ty>(arg0)
+        }
+        #[export_name = "testing:sleep-workflow/workflow#sleep-activity"]
+        unsafe extern "C" fn export_sleep_activity(arg0: i32,) {
+          $($path_to_types)*::_export_sleep_activity_cabi::<$ty>(arg0)
+        }
+      };);
+    }
                 #[doc(hidden)]
                 pub(crate) use __export_testing_sleep_workflow_workflow_cabi;
             }
@@ -296,13 +240,6 @@ mod _rt {
             String::from_utf8_unchecked(bytes)
         }
     }
-    pub unsafe fn invalid_enum_discriminant<T>() -> T {
-        if cfg!(debug_assertions) {
-            panic!("invalid enum discriminant")
-        } else {
-            core::hint::unreachable_unchecked()
-        }
-    }
 
     #[cfg(target_arch = "wasm32")]
     pub fn run_ctors_once() {
@@ -342,18 +279,16 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.24.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 491] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf1\x02\x01A\x02\x01\
-A\x08\x01B\x04\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\0\0s\x04\0\x0c\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 435] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb9\x02\x01A\x02\x01\
+A\x06\x01B\x04\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\0\0s\x04\0\x0c\
 new-join-set\x01\x01\x03\x01&my-org:workflow-engine/host-activities\x05\0\x01B\x04\
 \x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\x02\x06millisy\x0aiteration\
 sy\x01\0\x04\0\x0asleep-loop\x01\x01\x03\x01\x13testing:sleep/sleep\x05\x01\x01B\
-\x03\x01j\0\0\x01@\0\0\0\x04\0\x03run\x01\x01\x03\x01\x12wasi:cli/run@0.2.0\x05\x02\
-\x01B\x05\x01@\x01\x06millisy\x01\0\x04\0\x13sleep-host-activity\x01\0\x04\0\x0e\
-sleep-activity\x01\0\x01@\0\x01\0\x04\0\x03run\x01\x01\x04\x01\x1ftesting:sleep-\
-workflow/workflow\x05\x03\x04\x01\x1atesting:sleep-workflow/any\x04\0\x0b\x09\x01\
-\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.\
-202.0\x10wit-bindgen-rust\x060.24.0";
+\x03\x01@\x01\x06millisy\x01\0\x04\0\x13sleep-host-activity\x01\0\x04\0\x0esleep\
+-activity\x01\0\x04\x01\x1ftesting:sleep-workflow/workflow\x05\x02\x04\x01\x1ate\
+sting:sleep-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0c\
+processed-by\x02\x0dwit-component\x070.202.0\x10wit-bindgen-rust\x060.24.0";
 
 #[inline(never)]
 #[doc(hidden)]

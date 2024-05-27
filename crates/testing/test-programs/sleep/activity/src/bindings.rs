@@ -52,50 +52,6 @@ pub mod exports {
             }
         }
     }
-    #[allow(dead_code)]
-    pub mod wasi {
-        #[allow(dead_code)]
-        pub mod cli {
-            #[allow(dead_code, clippy::all)]
-            pub mod run {
-                #[used]
-                #[doc(hidden)]
-                #[cfg(target_arch = "wasm32")]
-                static __FORCE_SECTION_REF: fn() =
-                    super::super::super::super::__link_custom_section_describing_imports;
-                use super::super::super::super::_rt;
-                #[doc(hidden)]
-                #[allow(non_snake_case)]
-                pub unsafe fn _export_run_cabi<T: Guest>() -> i32 {
-                    #[cfg(target_arch = "wasm32")]
-                    _rt::run_ctors_once();
-                    let result0 = T::run();
-                    let result1 = match result0 {
-                        Ok(_) => 0i32,
-                        Err(_) => 1i32,
-                    };
-                    result1
-                }
-                pub trait Guest {
-                    /// Run the program.
-                    fn run() -> Result<(), ()>;
-                }
-                #[doc(hidden)]
-
-                macro_rules! __export_wasi_cli_run_0_2_0_cabi{
-      ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
-
-        #[export_name = "wasi:cli/run@0.2.0#run"]
-        unsafe extern "C" fn export_run() -> i32 {
-          $($path_to_types)*::_export_run_cabi::<$ty>()
-        }
-      };);
-    }
-                #[doc(hidden)]
-                pub(crate) use __export_wasi_cli_run_0_2_0_cabi;
-            }
-        }
-    }
 }
 mod _rt {
 
@@ -128,7 +84,6 @@ macro_rules! __export_any_impl {
   ($ty:ident) => (self::export!($ty with_types_in self););
   ($ty:ident with_types_in $($path_to_types_root:tt)*) => (
   $($path_to_types_root)*::exports::testing::sleep::sleep::__export_testing_sleep_sleep_cabi!($ty with_types_in $($path_to_types_root)*::exports::testing::sleep::sleep);
-  $($path_to_types_root)*::exports::wasi::cli::run::__export_wasi_cli_run_0_2_0_cabi!($ty with_types_in $($path_to_types_root)*::exports::wasi::cli::run);
   )
 }
 #[doc(inline)]
@@ -137,14 +92,12 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.24.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 277] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x9b\x01\x01A\x02\x01\
-A\x04\x01B\x04\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\x02\x06millis\
-y\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\x01\x04\x01\x13testing:sleep/slee\
-p\x05\0\x01B\x03\x01j\0\0\x01@\0\0\0\x04\0\x03run\x01\x01\x04\x01\x12wasi:cli/ru\
-n@0.2.0\x05\x01\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09\
-producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.202.0\x10wit-bindgen-rus\
-t\x060.24.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 233] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07p\x01A\x02\x01A\x02\x01\
+B\x04\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\x02\x06millisy\x0aiter\
+ationsy\x01\0\x04\0\x0asleep-loop\x01\x01\x04\x01\x13testing:sleep/sleep\x05\0\x04\
+\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cpr\
+ocessed-by\x02\x0dwit-component\x070.202.0\x10wit-bindgen-rust\x060.24.0";
 
 #[inline(never)]
 #[doc(hidden)]

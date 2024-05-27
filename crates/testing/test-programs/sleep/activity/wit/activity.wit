@@ -2,5 +2,4 @@ package any:any;
 
 world any {
     export testing:sleep/sleep;
-    export wasi:cli/run@0.2.0;
 }

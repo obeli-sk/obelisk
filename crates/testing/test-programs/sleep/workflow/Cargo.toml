@@ -19,4 +19,3 @@ wasm = []
 [package.metadata.component.target.dependencies]
 "testing:sleep".path = "../wit"
 "my-org:workflow-engine".path = "../../../../wasm-workers/host-wit/"
-"wasi:cli".path = "../activity/wit/deps/cli"

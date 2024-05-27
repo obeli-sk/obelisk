@@ -19,10 +19,3 @@ impl crate::bindings::exports::testing::sleep::sleep::Guest for Component {
         }
     }
 }
-
-impl crate::bindings::exports::wasi::cli::run::Guest for Component {
-    fn run() -> Result<(), ()> {
-        std::thread::sleep(Duration::from_millis(100));
-        Ok(())
-    }
-}
