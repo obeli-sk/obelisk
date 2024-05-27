@@ -80,8 +80,6 @@ impl<C: ClockFn> ActivityWorker<C> {
         config: ActivityConfig<C>,
         engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
-        let mut linker = wasmtime::component::Linker::new(&engine);
-
         // NB: workaround some rustc inference - a future refactoring may make this
         // obsolete.
         fn type_annotate<T: wasmtime_wasi::WasiView, F>(val: F) -> F
@@ -97,6 +95,7 @@ impl<C: ClockFn> ActivityWorker<C> {
             err: err.into(),
         };
 
+        let mut linker = wasmtime::component::Linker::new(&engine);
         // wasi
         wasmtime_wasi::add_to_linker_async(&mut linker).map_err(map_err)?;
         // wasi-http
