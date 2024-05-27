@@ -150,7 +150,10 @@ tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 ulid = { version = "1.1.0", features = ["serde"] }
 valuable = { version = "0.1.0", features = ["derive"] }
-wasmtime = { version = "20.0", default-features = false, features = [
+wiremock = "0.6"
+
+# wasmtime
+wasmtime = { version = "21.0.1", default-features = false, features = [
     # remove "parallel-compilation"
     "component-model",
     "addr2line",
@@ -166,13 +169,14 @@ wasmtime = { version = "20.0", default-features = false, features = [
     "profiling",
     "wat",
 ] }
-wasmtime-wasi = "20.0.0"
-wasmtime-wasi-http = "20.0.0"
-wast = "206.0.0"
-wiremock = "0.6"
+wasmtime-wasi = "21.0.1"
+wasmtime-wasi-http = "21.0.1"
+wast = "207.0.0"
+wit-component = "0.207.0"
+wit-parser = "0.207.0"
+
+# cargo-component
 wit-bindgen-rt = "0.24.0"
-wit-component = "0.206.0"
-wit-parser = "0.206.0"
 
 [patch.crates-io]
 madsim = { git = "https://github.com/tomasol/madsim", rev = "4232484d49b036cf68b56220ccac3e8e060bb9c7" }

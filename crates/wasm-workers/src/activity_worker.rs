@@ -81,27 +81,33 @@ impl<C: ClockFn> ActivityWorker<C> {
         engine: Arc<Engine>,
     ) -> Result<Self, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&engine);
-        // Link
-        wasmtime_wasi::bindings::Command::add_to_linker(&mut linker, |t| t).map_err(|err| {
-            WasmFileError::LinkingError {
-                file: wasm_component.wasm_path.clone(),
-                reason: StrVariant::Static("cannot add wasi command"),
-                err: err.into(),
-            }
-        })?;
-        wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker(&mut linker, |t| t)
-            .map_err(|err| WasmFileError::LinkingError {
-                file: wasm_component.wasm_path.clone(),
-                reason: StrVariant::Static("cannot add http outgoing_handler"),
-                err: err.into(),
-            })?;
-        wasmtime_wasi_http::bindings::http::types::add_to_linker(&mut linker, |t| t).map_err(
-            |err| WasmFileError::LinkingError {
-                file: wasm_component.wasm_path.clone(),
-                reason: StrVariant::Static("cannot add http types"),
-                err: err.into(),
-            },
-        )?;
+
+        // NB: workaround some rustc inference - a future refactoring may make this
+        // obsolete.
+        fn type_annotate<T: wasmtime_wasi::WasiView, F>(val: F) -> F
+        where
+            F: Fn(&mut T) -> &mut T,
+        {
+            val
+        }
+        let closure = type_annotate::<_, _>(|t| t);
+        let map_err = |err: wasmtime::Error| WasmFileError::LinkingError {
+            file: wasm_component.wasm_path.clone(),
+            reason: StrVariant::Static("linking error"),
+            err: err.into(),
+        };
+
+        // wasi
+        wasmtime_wasi::add_to_linker_async(&mut linker).map_err(map_err)?;
+        // wasi-http
+        wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker_get_host(
+            &mut linker,
+            closure,
+        )
+        .map_err(map_err)?;
+
+        wasmtime_wasi_http::bindings::http::types::add_to_linker_get_host(&mut linker, closure)
+            .map_err(map_err)?;
 
         let recycled_instances = config.recycled_instances.instantiate();
         Ok(Self {

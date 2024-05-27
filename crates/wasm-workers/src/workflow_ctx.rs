@@ -54,6 +54,7 @@ wasmtime::component::bindgen!({
     path: "host-wit/",
     async: true,
     interfaces: "import my-org:workflow-engine/host-activities;",
+    trappable_imports: true,
 });
 
 pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {

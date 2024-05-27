@@ -1,20 +1,17 @@
 // wasmtime/crates/wasi-http/tests/all/main.rs
 use std::sync::Arc;
 use wasmtime::Engine;
-use wasmtime::{
-    component::{Resource, ResourceTable},
-    Store,
-};
+use wasmtime::{component::ResourceTable, Store};
 use wasmtime_wasi::{self, WasiCtx, WasiCtxBuilder, WasiView};
-use wasmtime_wasi_http::bindings::http::types::ErrorCode;
-use wasmtime_wasi_http::HttpResult;
 use wasmtime_wasi_http::{
-    types::{self, HostFutureIncomingResponse, OutgoingRequest},
-    WasiHttpCtx, WasiHttpView,
+    bindings::http::types::ErrorCode,
+    body::HyperOutgoingBody,
+    types::{self, HostFutureIncomingResponse, OutgoingRequestConfig},
+    HttpResult, WasiHttpCtx, WasiHttpView,
 };
 
 type RequestSender = Arc<
-    dyn Fn(&mut Ctx, OutgoingRequest) -> HttpResult<Resource<HostFutureIncomingResponse>>
+    dyn Fn(hyper::Request<HyperOutgoingBody>, OutgoingRequestConfig) -> HostFutureIncomingResponse
         + Send
         + Sync,
 >;
@@ -49,18 +46,19 @@ impl WasiHttpView for Ctx {
 
     fn send_request(
         &mut self,
-        request: OutgoingRequest,
-    ) -> HttpResult<Resource<HostFutureIncomingResponse>> {
+        request: hyper::Request<HyperOutgoingBody>,
+        config: OutgoingRequestConfig,
+    ) -> HttpResult<HostFutureIncomingResponse> {
         if let Some(rejected_authority) = &self.rejected_authority {
-            let (auth, _port) = request.authority.split_once(':').unwrap();
-            if auth == rejected_authority {
+            let authority = request.uri().authority().map(ToString::to_string).unwrap();
+            if &authority == rejected_authority {
                 return Err(ErrorCode::HttpRequestDenied.into());
             }
         }
         if let Some(send_request) = self.send_request.clone() {
-            send_request(self, request)
+            Ok(send_request(request, config))
         } else {
-            types::default_send_request(self, request)
+            Ok(types::default_send_request(request, config))
         }
     }
 }
@@ -77,7 +75,7 @@ pub fn store(engine: &Engine) -> Store<Ctx> {
     let ctx = Ctx {
         table: ResourceTable::new(),
         wasi: builder.build(),
-        http: WasiHttpCtx {},
+        http: WasiHttpCtx::new(),
         // stderr,
         // stdout,
         send_request: None,

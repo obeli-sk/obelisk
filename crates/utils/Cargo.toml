@@ -11,6 +11,7 @@ val-json.workspace = true
 
 cfg-if.workspace = true
 chrono.workspace = true
+hyper.workspace = true
 indexmap.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
