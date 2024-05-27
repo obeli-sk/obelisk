@@ -415,8 +415,7 @@ pub(crate) mod tests {
                 tick_sleep: TICK_SLEEP,
                 clock_fn: sim_clock.get_clock_fn(),
             },
-        )
-        .unwrap();
+        );
         let workflow_exec_task = {
             let worker = Arc::new(WorkflowWorkerMock {
                 steps,

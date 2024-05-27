@@ -492,8 +492,7 @@ pub(crate) mod tests {
                         tick_sleep: TICK_SLEEP,
                         clock_fn: now,
                     },
-                )
-                .unwrap();
+                );
             let engine = activity_engine(EngineConfig::default());
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],

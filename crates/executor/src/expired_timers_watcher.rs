@@ -5,7 +5,7 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbError;
 use concepts::storage::JoinSetResponseEvent;
 use concepts::{
-    storage::{DbConnectionError, ExecutionEventInner, ExpiredTimer, JoinSetResponse},
+    storage::{ExecutionEventInner, ExpiredTimer, JoinSetResponse},
     FinishedExecutionError,
 };
 use std::{
@@ -69,7 +69,7 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
     pub fn spawn_new<C: ClockFn + 'static>(
         db_connection: DB,
         config: TimersWatcherConfig<C>,
-    ) -> Result<TaskHandle, DbConnectionError> {
+    ) -> TaskHandle {
         let executor_id = ExecutorId::generate();
         let span = info_span!("lock_watcher",
             executor = %executor_id,
@@ -95,11 +95,11 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
             .instrument(span),
         )
         .abort_handle();
-        Ok(TaskHandle {
+        TaskHandle {
             executor_id,
             is_closing,
             abort_handle,
-        })
+        }
     }
 
     fn log_err_if_new(res: Result<TickProgress, DbError>, old_err: &mut Option<DbError>) {

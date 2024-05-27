@@ -552,8 +552,7 @@ mod tests {
                 tick_sleep: TICK_SLEEP,
                 clock_fn: sim_clock.get_clock_fn(),
             },
-        )
-        .unwrap();
+        );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
         let params = Params::from_json_array(json!([SLEEP_MILLIS])).unwrap();
