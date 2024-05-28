@@ -272,10 +272,9 @@ fn exec<DB: DbConnection + 'static>(
         batch_size: 10,
         lock_expiry: Duration::from_secs(10),
         tick_sleep: Duration::from_millis(200),
-        clock_fn: now,
     };
     (
-        ExecTask::spawn_new(worker, exec_config, db_pool, None),
+        ExecTask::spawn_new(worker, exec_config, now, db_pool, None),
         ffqns,
     )
 }

@@ -339,9 +339,8 @@ pub(crate) mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            clock_fn,
         };
-        ExecTask::spawn_new(worker, exec_config, db_pool, None)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, None)
     }
 
     pub(crate) fn spawn_activity_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -530,9 +529,8 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: TICK_SLEEP,
-                clock_fn: now,
             };
-            let exec_task = ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None);
+            let exec_task = ExecTask::spawn_new(worker, exec_config, now, db_pool.clone(), None);
 
             // Create an execution.
             let stopwatch = std::time::Instant::now();
@@ -660,10 +658,16 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
-                clock_fn: sim_clock.get_clock_fn(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
-            let exec_task = ExecTask::new(worker, exec_config, db_pool.clone(), ffqns, None);
+            let exec_task = ExecTask::new(
+                worker,
+                exec_config,
+                sim_clock.get_clock_fn(),
+                db_pool.clone(),
+                ffqns,
+                None,
+            );
 
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let server_address = listener

@@ -21,17 +21,17 @@ use tokio::task::{AbortHandle, JoinHandle};
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::ClockFn;
 
-#[derive(Debug, Clone)]
-pub struct ExecConfig<C: ClockFn> {
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExecConfig {
     pub lock_expiry: Duration,
     pub tick_sleep: Duration,
     pub batch_size: u32,
-    pub clock_fn: C, // Used for obtaining current time when the execution finishes.
 }
 
 pub struct ExecTask<W: Worker, C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     worker: Arc<W>,
-    config: ExecConfig<C>,
+    config: ExecConfig,
+    clock_fn: C, // Used for obtaining current time when the execution finishes.
     db_pool: P,
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_id: ExecutorId,
@@ -100,7 +100,8 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
     #[cfg(feature = "test")]
     pub fn new(
         worker: Arc<W>,
-        config: ExecConfig<C>,
+        config: ExecConfig,
+        clock_fn: C,
         db_pool: P,
         ffqns: Arc<[FunctionFqn]>,
         task_limiter: Option<Arc<tokio::sync::Semaphore>>,
@@ -113,12 +114,14 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             db_pool,
             phantom_data: PhantomData,
             ffqns,
+            clock_fn,
         }
     }
 
     pub fn spawn_new(
         worker: Arc<W>,
-        config: ExecConfig<C>,
+        config: ExecConfig,
+        clock_fn: C,
         db_pool: P,
         task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> ExecutorTaskHandle {
@@ -134,7 +137,6 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         let abort_handle = tokio::spawn(
             async move {
                 info!("Spawned executor");
-                let clock_fn = config.clock_fn.clone();
                 let task = Self {
                     worker,
                     config,
@@ -143,13 +145,14 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     db_pool,
                     phantom_data: PhantomData,
                     ffqns: ffqns.clone(),
+                    clock_fn: clock_fn.clone(),
                 };
                 let mut old_err = None;
 
                 loop {
                     let res = task.tick(clock_fn()).await;
                     Self::log_err_if_new(res, &mut old_err);
-                    let executed_at = (task.config.clock_fn)();
+                    let executed_at = clock_fn();
                     task.db_pool
                         .connection()
                         .subscribe_to_pending(executed_at, ffqns.clone(), task.config.tick_sleep)
@@ -244,7 +247,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             let join_handle = {
                 let worker = self.worker.clone();
                 let db_pool = self.db_pool.clone();
-                let clock_fn = self.config.clock_fn.clone();
+                let clock_fn = self.clock_fn.clone();
                 let run_id = locked_execution.run_id;
                 let span =
                     info_span!("worker", %execution_id, %run_id, ffqn = %locked_execution.ffqn,);
@@ -586,7 +589,8 @@ mod tests {
         DB: DbConnection + 'static,
         P: DbPool<DB> + 'static,
     >(
-        config: ExecConfig<C>,
+        config: ExecConfig,
+        clock_fn: C,
         db_pool: P,
         worker: Arc<W>,
         executed_at: DateTime<Utc>,
@@ -601,6 +605,7 @@ mod tests {
             executor_id: ExecutorId::generate(),
             phantom_data: PhantomData,
             ffqns,
+            clock_fn,
         };
         let mut execution_progress = executor.tick(executed_at).await.unwrap();
         loop {
@@ -647,7 +652,6 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
-            clock_fn,
         };
 
         let execution_log = create_and_tick(
@@ -658,6 +662,7 @@ mod tests {
                 executed_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
             },
+            clock_fn,
             pool,
             exec_config,
             Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
@@ -688,15 +693,19 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            clock_fn,
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
             SupportedFunctionResult::None,
             Version::new(2),
         )));
-        let exec_task =
-            ExecTask::spawn_new(worker.clone(), exec_config.clone(), db_pool.clone(), None);
+        let exec_task = ExecTask::spawn_new(
+            worker.clone(),
+            exec_config.clone(),
+            clock_fn,
+            db_pool.clone(),
+            None,
+        );
 
         let execution_log = create_and_tick(
             CreateAndTickConfig {
@@ -706,10 +715,11 @@ mod tests {
                 executed_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
             },
+            clock_fn,
             db_pool.clone(),
             exec_config,
             worker,
-            |_, _, _, _| async {
+            |_, _, _, _, _| async {
                 tokio::time::sleep(Duration::from_secs(1)).await; // non deterministic if not run in madsim
                 ExecutionProgress::default()
             },
@@ -741,12 +751,13 @@ mod tests {
         C: ClockFn,
         DB: DbConnection,
         P: DbPool<DB>,
-        T: FnMut(ExecConfig<C>, P, Arc<W>, DateTime<Utc>) -> F,
+        T: FnMut(ExecConfig, C, P, Arc<W>, DateTime<Utc>) -> F,
         F: Future<Output = ExecutionProgress>,
     >(
         config: CreateAndTickConfig,
+        clock_fn: C,
         db_pool: P,
-        exec_config: ExecConfig<C>,
+        exec_config: ExecConfig,
         worker: Arc<W>,
         mut tick: T,
     ) -> ExecutionLog {
@@ -766,7 +777,7 @@ mod tests {
             .await
             .unwrap();
         // execute!
-        tick(exec_config, db_pool, worker, config.executed_at).await;
+        tick(exec_config, clock_fn, db_pool, worker, config.executed_at).await;
         let execution_log = db_connection.get(config.execution_id).await.unwrap();
         debug!("Execution history after tick: {execution_log:?}");
         // check that DB contains Created and Locked events.
@@ -802,7 +813,6 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            clock_fn: sim_clock.get_clock_fn(),
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -821,6 +831,7 @@ mod tests {
                 executed_at: sim_clock.now(),
                 retry_exp_backoff,
             },
+            sim_clock.get_clock_fn(),
             db_pool.clone(),
             exec_config.clone(),
             worker,
@@ -857,6 +868,7 @@ mod tests {
         // noop until `retry_exp_backoff` expires
         assert!(tick_fn(
             exec_config.clone(),
+            sim_clock.get_clock_fn(),
             db_pool.clone(),
             worker.clone(),
             sim_clock.now(),
@@ -866,7 +878,14 @@ mod tests {
         .is_empty());
         // tick again to finish the execution
         sim_clock.move_time_forward(retry_exp_backoff).await;
-        tick_fn(exec_config, db_pool.clone(), worker, sim_clock.now()).await;
+        tick_fn(
+            exec_config,
+            sim_clock.get_clock_fn(),
+            db_pool.clone(),
+            worker,
+            sim_clock.now(),
+        )
+        .await;
         let execution_log = {
             let db_connection = db_pool.connection();
             db_connection.get(execution_log.execution_id).await.unwrap()
@@ -901,7 +920,6 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            clock_fn,
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -918,6 +936,7 @@ mod tests {
                 executed_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
             },
+            clock_fn,
             db_pool.clone(),
             exec_config.clone(),
             worker,
@@ -982,8 +1001,8 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                clock_fn: sim_clock.get_clock_fn(),
             },
+            sim_clock.get_clock_fn(),
             db_pool.clone(),
             parent_worker,
             sim_clock.now(),
@@ -1051,8 +1070,8 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                clock_fn: sim_clock.get_clock_fn(),
             },
+            sim_clock.get_clock_fn(),
             db_pool.clone(),
             child_worker,
             sim_clock.now(),
@@ -1149,7 +1168,6 @@ mod tests {
             batch_size: 1,
             lock_expiry,
             tick_sleep: Duration::ZERO,
-            clock_fn: sim_clock.get_clock_fn(),
         };
 
         let timers_watcher = expired_timers_watcher::TimersWatcherTask {
@@ -1187,6 +1205,7 @@ mod tests {
             executor_id: ExecutorId::generate(),
             phantom_data: PhantomData,
             ffqns,
+            clock_fn: sim_clock.get_clock_fn(),
         };
         let mut first_execution_progress = executor.tick(sim_clock.now()).await.unwrap();
         assert_eq!(1, first_execution_progress.executions.len());

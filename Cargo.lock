@@ -1164,6 +1164,7 @@ dependencies = [
  "madsim",
  "madsim-tokio",
  "rstest",
+ "serde",
  "test-utils",
  "thiserror",
  "tracing",

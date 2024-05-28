@@ -439,9 +439,14 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                clock_fn: sim_clock.get_clock_fn(),
             };
-            ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None)
+            ExecTask::spawn_new(
+                worker,
+                exec_config,
+                sim_clock.get_clock_fn(),
+                db_pool.clone(),
+                None,
+            )
         };
         // Create an execution.
         let created_at = sim_clock.now();
@@ -512,9 +517,14 @@ pub(crate) mod tests {
                             batch_size: 1,
                             lock_expiry: Duration::from_secs(1),
                             tick_sleep: TICK_SLEEP,
-                            clock_fn: sim_clock.get_clock_fn(),
                         };
-                        ExecTask::spawn_new(worker, exec_config, db_pool.clone(), None)
+                        ExecTask::spawn_new(
+                            worker,
+                            exec_config,
+                            sim_clock.get_clock_fn(),
+                            db_pool.clone(),
+                            None,
+                        )
                     };
                     tokio::time::sleep(Duration::ZERO).await; // Hack that makes sure the other task has a chance to start
                     spawned_child_executors.push(child_exec_task);

@@ -408,9 +408,8 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
-            clock_fn,
         };
-        ExecTask::spawn_new(worker, exec_config, db_pool, None)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, None)
     }
 
     pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -571,9 +570,8 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
-            clock_fn,
         };
-        ExecTask::spawn_new(worker, exec_config, db_pool, None)
+        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, None)
     }
 
     #[rstest]
