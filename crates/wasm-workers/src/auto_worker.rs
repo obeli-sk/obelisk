@@ -17,29 +17,21 @@ use concepts::{
     storage::{DbConnection, DbPool},
     FunctionFqn, IfcFqnName, StrVariant,
 };
-use derivative::Derivative;
 use executor::worker::{Worker, WorkerContext};
 use itertools::Either;
-use std::{marker::PhantomData, ops::Deref, sync::Arc, time::Duration};
+use std::{ops::Deref, sync::Arc, time::Duration};
 use utils::time::ClockFn;
 use wasmtime::Engine;
 
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
-pub struct AutoConfig<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct AutoConfig {
     pub config_id: ConfigId,
     pub wasm_path: StrVariant,
     pub activity_recycled_instances: RecycleInstancesSetting,
-    pub clock_fn: C,
     pub workflow_join_next_blocking_strategy: JoinNextBlockingStrategy,
-    #[derivative(Debug = "ignore")]
-    pub workflow_db_pool: P,
     pub workflow_child_retry_exp_backoff: Duration,
     pub workflow_child_max_retries: u32,
-    pub timeout_sleep_unit: Duration,
     pub non_blocking_event_batching: NonBlockingEventBatching,
-    #[derivative(Debug = "ignore")]
-    pub phantom_data: PhantomData<DB>,
 }
 
 pub enum AutoWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
@@ -56,36 +48,42 @@ pub enum Kind {
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> AutoWorker<C, DB, P> {
     #[tracing::instrument(skip_all, fields(wasm_path = %config.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
-        config: AutoConfig<C, DB, P>,
+        config: AutoConfig,
         workflow_engine: Arc<Engine>,
         activity_engine: Arc<Engine>,
+        workflow_db_pool: P,
+        clock_fn: C,
     ) -> Result<Self, WasmFileError> {
-        // must pick an engine to parse the comopnent
+        // must pick an engine to parse the component
         let wasm_component = WasmComponent::new(config.wasm_path.clone(), &activity_engine)?;
         if supported_wasi_imports(wasm_component.exim.imports.iter().map(|pif| &pif.ifc_fqn)) {
-            let config = ActivityConfig {
-                config_id: config.config_id,
-                recycled_instances: config.activity_recycled_instances,
-                clock_fn: config.clock_fn,
-                timeout_sleep_unit: config.timeout_sleep_unit,
-            };
-            ActivityWorker::new_with_config(wasm_component, config, activity_engine)
-                .map(Self::ActivityWorker)
+            ActivityWorker::new_with_config(
+                wasm_component,
+                ActivityConfig {
+                    config_id: config.config_id,
+                    recycled_instances: config.activity_recycled_instances,
+                },
+                activity_engine,
+                clock_fn,
+            )
+            .map(Self::ActivityWorker)
         } else {
             // wrong engine was picked
             let wasm_component = WasmComponent::new(config.wasm_path, &workflow_engine)?;
-            let config = WorkflowConfig {
-                config_id: config.config_id,
-                clock_fn: config.clock_fn,
-                join_next_blocking_strategy: config.workflow_join_next_blocking_strategy,
-                db_pool: config.workflow_db_pool,
-                child_retry_exp_backoff: config.workflow_child_retry_exp_backoff,
-                child_max_retries: config.workflow_child_max_retries,
-                non_blocking_event_batching: config.non_blocking_event_batching,
-                phantom_data: PhantomData,
-            };
-            WorkflowWorker::new_with_config(wasm_component, config, workflow_engine)
-                .map(Self::WorkflowWorker)
+            WorkflowWorker::new_with_config(
+                wasm_component,
+                WorkflowConfig {
+                    config_id: config.config_id,
+                    join_next_blocking_strategy: config.workflow_join_next_blocking_strategy,
+                    child_retry_exp_backoff: config.workflow_child_retry_exp_backoff,
+                    child_max_retries: config.workflow_child_max_retries,
+                    non_blocking_event_batching: config.non_blocking_event_batching,
+                },
+                workflow_engine,
+                workflow_db_pool,
+                clock_fn,
+            )
+            .map(Self::WorkflowWorker)
         }
     }
 
@@ -152,11 +150,9 @@ mod valuable {
 
 #[cfg(test)]
 mod tests {
-    use std::{marker::PhantomData, time::Duration};
-
     use super::{AutoConfig, AutoWorker};
     use crate::{
-        activity_worker::{activity_engine, RecycleInstancesSetting, TIMEOUT_SLEEP_UNIT},
+        activity_worker::{activity_engine, RecycleInstancesSetting},
         auto_worker::Kind,
         workflow_worker::{workflow_engine, JoinNextBlockingStrategy, NonBlockingEventBatching},
         EngineConfig,
@@ -164,6 +160,7 @@ mod tests {
     use concepts::storage::DbPool;
     use concepts::{prefixed_ulid::ConfigId, StrVariant};
     use db_tests::Database;
+    use std::time::Duration;
     use test_utils::set_up;
     use utils::time::now;
 
@@ -184,19 +181,17 @@ mod tests {
             wasm_path: StrVariant::Static(file),
             config_id: ConfigId::generate(),
             activity_recycled_instances: RecycleInstancesSetting::Disable,
-            clock_fn: now,
             workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
-            workflow_db_pool: db_pool.clone(),
             workflow_child_retry_exp_backoff: Duration::ZERO,
             workflow_child_max_retries: 0,
-            timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
             non_blocking_event_batching: NonBlockingEventBatching::default(),
-            phantom_data: PhantomData,
         };
         let worker = AutoWorker::new_with_config(
             config,
             workflow_engine(EngineConfig::default()),
             activity_engine(EngineConfig::default()),
+            db_pool.clone(),
+            now,
         )
         .unwrap();
         assert_eq!(expected, worker.kind());

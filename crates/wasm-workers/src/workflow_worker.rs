@@ -5,11 +5,9 @@ use concepts::prefixed_ulid::ConfigId;
 use concepts::storage::{DbConnection, DbPool, Version};
 use concepts::SupportedFunctionResult;
 use concepts::{FunctionFqn, StrVariant};
-use derivative::Derivative;
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::error::Error;
-use std::marker::PhantomData;
 use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
@@ -32,52 +30,50 @@ pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
 }
 
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum JoinNextBlockingStrategy {
     /// Shut down the current runtime. When the `JoinSetResponse` is appended, workflow is reexecuted with a new `RunId`.
-    #[default]
     Interrupt,
     /// Keep the execution hot. Worker will poll the database until the execution lock expires.
+    #[default]
     Await,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum NonBlockingEventBatching {
-    #[default]
     Disabled,
+    #[default]
     Enabled,
 }
 
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
-pub struct WorkflowConfig<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct WorkflowConfig {
     pub config_id: ConfigId,
-    pub clock_fn: C,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
-    #[derivative(Debug = "ignore")]
-    pub db_pool: P,
     pub child_retry_exp_backoff: Duration,
     pub child_max_retries: u32,
     pub non_blocking_event_batching: NonBlockingEventBatching,
-    #[derivative(Debug = "ignore")]
-    pub phantom_data: PhantomData<DB>,
 }
 
 #[derive(Clone)]
 pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
-    config: WorkflowConfig<C, DB, P>,
+    config: WorkflowConfig,
     engine: Arc<Engine>,
     linker: wasmtime::component::Linker<WorkflowCtx<C, DB, P>>,
     component: wasmtime::component::Component,
     exim: ExIm,
+    db_pool: P,
+    clock_fn: C,
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
     #[tracing::instrument(skip_all, fields(wasm_path = %wasm_component.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
         wasm_component: WasmComponent,
-        config: WorkflowConfig<C, DB, P>,
+        config: WorkflowConfig,
         engine: Arc<Engine>,
+        db_pool: P,
+        clock_fn: C,
     ) -> Result<Self, WasmFileError> {
         const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
         let mut linker = wasmtime::component::Linker::new(&engine);
@@ -145,6 +141,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
             linker,
             component: wasm_component.component,
             exim: wasm_component.exim,
+            db_pool,
+            clock_fn,
         })
     }
 }
@@ -178,9 +176,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 ctx.event_history,
                 ctx.responses,
                 seed,
-                self.config.clock_fn.clone(),
+                self.clock_fn.clone(),
                 self.config.join_next_blocking_strategy,
-                self.config.db_pool.clone(),
+                self.db_pool.clone(),
                 ctx.version,
                 ctx.execution_deadline,
                 self.config.child_retry_exp_backoff,
@@ -262,7 +260,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
             Ok((result, store.into_data().version))
         };
-        let started_at = (self.config.clock_fn)();
+        let started_at = (self.clock_fn)();
         let deadline_duration = (ctx.execution_deadline - started_at).to_std().unwrap();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! {
@@ -302,7 +300,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             },
             () = tokio::time::sleep(deadline_duration) => {
                 let worker_result = std::mem::replace(&mut *timeout_error.lock().unwrap(), WorkerResult::Err(WorkerError::IntermittentTimeout));
-                info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.config.clock_fn)(), "Timing out with {worker_result:?}");
+                info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.clock_fn)(), "Timing out with {worker_result:?}");
                 worker_result
             }
         }
@@ -383,16 +381,15 @@ mod tests {
             WorkflowWorker::new_with_config(
                 WasmComponent::new(StrVariant::Static(wasm_path), &workflow_engine).unwrap(),
                 WorkflowConfig {
-                    db_pool: db_pool.clone(),
                     config_id: ConfigId::generate(),
-                    clock_fn: clock_fn.clone(),
                     join_next_blocking_strategy,
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
                     non_blocking_event_batching: NonBlockingEventBatching::default(),
-                    phantom_data: PhantomData,
                 },
                 workflow_engine,
+                db_pool.clone(),
+                clock_fn.clone(),
             )
             .unwrap(),
         );
@@ -513,16 +510,15 @@ mod tests {
                 )
                 .unwrap(),
                 WorkflowConfig {
-                    db_pool: db_pool.clone(),
                     config_id: ConfigId::generate(),
-                    clock_fn: clock_fn.clone(),
                     join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
                     non_blocking_event_batching: NonBlockingEventBatching::default(),
-                    phantom_data: PhantomData,
                 },
                 workflow_engine,
+                db_pool.clone(),
+                clock_fn.clone(),
             )
             .unwrap(),
         );

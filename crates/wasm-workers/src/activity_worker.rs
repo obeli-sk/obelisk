@@ -15,8 +15,9 @@ use wasmtime::{Store, UpdateDeadline};
 
 type StoreCtx = utils::wasi_http::Ctx;
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub enum RecycleInstancesSetting {
+    #[default]
     Enable,
     Disable,
 }
@@ -53,32 +54,32 @@ pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
     Arc::new(Engine::new(&wasmtime_config).unwrap())
 }
 
-#[derive(Clone, Debug)]
-pub struct ActivityConfig<C: ClockFn> {
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ActivityConfig {
     pub config_id: ConfigId,
     pub recycled_instances: RecycleInstancesSetting,
-    pub clock_fn: C,
-    pub timeout_sleep_unit: Duration,
 }
 
 pub const TIMEOUT_SLEEP_UNIT: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
 pub struct ActivityWorker<C: ClockFn> {
-    config: ActivityConfig<C>,
+    config: ActivityConfig,
     engine: Arc<Engine>,
     linker: wasmtime::component::Linker<StoreCtx>,
     component: wasmtime::component::Component,
     recycled_instances: MaybeRecycledInstances,
     exim: ExIm,
+    clock_fn: C,
 }
 
 impl<C: ClockFn> ActivityWorker<C> {
     #[tracing::instrument(skip_all, fields(wasm_path = %wasm_component.wasm_path, config_id = %config.config_id))]
     pub fn new_with_config(
         wasm_component: WasmComponent,
-        config: ActivityConfig<C>,
+        config: ActivityConfig,
         engine: Arc<Engine>,
+        clock_fn: C,
     ) -> Result<Self, WasmFileError> {
         // NB: workaround some rustc inference - a future refactoring may make this
         // obsolete.
@@ -116,6 +117,7 @@ impl<C: ClockFn> ActivityWorker<C> {
             component: wasm_component.component,
             recycled_instances,
             exim: wasm_component.exim,
+            clock_fn,
         })
     }
 }
@@ -229,7 +231,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             }
             WorkerResult::Ok(result, ctx.version)
         });
-        let started_at = (self.config.clock_fn)();
+        let started_at = (self.clock_fn)();
         let deadline_delta = ctx.execution_deadline - started_at;
         let deadline_duration = deadline_delta.to_std().unwrap();
         let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
@@ -244,9 +246,9 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                     }
                     return res;
                 },
-                ()   = tokio::time::sleep(self.config.timeout_sleep_unit) => {
-                    if (self.config.clock_fn)() - started_at >= deadline_delta {
-                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.config.clock_fn)(), "Timed out");
+                ()   = tokio::time::sleep(TIMEOUT_SLEEP_UNIT) => {
+                    if (self.clock_fn)() - started_at >= deadline_delta {
+                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.clock_fn)(), "Timed out");
                         return WorkerResult::Err(WorkerError::IntermittentTimeout);
                     }
                 }
@@ -319,10 +321,9 @@ pub(crate) mod tests {
                 ActivityConfig {
                     config_id: ConfigId::generate(),
                     recycled_instances: RecycleInstancesSetting::Disable,
-                    clock_fn: clock_fn.clone(),
-                    timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
                 },
                 engine,
+                clock_fn.clone(),
             )
             .unwrap(),
         );
@@ -418,10 +419,9 @@ pub(crate) mod tests {
             ActivityConfig {
                 config_id: ConfigId::generate(),
                 recycled_instances,
-                clock_fn: now,
-                timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
             },
             engine,
+            now,
         )
         .unwrap();
         let execution_deadline = now() + lock_expiry;
@@ -513,10 +513,9 @@ pub(crate) mod tests {
                     ActivityConfig {
                         config_id: ConfigId::generate(),
                         recycled_instances,
-                        clock_fn: now,
-                        timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
                     },
                     engine,
+                    now,
                 )
                 .unwrap(),
             );
@@ -600,10 +599,9 @@ pub(crate) mod tests {
                     ActivityConfig {
                         config_id: ConfigId::generate(),
                         recycled_instances: RecycleInstancesSetting::Disable,
-                        clock_fn: now,
-                        timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
                     },
                     engine,
+                    now,
                 )
                 .unwrap(),
             );
@@ -647,10 +645,9 @@ pub(crate) mod tests {
                     ActivityConfig {
                         config_id: ConfigId::generate(),
                         recycled_instances: RecycleInstancesSetting::Disable,
-                        clock_fn: sim_clock.get_clock_fn(),
-                        timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
                     },
                     engine,
+                    sim_clock.get_clock_fn(),
                 )
                 .unwrap(),
             );

@@ -204,21 +204,24 @@ fn exec<DB: DbConnection + 'static>(
     workflow_engine: Arc<Engine>,
     activity_engine: Arc<Engine>,
 ) -> (ExecutorTaskHandle, Vec<FunctionFqn>) {
-    let config = AutoConfig {
-        wasm_path,
-        config_id: ConfigId::generate(),
-        activity_recycled_instances: RecycleInstancesSetting::Enable,
-        clock_fn: now,
-        workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
-        workflow_db_pool: db_pool.clone(),
-        workflow_child_retry_exp_backoff: Duration::from_millis(10),
-        workflow_child_max_retries: 5,
-        timeout_sleep_unit: TIMEOUT_SLEEP_UNIT,
-        non_blocking_event_batching: NonBlockingEventBatching::Enabled,
-        phantom_data: PhantomData,
-    };
-    let worker =
-        Arc::new(AutoWorker::new_with_config(config, workflow_engine, activity_engine).unwrap());
+    let worker = Arc::new(
+        AutoWorker::new_with_config(
+            AutoConfig {
+                wasm_path,
+                config_id: ConfigId::generate(),
+                activity_recycled_instances: RecycleInstancesSetting::Enable,
+                workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
+                workflow_child_retry_exp_backoff: Duration::from_millis(10),
+                workflow_child_max_retries: 5,
+                non_blocking_event_batching: NonBlockingEventBatching::Enabled,
+            },
+            workflow_engine,
+            activity_engine,
+            db_pool.clone(),
+            now,
+        )
+        .unwrap(),
+    );
     let ffqns = executor::worker::Worker::exported_functions(worker.as_ref())
         .cloned()
         .collect::<Vec<_>>();
