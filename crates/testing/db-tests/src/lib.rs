@@ -17,6 +17,7 @@ use tempfile::NamedTempFile;
 
 pub const SOME_FFQN: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
 
+#[derive(Clone, Copy, Debug)]
 pub enum Database {
     Memory,
     Sqlite,

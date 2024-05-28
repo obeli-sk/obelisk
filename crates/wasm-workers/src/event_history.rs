@@ -784,7 +784,6 @@ impl EventCall {
 #[cfg(test)]
 mod tests {
     use crate::event_history::{EventCall, EventHistory};
-    use crate::workflow_ctx::tests::MOCK_FFQN;
     use crate::workflow_ctx::FunctionError;
     use crate::workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching};
     use assert_matches::assert_matches;
@@ -792,7 +791,7 @@ mod tests {
     use concepts::prefixed_ulid::JoinSetId;
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
-    use concepts::{ExecutionId, Params, SupportedFunctionResult};
+    use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
     use db_tests::Database;
     use executor::worker::{WorkerError, WorkerResult};
     use rstest::rstest;
@@ -803,6 +802,8 @@ mod tests {
     use utils::time::ClockFn;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::{WastVal, WastValWithType};
+
+    pub const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
 
     async fn load_event_history<C: ClockFn>(
         db_connection: &impl DbConnection,

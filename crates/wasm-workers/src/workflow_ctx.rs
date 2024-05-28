@@ -257,6 +257,7 @@ const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
 const SUFFIX_FN_START_ASYNC: &str = "-future";
 const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 
+#[cfg(madsim)]
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::{
@@ -380,9 +381,24 @@ pub(crate) mod tests {
     // E. Remove a step
     // F. Change the final result
 
-    #[tokio::test]
-    async fn check_determinism() {
+    #[test]
+    fn check_determinism() {
         let _guard = test_utils::set_up();
+        let mut builder_a = madsim::runtime::Builder::from_env();
+        builder_a.check = false;
+
+        let mut builder_b = madsim::runtime::Builder::from_env(); // Builder: Clone would be useful
+        builder_b.check = false;
+        builder_b.seed = builder_a.seed;
+
+        assert_eq!(
+            builder_a.run(|| async move { execute_steps().await }),
+            builder_b.run(|| async move { execute_steps().await })
+        );
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn execute_steps() -> (Vec<HistoryEvent>, FinishedExecutionResult) {
         let unstructured_holder = UnstructuredHolder::new();
         let mut unstructured = unstructured_holder.unstructured();
         let steps = {
@@ -395,19 +411,7 @@ pub(crate) mod tests {
         let created_at = now();
         info!(now = %created_at, "Generated steps: {steps:?}");
         let execution_id = ExecutionId::generate();
-        info!("first execution");
-        let first = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
-        info!("second execution");
-        let second = execute_steps(execution_id, steps.clone(), SimClock::new(created_at)).await;
-        assert_eq!(first, second);
-    }
-
-    #[allow(clippy::too_many_lines)]
-    async fn execute_steps(
-        execution_id: ExecutionId,
-        steps: Vec<WorkflowStep>,
-        sim_clock: SimClock,
-    ) -> (Vec<HistoryEvent>, FinishedExecutionResult) {
+        let sim_clock = SimClock::new(created_at);
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let mut child_execution_count = steps
             .iter()
