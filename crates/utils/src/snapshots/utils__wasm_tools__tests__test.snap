@@ -111,10 +111,4 @@ ExIm {
             },
         },
     ],
-    exported_functions: [
-        testing:fibo-workflow/workflow.fibow,
-        testing:fibo-workflow/workflow.fiboa,
-        testing:fibo-workflow/workflow.fiboa-concurrent,
-        testing:fibo-workflow/workflow-nesting.fibo-nested-workflow,
-    ],
 }

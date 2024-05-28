@@ -23,7 +23,6 @@ pub enum DecodeError {
 pub struct ExIm {
     pub exports: Vec<PackageIfcFns>,
     pub imports: Vec<PackageIfcFns>,
-    exported_functions: Vec<FunctionFqn>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,23 +33,36 @@ pub struct PackageIfcFns {
 
 impl ExIm {
     fn new(exports: Vec<PackageIfcFns>, imports: Vec<PackageIfcFns>) -> Self {
-        let exported_functions = exports
-            .iter()
-            .flat_map(|ifc| {
-                ifc.fns.keys().map(|fun| FunctionFqn {
-                    ifc_fqn: ifc.ifc_fqn.clone(),
-                    function_name: fun.clone(),
-                })
-            })
-            .collect();
-        Self {
-            exports,
-            imports,
-            exported_functions,
-        }
+        Self { exports, imports }
     }
-    pub fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
-        self.exported_functions.iter()
+
+    fn flatten(
+        input: &[PackageIfcFns],
+    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+        input.iter().flat_map(|ifc| {
+            ifc.fns.iter().map(|(fun, (params, result))| {
+                (
+                    FunctionFqn {
+                        ifc_fqn: ifc.ifc_fqn.clone(),
+                        function_name: fun.clone(),
+                    },
+                    params.as_ref(),
+                    result,
+                )
+            })
+        })
+    }
+
+    pub fn exported_functions(
+        &self,
+    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+        Self::flatten(&self.exports)
+    }
+
+    pub fn imported_functions(
+        &self,
+    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+        Self::flatten(&self.imports)
     }
 }
 

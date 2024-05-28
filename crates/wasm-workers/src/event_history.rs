@@ -791,12 +791,11 @@ mod tests {
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::JoinSetId;
     use concepts::storage::{CreateRequest, DbPool};
-    use concepts::storage::{
-        DbConnection, DbError, JoinSetResponse, JoinSetResponseEvent, Version,
-    };
+    use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::{ExecutionId, Params, SupportedFunctionResult};
     use db_tests::Database;
     use executor::worker::{WorkerError, WorkerResult};
+    use rstest::rstest;
     use std::sync::Arc;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
@@ -810,8 +809,10 @@ mod tests {
         execution_id: ExecutionId,
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
-    ) -> Result<(EventHistory<C>, Version), DbError> {
-        let exec_log = db_connection.get(execution_id).await?;
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        non_blocking_event_batching: NonBlockingEventBatching,
+    ) -> (EventHistory<C>, Version) {
+        let exec_log = db_connection.get(execution_id).await.unwrap();
         let event_history = EventHistory::new(
             execution_id,
             exec_log.event_history().collect(),
@@ -820,21 +821,27 @@ mod tests {
                 .into_iter()
                 .map(|event| event.event)
                 .collect(),
-            JoinNextBlockingStrategy::default(),
+            join_next_blocking_strategy,
             execution_deadline,
             Duration::ZERO,
             0,
-            NonBlockingEventBatching::default(),
+            non_blocking_event_batching,
             clock_fn,
             Arc::new(std::sync::Mutex::new(WorkerResult::Err(
                 WorkerError::IntermittentTimeout,
             ))),
         );
-        Ok((event_history, exec_log.version))
+        (event_history, exec_log.version)
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn regular_join_next_child() {
+    async fn regular_join_next_child(
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        second_run_strategy: JoinNextBlockingStrategy,
+        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
+        batching: NonBlockingEventBatching,
+    ) {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = Database::Memory.set_up().await;
@@ -862,9 +869,10 @@ mod tests {
             execution_id,
             sim_clock.now(),
             sim_clock.get_clock_fn(),
+            JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
+            batching,
         )
-        .await
-        .unwrap();
+        .await;
 
         let join_set_id = JoinSetId::generate();
         let child_execution_id = ExecutionId::generate();
@@ -908,7 +916,8 @@ mod tests {
             blocking_join_first(event_history, version)
                 .await
                 .unwrap_err(),
-            FunctionError::ChildExecutionRequest
+            FunctionError::ChildExecutionRequest,
+            "should have ended with an interrupt"
         );
         db_connection
             .append_response(
@@ -926,25 +935,32 @@ mod tests {
             .unwrap();
 
         info!("Second run");
-
         let (event_history, version) = load_event_history(
             &db_connection,
             execution_id,
             sim_clock.now(),
             sim_clock.get_clock_fn(),
+            second_run_strategy,
+            batching,
         )
-        .await
-        .unwrap();
-
-        blocking_join_first(event_history, version).await.unwrap();
+        .await;
+        blocking_join_first(event_history, version)
+            .await
+            .expect("should finish successfuly");
 
         drop(db_connection);
         db_pool.close().await.unwrap();
     }
 
+    #[rstest]
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
-    async fn start_async_respond_then_join_next() {
+    async fn start_async_respond_then_join_next(
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
+        batching: NonBlockingEventBatching,
+    ) {
         const CHILD_RESP: SupportedFunctionResult =
             SupportedFunctionResult::Infallible(WastValWithType {
                 r#type: TypeWrapper::U8,
@@ -1008,9 +1024,10 @@ mod tests {
             execution_id,
             sim_clock.now(),
             sim_clock.get_clock_fn(),
+            join_next_blocking_strategy,
+            batching,
         )
-        .await
-        .unwrap();
+        .await;
 
         let join_set_id = JoinSetId::generate();
         let child_execution_id = ExecutionId::generate();
@@ -1047,9 +1064,10 @@ mod tests {
             execution_id,
             sim_clock.now(),
             sim_clock.get_clock_fn(),
+            join_next_blocking_strategy,
+            batching,
         )
-        .await
-        .unwrap();
+        .await;
 
         start_async(
             &mut event_history,
@@ -1074,9 +1092,15 @@ mod tests {
         db_pool.close().await.unwrap();
     }
 
+    #[rstest]
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
-    async fn create_two_non_blocking_childs_then_two_join_nexts() {
+    async fn create_two_non_blocking_childs_then_two_join_nexts(
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        second_run_strategy: JoinNextBlockingStrategy,
+        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
+        batching: NonBlockingEventBatching,
+    ) {
         const KID_A: SupportedFunctionResult =
             SupportedFunctionResult::Infallible(WastValWithType {
                 r#type: TypeWrapper::U8,
@@ -1166,9 +1190,10 @@ mod tests {
             execution_id,
             sim_clock.now(),
             sim_clock.get_clock_fn(),
+            JoinNextBlockingStrategy::Interrupt,
+            batching,
         )
-        .await
-        .unwrap();
+        .await;
 
         let join_set_id = JoinSetId::generate();
         let child_execution_id_a = ExecutionId::generate();
@@ -1224,9 +1249,10 @@ mod tests {
             execution_id,
             sim_clock.now(),
             sim_clock.get_clock_fn(),
+            second_run_strategy,
+            batching,
         )
-        .await
-        .unwrap();
+        .await;
 
         let res = blocking_join_first(
             &mut event_history,

@@ -283,10 +283,10 @@ pub(crate) mod tests {
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::info;
     use utils::time::{now, ClockFn};
+    use val_json::type_wrapper::TypeWrapper;
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
-    const MOCK_FFQN_PTR: &FunctionFqn = &MOCK_FFQN;
 
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
     #[allow(dead_code)]
@@ -357,8 +357,16 @@ pub(crate) mod tests {
             WorkerResult::Ok(SupportedFunctionResult::None, workflow_ctx.version)
         }
 
-        fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
-            Some(MOCK_FFQN_PTR).into_iter()
+        fn exported_functions(
+            &self,
+        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+            None.into_iter()
+        }
+
+        fn imported_functions(
+            &self,
+        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+            None.into_iter()
         }
     }
 

@@ -1,7 +1,7 @@
 mod args;
 mod init;
 
-use args::{Args, Function, Server, Subcommand};
+use args::{Args, Function, Server, Subcommand, Worker};
 use clap::Parser;
 use concepts::storage::DbConnection;
 use concepts::storage::{CreateRequest, DbPool};
@@ -11,11 +11,11 @@ use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use std::sync::Arc;
-use std::{marker::PhantomData, time::Duration};
+use std::time::Duration;
 use tracing::error;
 use utils::time::now;
+use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
-use wasm_workers::activity_worker::TIMEOUT_SLEEP_UNIT;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::workflow_worker::NonBlockingEventBatching;
 use wasm_workers::{
@@ -35,6 +35,7 @@ async fn main() {
         // TODO: XDG specs or ~/.obelisk/obelisk.sqlite
         "obelisk.sqlite"
     };
+    let db_pool = SqlitePool::new(db_file).await.unwrap();
     match Args::parse().command {
         Subcommand::Server(Server::Run { clean }) => {
             if clean {
@@ -61,6 +62,40 @@ async fn main() {
                 tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
             }
         }
+        Subcommand::Worker(Worker::Inspect { wasm_path, verbose }) => {
+            let activity_engine = activity_engine(EngineConfig::default());
+            let workflow_engine = workflow_engine(EngineConfig::default());
+            let auto_worker = AutoWorker::new_with_config(
+                AutoConfig {
+                    wasm_path: StrVariant::Arc(Arc::from(wasm_path)),
+                    config_id: ConfigId::generate(),
+                    activity_recycled_instances: RecycleInstancesSetting::Enable,
+                    workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
+                    workflow_child_retry_exp_backoff: Duration::from_millis(10),
+                    workflow_child_max_retries: 5,
+                    non_blocking_event_batching: NonBlockingEventBatching::Enabled,
+                },
+                workflow_engine,
+                activity_engine,
+                db_pool.clone(),
+                now,
+            )
+            .unwrap();
+            println!("Kind:");
+            println!("\t{}", auto_worker.kind());
+
+            println!("Exports:");
+            inspect(
+                executor::worker::Worker::exported_functions(&auto_worker),
+                verbose,
+            );
+
+            println!("Imports:");
+            inspect(
+                executor::worker::Worker::imported_functions(&auto_worker),
+                verbose,
+            );
+        }
         other => {
             eprintln!("{other:?}");
             std::process::exit(1);
@@ -77,6 +112,25 @@ async fn main() {
     //     let db_pool = SqlitePool::new("obelisk.sqlite").await.unwrap();
     //     run(db_pool).await;
     // }
+}
+
+fn inspect<'a>(
+    iter: impl Iterator<Item = (FunctionFqn, &'a [TypeWrapper], &'a Option<TypeWrapper>)>,
+    verbose: bool,
+) {
+    for (ffqn, params, result) in iter {
+        print!("\t{ffqn}");
+        if verbose {
+            let mut params = serde_json::to_string(params).unwrap().replacen('[', "", 1);
+            params.replace_range((params.len() - 1).., "");
+            print!(" ({params})");
+            if let Some(result) = result {
+                let result = serde_json::to_string(result).unwrap();
+                print!(" -> {result}");
+            }
+        }
+        println!();
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -223,7 +277,7 @@ fn exec<DB: DbConnection + 'static>(
         .unwrap(),
     );
     let ffqns = executor::worker::Worker::exported_functions(worker.as_ref())
-        .cloned()
+        .map(|(ffqn, _, _)| ffqn)
         .collect::<Vec<_>>();
     let exec_config = ExecConfig {
         ffqns: ffqns.clone(),

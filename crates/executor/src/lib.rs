@@ -19,6 +19,7 @@ pub mod worker {
         storage::{DbError, JoinSetResponseEvent},
         FinishedExecutionError, StrVariant,
     };
+    use val_json::type_wrapper::TypeWrapper;
 
     #[derive(Debug, thiserror::Error)]
     pub enum WorkerError {
@@ -75,6 +76,12 @@ pub mod worker {
     pub trait Worker: valuable::Valuable + Send + Sync + 'static {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult;
 
-        fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn>;
+        fn exported_functions(
+            &self,
+        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)>;
+
+        fn imported_functions(
+            &self,
+        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)>;
     }
 }

@@ -482,11 +482,7 @@ pub mod simple_worker {
     use indexmap::IndexMap;
     use std::sync::Arc;
     use tracing::trace;
-
-    pub(crate) const FFQN_SOME: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
-    pub(crate) const FFQN_SOME_PTR: &FunctionFqn = &FFQN_SOME;
-    pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
-    pub(crate) const FFQN_CHILD_PTR: &FunctionFqn = &FFQN_CHILD;
+    use val_json::type_wrapper::TypeWrapper;
 
     pub type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent>, WorkerResult)>>>;
@@ -527,15 +523,23 @@ pub mod simple_worker {
             worker_result
         }
 
-        fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
-            vec![FFQN_SOME_PTR, FFQN_CHILD_PTR].into_iter()
+        fn exported_functions(
+            &self,
+        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+            None.into_iter()
+        }
+
+        fn imported_functions(
+            &self,
+        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+            None.into_iter()
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use self::simple_worker::{SimpleWorker, FFQN_SOME_PTR};
+    use self::simple_worker::SimpleWorker;
     use super::*;
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use assert_matches::assert_matches;
@@ -547,12 +551,14 @@ mod tests {
     use concepts::{Params, SupportedFunctionResult};
     use db_tests::Database;
     use indexmap::IndexMap;
-    use simple_worker::FFQN_SOME;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::set_up;
     use test_utils::sim_clock::SimClock;
-    use tests::simple_worker::FFQN_CHILD;
     use utils::time::now;
+    use val_json::type_wrapper::TypeWrapper;
+
+    pub(crate) const FFQN_SOME: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
+    pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
 
     async fn tick_fn<
         W: Worker + Debug,
@@ -1102,8 +1108,16 @@ mod tests {
             WorkerResult::Ok(self.result.clone(), ctx.version)
         }
 
-        fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
-            Some(FFQN_SOME_PTR).into_iter()
+        fn exported_functions(
+            &self,
+        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+            None.into_iter()
+        }
+
+        fn imported_functions(
+            &self,
+        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+            None.into_iter()
         }
     }
 

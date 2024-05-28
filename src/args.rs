@@ -1,5 +1,4 @@
 use clap::Parser;
-use std::{ops::RangeInclusive, path::PathBuf};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -34,11 +33,17 @@ pub(crate) enum Server {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Worker {
+    Inspect {
+        #[arg(required(true))]
+        wasm_path: String, // TODO: PathBuf
+        #[arg(short, long)]
+        verbose: bool,
+    },
     Add {
-        #[arg(num_args(1..), required(true))]
-        wasm_file: PathBuf,
         #[arg(short, long)]
         replace: bool,
+        #[arg(required(true))]
+        wasm_path: String, // TODO: PathBuf
     },
     List,
     Remove {
@@ -69,21 +74,4 @@ pub(crate) enum Function {
 pub(crate) enum Exe {
     List,
     Status { execution_id: String },
-}
-
-const PORT_RANGE: RangeInclusive<usize> = 0..=65535;
-
-fn port_in_range(s: &str) -> Result<u16, String> {
-    let port: usize = s
-        .parse()
-        .map_err(|_| format!("`{s}` isn't a port number"))?;
-    if PORT_RANGE.contains(&port) {
-        Ok(port as u16)
-    } else {
-        Err(format!(
-            "port not in range {}-{}",
-            PORT_RANGE.start(),
-            PORT_RANGE.end()
-        ))
-    }
 }

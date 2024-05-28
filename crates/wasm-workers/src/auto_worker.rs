@@ -19,6 +19,7 @@ use concepts::{
 };
 use executor::worker::{Worker, WorkerContext};
 use itertools::Either;
+use val_json::type_wrapper::TypeWrapper;
 use std::{ops::Deref, sync::Arc, time::Duration};
 use utils::time::ClockFn;
 use wasmtime::Engine;
@@ -26,7 +27,7 @@ use wasmtime::Engine;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct AutoConfig {
     pub config_id: ConfigId,
-    pub wasm_path: StrVariant,
+    pub wasm_path: StrVariant, // TODO: PathBuf
     pub activity_recycled_instances: RecycleInstancesSetting,
     pub workflow_join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub workflow_child_retry_exp_backoff: Duration,
@@ -39,7 +40,7 @@ pub enum AutoWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     WorkflowWorker(WorkflowWorker<C, DB, P>),
 }
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq, derive_more::Display)]
 pub enum Kind {
     Activity,
     Workflow,
@@ -111,12 +112,18 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         }
     }
 
-    fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
-        (match self {
+    fn exported_functions(&self) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+        match self {
             AutoWorker::WorkflowWorker(w) => Either::Left(w.exported_functions()),
             AutoWorker::ActivityWorker(a) => Either::Right(a.exported_functions()),
-        })
-        .into_iter()
+        }
+    }
+
+    fn imported_functions(&self) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+        match self {
+            AutoWorker::WorkflowWorker(w) => Either::Left(w.imported_functions()),
+            AutoWorker::ActivityWorker(a) => Either::Right(a.imported_functions()),
+        }
     }
 }
 

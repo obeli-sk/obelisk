@@ -14,6 +14,7 @@ use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::ExIm;
+use val_json::type_wrapper::TypeWrapper;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -151,8 +152,16 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
 impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
     for WorkflowWorker<C, DB, P>
 {
-    fn exported_functions(&self) -> impl Iterator<Item = &FunctionFqn> {
+    fn exported_functions(
+        &self,
+    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
         self.exim.exported_functions()
+    }
+
+    fn imported_functions(
+        &self,
+    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+        self.exim.imported_functions()
     }
 
     #[allow(clippy::too_many_lines)]
