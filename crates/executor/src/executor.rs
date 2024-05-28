@@ -23,7 +23,6 @@ use utils::time::ClockFn;
 
 #[derive(Debug, Clone)]
 pub struct ExecConfig<C: ClockFn> {
-    pub ffqns: Vec<FunctionFqn>,
     pub lock_expiry: Duration,
     pub tick_sleep: Duration,
     pub batch_size: u32,
@@ -37,6 +36,7 @@ pub struct ExecTask<W: Worker, C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_id: ExecutorId,
     phantom_data: PhantomData<DB>,
+    ffqns: Arc<[FunctionFqn]>,
 }
 
 #[derive(Derivative, Default)]
@@ -87,6 +87,13 @@ impl Drop for ExecutorTaskHandle {
     }
 }
 
+pub(crate) fn extract_ffqns(worker: &impl Worker) -> Arc<[FunctionFqn]> {
+    worker
+        .exported_functions()
+        .map(|(ffqn, _, _)| ffqn)
+        .collect::<Arc<_>>()
+}
+
 impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     ExecTask<W, C, DB, P>
 {
@@ -95,6 +102,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         worker: Arc<W>,
         config: ExecConfig<C>,
         db_pool: P,
+        ffqns: Arc<[FunctionFqn]>,
         task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Self {
         Self {
@@ -104,6 +112,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             executor_id: ExecutorId::generate(),
             db_pool,
             phantom_data: PhantomData,
+            ffqns,
         }
     }
 
@@ -120,9 +129,11 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         );
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
+        let ffqns = extract_ffqns(worker.as_ref());
+
         let abort_handle = tokio::spawn(
             async move {
-                info!(ffqns = ?config.ffqns, "Spawned executor");
+                info!("Spawned executor");
                 let clock_fn = config.clock_fn.clone();
                 let task = Self {
                     worker,
@@ -131,19 +142,17 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     executor_id,
                     db_pool,
                     phantom_data: PhantomData,
+                    ffqns: ffqns.clone(),
                 };
                 let mut old_err = None;
-                let ffqns: Arc<[FunctionFqn]> = Arc::from(task.config.ffqns.clone());
+
                 loop {
                     let res = task.tick(clock_fn()).await;
                     Self::log_err_if_new(res, &mut old_err);
+                    let executed_at = (task.config.clock_fn)();
                     task.db_pool
                         .connection()
-                        .subscribe_to_pending(
-                            (task.config.clock_fn)(),
-                            ffqns.clone(),
-                            task.config.tick_sleep,
-                        )
+                        .subscribe_to_pending(executed_at, ffqns.clone(), task.config.tick_sleep)
                         .await;
                     if is_closing_inner.load(Ordering::Relaxed) {
                         return;
@@ -214,7 +223,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                 .lock_pending(
                     permits.len(), // batch size
                     executed_at,   // fetch expiring before now
-                    self.config.ffqns.clone(),
+                    self.ffqns.clone(),
                     executed_at, // created at
                     self.executor_id,
                     lock_expires_at,
@@ -484,12 +493,14 @@ pub mod simple_worker {
     use tracing::trace;
     use val_json::type_wrapper::TypeWrapper;
 
+    pub(crate) const FFQN_SOME: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
     pub type SimpleWorkerResultMap =
         Arc<std::sync::Mutex<IndexMap<Version, (Vec<HistoryEvent>, WorkerResult)>>>;
 
     #[derive(Clone, Debug)]
     pub struct SimpleWorker {
         pub worker_results_rev: SimpleWorkerResultMap,
+        pub ffqn: FunctionFqn,
     }
 
     impl SimpleWorker {
@@ -500,6 +511,15 @@ pub mod simple_worker {
                     Version::new(2),
                     (vec![], res),
                 )]))),
+                ffqn: FFQN_SOME,
+            }
+        }
+
+        #[must_use]
+        pub fn with_ffqn(self, ffqn: FunctionFqn) -> Self {
+            Self {
+                worker_results_rev: self.worker_results_rev,
+                ffqn,
             }
         }
     }
@@ -526,7 +546,7 @@ pub mod simple_worker {
         fn exported_functions(
             &self,
         ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
-            None.into_iter()
+            Some((self.ffqn.clone(), [].as_ref(), &None)).into_iter()
         }
 
         fn imported_functions(
@@ -551,13 +571,13 @@ mod tests {
     use concepts::{Params, SupportedFunctionResult};
     use db_tests::Database;
     use indexmap::IndexMap;
+    use simple_worker::FFQN_SOME;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::set_up;
     use test_utils::sim_clock::SimClock;
     use utils::time::now;
     use val_json::type_wrapper::TypeWrapper;
 
-    pub(crate) const FFQN_SOME: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
     pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
 
     async fn tick_fn<
@@ -572,6 +592,7 @@ mod tests {
         executed_at: DateTime<Utc>,
     ) -> ExecutionProgress {
         trace!("Ticking with {worker:?}");
+        let ffqns = super::extract_ffqns(worker.as_ref());
         let executor = ExecTask {
             worker,
             config,
@@ -579,6 +600,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             phantom_data: PhantomData,
+            ffqns,
         };
         let mut execution_progress = executor.tick(executed_at).await.unwrap();
         loop {
@@ -622,7 +644,6 @@ mod tests {
         set_up();
         let created_at = clock_fn();
         let exec_config = ExecConfig {
-            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
@@ -664,7 +685,6 @@ mod tests {
         let clock_fn = move || created_at;
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
-            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -779,7 +799,6 @@ mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
-            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -826,6 +845,7 @@ mod tests {
             assert_eq!(sim_clock.now() + retry_exp_backoff, expires_at);
         }
         let worker = Arc::new(SimpleWorker {
+            ffqn: FFQN_SOME,
             worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
                 Version::new(4),
                 (
@@ -878,7 +898,6 @@ mod tests {
         let clock_fn = move || created_at;
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
-            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -960,7 +979,6 @@ mod tests {
             .unwrap();
         tick_fn(
             ExecConfig {
-                ffqns: vec![FFQN_SOME],
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
@@ -1023,14 +1041,13 @@ mod tests {
             }
         };
 
-        let child_worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
-            worker_error,
-        )));
+        let child_worker = Arc::new(
+            SimpleWorker::with_single_result(WorkerResult::Err(worker_error)).with_ffqn(FFQN_CHILD),
+        );
 
         // execute the child
         tick_fn(
             ExecConfig {
-                ffqns: vec![FFQN_CHILD],
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
@@ -1111,7 +1128,7 @@ mod tests {
         fn exported_functions(
             &self,
         ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
-            None.into_iter()
+            Some((FFQN_SOME, [].as_ref(), &None)).into_iter()
         }
 
         fn imported_functions(
@@ -1129,7 +1146,6 @@ mod tests {
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let lock_expiry = Duration::from_millis(100);
         let exec_config = ExecConfig {
-            ffqns: vec![FFQN_SOME],
             batch_size: 1,
             lock_expiry,
             tick_sleep: Duration::ZERO,
@@ -1162,6 +1178,7 @@ mod tests {
             .await
             .unwrap();
 
+        let ffqns = super::extract_ffqns(worker.as_ref());
         let executor = ExecTask {
             worker,
             config: exec_config,
@@ -1169,6 +1186,7 @@ mod tests {
             task_limiter: None,
             executor_id: ExecutorId::generate(),
             phantom_data: PhantomData,
+            ffqns,
         };
         let mut first_execution_progress = executor.tick(sim_clock.now()).await.unwrap();
         assert_eq!(1, first_execution_progress.executions.len());

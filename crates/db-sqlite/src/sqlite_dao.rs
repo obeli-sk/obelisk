@@ -1220,7 +1220,7 @@ impl DbConnection for SqlitePool {
         &self,
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,
-        ffqns: Vec<FunctionFqn>,
+        ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,

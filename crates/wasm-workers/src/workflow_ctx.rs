@@ -287,7 +287,7 @@ pub(crate) mod tests {
     use val_json::type_wrapper::TypeWrapper;
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
-    pub const MOCK_FFQN: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
+    pub const FFQN_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
 
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
     #[allow(dead_code)]
@@ -361,7 +361,7 @@ pub(crate) mod tests {
         fn exported_functions(
             &self,
         ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
-            None.into_iter()
+            Some((FFQN_MOCK, [].as_ref(), &None)).into_iter()
         }
 
         fn imported_functions(
@@ -436,7 +436,6 @@ pub(crate) mod tests {
                 phantom_data: PhantomData,
             });
             let exec_config = ExecConfig {
-                ffqns: vec![MOCK_FFQN],
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
@@ -451,7 +450,7 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at,
                 execution_id,
-                ffqn: MOCK_FFQN,
+                ffqn: FFQN_MOCK,
                 params: Params::default(),
                 parent: None,
                 scheduled_at: created_at,
@@ -510,7 +509,6 @@ pub(crate) mod tests {
                             phantom_data: PhantomData,
                         });
                         let exec_config = ExecConfig {
-                            ffqns: vec![child_request.ffqn().clone()],
                             batch_size: 1,
                             lock_expiry: Duration::from_secs(1),
                             tick_sleep: TICK_SLEEP,

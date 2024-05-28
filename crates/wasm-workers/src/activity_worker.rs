@@ -320,7 +320,6 @@ pub(crate) mod tests {
     pub(crate) fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         wasm_path: &'static str,
-        ffqn: FunctionFqn,
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
         let engine = activity_engine(EngineConfig::default());
@@ -337,7 +336,6 @@ pub(crate) mod tests {
             .unwrap(),
         );
         let exec_config = ExecConfig {
-            ffqns: vec![ffqn],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
@@ -353,7 +351,6 @@ pub(crate) mod tests {
         spawn_activity(
             db_pool,
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-            FIBO_ACTIVITY_FFQN,
             clock_fn,
         )
     }
@@ -530,7 +527,6 @@ pub(crate) mod tests {
             );
 
             let exec_config = ExecConfig {
-                ffqns: vec![SLEEP_LOOP_ACTIVITY_FFQN],
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: TICK_SLEEP,
@@ -661,13 +657,13 @@ pub(crate) mod tests {
                 .unwrap(),
             );
             let exec_config = ExecConfig {
-                ffqns: vec![HTTP_GET_SUCCESSFUL_ACTIVITY],
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
                 clock_fn: sim_clock.get_clock_fn(),
             };
-            let exec_task = ExecTask::new(worker, exec_config, db_pool.clone(), None);
+            let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
+            let exec_task = ExecTask::new(worker, exec_config, db_pool.clone(), ffqns, None);
 
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let server_address = listener

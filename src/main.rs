@@ -1,7 +1,7 @@
 mod args;
 mod init;
 
-use args::{Args, Function, Server, Subcommand, Worker};
+use args::{Args, Server, Subcommand, Worker};
 use clap::Parser;
 use concepts::storage::DbConnection;
 use concepts::storage::{CreateRequest, DbPool};
@@ -101,17 +101,6 @@ async fn main() {
             std::process::exit(1);
         }
     }
-
-    // if std::env::var("DB")
-    //     .unwrap_or_default()
-    //     .eq_ignore_ascii_case("mem")
-    // {
-    //     let db_pool = db_mem::inmemory_dao::InMemoryPool::new();
-    //     run(db_pool).await;
-    // } else {
-    //     let db_pool = SqlitePool::new("obelisk.sqlite").await.unwrap();
-    //     run(db_pool).await;
-    // }
 }
 
 fn inspect<'a>(
@@ -280,7 +269,6 @@ fn exec<DB: DbConnection + 'static>(
         .map(|(ffqn, _, _)| ffqn)
         .collect::<Vec<_>>();
     let exec_config = ExecConfig {
-        ffqns: ffqns.clone(),
         batch_size: 10,
         lock_expiry: Duration::from_secs(10),
         tick_sleep: Duration::from_millis(200),

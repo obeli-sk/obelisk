@@ -11,6 +11,7 @@ use concepts::{storage::HistoryEvent, FinishedExecutionResult};
 use concepts::{Params, StrVariant};
 use db_tests::Database;
 use db_tests::SOME_FFQN;
+use std::sync::Arc;
 use std::time::Duration;
 use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
@@ -189,7 +190,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         .lock_pending(
             1,
             sim_clock.now(),
-            vec![SOME_FFQN],
+            Arc::from([SOME_FFQN]),
             sim_clock.now(),
             exec1,
             sim_clock.now() + lock_expiry,
@@ -238,7 +239,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             .lock_pending(
                 1,
                 created_at,
-                vec![SOME_FFQN],
+                Arc::from([SOME_FFQN]),
                 created_at,
                 exec1,
                 created_at + lock_expiry,
@@ -506,7 +507,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
             .lock_pending(
                 1,
                 sim_clock.now(),
-                vec![SOME_FFQN],
+                Arc::from([SOME_FFQN]),
                 sim_clock.now(),
                 exec1,
                 sim_clock.now() + lock_duration,
@@ -803,7 +804,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
         .lock_pending(
             3,
             sim_clock.now(),
-            vec![SOME_FFQN],
+            Arc::from([SOME_FFQN]),
             sim_clock.now(),
             ExecutorId::generate(),
             sim_clock.now() + Duration::from_secs(1),

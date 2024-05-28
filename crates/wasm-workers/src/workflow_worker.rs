@@ -362,6 +362,7 @@ mod tests {
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
         expired_timers_watcher,
     };
+    use rstest::rstest;
     use serde_json::json;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
@@ -381,9 +382,9 @@ mod tests {
     fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         wasm_path: &'static str,
-        ffqn: FunctionFqn,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
+        non_blocking_event_batching: NonBlockingEventBatching,
     ) -> ExecutorTaskHandle {
         let workflow_engine = workflow_engine(EngineConfig::default());
         let worker = Arc::new(
@@ -394,7 +395,7 @@ mod tests {
                     join_next_blocking_strategy,
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
-                    non_blocking_event_batching: NonBlockingEventBatching::default(),
+                    non_blocking_event_batching,
                 },
                 workflow_engine,
                 db_pool.clone(),
@@ -404,9 +405,8 @@ mod tests {
         );
 
         let exec_config = ExecConfig {
-            ffqns: vec![ffqn],
             batch_size: 1,
-            lock_expiry: Duration::from_secs(1),
+            lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
             clock_fn,
         };
@@ -416,30 +416,56 @@ mod tests {
     pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         clock_fn: impl ClockFn + 'static,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        non_blocking_event_batching: NonBlockingEventBatching,
     ) -> ExecutorTaskHandle {
         spawn_workflow(
             db_pool,
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-            FIBO_WORKFLOW_FFQN,
             clock_fn,
-            JoinNextBlockingStrategy::default(),
+            join_next_blocking_strategy,
+            non_blocking_event_batching,
         )
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn fibo_workflow_should_schedule_fibo_activity_mem() {
+    async fn fibo_workflow_should_schedule_fibo_activity_mem(
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
+        batching: NonBlockingEventBatching,
+    ) {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
-        fibo_workflow_should_schedule_fibo_activity(db_pool.clone(), sim_clock).await;
+        fibo_workflow_should_schedule_fibo_activity(
+            db_pool.clone(),
+            sim_clock,
+            join_next_blocking_strategy,
+            batching,
+        )
+        .await;
         db_pool.close().await.unwrap();
     }
 
     #[cfg(not(madsim))]
+    #[rstest]
     #[tokio::test]
-    async fn fibo_workflow_should_schedule_fibo_activity_sqlite() {
+    async fn fibo_workflow_should_schedule_fibo_activity_sqlite(
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
+        batching: NonBlockingEventBatching,
+    ) {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Sqlite.set_up().await;
-        fibo_workflow_should_schedule_fibo_activity(db_pool.clone(), sim_clock).await;
+        fibo_workflow_should_schedule_fibo_activity(
+            db_pool.clone(),
+            sim_clock,
+            join_next_blocking_strategy,
+            batching,
+        )
+        .await;
         db_pool.close().await.unwrap();
     }
 
@@ -449,10 +475,17 @@ mod tests {
     >(
         db_pool: P,
         sim_clock: SimClock,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        batching: NonBlockingEventBatching,
     ) {
         const INPUT_ITERATIONS: u32 = 1;
         let _guard = test_utils::set_up();
-        let workflow_exec_task = spawn_workflow_fibo(db_pool.clone(), sim_clock.get_clock_fn());
+        let workflow_exec_task = spawn_workflow_fibo(
+            db_pool.clone(),
+            sim_clock.get_clock_fn(),
+            join_next_blocking_strategy,
+            batching,
+        );
         // Create an execution.
         let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = sim_clock.now();
@@ -507,6 +540,8 @@ mod tests {
     pub(crate) fn spawn_workflow_sleep<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         clock_fn: impl ClockFn + 'static,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        non_blocking_event_batching: NonBlockingEventBatching,
     ) -> ExecutorTaskHandle {
         let workflow_engine = workflow_engine(EngineConfig::default());
         let worker = Arc::new(
@@ -520,10 +555,10 @@ mod tests {
                 .unwrap(),
                 WorkflowConfig {
                     config_id: ConfigId::generate(),
-                    join_next_blocking_strategy: JoinNextBlockingStrategy::default(),
+                    join_next_blocking_strategy,
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
-                    non_blocking_event_batching: NonBlockingEventBatching::default(),
+                    non_blocking_event_batching,
                 },
                 workflow_engine,
                 db_pool.clone(),
@@ -533,7 +568,6 @@ mod tests {
         );
 
         let exec_config = ExecConfig {
-            ffqns: vec![SLEEP_HOST_ACTIVITY_FFQN],
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
@@ -542,15 +576,25 @@ mod tests {
         ExecTask::spawn_new(worker, exec_config, db_pool, None)
     }
 
-    // TODO: test with JoinNextBlockingStrategy::Await
+    #[rstest]
     #[tokio::test]
-    async fn sleep_should_be_persisted_after_executor_restart() {
+    async fn sleep_should_be_persisted_after_executor_restart(
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
+        batching: NonBlockingEventBatching,
+    ) {
         const SLEEP_MILLIS: u32 = 100;
         let _guard = test_utils::set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
 
-        let workflow_exec_task = spawn_workflow_sleep(db_pool.clone(), sim_clock.get_clock_fn());
+        let workflow_exec_task = spawn_workflow_sleep(
+            db_pool.clone(),
+            sim_clock.get_clock_fn(),
+            join_next_blocking_strategy,
+            batching,
+        );
         let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
             db_pool.connection(),
             expired_timers_watcher::TimersWatcherConfig {
@@ -595,7 +639,12 @@ mod tests {
             .move_time_forward(Duration::from_millis(u64::from(SLEEP_MILLIS)))
             .await;
         // Restart worker
-        let workflow_exec_task = spawn_workflow_sleep(db_pool.clone(), sim_clock.get_clock_fn());
+        let workflow_exec_task = spawn_workflow_sleep(
+            db_pool.clone(),
+            sim_clock.get_clock_fn(),
+            join_next_blocking_strategy,
+            batching,
+        );
         let res = db_connection
             .wait_for_finished_result(execution_id, None)
             .await
@@ -609,11 +658,15 @@ mod tests {
     }
 
     #[cfg(not(madsim))]
+    #[rstest]
     #[tokio::test]
-    async fn http_get() {
-        use crate::activity_worker::tests::{
-            spawn_activity, wasmtime_nosim::HTTP_GET_SUCCESSFUL_ACTIVITY,
-        };
+    async fn http_get(
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
+        batching: NonBlockingEventBatching,
+    ) {
+        use crate::activity_worker::tests::spawn_activity;
         use chrono::DateTime;
         use std::ops::Deref;
         use wiremock::{
@@ -632,15 +685,14 @@ mod tests {
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            HTTP_GET_SUCCESSFUL_ACTIVITY,
             sim_clock.get_clock_fn(),
         );
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            HTTP_GET_WORKFLOW_FFQN,
             sim_clock.get_clock_fn(),
-            JoinNextBlockingStrategy::default(),
+            join_next_blocking_strategy,
+            batching,
         );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -694,10 +746,10 @@ mod tests {
         #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_strategy: JoinNextBlockingStrategy,
+        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
+        batching: NonBlockingEventBatching,
     ) {
-        use crate::activity_worker::tests::{
-            spawn_activity, wasmtime_nosim::HTTP_GET_SUCCESSFUL_ACTIVITY,
-        };
+        use crate::activity_worker::tests::spawn_activity;
         use chrono::DateTime;
         use std::ops::Deref;
         use wiremock::{
@@ -722,15 +774,14 @@ mod tests {
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            HTTP_GET_SUCCESSFUL_ACTIVITY,
             sim_clock.get_clock_fn(),
         );
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            HTTP_GET_WORKFLOW_FFQN,
             sim_clock.get_clock_fn(),
             join_next_strategy,
+            batching,
         );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
