@@ -1,6 +1,6 @@
 use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::JoinSetId;
+use concepts::prefixed_ulid::{ConfigId, JoinSetId};
 use concepts::storage::{DbPool, ExecutionLog, JoinSetResponseEvent, LockedExecution};
 use concepts::FinishedExecutionResult;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, StrVariant};
@@ -26,6 +26,7 @@ pub struct ExecConfig {
     pub lock_expiry: Duration,
     pub tick_sleep: Duration,
     pub batch_size: u32,
+    pub config_id: ConfigId,
 }
 
 pub struct ExecTask<W: Worker, C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
@@ -127,8 +128,8 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
     ) -> ExecutorTaskHandle {
         let executor_id = ExecutorId::generate();
         let span = info_span!("executor",
-            executor = %executor_id,
-            worker = worker.as_value()
+            %executor_id,
+            config_id = %config.config_id,
         );
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
@@ -652,6 +653,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
+            config_id: ConfigId::generate(),
         };
 
         let execution_log = create_and_tick(
@@ -693,6 +695,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
+            config_id: ConfigId::generate(),
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
@@ -813,6 +816,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
+            config_id: ConfigId::generate(),
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -920,6 +924,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
+            config_id: ConfigId::generate(),
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -1001,6 +1006,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
+                config_id: ConfigId::generate(),
             },
             sim_clock.get_clock_fn(),
             db_pool.clone(),
@@ -1070,6 +1076,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
+                config_id: ConfigId::generate(),
             },
             sim_clock.get_clock_fn(),
             db_pool.clone(),
@@ -1168,6 +1175,7 @@ mod tests {
             batch_size: 1,
             lock_expiry,
             tick_sleep: Duration::ZERO,
+            config_id: ConfigId::generate(),
         };
 
         let timers_watcher = expired_timers_watcher::TimersWatcherTask {

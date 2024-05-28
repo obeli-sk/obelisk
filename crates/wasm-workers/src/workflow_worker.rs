@@ -408,6 +408,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
+            config_id: ConfigId::generate(),
         };
         ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, None)
     }
@@ -570,6 +571,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
+            config_id: ConfigId::generate(),
         };
         ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, None)
     }
