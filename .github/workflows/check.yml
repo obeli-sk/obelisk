@@ -61,8 +61,6 @@ jobs:
             ${{ github.job }}-${{ runner.os }}-
       - name: cargo clippy (nosim)
         run: nix develop --command cargo clippy --all-targets -- -D warnings
-        env:
-          RUSTFLAGS: "--cfg tracing_unstable"
       - name: Save rust cache
         id: target-cache-save
         uses: actions/cache/save@v4
@@ -103,7 +101,7 @@ jobs:
       - name: cargo clippy (madsim)
         run: nix develop --command cargo clippy --all-targets -- -D warnings
         env:
-          RUSTFLAGS: "--cfg madsim --cfg tracing_unstable"
+          RUSTFLAGS: "--cfg madsim"
       - name: Save rust cache
         id: target-cache-save
         uses: actions/cache/save@v4

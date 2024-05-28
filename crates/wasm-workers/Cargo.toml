@@ -27,7 +27,6 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 ulid.workspace = true
-valuable.workspace = true
 wasmtime-wasi-http.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true

@@ -19,9 +19,9 @@ use concepts::{
 };
 use executor::worker::{Worker, WorkerContext};
 use itertools::Either;
-use val_json::type_wrapper::TypeWrapper;
 use std::{ops::Deref, sync::Arc, time::Duration};
 use utils::time::ClockFn;
+use val_json::type_wrapper::TypeWrapper;
 use wasmtime::Engine;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -112,45 +112,21 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         }
     }
 
-    fn exported_functions(&self) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+    fn exported_functions(
+        &self,
+    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
         match self {
             AutoWorker::WorkflowWorker(w) => Either::Left(w.exported_functions()),
             AutoWorker::ActivityWorker(a) => Either::Right(a.exported_functions()),
         }
     }
 
-    fn imported_functions(&self) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+    fn imported_functions(
+        &self,
+    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
         match self {
             AutoWorker::WorkflowWorker(w) => Either::Left(w.imported_functions()),
             AutoWorker::ActivityWorker(a) => Either::Right(a.imported_functions()),
-        }
-    }
-}
-
-mod valuable {
-    use super::AutoWorker;
-    use concepts::storage::{DbConnection, DbPool};
-    use utils::time::ClockFn;
-
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ::valuable::Structable for AutoWorker<C, DB, P> {
-        fn definition(&self) -> ::valuable::StructDef<'_> {
-            match self {
-                AutoWorker::WorkflowWorker(w) => w.definition(),
-                AutoWorker::ActivityWorker(a) => a.definition(),
-            }
-        }
-    }
-
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ::valuable::Valuable for AutoWorker<C, DB, P> {
-        fn as_value(&self) -> ::valuable::Value<'_> {
-            ::valuable::Value::Structable(self)
-        }
-
-        fn visit(&self, visitor: &mut dyn ::valuable::Visit) {
-            match self {
-                AutoWorker::WorkflowWorker(w) => w.visit(visitor),
-                AutoWorker::ActivityWorker(a) => a.visit(visitor),
-            }
         }
     }
 }

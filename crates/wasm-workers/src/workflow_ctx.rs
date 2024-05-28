@@ -265,6 +265,7 @@ pub(crate) mod tests {
         workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching},
     };
     use async_trait::async_trait;
+    use concepts::prefixed_ulid::ConfigId;
     use concepts::{
         storage::{
             wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
@@ -304,16 +305,6 @@ pub(crate) mod tests {
         #[derivative(Debug = "ignore")]
         db_pool: P,
         phantom_data: PhantomData<DB>,
-    }
-
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> valuable::Valuable
-        for WorkflowWorkerMock<C, DB, P>
-    {
-        fn as_value(&self) -> valuable::Value<'_> {
-            "WorkflowWorkerMock".as_value()
-        }
-
-        fn visit(&self, _visit: &mut dyn valuable::Visit) {}
     }
 
     #[async_trait]
@@ -439,6 +430,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
+                config_id: ConfigId::generate(),
             };
             ExecTask::spawn_new(
                 worker,
@@ -517,6 +509,7 @@ pub(crate) mod tests {
                             batch_size: 1,
                             lock_expiry: Duration::from_secs(1),
                             tick_sleep: TICK_SLEEP,
+                            config_id: ConfigId::generate(),
                         };
                         ExecTask::spawn_new(
                             worker,

@@ -24,7 +24,6 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 ulid.workspace = true
-valuable.workspace = true
 
 [dev-dependencies]
 db-mem.workspace = true

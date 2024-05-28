@@ -528,14 +528,6 @@ pub mod simple_worker {
         }
     }
 
-    impl valuable::Valuable for SimpleWorker {
-        fn as_value(&self) -> valuable::Value<'_> {
-            "SimpleWorker".as_value()
-        }
-
-        fn visit(&self, _visit: &mut dyn valuable::Visit) {}
-    }
-
     #[async_trait]
     impl Worker for SimpleWorker {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult {
@@ -1134,14 +1126,6 @@ mod tests {
     struct SleepyWorker {
         duration: Duration,
         result: SupportedFunctionResult,
-    }
-
-    impl valuable::Valuable for SleepyWorker {
-        fn as_value(&self) -> valuable::Value<'_> {
-            "SleepyWorker".as_value()
-        }
-
-        fn visit(&self, _visit: &mut dyn valuable::Visit) {}
     }
 
     #[async_trait]

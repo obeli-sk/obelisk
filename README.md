@@ -1,12 +1,19 @@
 # Obelisk
-Deterministic workflow engine.
-Job scheduler/ WASM runner.
+Deterministic workflow engine built on top of WASI 0.2
 
 ## Project status / Disclaimer
 This is a pre-release.
 This repo contains backend code for local development and testing.
 The software doesn't have backward compatibility guarantees for CLI nor database format.
 Please exercise caution if attempting to use it for production.
+
+## Core principles
+* Schema first, using [WIT](https://component-model.bytecodealliance.org/design/wit.html) as the interface specification between workflows and activities.
+* Local first development, single process, with an escape hatch for external activities (planned).
+* Backend developer's delight
+    * Automatic retries on errors, timeouts, workflow executions continuing after a server crash.
+    * Observability (planned)
+    * Time traveling debugger (planned), ability to replay and fork existing workflow executions.
 
 ## Features
 * *Activities* that must be idempotent
@@ -20,16 +27,32 @@ Please exercise caution if attempting to use it for production.
 
 * *Deterministic workflows*
     * Isolated from the environment
-    * Calling a single child workflow or activity, blocking the execution
+    * Workflows can spawn child workflows or activities, either blocking or awaiting the result eventually
     * Execution is persisted at every state change, so that it can be replayed after an interrupt or an error.
+    * Ability to replay workflows with added log messages and other changes that do not alter the determinism of the execution (planned)
 
 * Work stealing executor
     * Periodically locking a batch of currently pending executions, starts/continues their execution
     * Cleaning up old hanging executions with expired locks. Executions that have the budget will be retried.
 
+## Installation
+```sh
+# Install rust from https://rustup.rs/
+cargo install --locked obeli-sk
+``
+
+## Usage
+```sh
+obeli-sk server run &
+obeli-sk worker load github:obeli-sk/examples@latest
+obeli-sk function list
+obeli-sk function run ...
+```
+
 # Planned features
 * UI
-* OpenAPI binding generator
+* External Activity RPC
+* OpenAPI generator for activities
 * Fatal error mapping to supported result types, e.g. permanent timeout to a numeric or string representation.
 * WASM upgrades - disabling work stealing by executors with outdated wasm hashes
 * Params typecheck on creation, introspection of types of all functions in the system
@@ -38,6 +61,7 @@ Please exercise caution if attempting to use it for production.
 * Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
 * Labels restricting workflows/activities to executors
 * ErrId that is passed back to parent, error detail
+* Ability to run activities in any language using an RPC protocol
 
 # Building
 
@@ -48,7 +72,7 @@ nix develop # or direnv allow, after simlinking .envrc-example -> .envrc
 ```
 Otherwise:
 ```sh
-cargo install cargo-component
+cargo install cargo-component --locked
 ```
 
 ## Running
@@ -64,5 +88,5 @@ cargo nextest run --workspace --target-dir=target/debug/nosim
 
 ### Deterministic tests using madsim simulator
 ```sh
-MADSIM_ALLOW_SYSTEM_THREAD=1 RUSTFLAGS="--cfg madsim --cfg tracing_unstable" cargo nextest run --workspace --target-dir=target/debug/madsim
+MADSIM_ALLOW_SYSTEM_THREAD=1 RUSTFLAGS="--cfg madsim" cargo nextest run --workspace --target-dir=target/debug/madsim
 ```

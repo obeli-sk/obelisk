@@ -73,7 +73,7 @@ pub mod worker {
     }
 
     #[async_trait]
-    pub trait Worker: valuable::Valuable + Send + Sync + 'static {
+    pub trait Worker: Send + Sync + 'static {
         async fn run(&self, ctx: WorkerContext) -> WorkerResult;
 
         fn exported_functions(

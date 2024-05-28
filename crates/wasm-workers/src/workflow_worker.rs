@@ -316,36 +316,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     }
 }
 
-mod valuable {
-    use super::WorkflowWorker;
-    use concepts::storage::{DbConnection, DbPool};
-    use utils::time::ClockFn;
-
-    static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ::valuable::Structable
-        for WorkflowWorker<C, DB, P>
-    {
-        fn definition(&self) -> ::valuable::StructDef<'_> {
-            ::valuable::StructDef::new_static("WorkflowWorker", ::valuable::Fields::Named(FIELDS))
-        }
-    }
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> ::valuable::Valuable
-        for WorkflowWorker<C, DB, P>
-    {
-        fn as_value(&self) -> ::valuable::Value<'_> {
-            ::valuable::Value::Structable(self)
-        }
-        fn visit(&self, visitor: &mut dyn ::valuable::Visit) {
-            visitor.visit_named_fields(&::valuable::NamedValues::new(
-                FIELDS,
-                &[::valuable::Value::String(
-                    &self.config.config_id.to_string(),
-                )],
-            ));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     // TODO: test timeouts, retries

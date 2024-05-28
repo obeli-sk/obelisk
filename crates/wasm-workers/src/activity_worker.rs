@@ -266,31 +266,6 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
     }
 }
 
-mod valuable {
-    use super::ActivityWorker;
-    use utils::time::ClockFn;
-
-    static FIELDS: &[::valuable::NamedField<'static>] = &[::valuable::NamedField::new("config_id")];
-    impl<C: ClockFn> ::valuable::Structable for ActivityWorker<C> {
-        fn definition(&self) -> ::valuable::StructDef<'_> {
-            ::valuable::StructDef::new_static("ActivityWorker", ::valuable::Fields::Named(FIELDS))
-        }
-    }
-    impl<C: ClockFn> ::valuable::Valuable for ActivityWorker<C> {
-        fn as_value(&self) -> ::valuable::Value<'_> {
-            ::valuable::Value::Structable(self)
-        }
-        fn visit(&self, visitor: &mut dyn ::valuable::Visit) {
-            visitor.visit_named_fields(&::valuable::NamedValues::new(
-                FIELDS,
-                &[::valuable::Value::String(
-                    &self.config.config_id.to_string(),
-                )],
-            ));
-        }
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
