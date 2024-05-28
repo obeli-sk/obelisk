@@ -1,3 +1,8 @@
+mod args;
+mod init;
+
+use args::{Args, Function, Server, Subcommand};
+use clap::Parser;
 use concepts::storage::DbConnection;
 use concepts::storage::{CreateRequest, DbPool};
 use concepts::{prefixed_ulid::ConfigId, StrVariant};
@@ -5,7 +10,6 @@ use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
-use executor::worker::Worker;
 use std::sync::Arc;
 use std::{marker::PhantomData, time::Duration};
 use tracing::error;
@@ -22,79 +26,57 @@ use wasm_workers::{
 };
 use wasmtime::Engine;
 
-fn is_env_true(key: &str) -> bool {
-    std::env::var(key)
-        .ok()
-        .and_then(|val| val.parse::<bool>().ok())
-        .unwrap_or_default()
-}
-
-#[cfg(feature = "tokio-console")]
-fn tokio_console_layer<S>() -> Option<impl tracing_subscriber::Layer<S>>
-where
-    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
-{
-    if is_env_true("TOKIO_CONSOLE") {
-        // Run with
-        // TOKIO_CONSOLE=true RUSTFLAGS="--cfg tokio_unstable --cfg tracing_unstable" DB=mem RUST_LOG=error,runtime=trace,tokio=trace cargo run --target-dir=target/debug/tokio-console --features parallel-compilation,tokio-console > /dev/null
-        use tracing_subscriber::Layer;
-        Some(
-            console_subscriber::spawn().with_filter(
-                tracing_subscriber::filter::Targets::new()
-                    .with_target("tokio", tracing::Level::TRACE)
-                    .with_target("runtime", tracing::Level::TRACE),
-            ),
-        )
-    } else {
-        None
-    }
-}
-
-#[cfg(not(feature = "tokio-console"))]
-fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
-    None
-}
-
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() {
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
+    let _guard = init::init();
 
-    let _chrome_guard;
-    tracing_subscriber::registry()
-        .with(tokio_console_layer())
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_thread_ids(true)
-                .with_file(true)
-                .with_line_number(true)
-                .json(),
-        )
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .with(if is_env_true("CHROME_TRACE") {
-            let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
-                .trace_style(tracing_chrome::TraceStyle::Async)
-                .build();
-            _chrome_guard = guard;
-            Some(chrome_layer)
-        } else {
-            None
-        })
-        .init();
-
-    std::panic::set_hook(Box::new(utils::tracing_panic_hook));
-
-    if std::env::var("DB")
-        .unwrap_or_default()
-        .eq_ignore_ascii_case("mem")
-    {
-        let db_pool = db_mem::inmemory_dao::InMemoryPool::new();
-        run(db_pool).await;
-    } else {
-        let db_pool = SqlitePool::new("obelisk.sqlite").await.unwrap();
-        run(db_pool).await;
+    let db_file = {
+        // TODO: XDG specs or ~/.obelisk/obelisk.sqlite
+        "obelisk.sqlite"
+    };
+    match Args::parse().command {
+        Subcommand::Server(Server::Run { clean }) => {
+            if clean {
+                tokio::fs::remove_file(db_file)
+                    .await
+                    .expect("cannot delete database file");
+            }
+            let activity_engine = activity_engine(EngineConfig::default());
+            let workflow_engine = workflow_engine(EngineConfig::default());
+            let _epoch_ticker = EpochTicker::spawn_new(
+                vec![activity_engine.weak(), workflow_engine.weak()],
+                Duration::from_millis(10),
+            );
+            let db_pool = SqlitePool::new(db_file).await.unwrap();
+            let _timers_watcher = TimersWatcherTask::spawn_new(
+                db_pool.connection(),
+                TimersWatcherConfig {
+                    tick_sleep: Duration::from_millis(100),
+                    clock_fn: now,
+                },
+            );
+            // TODO: start worker watcher
+            loop {
+                tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
+            }
+        }
+        other => {
+            eprintln!("{other:?}");
+            std::process::exit(1);
+        }
     }
+
+    // if std::env::var("DB")
+    //     .unwrap_or_default()
+    //     .eq_ignore_ascii_case("mem")
+    // {
+    //     let db_pool = db_mem::inmemory_dao::InMemoryPool::new();
+    //     run(db_pool).await;
+    // } else {
+    //     let db_pool = SqlitePool::new("obelisk.sqlite").await.unwrap();
+    //     run(db_pool).await;
+    // }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -113,39 +95,38 @@ async fn run<DB: DbConnection + 'static>(db_pool: impl DbPool<DB> + 'static) {
             tick_sleep: Duration::from_millis(100),
             clock_fn: now,
         },
-    )
-    .unwrap();
+    );
 
-    let wasm_tasks = vec![
-        exec(
-            StrVariant::Static(
-                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            ),
-            db_pool.clone(),
-            workflow_engine.clone(),
-            activity_engine.clone(),
-        ),
-        exec(
-            StrVariant::Static(
-                test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            ),
-            db_pool.clone(),
-            workflow_engine.clone(),
-            activity_engine.clone(),
-        ),
-        exec(
-            StrVariant::Static(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
-            db_pool.clone(),
-            workflow_engine.clone(),
-            activity_engine.clone(),
-        ),
-        exec(
-            StrVariant::Static(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW),
-            db_pool.clone(),
-            workflow_engine,
-            activity_engine,
-        ),
-    ];
+    // let wasm_tasks = vec![
+    //     exec(
+    //         StrVariant::Static(
+    //             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+    //         ),
+    //         db_pool.clone(),
+    //         workflow_engine.clone(),
+    //         activity_engine.clone(),
+    //     ),
+    //     exec(
+    //         StrVariant::Static(
+    //             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+    //         ),
+    //         db_pool.clone(),
+    //         workflow_engine.clone(),
+    //         activity_engine.clone(),
+    //     ),
+    //     exec(
+    //         StrVariant::Static(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
+    //         db_pool.clone(),
+    //         workflow_engine.clone(),
+    //         activity_engine.clone(),
+    //     ),
+    //     exec(
+    //         StrVariant::Static(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW),
+    //         db_pool.clone(),
+    //         workflow_engine,
+    //         activity_engine,
+    //     ),
+    // ];
 
     // parse input
     let mut args = std::env::args();
@@ -197,9 +178,9 @@ async fn run<DB: DbConnection + 'static>(db_pool: impl DbPool<DB> + 'static) {
             }
         }
 
-        for (task, _) in wasm_tasks {
-            task.close().await;
-        }
+        // for (task, _) in wasm_tasks {
+        //     task.close().await;
+        // }
         timers_watcher.close().await;
         db_pool.close().await.unwrap();
     } else if args.is_empty() {
@@ -209,11 +190,11 @@ async fn run<DB: DbConnection + 'static>(db_pool: impl DbPool<DB> + 'static) {
     } else {
         eprintln!("Two arguments expected: `function's fully qualified name` `parameters`");
         eprintln!("Available functions:");
-        for (_, ffqns) in &wasm_tasks {
-            for ffqn in ffqns {
-                eprintln!("{ffqn}");
-            }
-        }
+        // for (_, ffqns) in &wasm_tasks {
+        //     for ffqn in ffqns {
+        //         eprintln!("{ffqn}");
+        //     }
+        // }
     }
 }
 
@@ -238,7 +219,9 @@ fn exec<DB: DbConnection + 'static>(
     };
     let worker =
         Arc::new(AutoWorker::new_with_config(config, workflow_engine, activity_engine).unwrap());
-    let ffqns = worker.exported_functions().cloned().collect::<Vec<_>>();
+    let ffqns = executor::worker::Worker::exported_functions(worker.as_ref())
+        .cloned()
+        .collect::<Vec<_>>();
     let exec_config = ExecConfig {
         ffqns: ffqns.clone(),
         batch_size: 10,

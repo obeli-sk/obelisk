@@ -6,12 +6,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-wasmtime.workspace = true
-test-programs-http-get-activity-builder.workspace = true # TODO: Remove
-test-programs-http-get-workflow-builder.workspace = true # TODO: Remove
-test-programs-fibo-activity-builder.workspace = true     # TODO: Remove
-test-programs-fibo-workflow-builder.workspace = true     # TODO: Remove
-
 concepts.workspace = true
 db-mem.workspace = true
 db-sqlite.workspace = true
@@ -19,20 +13,23 @@ executor.workspace = true
 val-json.workspace = true
 wasm-workers.workspace = true
 
+clap.workspace = true
 console-subscriber = { workspace = true, optional = true }
 serde_json.workspace = true
 tokio = { workspace = true, features = [
-    "sync",
-    "rt",
-    "time",
+    "fs",
     "macros",
     "rt-multi-thread",
+    "rt",
+    "sync",
+    "time",
 ] }
 tracing-chrome.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
 utils.workspace = true
 valuable.workspace = true
+wasmtime.workspace = true
 
 [features]
 parallel-compilation = ["wasmtime/parallel-compilation"]
@@ -114,6 +111,7 @@ async-trait = "0.1"
 cargo_metadata = "0.18"
 cfg-if = "1.0.0"
 chrono = { version = "0.4.34", features = ["arbitrary", "serde"] }
+clap = { version = "4.5.4", features = ["derive"] }
 console-subscriber = "0.2.0"
 criterion = "0.5"
 derivative = "2.2.0"
