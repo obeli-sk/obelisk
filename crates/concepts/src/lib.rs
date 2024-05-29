@@ -394,12 +394,13 @@ impl SupportedFunctionResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Params(ParamsInternal);
+pub struct Params(ParamsInternal); // TODO: Rename to ParameterValues
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ParamsInternal {
-    Json(Value), //TODO: is Arc needed here? Or move upwards?
+    Json(Value),
     Vals {
+        //TODO: is Arc needed here? Or move upwards?
         vals: Arc<[wasmtime::component::Val]>,
     },
     Empty,
@@ -410,6 +411,8 @@ impl Default for Params {
         Self(ParamsInternal::Empty)
     }
 }
+
+pub type FunctionMetadata = (FunctionFqn, ParameterTypes, ReturnType);
 
 mod serde_params {
     use crate::{Params, ParamsInternal};
@@ -744,12 +747,12 @@ pub enum ComponentType {
 
 pub type ReturnType = Option<TypeWrapper>;
 
-#[derive(Debug, Clone)]
-pub struct ParameterTypes(pub Arc<[(String, TypeWrapper)]>);
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ParameterTypes(pub Vec<(String, TypeWrapper)>);
 
 impl ParameterTypes {
     pub fn empty() -> Self {
-        ParameterTypes(Arc::new([]))
+        ParameterTypes(Vec::new())
     }
 }
 

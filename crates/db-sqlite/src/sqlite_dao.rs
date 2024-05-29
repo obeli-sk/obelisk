@@ -1,11 +1,10 @@
-#![allow(clippy::all, dead_code)]
 use async_sqlite::{rusqlite::named_params, ClientBuilder, JournalMode, Pool, PoolBuilder};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{DelayId, ExecutorId, JoinSetId, PrefixedUlid, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
+        AppendBatchResponse, AppendRequest, AppendResponse, Component, CreateRequest, DbConnection,
         DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
         ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution,
@@ -104,6 +103,28 @@ CREATE TABLE IF NOT EXISTS t_delay (
     delay_id TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     PRIMARY KEY (execution_id, join_set_id, delay_id)
+)
+";
+
+const CREATE_TABLE_T_COMPONENT: &str = r"
+CREATE TABLE IF NOT EXISTS t_component (
+    created_at TEXT NOT NULL,
+    component_id TEXT NOT NULL,
+    component_type TEXT NOT NULL,
+    config JSONB NOT NULL,
+    file_name TEXT NOT NULL,
+    imports JSONB NOT NULL,
+    PRIMARY KEY (component_id)
+)
+";
+
+const CREATE_TABLE_T_COMPONENT_EXPORT: &str = r"
+CREATE TABLE IF NOT EXISTS t_component_export (
+    component_id TEXT NOT NULL,
+    ffqn TEXT NOT NULL,
+    parameter_types JSONB NOT NULL,
+    return_type JSONB,
+    PRIMARY KEY (ffqn)
 )
 ";
 
@@ -305,6 +326,10 @@ impl SqlitePool {
                 conn.execute(CREATE_TABLE_T_STATE, [])?;
                 trace!("Executing `CREATE_TABLE_T_DELAY`");
                 conn.execute(CREATE_TABLE_T_DELAY, [])?;
+                trace!("Executing `CREATE_TABLE_T_COMPONENT`");
+                conn.execute(CREATE_TABLE_T_COMPONENT, [])?;
+                trace!("Executing `CREATE_TABLE_T_COMPONENT_EXPORT`");
+                conn.execute(CREATE_TABLE_T_COMPONENT_EXPORT, [])?;
                 info!("Done setting up sqlite");
                 Ok::<_, SqliteError>(())
             },
@@ -450,16 +475,6 @@ impl SqlitePool {
         }
         Ok(())
     }
-
-    fn check_next_version(
-        tx: &Transaction,
-        execution_id: ExecutionId,
-        appending_version: &Version,
-    ) -> Result<(), SqliteError> {
-        let expected_version = Self::get_next_version(tx, execution_id)?;
-        Self::check_expected_next_and_appending_version(&expected_version, appending_version)
-    }
-
     #[instrument(skip_all, fields(execution_id = %req.execution_id))]
     fn create_inner(
         tx: &Transaction,
@@ -476,11 +491,15 @@ impl SqlitePool {
         let created_at = req.created_at;
         let scheduled_at = req.scheduled_at;
         let event = ExecutionEventInner::from(req);
+        let event_ser = serde_json::to_string(&event).map_err(|err| {
+            error!("Cannot serialize {event:?} - {err:?}");
+            rusqlite::Error::ToSqlConversionFailure(err.into())
+        })?;
         stmt.execute(named_params! {
             ":execution_id": &execution_id_str,
             ":created_at": created_at,
             ":version": version.0,
-            ":json_value": serde_json::to_value(&event).unwrap(),
+            ":json_value": event_ser,
             ":variant": event.variant(),
             ":join_set_id": event.join_set_id().map(|join_set_id| join_set_id.to_string()),
         })?;
@@ -702,6 +721,10 @@ impl SqlitePool {
             lock_expires_at,
             run_id,
         };
+        let event_ser = serde_json::to_string(&event).map_err(|err| {
+            error!("Cannot serialize {event:?} - {err:?}");
+            rusqlite::Error::ToSqlConversionFailure(err.into())
+        })?;
         let mut stmt = tx.prepare_cached(
             "INSERT INTO t_execution_log \
             (execution_id, created_at, json_value, version, variant) \
@@ -711,7 +734,7 @@ impl SqlitePool {
         stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
             ":created_at": created_at,
-            ":json_value": serde_json::to_value(&event).unwrap(),
+            ":json_value": event_ser,
             ":version": appending_version.0,
             ":variant": event.variant(),
         })?;
@@ -865,6 +888,10 @@ impl SqlitePool {
             &combined_state.next_version,
             &appending_version,
         )?;
+        let event_ser = serde_json::to_string(&req.event).map_err(|err| {
+            error!("Cannot serialize {:?} - {err:?}", req.event);
+            rusqlite::Error::ToSqlConversionFailure(err.into())
+        })?;
 
         let mut stmt = tx.prepare(
                     "INSERT INTO t_execution_log (execution_id, created_at, json_value, version, variant, join_set_id) \
@@ -872,7 +899,7 @@ impl SqlitePool {
         stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
             ":created_at": req.created_at,
-            ":json_value": serde_json::to_value(&req.event).unwrap(),
+            ":json_value": event_ser,
             ":version": appending_version.0,
             ":variant": req.event.variant(),
             ":join_set_id": req.event.join_set_id().map(|join_set_id | join_set_id.to_string()),
@@ -993,10 +1020,14 @@ impl SqlitePool {
                     VALUES (:execution_id, :created_at, :json_value, :join_set_id, :delay_id, :child_execution_id)",
         )?;
         let join_set_id = req.event.join_set_id;
+        let event_ser = serde_json::to_string(&req.event.event).map_err(|err| {
+            error!("Cannot serialize {:?} - {err:?}", req.event.event);
+            rusqlite::Error::ToSqlConversionFailure(err.into())
+        })?;
         stmt.execute(named_params! {
             ":execution_id": execution_id.to_string(),
             ":created_at": req.created_at,
-            ":json_value": serde_json::to_value(&req.event.event).unwrap(),
+            ":json_value": event_ser,
             ":join_set_id": join_set_id.to_string(),
             ":delay_id": req.event.event.delay_id().map(|id| id.to_string()),
             ":child_execution_id": req.event.event.child_execution_id().map(|id|id.to_string()),
@@ -1186,15 +1217,6 @@ impl SqlitePool {
 enum IndexAction {
     PendingStateChanged(PendingState),
     NoPendingStateChange(Option<DelayReq>),
-}
-impl IndexAction {
-    fn pending_state(&self) -> Option<&PendingState> {
-        if let IndexAction::PendingStateChanged(pending_state) = self {
-            Some(pending_state)
-        } else {
-            None
-        }
-    }
 }
 
 #[async_trait]
@@ -1741,6 +1763,61 @@ impl DbConnection for SqlitePool {
             _ = receiver.recv() => {} // Got results eventually
             () = tokio::time::sleep(max_wait) => {} // Timeout
         }
+    }
+
+    #[instrument(skip(self))]
+    async fn append_component(
+        &self,
+        created_at: DateTime<Utc>,
+        component: Component,
+    ) -> Result<(), DbError> {
+        trace!("append_component");
+        let imports = serde_json::to_string(&component.imports).map_err(|serde| {
+            error!("Cannot serialize {:?} - {serde:?}", component.imports);
+            SqliteError::Parsing(StrVariant::Arc(Arc::from(serde.to_string())))
+        })?;
+        self.pool
+            .transaction_write_with_span::<_, _, SqliteError>(
+                move |tx| {
+                    let mut stmt = tx.prepare(
+                        "INSERT INTO t_component \
+                            (created_at, component_id, component_type, config, file_name, imports) \
+                            VALUES \
+                            (:created_at, :component_id, :component_type, :config, :file_name, :imports)",
+                    )?;
+                    stmt.execute(named_params! {
+                        ":created_at": created_at,
+                        ":component_id": component.component_id.to_string(),
+                        ":component_type": component.component_type.to_string(),
+                        ":config": component.config,
+                        ":file_name": component.file_name,
+                        ":imports": imports
+                        })?;
+                    for (ffqn, parameter_types, return_type) in component.exports {
+                        let parameter_types = serde_json::to_string(&parameter_types)
+                            .map_err(|err| {
+                                error!("Cannot serialize {:?} - {err:?}", parameter_types);
+                                rusqlite::Error::ToSqlConversionFailure(err.into())})?;
+                        let return_type = return_type.map(|return_type|serde_json::to_string(&return_type).map_err(|err| {
+                            error!("Cannot serialize {return_type:?} - {err:?}");
+                            rusqlite::Error::ToSqlConversionFailure(err.into())})).transpose()?;
+                        let mut stmt = tx.prepare_cached("INSERT INTO t_component_export \
+                            (component_id, ffqn, parameter_types, return_type)
+                            VALUES \
+                            (:component_id, :ffqn, :parameter_types, :return_type)")?;
+                        stmt.execute(named_params! {
+                            ":component_id": component.component_id.to_string(),
+                            ":ffqn": ffqn.to_string(),
+                            ":parameter_types": parameter_types,
+                            ":return_type": return_type
+                        })?;
+                    }
+                    Ok(())
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
     }
 }
 

@@ -7,9 +7,8 @@ use crate::ComponentType;
 use crate::ExecutionId;
 use crate::FinishedExecutionResult;
 use crate::FunctionFqn;
-use crate::ParameterTypes;
+use crate::FunctionMetadata;
 use crate::Params;
-use crate::ReturnType;
 use crate::StrVariant;
 use crate::SupportedFunctionResult;
 use assert_matches::assert_matches;
@@ -618,10 +617,14 @@ pub trait DbConnection: Send + Sync {
         }
     }
 
+    async fn append_component(
+        &self,
+        created_at: DateTime<Utc>,
+        component: Component,
+    ) -> Result<(), DbError>;
+
     /*
-    async fn append_component(&self, component: Component)
-    // -> Result<_, IdAlreadyExists, HashAlreadyExists | DbError>
-    ;
+
 
     async fn archive_component(&self, component_id: ComponentId);
 
@@ -641,12 +644,12 @@ pub trait DbConnection: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct Component {
-    component_id: ComponentId,
-    component_type: ComponentType, // wasm activity, wasm workflow
-    config: serde_json::Value, // Something that the binary can turn into ActivityConfig/WorkflowConfig + ExecConfig
-    file_name: String,         // additional identifier without path
-    parameter_types: ParameterTypes,
-    return_type: ReturnType,
+    pub component_id: ComponentId,
+    pub component_type: ComponentType,
+    pub config: serde_json::Value, // Out of persistence scope
+    pub file_name: String,         // Additional identifier without path
+    pub exports: Vec<FunctionMetadata>,
+    pub imports: Vec<FunctionMetadata>,
 }
 
 pub async fn wait_for_pending_state_fn<T: Debug>(

@@ -265,7 +265,7 @@ pub(crate) mod tests {
         workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching},
     };
     use async_trait::async_trait;
-    use concepts::prefixed_ulid::ConfigId;
+    use concepts::{prefixed_ulid::ConfigId, FunctionMetadata, ParameterTypes};
     use concepts::{
         storage::{
             wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
@@ -349,15 +349,11 @@ pub(crate) mod tests {
             WorkerResult::Ok(SupportedFunctionResult::None, workflow_ctx.version)
         }
 
-        fn exported_functions(
-            &self,
-        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
-            Some((FFQN_MOCK, [].as_ref(), &None)).into_iter()
+        fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
+            Some((FFQN_MOCK, ParameterTypes::empty(), None)).into_iter()
         }
 
-        fn imported_functions(
-            &self,
-        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+        fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
             None.into_iter()
         }
     }

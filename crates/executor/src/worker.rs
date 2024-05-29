@@ -3,8 +3,7 @@ use chrono::{DateTime, Utc};
 use concepts::storage::HistoryEvent;
 use concepts::storage::Version;
 use concepts::ExecutionId;
-use concepts::ParameterTypes;
-use concepts::ReturnType;
+use concepts::FunctionMetadata;
 use concepts::{
     storage::{DbError, JoinSetResponseEvent},
     FinishedExecutionError, StrVariant,
@@ -17,11 +16,9 @@ use std::error::Error;
 pub trait Worker: Send + Sync + 'static {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult;
 
-    fn exported_functions(&self)
-        -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)>;
+    fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata>;
 
-    fn imported_functions(&self)
-        -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)>;
+    fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata>;
 }
 
 #[must_use]

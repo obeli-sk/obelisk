@@ -5,8 +5,8 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection, DbError,
-        DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent,
+        AppendBatchResponse, AppendRequest, AppendResponse, Component, CreateRequest, DbConnection,
+        DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Version,
     },
     ExecutionId, FunctionFqn, StrVariant,
@@ -205,6 +205,14 @@ impl DbConnection for DbConnectionProxy {
     ) {
         self.0
             .subscribe_to_pending(pending_at_or_sooner, ffqns, max_wait)
-            .await;
+            .await
+    }
+
+    async fn append_component(
+        &self,
+        created_at: DateTime<Utc>,
+        component: Component,
+    ) -> Result<(), DbError> {
+        self.0.append_component(created_at, component).await
     }
 }

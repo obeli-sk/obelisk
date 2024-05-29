@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
+    AppendBatchResponse, AppendRequest, AppendResponse, Component, CreateRequest, DbConnection,
     DbConnectionError, DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer,
     JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, SpecificError,
     Version,
@@ -216,6 +216,15 @@ impl DbConnection for InMemoryDbConnection {
                 }
             }
         }
+    }
+
+    #[instrument(skip(self))]
+    async fn append_component(
+        &self,
+        created_at: DateTime<Utc>,
+        component: Component,
+    ) -> Result<(), DbError> {
+        todo!()
     }
 }
 
