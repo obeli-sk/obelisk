@@ -800,6 +800,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn worker_error_should_trigger_an_execution_retry() {
         set_up();
         let sim_clock = SimClock::default();

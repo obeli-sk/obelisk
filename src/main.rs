@@ -247,11 +247,12 @@ fn exec<DB: DbConnection + 'static>(
     workflow_engine: Arc<Engine>,
     activity_engine: Arc<Engine>,
 ) -> (ExecutorTaskHandle, Vec<FunctionFqn>) {
+    let config_id = ConfigId::generate();
     let worker = Arc::new(
         AutoWorker::new_with_config(
             AutoConfig {
                 wasm_path,
-                config_id: ConfigId::generate(),
+                config_id,
                 activity_recycled_instances: RecycleInstancesSetting::Enable,
                 workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
                 workflow_child_retry_exp_backoff: Duration::from_millis(10),
@@ -272,7 +273,7 @@ fn exec<DB: DbConnection + 'static>(
         batch_size: 10,
         lock_expiry: Duration::from_secs(10),
         tick_sleep: Duration::from_millis(200),
-        config_id: ConfigId::generate(),
+        config_id,
     };
     (
         ExecTask::spawn_new(worker, exec_config, now, db_pool, None),

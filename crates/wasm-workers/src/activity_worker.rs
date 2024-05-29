@@ -65,7 +65,6 @@ pub const TIMEOUT_SLEEP_UNIT: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
 pub struct ActivityWorker<C: ClockFn> {
-    config: ActivityConfig,
     engine: Arc<Engine>,
     linker: wasmtime::component::Linker<StoreCtx>,
     component: wasmtime::component::Component,
@@ -112,7 +111,6 @@ impl<C: ClockFn> ActivityWorker<C> {
 
         let recycled_instances = config.recycled_instances.instantiate();
         Ok(Self {
-            config,
             engine,
             linker,
             component: wasm_component.component,
