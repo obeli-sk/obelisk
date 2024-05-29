@@ -3,6 +3,8 @@ use chrono::{DateTime, Utc};
 use concepts::storage::HistoryEvent;
 use concepts::storage::Version;
 use concepts::ExecutionId;
+use concepts::ParameterTypes;
+use concepts::ReturnType;
 use concepts::{
     storage::{DbError, JoinSetResponseEvent},
     FinishedExecutionError, StrVariant,
@@ -10,19 +12,16 @@ use concepts::{
 use concepts::{FunctionFqn, ParamsParsingError, ResultParsingError};
 use concepts::{Params, SupportedFunctionResult};
 use std::error::Error;
-use val_json::type_wrapper::TypeWrapper;
 
 #[async_trait]
 pub trait Worker: Send + Sync + 'static {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult;
 
-    fn exported_functions(
-        &self,
-    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)>;
+    fn exported_functions(&self)
+        -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)>;
 
-    fn imported_functions(
-        &self,
-    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)>;
+    fn imported_functions(&self)
+        -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)>;
 }
 
 #[must_use]

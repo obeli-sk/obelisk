@@ -3,8 +3,8 @@ use crate::{EngineConfig, WasmComponent, WasmFileError};
 use async_trait::async_trait;
 use concepts::prefixed_ulid::ConfigId;
 use concepts::storage::{DbConnection, DbPool, Version};
-use concepts::SupportedFunctionResult;
 use concepts::{FunctionFqn, StrVariant};
+use concepts::{ParameterTypes, ReturnType, SupportedFunctionResult};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::error::Error;
@@ -14,7 +14,6 @@ use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::ExIm;
-use val_json::type_wrapper::TypeWrapper;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -154,13 +153,13 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 {
     fn exported_functions(
         &self,
-    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+    ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
         self.exim.exported_functions()
     }
 
     fn imported_functions(
         &self,
-    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+    ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
         self.exim.imported_functions()
     }
 

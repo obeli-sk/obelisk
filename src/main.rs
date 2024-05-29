@@ -1,12 +1,14 @@
 mod args;
 mod init;
 
-use args::{Args, Server, Subcommand, Worker};
+use args::{Args, Component, Server, Subcommand};
 use clap::Parser;
 use concepts::storage::DbConnection;
 use concepts::storage::{CreateRequest, DbPool};
 use concepts::{prefixed_ulid::ConfigId, StrVariant};
-use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
+use concepts::{
+    ExecutionId, FunctionFqn, ParameterTypes, Params, ReturnType, SupportedFunctionResult,
+};
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
@@ -14,7 +16,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::error;
 use utils::time::now;
-use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::workflow_worker::NonBlockingEventBatching;
@@ -62,7 +63,7 @@ async fn main() {
                 tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
             }
         }
-        Subcommand::Worker(Worker::Inspect { wasm_path, verbose }) => {
+        Subcommand::Component(Component::Inspect { wasm_path, verbose }) => {
             let activity_engine = activity_engine(EngineConfig::default());
             let workflow_engine = workflow_engine(EngineConfig::default());
             let auto_worker = AutoWorker::new_with_config(
@@ -104,17 +105,15 @@ async fn main() {
 }
 
 fn inspect<'a>(
-    iter: impl Iterator<Item = (FunctionFqn, &'a [TypeWrapper], &'a Option<TypeWrapper>)>,
+    iter: impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)>,
     verbose: bool,
 ) {
-    for (ffqn, params, result) in iter {
+    for (ffqn, parameter_types, result) in iter {
         print!("\t{ffqn}");
         if verbose {
-            let mut params = serde_json::to_string(params).unwrap().replacen('[', "", 1);
-            params.replace_range((params.len() - 1).., "");
-            print!(" ({params})");
+            print!(" {parameter_types}");
             if let Some(result) = result {
-                let result = serde_json::to_string(result).unwrap();
+                let result = serde_json::to_string(&result).unwrap();
                 print!(" -> {result}");
             }
         }

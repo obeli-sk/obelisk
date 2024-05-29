@@ -1,4 +1,5 @@
 use clap::Parser;
+use concepts::ComponentId;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -12,9 +13,7 @@ pub(crate) enum Subcommand {
     #[command(subcommand)]
     Server(Server),
     #[command(subcommand)]
-    Worker(Worker),
-    #[command(subcommand)]
-    Function(Function),
+    Component(Component),
     #[command(subcommand)]
     Exe(Exe),
 }
@@ -25,14 +24,10 @@ pub(crate) enum Server {
         #[arg(short, long)]
         clean: bool,
     },
-    Shutdown {
-        #[arg(short, long)]
-        ungraceful: bool,
-    },
 }
 
 #[derive(Debug, clap::Subcommand)]
-pub(crate) enum Worker {
+pub(crate) enum Component {
     Inspect {
         #[arg(required(true))]
         wasm_path: String, // TODO: PathBuf
@@ -41,37 +36,34 @@ pub(crate) enum Worker {
     },
     Add {
         #[arg(short, long)]
-        replace: bool,
+        replace: bool, // if there is an overlap between existing exports
         #[arg(required(true))]
         wasm_path: String, // TODO: PathBuf
+                           // TODO: interactive configuration based on component type
     },
     List,
-    Remove {
-        #[arg(num_args(1..), required(true))]
-        hashes: Vec<String>,
-    },
-}
-
-#[derive(Debug, clap::Subcommand)]
-pub(crate) enum Function {
-    List,
-    Validate {
-        function: String,
-        params: Vec<String>,
-    },
-    Schedule {
-        when: String,
-        function: String,
-        params: Vec<String>,
-    },
-    Run {
-        function: String,
-        params: Vec<String>,
+    Archive {
+        #[arg(short, long)]
+        component_id: String, // TODO: ComponentId,
     },
 }
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Exe {
+    // Execution creation:
+    // interactive search for ffqn showing param types and result, file name
+    // enter parameters one by one, TODO: parameter names
+    // submit execution
+    // TODO: typecheck by the CLI
+    // Return ExecutionId, poll the status unless finishes or Ctrl-C
+    Schedule {
+        // interactive
+        // when: String,
+        // function: String,
+        // params: Vec<String>,
+    },
     List,
-    Status { execution_id: String },
+    Status {
+        execution_id: String,
+    },
 }

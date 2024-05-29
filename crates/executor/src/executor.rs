@@ -490,12 +490,11 @@ pub mod simple_worker {
     use async_trait::async_trait;
     use concepts::{
         storage::{HistoryEvent, Version},
-        FunctionFqn,
+        FunctionFqn, ParameterTypes, ReturnType,
     };
     use indexmap::IndexMap;
     use std::sync::Arc;
     use tracing::trace;
-    use val_json::type_wrapper::TypeWrapper;
 
     pub(crate) const FFQN_SOME: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn");
     pub type SimpleWorkerResultMap =
@@ -541,13 +540,13 @@ pub mod simple_worker {
 
         fn exported_functions(
             &self,
-        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
-            Some((self.ffqn.clone(), [].as_ref(), &None)).into_iter()
+        ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
+            Some((self.ffqn.clone(), ParameterTypes::empty(), None)).into_iter()
         }
 
         fn imported_functions(
             &self,
-        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+        ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
             None.into_iter()
         }
     }
@@ -564,7 +563,7 @@ mod tests {
     use concepts::storage::{
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
-    use concepts::{Params, SupportedFunctionResult};
+    use concepts::{ParameterTypes, Params, ReturnType, SupportedFunctionResult};
     use db_tests::Database;
     use indexmap::IndexMap;
     use simple_worker::FFQN_SOME;
@@ -572,7 +571,6 @@ mod tests {
     use test_utils::set_up;
     use test_utils::sim_clock::SimClock;
     use utils::time::now;
-    use val_json::type_wrapper::TypeWrapper;
 
     pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
 
@@ -1138,13 +1136,13 @@ mod tests {
 
         fn exported_functions(
             &self,
-        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
-            Some((FFQN_SOME, [].as_ref(), &None)).into_iter()
+        ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
+            Some((FFQN_SOME, ParameterTypes::empty(), None)).into_iter()
         }
 
         fn imported_functions(
             &self,
-        ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+        ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
             None.into_iter()
         }
     }

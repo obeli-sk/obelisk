@@ -293,13 +293,8 @@ impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct FunctionMetadata {
-    pub results_len: usize,
-    pub params: Vec<(String /*name*/, TypeWrapper)>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// TODO: rename to SupportedFunctionReturnValue
 pub enum SupportedFunctionResult {
     None,
     Fallible(WastValWithType),
@@ -723,6 +718,52 @@ pub mod prefixed_ulid {
                 u.arbitrary()?,
             )))
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, strum::Display)]
+#[strum(serialize_all = "snake_case")]
+pub enum HashType {
+    Sha256,
+}
+
+#[derive(Debug, Clone, derive_more::Display)]
+#[display(fmt = "{hash_type}:{hash_base64}")]
+pub struct ComponentId {
+    hash_type: HashType,
+    hash_base64: String,
+}
+
+#[derive(Debug, Clone, Copy, strum::Display, serde::Serialize, serde::Deserialize)]
+#[strum(serialize_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum ComponentType {
+    WasmActivity,
+    WasmWorkflow,
+}
+
+pub type ReturnType = Option<TypeWrapper>;
+
+#[derive(Debug, Clone)]
+pub struct ParameterTypes(pub Arc<[(String, TypeWrapper)]>);
+
+impl ParameterTypes {
+    pub fn empty() -> Self {
+        ParameterTypes(Arc::new([]))
+    }
+}
+
+impl Display for ParameterTypes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(")?;
+        let mut iter = self.0.iter().peekable();
+        while let Some((name, ty)) = iter.next() {
+            write!(f, "{name}: {ty:?}")?; // TODO: implement Display for TypeWrapper
+            if iter.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ")")
     }
 }
 

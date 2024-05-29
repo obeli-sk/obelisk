@@ -15,13 +15,12 @@ use async_trait::async_trait;
 use concepts::{
     prefixed_ulid::ConfigId,
     storage::{DbConnection, DbPool},
-    FunctionFqn, IfcFqnName, StrVariant,
+    FunctionFqn, IfcFqnName, ParameterTypes, ReturnType, StrVariant,
 };
 use executor::worker::{Worker, WorkerContext};
 use itertools::Either;
 use std::{ops::Deref, sync::Arc, time::Duration};
 use utils::time::ClockFn;
-use val_json::type_wrapper::TypeWrapper;
 use wasmtime::Engine;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -114,7 +113,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
     fn exported_functions(
         &self,
-    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+    ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
         match self {
             AutoWorker::WorkflowWorker(w) => Either::Left(w.exported_functions()),
             AutoWorker::ActivityWorker(a) => Either::Right(a.exported_functions()),
@@ -123,7 +122,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
     fn imported_functions(
         &self,
-    ) -> impl Iterator<Item = (FunctionFqn, &[TypeWrapper], &Option<TypeWrapper>)> {
+    ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
         match self {
             AutoWorker::WorkflowWorker(w) => Either::Left(w.imported_functions()),
             AutoWorker::ActivityWorker(a) => Either::Right(a.imported_functions()),

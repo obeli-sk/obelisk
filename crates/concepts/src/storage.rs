@@ -2,10 +2,14 @@ use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::JoinSetId;
 use crate::prefixed_ulid::RunId;
+use crate::ComponentId;
+use crate::ComponentType;
 use crate::ExecutionId;
 use crate::FinishedExecutionResult;
 use crate::FunctionFqn;
+use crate::ParameterTypes;
 use crate::Params;
+use crate::ReturnType;
 use crate::StrVariant;
 use crate::SupportedFunctionResult;
 use assert_matches::assert_matches;
@@ -613,6 +617,36 @@ pub trait DbConnection: Send + Sync {
             fut.await
         }
     }
+
+    /*
+    async fn append_component(&self, component: Component)
+    // -> Result<_, IdAlreadyExists, HashAlreadyExists | DbError>
+    ;
+
+    async fn archive_component(&self, component_id: ComponentId);
+
+    async fn list_active_components(&self) -> Vec<Component>;
+
+    async fn list_ffqns(
+        &self,
+    ) -> Vec<(
+        FunctionFqn,
+        ParameterTypes,
+        ResultType,
+        String, /* file name */
+        ComponentType,
+    )>;
+    */
+}
+
+#[derive(Debug, Clone)]
+pub struct Component {
+    component_id: ComponentId,
+    component_type: ComponentType, // wasm activity, wasm workflow
+    config: serde_json::Value, // Something that the binary can turn into ActivityConfig/WorkflowConfig + ExecConfig
+    file_name: String,         // additional identifier without path
+    parameter_types: ParameterTypes,
+    return_type: ReturnType,
 }
 
 pub async fn wait_for_pending_state_fn<T: Debug>(
