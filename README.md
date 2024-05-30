@@ -36,12 +36,35 @@ Please exercise caution if attempting to use it for production.
     * Cleaning up old hanging executions with expired locks. Executions that have the budget will be retried.
 
 ## Installation
+
+### Docker
+TODO
+
+### Pre-built binary
+TODO
+
+### Building from crates.io
 ```sh
 # Install rust from https://rustup.rs/
 cargo install --locked obeli-sk
-``
+```
+
+## Building from source
+Set up the environment using nix flakes:
+```sh
+nix develop # or direnv allow, after simlinking .envrc-example -> .envrc
+```
+Or manually:
+```sh
+cargo install cargo-component --locked
+```
+Run the program:
+```sh
+cargo run --release
+```
 
 ## Usage
+
 ```sh
 obeli-sk server run &
 obeli-sk worker load github:obeli-sk/examples@latest
@@ -63,22 +86,11 @@ obeli-sk function run ...
 * ErrId that is passed back to parent, error detail
 * Ability to run activities in any language using an RPC protocol
 
-# Building
-
-## Setting up environment
-Using nix flakes:
-```sh
-nix develop # or direnv allow, after simlinking .envrc-example -> .envrc
-```
-Otherwise:
-```sh
-cargo install cargo-component --locked
-```
 
 ## Running
 
 ```sh
-cargo run --features parallel-compilation
+cargo run
 ```
 
 ## Running Tests
