@@ -38,6 +38,7 @@ base16ct.workspace = true
 [features]
 parallel-compilation = ["wasmtime/parallel-compilation"]
 tokio-console = ["dep:console-subscriber"]
+default = ["parallel-compilation"]
 
 [lints]
 workspace = true
