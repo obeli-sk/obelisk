@@ -39,6 +39,7 @@ jobs:
       - name: Build tests
         run: nix develop --command cargo nextest run --workspace --all-features --no-run
       - name: cargo test
+        env:
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
         run: nix develop --command cargo nextest run --workspace --all-features  --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
       - name: Publish Test Results
