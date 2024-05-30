@@ -621,7 +621,8 @@ pub trait DbConnection: Send + Sync {
         &self,
         created_at: DateTime<Utc>,
         component: Component,
-    ) -> Result<(), DbError>;
+        replace: bool,
+    ) -> Result<Vec<ComponentId>, DbError>;
 
     /*
 

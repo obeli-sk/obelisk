@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use concepts::{
     prefixed_ulid::ConfigId,
     storage::{DbConnection, DbPool},
-    FunctionFqn, IfcFqnName, ParameterTypes, ReturnType, StrVariant,
+    ComponentType, FunctionFqn, IfcFqnName, ParameterTypes, ReturnType, StrVariant,
 };
 use executor::worker::{Worker, WorkerContext};
 use itertools::Either;
@@ -37,12 +37,6 @@ pub struct AutoConfig {
 pub enum AutoWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     ActivityWorker(ActivityWorker<C>),
     WorkflowWorker(WorkflowWorker<C, DB, P>),
-}
-
-#[derive(Clone, Debug, Copy, PartialEq, Eq, derive_more::Display)]
-pub enum Kind {
-    Activity,
-    Workflow,
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> AutoWorker<C, DB, P> {
@@ -87,10 +81,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> AutoWorker<C, DB, P> {
         }
     }
 
-    pub fn kind(&self) -> Kind {
+    pub fn component_type(&self) -> ComponentType {
         match self {
-            Self::ActivityWorker(_) => Kind::Activity,
-            Self::WorkflowWorker(_) => Kind::Workflow,
+            Self::ActivityWorker(_) => ComponentType::WasmActivity,
+            Self::WorkflowWorker(_) => ComponentType::WasmWorkflow,
         }
     }
 }
@@ -135,12 +129,11 @@ mod tests {
     use super::{AutoConfig, AutoWorker};
     use crate::{
         activity_worker::{activity_engine, RecycleInstancesSetting},
-        auto_worker::Kind,
         workflow_worker::{workflow_engine, JoinNextBlockingStrategy, NonBlockingEventBatching},
         EngineConfig,
     };
-    use concepts::storage::DbPool;
     use concepts::{prefixed_ulid::ConfigId, StrVariant};
+    use concepts::{storage::DbPool, ComponentType};
     use db_tests::Database;
     use std::time::Duration;
     use test_utils::set_up;
@@ -149,14 +142,14 @@ mod tests {
     #[rstest::rstest]
     #[case(
         test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-        Kind::Activity
+        ComponentType::WasmActivity
     )]
     #[case(
         test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-        Kind::Workflow
+        ComponentType::WasmWorkflow
     )]
     #[tokio::test]
-    async fn detection(#[case] file: &'static str, #[case] expected: Kind) {
+    async fn detection(#[case] file: &'static str, #[case] expected: ComponentType) {
         set_up();
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let config = AutoConfig {
@@ -176,7 +169,7 @@ mod tests {
             now,
         )
         .unwrap();
-        assert_eq!(expected, worker.kind());
+        assert_eq!(expected, worker.component_type());
         drop(worker);
         db_pool.close().await.unwrap();
     }

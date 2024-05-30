@@ -1,5 +1,6 @@
+use std::path::PathBuf;
+
 use clap::Parser;
-use concepts::ComponentId;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -36,10 +37,11 @@ pub(crate) enum Component {
     },
     Add {
         #[arg(short, long)]
-        replace: bool, // if there is an overlap between existing exports
+        /// Replace component(s) with overlapping exports
+        replace: bool,
         #[arg(required(true))]
-        wasm_path: String, // TODO: PathBuf
-                           // TODO: interactive configuration based on component type
+        wasm_path: PathBuf,
+        // TODO: interactive configuration based on component type
     },
     List,
     Archive {

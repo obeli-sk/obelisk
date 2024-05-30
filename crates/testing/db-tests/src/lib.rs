@@ -9,7 +9,7 @@ use concepts::{
         DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Version,
     },
-    ExecutionId, FunctionFqn, StrVariant,
+    ComponentId, ExecutionId, FunctionFqn, StrVariant,
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -212,7 +212,10 @@ impl DbConnection for DbConnectionProxy {
         &self,
         created_at: DateTime<Utc>,
         component: Component,
-    ) -> Result<(), DbError> {
-        self.0.append_component(created_at, component).await
+        replace: bool,
+    ) -> Result<Vec<ComponentId>, DbError> {
+        self.0
+            .append_component(created_at, component, replace)
+            .await
     }
 }

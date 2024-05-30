@@ -1,17 +1,20 @@
 mod args;
 mod init;
 
-use args::{Args, Component, Server, Subcommand};
+use args::{Args, Server, Subcommand};
 use clap::Parser;
-use concepts::storage::DbConnection;
+use concepts::storage::{Component, DbConnection};
 use concepts::storage::{CreateRequest, DbPool};
 use concepts::{prefixed_ulid::ConfigId, StrVariant};
 use concepts::{
-    ExecutionId, FunctionFqn, ParameterTypes, Params, ReturnType, SupportedFunctionResult,
+    ComponentId, ExecutionId, FunctionFqn, ParameterTypes, Params, ReturnType,
+    SupportedFunctionResult,
 };
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
+use executor::worker::Worker;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::error;
@@ -59,11 +62,14 @@ async fn main() {
                 },
             );
             // TODO: start worker watcher
-            loop {
-                tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
+            match tokio::signal::ctrl_c().await {
+                Ok(()) => {}
+                Err(err) => {
+                    eprintln!("Unable to listen for shutdown signal: {}", err);
+                }
             }
         }
-        Subcommand::Component(Component::Inspect { wasm_path, verbose }) => {
+        Subcommand::Component(args::Component::Inspect { wasm_path, verbose }) => {
             let activity_engine = activity_engine(EngineConfig::default());
             let workflow_engine = workflow_engine(EngineConfig::default());
             let auto_worker = AutoWorker::new_with_config(
@@ -83,7 +89,7 @@ async fn main() {
             )
             .unwrap();
             println!("Kind:");
-            println!("\t{}", auto_worker.kind());
+            println!("\t{}", auto_worker.component_type());
 
             println!("Exports:");
             inspect(
@@ -97,11 +103,77 @@ async fn main() {
                 verbose,
             );
         }
+        Subcommand::Component(args::Component::Add { replace, wasm_path }) => {
+            let wasm_path = wasm_path.canonicalize().unwrap();
+            let file_name = wasm_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let component_id = hash(&wasm_path).unwrap();
+            let activity_engine = activity_engine(EngineConfig::default());
+            let workflow_engine = workflow_engine(EngineConfig::default());
+            let config_id = ConfigId::generate();
+            let auto_config = AutoConfig {
+                wasm_path: StrVariant::Arc(Arc::from(wasm_path.to_string_lossy())),
+                config_id,
+                activity_recycled_instances: RecycleInstancesSetting::Enable,
+                workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
+                workflow_child_retry_exp_backoff: Duration::from_millis(10),
+                workflow_child_max_retries: 5,
+                non_blocking_event_batching: NonBlockingEventBatching::Enabled,
+            };
+            let exec_config = ExecConfig {
+                batch_size: 10,
+                lock_expiry: Duration::from_secs(10),
+                tick_sleep: Duration::from_millis(200),
+                config_id,
+            };
+            let config = serde_json::to_value(&auto_config).unwrap();
+            let auto_worker = AutoWorker::new_with_config( // FIXME(perf): Switch to wasm-tools
+                auto_config,
+                workflow_engine,
+                activity_engine,
+                db_pool.clone(),
+                now,
+            )
+            .unwrap();
+            let component = Component {
+                component_id,
+                component_type: auto_worker.component_type(),
+                config,
+                file_name,
+                exports: auto_worker.exported_functions().collect(),
+                imports: auto_worker.imported_functions().collect(),
+            };
+            let replaced = db_pool
+                .connection()
+                .append_component(now(), component, replace)
+                .await
+                .unwrap();
+            if !replaced.is_empty() {
+                println!("Replaced components:");
+                for replaced in replaced {
+                    println!("\t{replaced}");
+                }
+            }
+        }
         other => {
             eprintln!("{other:?}");
             std::process::exit(1);
         }
     }
+}
+
+fn hash<P: AsRef<Path>>(path: P) -> anyhow::Result<ComponentId> {
+    use sha2::{Digest, Sha256};
+    use std::{fs, io};
+    let mut file = fs::File::open(&path)?;
+    let mut hasher = Sha256::new();
+    io::copy(&mut file, &mut hasher)?;
+    let hash = hasher.finalize();
+    let hash_base64 = base16ct::lower::encode_string(&hash);
+    Ok(ComponentId::new(concepts::HashType::Sha256, hash_base64))
 }
 
 fn inspect<'a>(

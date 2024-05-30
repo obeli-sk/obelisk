@@ -13,14 +13,17 @@ executor.workspace = true
 val-json.workspace = true
 wasm-workers.workspace = true
 
+anyhow.workspace = true
 clap.workspace = true
 console-subscriber = { workspace = true, optional = true }
 serde_json.workspace = true
+sha2.workspace = true
 tokio = { workspace = true, features = [
     "fs",
     "macros",
     "rt-multi-thread",
     "rt",
+    "signal",
     "sync",
     "time",
 ] }
@@ -29,6 +32,7 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 utils.workspace = true
 wasmtime.workspace = true
+base16ct.workspace = true
 
 [features]
 parallel-compilation = ["wasmtime/parallel-compilation"]
@@ -107,6 +111,7 @@ async-sqlite = { version = "0.2.2", features = [
     "tracing",
 ] }
 async-trait = "0.1"
+base16ct = { version = "0.2.0", features = ["alloc"] }
 cargo_metadata = "0.18"
 cfg-if = "1.0.0"
 chrono = { version = "0.4.34", features = ["arbitrary", "serde"] }
@@ -127,11 +132,12 @@ itertools = "0.12.1"
 lazy_static = "1.4"
 madsim = "0.2.28"
 rand = "0.8.5"
-rusqlite = { version = "0.31.0" }
 rstest = "0.18.2"
+rusqlite = { version = "0.31.0" }
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
 serde_with = "3.7.0"
+sha2 = "0.10.8"
 strum = { version = "0.26.0", features = ["derive"] }
 tempfile = "3.10.1"
 thiserror = "1.0"

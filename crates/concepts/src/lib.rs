@@ -724,20 +724,59 @@ pub mod prefixed_ulid {
     }
 }
 
-#[derive(Debug, Clone, Copy, strum::Display)]
+#[derive(Debug, Clone, Copy, strum::Display, strum::EnumString, PartialEq, Eq, Hash)]
 #[strum(serialize_all = "snake_case")]
 pub enum HashType {
     Sha256,
 }
 
-#[derive(Debug, Clone, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    derive_more::Display,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+    PartialEq,
+    Eq,
+    Hash,
+)]
 #[display(fmt = "{hash_type}:{hash_base64}")]
 pub struct ComponentId {
     hash_type: HashType,
     hash_base64: String,
 }
 
-#[derive(Debug, Clone, Copy, strum::Display, serde::Serialize, serde::Deserialize)]
+impl ComponentId {
+    pub fn new(hash_type: HashType, hash_base64: String) -> Self {
+        Self {
+            hash_type,
+            hash_base64,
+        }
+    }
+}
+
+impl FromStr for ComponentId {
+    type Err = StrVariant;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let (hash_type, hash_base64) = input
+            .split_once(':')
+            .ok_or(StrVariant::Static("delimiter ':' not found"))?;
+        let hash_type = HashType::from_str(hash_type).map_err(|err| {
+            StrVariant::Arc(Arc::from(format!(
+                "cannot parse HashType from `{hash_type}` - {err}"
+            )))
+        })?;
+        Ok(Self {
+            hash_type,
+            hash_base64: hash_base64.to_string(),
+        })
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, strum::Display, serde::Serialize, serde::Deserialize, PartialEq, Eq,
+)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum ComponentType {

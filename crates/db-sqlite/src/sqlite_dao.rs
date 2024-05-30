@@ -11,8 +11,9 @@ use concepts::{
         PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
         DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
-    ExecutionId, FunctionFqn, StrVariant,
+    ComponentId, ExecutionId, FunctionFqn, StrVariant,
 };
+use itertools::Itertools;
 use rusqlite::{
     types::{FromSql, FromSqlError},
     Connection, OptionalExtension, Transaction,
@@ -20,6 +21,7 @@ use rusqlite::{
 use std::{
     cmp::max,
     collections::VecDeque,
+    fmt::{Debug, Display},
     path::Path,
     str::FromStr,
     sync::{Arc, Mutex},
@@ -199,6 +201,22 @@ impl<T: serde::de::DeserializeOwned + 'static> FromSql for JsonWrapper<T> {
             error!(
                 backtrace = %std::backtrace::Backtrace::capture(),
                 "Cannot convert JSON to type:`{type}` - {err:?}",
+                r#type = std::any::type_name::<T>()
+            );
+            FromSqlError::InvalidType
+        })?;
+        Ok(Self(value))
+    }
+}
+
+struct StringWrapper<T: FromStr>(T);
+impl<T: FromStr<Err = D>, D: Debug> FromSql for StringWrapper<T> {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let value = String::column_result(value)?;
+        let value = T::from_str(&value).map_err(|err| {
+            error!(
+                backtrace = %std::backtrace::Backtrace::capture(),
+                "Cannot convert string `{value}` to type:`{type}` - {err:?}",
                 r#type = std::any::type_name::<T>()
             );
             FromSqlError::InvalidType
@@ -588,7 +606,6 @@ impl SqlitePool {
                     ":retry_exp_backoff_millis": u64::try_from(create_req.retry_exp_backoff.as_millis()).unwrap(),
                     ":parent_execution_id": create_req.parent.map(|(pid, _) | pid.to_string()),
                     ":parent_join_set_id": create_req.parent.map(|(_, join_set_id)| join_set_id.to_string()),
-
                 })?;
                 Ok(IndexUpdated {
                     intermittent_event_count: Some(intermittent_event_count),
@@ -1212,6 +1229,27 @@ impl SqlitePool {
             _ => {}
         }
     }
+
+    fn get_component_id_by_export(
+        tx: &Transaction,
+        ffqn: &FunctionFqn,
+    ) -> Result<Option<ComponentId>, SqliteError> {
+        tx.prepare(
+            "SELECT c.component_id FROM t_component c INNER JOIN t_component_export e WHERE \
+                c.component_id = e.component_id AND e.ffqn = :ffqn",
+        )?
+        .query_row(
+            named_params! {
+                ":ffqn": ffqn.to_string(),
+            },
+            |row| {
+                row.get::<_, StringWrapper<ComponentId>>("component_id")
+                    .map(|it| it.0)
+            },
+        )
+        .optional()
+        .map_err(|err| SqliteError::Sqlite(err.into()))
+    }
 }
 
 enum IndexAction {
@@ -1765,12 +1803,13 @@ impl DbConnection for SqlitePool {
         }
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip_all, fields(component_id = %component.component_id))]
     async fn append_component(
         &self,
         created_at: DateTime<Utc>,
         component: Component,
-    ) -> Result<(), DbError> {
+        replace: bool,
+    ) -> Result<Vec<ComponentId>, DbError> {
         trace!("append_component");
         let imports = serde_json::to_string(&component.imports).map_err(|serde| {
             error!("Cannot serialize {:?} - {serde:?}", component.imports);
@@ -1779,6 +1818,23 @@ impl DbConnection for SqlitePool {
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
+                    let mut conflicts = hashbrown::HashSet::new();
+                    if replace {
+                        for (export_ffqn, _, _) in &component.exports {
+                            if let Some(conflict) = Self::get_component_id_by_export(&tx, export_ffqn)? {
+                                conflicts.insert(conflict);
+                            }
+                        }
+                        for conflict in &conflicts {
+                            debug!("Deleting {conflict}");
+                            tx.prepare(
+                                "DELETE FROM t_component_export WHERE component_id = :component_id",
+                            )?.execute(named_params! {":component_id": conflict.to_string(),})?;
+                            tx.prepare(
+                                "DELETE FROM t_component WHERE component_id = :component_id",
+                            )?.execute(named_params! {":component_id": conflict.to_string(),})?;
+                        }
+                    }
                     let mut stmt = tx.prepare(
                         "INSERT INTO t_component \
                             (created_at, component_id, component_type, config, file_name, imports) \
@@ -1812,7 +1868,7 @@ impl DbConnection for SqlitePool {
                             ":return_type": return_type
                         })?;
                     }
-                    Ok(())
+                    Ok(conflicts.into_iter().collect_vec())
                 },
                 Span::current(),
             )

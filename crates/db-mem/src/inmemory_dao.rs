@@ -15,7 +15,7 @@ use concepts::storage::{
     Version,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
-use concepts::{ExecutionId, FunctionFqn, StrVariant};
+use concepts::{ComponentId, ExecutionId, FunctionFqn, StrVariant};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
 use std::collections::BTreeMap;
@@ -223,7 +223,8 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         created_at: DateTime<Utc>,
         component: Component,
-    ) -> Result<(), DbError> {
+        replace: bool,
+    ) -> Result<Vec<ComponentId>, DbError> {
         todo!()
     }
 }
