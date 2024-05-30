@@ -738,6 +738,7 @@ pub struct ComponentId {
 }
 
 impl ComponentId {
+    #[must_use]
     pub fn new(hash_type: HashType, hash_base64: String) -> Self {
         Self {
             hash_type,
@@ -778,6 +779,7 @@ pub type ReturnType = Option<TypeWrapper>;
 pub struct ParameterTypes(pub Vec<(String, TypeWrapper)>);
 
 impl ParameterTypes {
+    #[must_use]
     pub fn empty() -> Self {
         ParameterTypes(Vec::new())
     }

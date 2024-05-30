@@ -883,7 +883,7 @@ impl SqlitePool {
         } = &req.event
         {
             let locked = Self::lock_inner(
-                &tx,
+                tx,
                 req.created_at,
                 execution_id,
                 *run_id,
@@ -1007,11 +1007,11 @@ impl SqlitePool {
         let next_version = Version(appending_version.0 + 1);
         let pending_at = match index_action {
             IndexAction::PendingStateChanged(pending_state) => {
-                Self::update_index(&tx, execution_id, &pending_state, &next_version, true, None)?
+                Self::update_index(tx, execution_id, &pending_state, &next_version, true, None)?
                     .pending_at
             }
             IndexAction::NoPendingStateChange(delay_req) => {
-                Self::update_index_next_version(&tx, execution_id, &next_version, delay_req)?;
+                Self::update_index_next_version(tx, execution_id, &next_version, delay_req)?;
                 None
             }
         };
@@ -1205,7 +1205,7 @@ impl SqlitePool {
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|str| SqliteError::Parsing(str))?;
+                .map_err(SqliteError::Parsing)?;
             execution_ids_versions.extend(execs_and_versions);
             if execution_ids_versions.len() == batch_size {
                 // Prioritieze lowering of db requests, although ffqns later in the list might get starved.
@@ -1303,7 +1303,7 @@ impl DbConnection for SqlitePool {
                         // Append lock
                         for (execution_id, version) in execution_ids_versions {
                             let locked = Self::lock_inner(
-                                &tx,
+                                tx,
                                 created_at,
                                 execution_id,
                                 RunId::generate(),
@@ -1338,7 +1338,7 @@ impl DbConnection for SqlitePool {
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
                     let locked = Self::lock_inner(
-                        &tx,
+                        tx,
                         created_at,
                         execution_id,
                         run_id,
@@ -1580,7 +1580,7 @@ impl DbConnection for SqlitePool {
         }
         pending_ats
             .into_iter()
-            .filter_map(|it| it)
+            .flatten()
             .for_each(|pending_at| self.notify_pending(pending_at, created_at));
         Ok(version)
     }
@@ -1618,10 +1618,10 @@ impl DbConnection for SqlitePool {
                         .collect::<Result<Vec<_>, _>>()?
                         .into_iter()
                         .collect::<Result<Vec<_>, _>>()?;
-                    let pending_state = Self::get_pending_state(&tx, execution_id)?
+                    let pending_state = Self::get_pending_state(tx, execution_id)?
                         .map_or(PendingState::Finished, |it| it.pending_state); // Execution exists and was not found in `t_state` => Finished
                     let version = Version::new(events.len());
-                    let responses = Self::get_responses(&tx, execution_id)?;
+                    let responses = Self::get_responses(tx, execution_id)?;
                     Ok(ExecutionLog {
                         execution_id,
                         events,
@@ -1644,11 +1644,11 @@ impl DbConnection for SqlitePool {
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
         debug!("next_responses");
         let response_subscribers = self.response_subscribers.clone();
-        match self
+        let resp_or_receiver = self
             .pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
-                    let responses = Self::get_responses_with_offset(&tx, execution_id, start_idx)?;
+                    let responses = Self::get_responses_with_offset(tx, execution_id, start_idx)?;
                     if responses.is_empty() {
                         // cannot race as we have the transaction write lock
                         let (sender, receiver) = oneshot::channel();
@@ -1664,8 +1664,8 @@ impl DbConnection for SqlitePool {
                 Span::current(),
             )
             .await
-            .map_err(DbError::from)?
-        {
+            .map_err(DbError::from)?;
+        match resp_or_receiver {
             itertools::Either::Left(resp) => Ok(resp),
             itertools::Either::Right(receiver) => receiver
                 .await
@@ -1692,7 +1692,7 @@ impl DbConnection for SqlitePool {
             self.pool
                 .transaction_write_with_span::<_, _, SqliteError>(
                     move |tx| {
-                        Self::append_response(&tx, execution_id, &event, &response_subscribers)
+                        Self::append_response(tx, execution_id, &event, &response_subscribers)
                     },
                     Span::current(),
                 )
@@ -1820,7 +1820,7 @@ impl DbConnection for SqlitePool {
                     let mut conflicts = hashbrown::HashSet::new();
                     if replace {
                         for (export_ffqn, _, _) in &component.exports {
-                            if let Some(conflict) = Self::get_component_id_by_export(&tx, export_ffqn)? {
+                            if let Some(conflict) = Self::get_component_id_by_export(tx, export_ffqn)? {
                                 conflicts.insert(conflict);
                             }
                         }

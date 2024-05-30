@@ -4,23 +4,9 @@
 //! * If there are no imports except for standard WASI -> Activity
 //! * Otherwise -> Workflow
 
-use crate::{
-    activity_worker::{ActivityConfig, ActivityWorker, RecycleInstancesSetting},
-    workflow_worker::{
-        JoinNextBlockingStrategy, NonBlockingEventBatching, WorkflowConfig, WorkflowWorker,
-    },
-    WasmComponent, WasmFileError,
-};
-use async_trait::async_trait;
-use concepts::{
-    prefixed_ulid::ConfigId,
-    storage::{DbConnection, DbPool},
-    ComponentType, FunctionMetadata, IfcFqnName, StrVariant,
-};
-use executor::worker::{Worker, WorkerContext};
-use itertools::Either;
-use std::{ops::Deref, path::PathBuf, sync::Arc, time::Duration};
-use utils::time::ClockFn;
+use crate::{WasmComponent, WasmFileError};
+use concepts::{ComponentType, FunctionMetadata, IfcFqnName, StrVariant};
+use std::ops::Deref;
 use wasmtime::Engine;
 
 pub struct DetectedComponent {
@@ -30,8 +16,8 @@ pub struct DetectedComponent {
 }
 
 impl DetectedComponent {
-    pub fn new(wasm_path: StrVariant, engine: Arc<Engine>) -> Result<Self, WasmFileError> {
-        let wasm_component = WasmComponent::new(&wasm_path, &engine)?;
+    pub fn new(wasm_path: &StrVariant, engine: &Engine) -> Result<Self, WasmFileError> {
+        let wasm_component = WasmComponent::new(wasm_path, engine)?;
         let component_type =
             if supported_wasi_imports(wasm_component.exim.imports.iter().map(|pif| &pif.ifc_fqn)) {
                 ComponentType::WasmActivity
@@ -72,8 +58,8 @@ mod tests {
     async fn detection(#[case] file: &'static str, #[case] expected: ComponentType) {
         set_up();
         let detected = DetectedComponent::new(
-            StrVariant::Static(file),
-            workflow_engine(EngineConfig::default()),
+            &StrVariant::Static(file),
+            &workflow_engine(EngineConfig::default()),
         )
         .unwrap();
         assert_eq!(expected, detected.component_type);

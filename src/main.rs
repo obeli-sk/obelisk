@@ -7,13 +7,12 @@ use concepts::storage::{Component, ComponentWithMetadata, DbConnection};
 use concepts::storage::{CreateRequest, DbPool};
 use concepts::{prefixed_ulid::ConfigId, StrVariant};
 use concepts::{
-    ComponentId, ComponentType, ExecutionId, FunctionFqn, FunctionMetadata, Params,
-    SupportedFunctionResult,
+    ComponentId, ComponentType, ExecutionId, FunctionMetadata, Params, SupportedFunctionResult,
 };
 use db_sqlite::sqlite_dao::SqlitePool;
-use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
+use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
@@ -126,13 +125,13 @@ async fn main() {
                     println!("Done");
                 }
                 Err(err) => {
-                    eprintln!("Unable to listen for shutdown signal: {}", err);
+                    eprintln!("Unable to listen for shutdown signal: {err}");
                 }
             }
         }
         Subcommand::Component(args::Component::Inspect { wasm_path, verbose }) => {
             let detected =
-                DetectedComponent::new(StrVariant::Arc(Arc::from(wasm_path)), workflow_engine)
+                DetectedComponent::new(&StrVariant::Arc(Arc::from(wasm_path)), &workflow_engine)
                     .unwrap();
             println!("Component type:");
             println!("\t{}", detected.component_type);
@@ -160,12 +159,12 @@ async fn main() {
                 config_id,
             };
             let detected = DetectedComponent::new(
-                StrVariant::Arc(Arc::from(wasm_path.to_string_lossy())),
-                workflow_engine,
+                &StrVariant::Arc(Arc::from(wasm_path.to_string_lossy())),
+                &workflow_engine,
             )
             .unwrap();
             let config = match detected.component_type {
-                ComponentType::WasmActivity => serde_json::to_value(&WasmActivityConfig {
+                ComponentType::WasmActivity => serde_json::to_value(WasmActivityConfig {
                     wasm_path: wasm_path.to_string_lossy().to_string(),
                     exec_config,
                     activity_config: ActivityConfig {
@@ -174,7 +173,7 @@ async fn main() {
                     },
                 })
                 .unwrap(),
-                ComponentType::WasmWorkflow => serde_json::to_value(&WasmWorkflowConfig {
+                ComponentType::WasmWorkflow => serde_json::to_value(WasmWorkflowConfig {
                     wasm_path: wasm_path.to_string_lossy().to_string(),
                     exec_config,
                     workflow_config: WorkflowConfig {
