@@ -1,4 +1,4 @@
-use concepts::StrVariant;
+use concepts::{FunctionMetadata, StrVariant};
 use std::{error::Error, ops::Deref};
 use tracing::{info, instrument, trace};
 use utils::wasm_tools::{self, ExIm};
@@ -40,7 +40,6 @@ pub enum WasmFileError {
 #[derive(derivative::Derivative)]
 #[derivative(Debug)]
 struct WasmComponent {
-    wasm_path: StrVariant,
     #[derivative(Debug = "ignore")]
     component: Component,
     exim: ExIm,
@@ -48,7 +47,7 @@ struct WasmComponent {
 
 impl WasmComponent {
     #[instrument(skip_all, fields(%wasm_path))]
-    fn new(wasm_path: StrVariant, engine: &Engine) -> Result<Self, WasmFileError> {
+    fn new(wasm_path: &StrVariant, engine: &Engine) -> Result<Self, WasmFileError> {
         info!("Reading");
         let component =
             Component::from_file(engine, wasm_path.deref()).map_err(|err: wasmtime::Error| {
@@ -57,10 +56,14 @@ impl WasmComponent {
         let exim = wasm_tools::decode(&component, engine)
             .map_err(|err| WasmFileError::DecodeError(wasm_path.clone(), err))?;
         trace!(?exim, "Exports and imports");
-        Ok(Self {
-            wasm_path,
-            component,
-            exim,
-        })
+        Ok(Self { component, exim })
+    }
+
+    fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> + '_ {
+        self.exim.exported_functions()
+    }
+
+    fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> + '_ {
+        self.exim.imported_functions()
     }
 }

@@ -2090,6 +2090,7 @@ dependencies = [
  "db-sqlite",
  "executor",
  "madsim-tokio",
+ "serde",
  "serde_json",
  "sha2",
  "tracing",

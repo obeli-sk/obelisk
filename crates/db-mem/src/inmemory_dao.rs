@@ -9,10 +9,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, Component, CreateRequest, DbConnection,
-    DbConnectionError, DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer,
-    JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, SpecificError,
-    Version,
+    AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ExecutionId, FunctionFqn, StrVariant};
@@ -222,9 +219,13 @@ impl DbConnection for InMemoryDbConnection {
     async fn append_component(
         &self,
         created_at: DateTime<Utc>,
-        component: Component,
+        component: ComponentWithMetadata,
         replace: bool,
     ) -> Result<Vec<ComponentId>, DbError> {
+        todo!()
+    }
+
+    async fn list_active_components(&self) -> Result<Vec<Component>, DbError> {
         todo!()
     }
 }

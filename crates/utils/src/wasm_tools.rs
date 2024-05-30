@@ -1,4 +1,4 @@
-use concepts::{FnName, FunctionFqn, IfcFqnName, ParameterTypes, ReturnType};
+use concepts::{FnName, FunctionFqn, FunctionMetadata, IfcFqnName, ParameterTypes};
 use indexmap::IndexMap;
 use std::sync::Arc;
 use tracing::debug;
@@ -36,9 +36,7 @@ impl ExIm {
         Self { exports, imports }
     }
 
-    fn flatten(
-        input: &[PackageIfcFns],
-    ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> + '_ {
+    fn flatten(input: &[PackageIfcFns]) -> impl Iterator<Item = FunctionMetadata> + '_ {
         input.iter().flat_map(|ifc| {
             ifc.fns.iter().map(|(fun, (param_types, result))| {
                 let param_types = param_types
@@ -57,15 +55,11 @@ impl ExIm {
         })
     }
 
-    pub fn exported_functions(
-        &self,
-    ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> + '_ {
+    pub fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> + '_ {
         Self::flatten(&self.exports)
     }
 
-    pub fn imported_functions(
-        &self,
-    ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> + '_ {
+    pub fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> + '_ {
         Self::flatten(&self.imports)
     }
 }

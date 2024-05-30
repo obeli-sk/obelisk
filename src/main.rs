@@ -3,32 +3,31 @@ mod init;
 
 use args::{Args, Server, Subcommand};
 use clap::Parser;
-use concepts::storage::{Component, DbConnection};
+use concepts::storage::{Component, ComponentWithMetadata, DbConnection};
 use concepts::storage::{CreateRequest, DbPool};
 use concepts::{prefixed_ulid::ConfigId, StrVariant};
 use concepts::{
-    ComponentId, ExecutionId, FunctionFqn, ParameterTypes, Params, ReturnType,
+    ComponentId, ComponentType, ExecutionId, FunctionFqn, FunctionMetadata, Params,
     SupportedFunctionResult,
 };
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
-use executor::worker::Worker;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::error;
+use tracing::{error, info};
 use utils::time::now;
 use val_json::wast_val::{WastVal, WastValWithType};
+use wasm_workers::activity_worker::{ActivityConfig, ActivityWorker};
+use wasm_workers::auto_worker::DetectedComponent;
 use wasm_workers::epoch_ticker::EpochTicker;
-use wasm_workers::workflow_worker::NonBlockingEventBatching;
+use wasm_workers::workflow_worker::{NonBlockingEventBatching, WorkflowConfig, WorkflowWorker};
 use wasm_workers::{
     activity_worker::{activity_engine, RecycleInstancesSetting},
-    auto_worker::{AutoConfig, AutoWorker},
     workflow_worker::{workflow_engine, JoinNextBlockingStrategy},
     EngineConfig,
 };
-use wasmtime::Engine;
 
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
@@ -40,6 +39,9 @@ async fn main() {
         "obelisk.sqlite"
     };
     let db_pool = SqlitePool::new(db_file).await.unwrap();
+    let activity_engine = activity_engine(EngineConfig::default());
+    let workflow_engine = workflow_engine(EngineConfig::default());
+
     match Args::parse().command {
         Subcommand::Server(Server::Run { clean }) => {
             if clean {
@@ -47,61 +49,99 @@ async fn main() {
                     .await
                     .expect("cannot delete database file");
             }
-            let activity_engine = activity_engine(EngineConfig::default());
-            let workflow_engine = workflow_engine(EngineConfig::default());
             let _epoch_ticker = EpochTicker::spawn_new(
                 vec![activity_engine.weak(), workflow_engine.weak()],
                 Duration::from_millis(10),
             );
             let db_pool = SqlitePool::new(db_file).await.unwrap();
-            let _timers_watcher = TimersWatcherTask::spawn_new(
+            let timers_watcher = TimersWatcherTask::spawn_new(
                 db_pool.connection(),
                 TimersWatcherConfig {
                     tick_sleep: Duration::from_millis(100),
                     clock_fn: now,
                 },
             );
+            // Attempt to start executors for every active component
+            let components = db_pool.connection().list_active_components().await.unwrap();
+            let mut exec_join_handles = Vec::with_capacity(components.len());
+            for component in components {
+                info!(
+                    "Starting {component_type} executor `{file_name}`",
+                    component_type = component.component_type,
+                    file_name = component.file_name
+                );
+                match component.component_type {
+                    ComponentType::WasmActivity => {
+                        let wasm_activity_config: WasmActivityConfig =
+                            serde_json::from_value(component.config).unwrap();
+                        let worker = Arc::new(
+                            ActivityWorker::new_with_config(
+                                StrVariant::Arc(Arc::from(wasm_activity_config.wasm_path)),
+                                wasm_activity_config.activity_config,
+                                activity_engine.clone(),
+                                now,
+                            )
+                            .unwrap(),
+                        );
+                        exec_join_handles.push(ExecTask::spawn_new(
+                            worker,
+                            wasm_activity_config.exec_config,
+                            now,
+                            db_pool.clone(),
+                            None,
+                        ));
+                    }
+                    ComponentType::WasmWorkflow => {
+                        let wasm_workflow_config: WasmWorkflowConfig =
+                            serde_json::from_value(component.config).unwrap();
+                        let worker = Arc::new(
+                            WorkflowWorker::new_with_config(
+                                StrVariant::Arc(Arc::from(wasm_workflow_config.wasm_path)),
+                                wasm_workflow_config.workflow_config,
+                                workflow_engine.clone(),
+                                db_pool.clone(),
+                                now,
+                            )
+                            .unwrap(),
+                        );
+                        exec_join_handles.push(ExecTask::spawn_new(
+                            worker,
+                            wasm_workflow_config.exec_config,
+                            now,
+                            db_pool.clone(),
+                            None,
+                        ));
+                    }
+                }
+            }
             // TODO: start worker watcher
             match tokio::signal::ctrl_c().await {
-                Ok(()) => {}
+                Ok(()) => {
+                    println!("Gracefully shutting down");
+                    timers_watcher.close().await;
+                    for exec_join_handle in exec_join_handles {
+                        exec_join_handle.close().await;
+                    }
+                    db_pool.close().await.unwrap();
+                    println!("Done");
+                }
                 Err(err) => {
                     eprintln!("Unable to listen for shutdown signal: {}", err);
                 }
             }
         }
         Subcommand::Component(args::Component::Inspect { wasm_path, verbose }) => {
-            let activity_engine = activity_engine(EngineConfig::default());
-            let workflow_engine = workflow_engine(EngineConfig::default());
-            let auto_worker = AutoWorker::new_with_config(
-                AutoConfig {
-                    wasm_path: StrVariant::Arc(Arc::from(wasm_path)),
-                    config_id: ConfigId::generate(),
-                    activity_recycled_instances: RecycleInstancesSetting::Enable,
-                    workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
-                    workflow_child_retry_exp_backoff: Duration::from_millis(10),
-                    workflow_child_max_retries: 5,
-                    non_blocking_event_batching: NonBlockingEventBatching::Enabled,
-                },
-                workflow_engine,
-                activity_engine,
-                db_pool.clone(),
-                now,
-            )
-            .unwrap();
-            println!("Kind:");
-            println!("\t{}", auto_worker.component_type());
+            let detected =
+                DetectedComponent::new(StrVariant::Arc(Arc::from(wasm_path)), workflow_engine)
+                    .unwrap();
+            println!("Component type:");
+            println!("\t{}", detected.component_type);
 
             println!("Exports:");
-            inspect(
-                executor::worker::Worker::exported_functions(&auto_worker),
-                verbose,
-            );
+            inspect(&detected.exports, verbose);
 
             println!("Imports:");
-            inspect(
-                executor::worker::Worker::imported_functions(&auto_worker),
-                verbose,
-            );
+            inspect(&detected.imports, verbose);
         }
         Subcommand::Component(args::Component::Add { replace, wasm_path }) => {
             let wasm_path = wasm_path.canonicalize().unwrap();
@@ -111,40 +151,51 @@ async fn main() {
                 .to_string_lossy()
                 .into_owned();
             let component_id = hash(&wasm_path).unwrap();
-            let activity_engine = activity_engine(EngineConfig::default());
-            let workflow_engine = workflow_engine(EngineConfig::default());
             let config_id = ConfigId::generate();
-            let auto_config = AutoConfig {
-                wasm_path: StrVariant::Arc(Arc::from(wasm_path.to_string_lossy())),
-                config_id,
-                activity_recycled_instances: RecycleInstancesSetting::Enable,
-                workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
-                workflow_child_retry_exp_backoff: Duration::from_millis(10),
-                workflow_child_max_retries: 5,
-                non_blocking_event_batching: NonBlockingEventBatching::Enabled,
-            };
+
             let exec_config = ExecConfig {
                 batch_size: 10,
                 lock_expiry: Duration::from_secs(10),
                 tick_sleep: Duration::from_millis(200),
                 config_id,
             };
-            let config = serde_json::to_value(&auto_config).unwrap();
-            let auto_worker = AutoWorker::new_with_config( // FIXME(perf): Switch to wasm-tools
-                auto_config,
+            let detected = DetectedComponent::new(
+                StrVariant::Arc(Arc::from(wasm_path.to_string_lossy())),
                 workflow_engine,
-                activity_engine,
-                db_pool.clone(),
-                now,
             )
             .unwrap();
-            let component = Component {
-                component_id,
-                component_type: auto_worker.component_type(),
-                config,
-                file_name,
-                exports: auto_worker.exported_functions().collect(),
-                imports: auto_worker.imported_functions().collect(),
+            let config = match detected.component_type {
+                ComponentType::WasmActivity => serde_json::to_value(&WasmActivityConfig {
+                    wasm_path: wasm_path.to_string_lossy().to_string(),
+                    exec_config,
+                    activity_config: ActivityConfig {
+                        config_id,
+                        recycled_instances: RecycleInstancesSetting::Enable,
+                    },
+                })
+                .unwrap(),
+                ComponentType::WasmWorkflow => serde_json::to_value(&WasmWorkflowConfig {
+                    wasm_path: wasm_path.to_string_lossy().to_string(),
+                    exec_config,
+                    workflow_config: WorkflowConfig {
+                        config_id,
+                        join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
+                        child_retry_exp_backoff: Duration::from_millis(10),
+                        child_max_retries: 5,
+                        non_blocking_event_batching: NonBlockingEventBatching::Enabled,
+                    },
+                })
+                .unwrap(),
+            };
+            let component = ComponentWithMetadata {
+                component: Component {
+                    component_id,
+                    component_type: detected.component_type,
+                    config,
+                    file_name,
+                },
+                exports: detected.exports,
+                imports: detected.imports,
             };
             let replaced = db_pool
                 .connection()
@@ -165,6 +216,20 @@ async fn main() {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct WasmWorkflowConfig {
+    wasm_path: String,
+    exec_config: ExecConfig,
+    workflow_config: WorkflowConfig,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct WasmActivityConfig {
+    wasm_path: String,
+    exec_config: ExecConfig,
+    activity_config: ActivityConfig,
+}
+
 fn hash<P: AsRef<Path>>(path: P) -> anyhow::Result<ComponentId> {
     use sha2::{Digest, Sha256};
     use std::{fs, io};
@@ -176,10 +241,7 @@ fn hash<P: AsRef<Path>>(path: P) -> anyhow::Result<ComponentId> {
     Ok(ComponentId::new(concepts::HashType::Sha256, hash_base64))
 }
 
-fn inspect<'a>(
-    iter: impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)>,
-    verbose: bool,
-) {
+fn inspect<'a>(iter: &[FunctionMetadata], verbose: bool) {
     for (ffqn, parameter_types, result) in iter {
         print!("\t{ffqn}");
         if verbose {
@@ -310,44 +372,4 @@ async fn run<DB: DbConnection + 'static>(db_pool: impl DbPool<DB> + 'static) {
         //     }
         // }
     }
-}
-
-fn exec<DB: DbConnection + 'static>(
-    wasm_path: StrVariant,
-    db_pool: impl DbPool<DB> + 'static,
-    workflow_engine: Arc<Engine>,
-    activity_engine: Arc<Engine>,
-) -> (ExecutorTaskHandle, Vec<FunctionFqn>) {
-    let config_id = ConfigId::generate();
-    let worker = Arc::new(
-        AutoWorker::new_with_config(
-            AutoConfig {
-                wasm_path,
-                config_id,
-                activity_recycled_instances: RecycleInstancesSetting::Enable,
-                workflow_join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
-                workflow_child_retry_exp_backoff: Duration::from_millis(10),
-                workflow_child_max_retries: 5,
-                non_blocking_event_batching: NonBlockingEventBatching::Enabled,
-            },
-            workflow_engine,
-            activity_engine,
-            db_pool.clone(),
-            now,
-        )
-        .unwrap(),
-    );
-    let ffqns = executor::worker::Worker::exported_functions(worker.as_ref())
-        .map(|(ffqn, _, _)| ffqn)
-        .collect::<Vec<_>>();
-    let exec_config = ExecConfig {
-        batch_size: 10,
-        lock_expiry: Duration::from_secs(10),
-        tick_sleep: Duration::from_millis(200),
-        config_id,
-    };
-    (
-        ExecTask::spawn_new(worker, exec_config, now, db_pool, None),
-        ffqns,
-    )
 }

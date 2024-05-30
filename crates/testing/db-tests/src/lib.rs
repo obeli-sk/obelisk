@@ -5,9 +5,10 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, Component, CreateRequest, DbConnection,
-        DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Version,
+        AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentWithMetadata,
+        CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner, ExecutionLog,
+        ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
+        LockResponse, Version,
     },
     ComponentId, ExecutionId, FunctionFqn, StrVariant,
 };
@@ -211,11 +212,15 @@ impl DbConnection for DbConnectionProxy {
     async fn append_component(
         &self,
         created_at: DateTime<Utc>,
-        component: Component,
+        component: ComponentWithMetadata,
         replace: bool,
     ) -> Result<Vec<ComponentId>, DbError> {
         self.0
             .append_component(created_at, component, replace)
             .await
+    }
+
+    async fn list_active_components(&self) -> Result<Vec<Component>, DbError> {
+        self.0.list_active_components().await
     }
 }

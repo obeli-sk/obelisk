@@ -1,8 +1,8 @@
 use crate::{EngineConfig, WasmComponent, WasmFileError};
 use async_trait::async_trait;
 use concepts::prefixed_ulid::ConfigId;
-use concepts::{FunctionFqn, StrVariant};
-use concepts::{ParameterTypes, ReturnType, SupportedFunctionResult};
+use concepts::SupportedFunctionResult;
+use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::time::Duration;
@@ -73,9 +73,9 @@ pub struct ActivityWorker<C: ClockFn> {
 }
 
 impl<C: ClockFn> ActivityWorker<C> {
-    #[tracing::instrument(skip_all, fields(wasm_path = %wasm_component.wasm_path, config_id = %config.config_id))]
+    #[tracing::instrument(skip_all, fields(config_id = %config.config_id))]
     pub fn new_with_config(
-        wasm_component: WasmComponent,
+        wasm_path: StrVariant,
         config: ActivityConfig,
         engine: Arc<Engine>,
         clock_fn: C,
@@ -89,8 +89,9 @@ impl<C: ClockFn> ActivityWorker<C> {
             val
         }
         let closure = type_annotate::<_, _>(|t| t);
+        let wasm_component = WasmComponent::new(&wasm_path, &engine)?;
         let map_err = |err: wasmtime::Error| WasmFileError::LinkingError {
-            file: wasm_component.wasm_path.clone(),
+            file: wasm_path.clone(),
             reason: StrVariant::Static("linking error"),
             err: err.into(),
         };
@@ -122,15 +123,11 @@ impl<C: ClockFn> ActivityWorker<C> {
 
 #[async_trait]
 impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
-    fn exported_functions(
-        &self,
-    ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
+    fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
         self.exim.exported_functions()
     }
 
-    fn imported_functions(
-        &self,
-    ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
+    fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
         self.exim.imported_functions()
     }
 
@@ -270,7 +267,7 @@ pub(crate) mod tests {
     use assert_matches::assert_matches;
     use concepts::{
         storage::{CreateRequest, DbConnection, DbPool, Version},
-        ExecutionId, Params, SupportedFunctionResult,
+        ExecutionId, FunctionFqn, Params, SupportedFunctionResult,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -297,7 +294,7 @@ pub(crate) mod tests {
         let engine = activity_engine(EngineConfig::default());
         let worker = Arc::new(
             ActivityWorker::new_with_config(
-                WasmComponent::new(StrVariant::Static(wasm_path), &engine).unwrap(),
+                StrVariant::Static(wasm_path),
                 ActivityConfig {
                     config_id: ConfigId::generate(),
                     recycled_instances: RecycleInstancesSetting::Disable,
@@ -387,13 +384,7 @@ pub(crate) mod tests {
             allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
         });
         let fibo_worker = ActivityWorker::new_with_config(
-            WasmComponent::new(
-                StrVariant::Static(
-                    test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-                ),
-                &engine,
-            )
-            .unwrap(),
+            StrVariant::Static(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
             ActivityConfig {
                 config_id: ConfigId::generate(),
                 recycled_instances,
@@ -481,13 +472,9 @@ pub(crate) mod tests {
                 env_or_default("RECYCLE", recycle).into();
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
-                    WasmComponent::new(
-                        StrVariant::Static(
-                            test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                        ),
-                        &engine,
-                    )
-                    .unwrap(),
+                    StrVariant::Static(
+                        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                    ),
                     ActivityConfig {
                         config_id: ConfigId::generate(),
                         recycled_instances,
@@ -566,13 +553,9 @@ pub(crate) mod tests {
 
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
-                    WasmComponent::new(
-                        StrVariant::Static(
-                            test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                        ),
-                        &engine,
-                    )
-                    .unwrap(),
+                    StrVariant::Static(
+                        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+                    ),
                     ActivityConfig {
                         config_id: ConfigId::generate(),
                         recycled_instances: RecycleInstancesSetting::Disable,
@@ -618,7 +601,9 @@ pub(crate) mod tests {
             let engine = activity_engine(EngineConfig::default());
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
-                    WasmComponent::new(StrVariant::Static(test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY), &engine).unwrap(),
+                    StrVariant::Static(
+                        test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                    ),
                     ActivityConfig {
                         config_id: ConfigId::generate(),
                         recycled_instances: RecycleInstancesSetting::Disable,

@@ -620,16 +620,18 @@ pub trait DbConnection: Send + Sync {
     async fn append_component(
         &self,
         created_at: DateTime<Utc>,
-        component: Component,
+        component: ComponentWithMetadata,
         replace: bool,
     ) -> Result<Vec<ComponentId>, DbError>;
+
+    async fn list_active_components(&self) -> Result<Vec<Component>, DbError>;
 
     /*
 
 
     async fn archive_component(&self, component_id: ComponentId);
 
-    async fn list_active_components(&self) -> Vec<Component>;
+
 
     async fn list_ffqns(
         &self,
@@ -649,6 +651,11 @@ pub struct Component {
     pub component_type: ComponentType,
     pub config: serde_json::Value, // Out of persistence scope
     pub file_name: String,         // Additional identifier without path
+}
+
+#[derive(Debug, Clone)]
+pub struct ComponentWithMetadata {
+    pub component: Component,
     pub exports: Vec<FunctionMetadata>,
     pub imports: Vec<FunctionMetadata>,
 }

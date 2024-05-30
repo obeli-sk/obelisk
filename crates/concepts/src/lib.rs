@@ -730,16 +730,7 @@ pub enum HashType {
     Sha256,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    derive_more::Display,
-    serde_with::SerializeDisplay,
-    serde_with::DeserializeFromStr,
-    PartialEq,
-    Eq,
-    Hash,
-)]
+#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Hash)]
 #[display(fmt = "{hash_type}:{hash_base64}")]
 pub struct ComponentId {
     hash_type: HashType,
@@ -774,11 +765,8 @@ impl FromStr for ComponentId {
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, strum::Display, serde::Serialize, serde::Deserialize, PartialEq, Eq,
-)]
+#[derive(Debug, Clone, Copy, strum::Display, PartialEq, Eq, strum::EnumString)]
 #[strum(serialize_all = "snake_case")]
-#[serde(rename_all = "snake_case")]
 pub enum ComponentType {
     WasmActivity,
     WasmWorkflow,

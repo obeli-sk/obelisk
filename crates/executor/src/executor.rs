@@ -490,7 +490,7 @@ pub mod simple_worker {
     use async_trait::async_trait;
     use concepts::{
         storage::{HistoryEvent, Version},
-        FunctionFqn, ParameterTypes, ReturnType,
+        FunctionFqn, FunctionMetadata, ParameterTypes,
     };
     use indexmap::IndexMap;
     use std::sync::Arc;
@@ -538,15 +538,11 @@ pub mod simple_worker {
             worker_result
         }
 
-        fn exported_functions(
-            &self,
-        ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
+        fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
             Some((self.ffqn.clone(), ParameterTypes::empty(), None)).into_iter()
         }
 
-        fn imported_functions(
-            &self,
-        ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
+        fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
             None.into_iter()
         }
     }
@@ -563,7 +559,7 @@ mod tests {
     use concepts::storage::{
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
-    use concepts::{ParameterTypes, Params, ReturnType, SupportedFunctionResult};
+    use concepts::{FunctionMetadata, ParameterTypes, Params, SupportedFunctionResult};
     use db_tests::Database;
     use indexmap::IndexMap;
     use simple_worker::FFQN_SOME;
@@ -1134,15 +1130,11 @@ mod tests {
             WorkerResult::Ok(self.result.clone(), ctx.version)
         }
 
-        fn exported_functions(
-            &self,
-        ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
+        fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
             Some((FFQN_SOME, ParameterTypes::empty(), None)).into_iter()
         }
 
-        fn imported_functions(
-            &self,
-        ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
+        fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
             None.into_iter()
         }
     }

@@ -3,8 +3,8 @@ use crate::{EngineConfig, WasmComponent, WasmFileError};
 use async_trait::async_trait;
 use concepts::prefixed_ulid::ConfigId;
 use concepts::storage::{DbConnection, DbPool, Version};
-use concepts::{FunctionFqn, StrVariant};
-use concepts::{ParameterTypes, ReturnType, SupportedFunctionResult};
+use concepts::SupportedFunctionResult;
+use concepts::{FunctionFqn, FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::error::Error;
@@ -67,9 +67,9 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
-    #[tracing::instrument(skip_all, fields(wasm_path = %wasm_component.wasm_path, config_id = %config.config_id))]
+    #[tracing::instrument(skip_all, fields(config_id = %config.config_id))]
     pub fn new_with_config(
-        wasm_component: WasmComponent,
+        wasm_path: StrVariant,
         config: WorkflowConfig,
         engine: Arc<Engine>,
         db_pool: P,
@@ -79,6 +79,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         let mut linker = wasmtime::component::Linker::new(&engine);
 
         // Mock imported functions
+        let wasm_component = WasmComponent::new(&wasm_path, &engine)?;
         for import in &wasm_component.exim.imports {
             if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
                 // Skip host-implemented functions
@@ -117,7 +118,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                             debug!("Skipping mocking of {ffqn}");
                         } else {
                             return Err(WasmFileError::LinkingError {
-                                file: wasm_component.wasm_path.clone(),
+                                file: wasm_path.clone(),
                                 reason: StrVariant::Arc(Arc::from(format!(
                                     "cannot add mock for imported function {ffqn}"
                                 ))),
@@ -131,7 +132,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
             }
         }
         WorkflowCtx::add_to_linker(&mut linker).map_err(|err| WasmFileError::LinkingError {
-            file: wasm_component.wasm_path.clone(),
+            file: wasm_path.clone(),
             reason: StrVariant::Arc(Arc::from("cannot add host activities".to_string())),
             err: err.into(),
         })?;
@@ -151,15 +152,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
 impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
     for WorkflowWorker<C, DB, P>
 {
-    fn exported_functions(
-        &self,
-    ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
+    fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
         self.exim.exported_functions()
     }
 
-    fn imported_functions(
-        &self,
-    ) -> impl Iterator<Item = (FunctionFqn, ParameterTypes, ReturnType)> {
+    fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
         self.exim.imported_functions()
     }
 
@@ -358,7 +355,7 @@ mod tests {
         let workflow_engine = workflow_engine(EngineConfig::default());
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
-                WasmComponent::new(StrVariant::Static(wasm_path), &workflow_engine).unwrap(),
+                StrVariant::Static(wasm_path),
                 WorkflowConfig {
                     config_id: ConfigId::generate(),
                     join_next_blocking_strategy,
@@ -515,13 +512,9 @@ mod tests {
         let workflow_engine = workflow_engine(EngineConfig::default());
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
-                WasmComponent::new(
-                    StrVariant::Static(
-                        test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
-                    ),
-                    &workflow_engine,
-                )
-                .unwrap(),
+                StrVariant::Static(
+                    test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+                ),
                 WorkflowConfig {
                     config_id: ConfigId::generate(),
                     join_next_blocking_strategy,

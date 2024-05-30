@@ -4,14 +4,14 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{DelayId, ExecutorId, JoinSetId, PrefixedUlid, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, Component, CreateRequest, DbConnection,
-        DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
-        ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution,
-        PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
-        DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
+        AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentWithMetadata,
+        CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
+        ExecutionEventInner, ExecutionLog, ExpiredTimer, HistoryEvent, JoinSetRequest,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
+        LockResponse, LockedExecution, PendingState, SpecificError, Version, DUMMY_CREATED,
+        DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
-    ComponentId, ExecutionId, FunctionFqn, StrVariant,
+    ComponentId, ComponentType, ExecutionId, FunctionFqn, StrVariant,
 };
 use itertools::Itertools;
 use rusqlite::{
@@ -21,7 +21,7 @@ use rusqlite::{
 use std::{
     cmp::max,
     collections::VecDeque,
-    fmt::{Debug, Display},
+    fmt::Debug,
     path::Path,
     str::FromStr,
     sync::{Arc, Mutex},
@@ -172,7 +172,6 @@ pub struct SqlitePool {
 
 struct PrefixedUlidWrapper<T: 'static>(PrefixedUlid<T>);
 type ExecutorIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::Exr>;
-type ConfigIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::Conf>;
 type JoinSetIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::JoinSet>;
 type ExecutionIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::E>;
 type RunIdW = PrefixedUlidWrapper<concepts::prefixed_ulid::prefix::Run>;
@@ -1803,11 +1802,11 @@ impl DbConnection for SqlitePool {
         }
     }
 
-    #[instrument(skip_all, fields(component_id = %component.component_id))]
+    #[instrument(skip_all, fields(component_id = %component.component.component_id))]
     async fn append_component(
         &self,
         created_at: DateTime<Utc>,
-        component: Component,
+        component: ComponentWithMetadata,
         replace: bool,
     ) -> Result<Vec<ComponentId>, DbError> {
         trace!("append_component");
@@ -1843,10 +1842,10 @@ impl DbConnection for SqlitePool {
                     )?;
                     stmt.execute(named_params! {
                         ":created_at": created_at,
-                        ":component_id": component.component_id.to_string(),
-                        ":component_type": component.component_type.to_string(),
-                        ":config": component.config,
-                        ":file_name": component.file_name,
+                        ":component_id": component.component.component_id.to_string(),
+                        ":component_type": component.component.component_type.to_string(),
+                        ":config": component.component.config,
+                        ":file_name": component.component.file_name,
                         ":imports": imports
                         })?;
                     for (ffqn, parameter_types, return_type) in component.exports {
@@ -1862,13 +1861,45 @@ impl DbConnection for SqlitePool {
                             VALUES \
                             (:component_id, :ffqn, :parameter_types, :return_type)")?;
                         stmt.execute(named_params! {
-                            ":component_id": component.component_id.to_string(),
+                            ":component_id": component.component.component_id.to_string(),
                             ":ffqn": ffqn.to_string(),
                             ":parameter_types": parameter_types,
                             ":return_type": return_type
                         })?;
                     }
                     Ok(conflicts.into_iter().collect_vec())
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_active_components(&self) -> Result<Vec<Component>, DbError> {
+        trace!("list_active_components");
+        self.pool
+            .conn_with_err_and_span::<_, _, SqliteError>(
+                move |conn| {
+                    conn.prepare(
+                        "SELECT component_id, component_type, config, file_name FROM t_component",
+                    )?
+                    .query_map(named_params! {}, |row| {
+                        let component_id =
+                            row.get::<_, StringWrapper<ComponentId>>("component_id")?.0;
+                        let component_type = row
+                            .get::<_, StringWrapper<ComponentType>>("component_type")?
+                            .0;
+                        let config = row.get::<_, serde_json::Value>("config")?;
+                        let file_name = row.get("file_name")?;
+                        Ok(Component {
+                            component_id,
+                            component_type,
+                            config,
+                            file_name,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(SqliteError::from)
                 },
                 Span::current(),
             )
