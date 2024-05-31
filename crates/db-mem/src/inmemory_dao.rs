@@ -390,7 +390,7 @@ impl DbPool<InMemoryDbConnection> for InMemoryPool {
         InMemoryDbConnection(self.0.clone())
     }
 
-    async fn close(&self) -> Result<(), StrVariant> {
+    async fn close(&self) -> Result<(), DbError> {
         Ok(())
     }
 }

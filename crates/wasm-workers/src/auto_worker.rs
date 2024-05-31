@@ -16,6 +16,13 @@ pub struct DetectedComponent {
 }
 
 impl DetectedComponent {
+    #[must_use]
+    pub fn get_engine() -> Engine {
+        let mut wasmtime_config = wasmtime::Config::new();
+        wasmtime_config.wasm_component_model(true);
+        Engine::new(&wasmtime_config).unwrap()
+    }
+
     pub fn new(wasm_path: &StrVariant, engine: &Engine) -> Result<Self, WasmFileError> {
         let wasm_component = WasmComponent::new(wasm_path, engine)?;
         let component_type =
@@ -40,7 +47,7 @@ fn supported_wasi_imports<'a>(mut imported_packages: impl Iterator<Item = &'a If
 #[cfg(test)]
 mod tests {
     use crate::auto_worker::DetectedComponent;
-    use crate::{workflow_worker::workflow_engine, EngineConfig};
+    use crate::{workflow_worker::get_workflow_engine, EngineConfig};
     use concepts::ComponentType;
     use concepts::StrVariant;
     use test_utils::set_up;
@@ -59,7 +66,7 @@ mod tests {
         set_up();
         let detected = DetectedComponent::new(
             &StrVariant::Static(file),
-            &workflow_engine(EngineConfig::default()),
+            &get_workflow_engine(EngineConfig::default()),
         )
         .unwrap();
         assert_eq!(expected, detected.component_type);

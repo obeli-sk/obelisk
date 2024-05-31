@@ -44,7 +44,7 @@ impl RecycleInstancesSetting {
 }
 
 #[must_use]
-pub fn activity_engine(config: EngineConfig) -> Arc<Engine> {
+pub fn get_activity_engine(config: EngineConfig) -> Arc<Engine> {
     let mut wasmtime_config = wasmtime::Config::new();
     wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
     wasmtime_config.wasm_component_model(true);
@@ -291,7 +291,7 @@ pub(crate) mod tests {
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
-        let engine = activity_engine(EngineConfig::default());
+        let engine = get_activity_engine(EngineConfig::default());
         let worker = Arc::new(
             ActivityWorker::new_with_config(
                 StrVariant::Static(wasm_path),
@@ -380,7 +380,7 @@ pub(crate) mod tests {
         pool.total_memories(max_instances);
         pool.total_tables(max_instances);
 
-        let engine = activity_engine(EngineConfig {
+        let engine = get_activity_engine(EngineConfig {
             allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
         });
         let fibo_worker = ActivityWorker::new_with_config(
@@ -462,7 +462,7 @@ pub(crate) mod tests {
                         clock_fn: now,
                     },
                 );
-            let engine = activity_engine(EngineConfig::default());
+            let engine = get_activity_engine(EngineConfig::default());
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
                 Duration::from_millis(EPOCH_MILLIS),
@@ -545,7 +545,7 @@ pub(crate) mod tests {
             const TIMEOUT: Duration = Duration::from_millis(200);
             test_utils::set_up();
 
-            let engine = activity_engine(EngineConfig::default());
+            let engine = get_activity_engine(EngineConfig::default());
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
                 Duration::from_millis(EPOCH_MILLIS),
@@ -598,7 +598,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             let sim_clock = SimClock::default();
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let engine = activity_engine(EngineConfig::default());
+            let engine = get_activity_engine(EngineConfig::default());
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     StrVariant::Static(

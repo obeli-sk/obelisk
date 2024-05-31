@@ -1,5 +1,5 @@
 use concepts::{FunctionMetadata, StrVariant};
-use std::{error::Error, ops::Deref};
+use std::{error::Error, ops::Deref, sync::Arc};
 use tracing::{info, instrument, trace};
 use utils::wasm_tools::{self, ExIm};
 use wasmtime::{component::Component, Engine};
@@ -11,6 +11,7 @@ mod event_history;
 mod workflow_ctx;
 pub mod workflow_worker;
 
+#[derive(Clone)]
 pub struct EngineConfig {
     pub allocation_strategy: wasmtime::InstanceAllocationStrategy,
 }
@@ -33,8 +34,23 @@ pub enum WasmFileError {
     LinkingError {
         file: StrVariant,
         reason: StrVariant,
-        err: Box<dyn Error>,
+        err: Box<dyn Error + Send + Sync>,
     },
+}
+
+pub struct Engines {
+    pub activity_engine: Arc<Engine>,
+    pub workflow_engine: Arc<Engine>,
+}
+
+impl Engines {
+    #[must_use]
+    pub fn new(engine_config: EngineConfig) -> Self {
+        Engines {
+            activity_engine: activity_worker::get_activity_engine(engine_config.clone()),
+            workflow_engine: workflow_worker::get_workflow_engine(engine_config),
+        }
+    }
 }
 
 #[derive(derivative::Derivative)]

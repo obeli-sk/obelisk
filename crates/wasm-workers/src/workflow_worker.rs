@@ -18,7 +18,7 @@ use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
 #[must_use]
-pub fn workflow_engine(config: EngineConfig) -> Arc<Engine> {
+pub fn get_workflow_engine(config: EngineConfig) -> Arc<Engine> {
     let mut wasmtime_config = wasmtime::Config::new();
     wasmtime_config.wasm_backtrace(true);
     wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Disable);
@@ -352,7 +352,7 @@ mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: NonBlockingEventBatching,
     ) -> ExecutorTaskHandle {
-        let workflow_engine = workflow_engine(EngineConfig::default());
+        let workflow_engine = get_workflow_engine(EngineConfig::default());
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
                 StrVariant::Static(wasm_path),
@@ -509,7 +509,7 @@ mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: NonBlockingEventBatching,
     ) -> ExecutorTaskHandle {
-        let workflow_engine = workflow_engine(EngineConfig::default());
+        let workflow_engine = get_workflow_engine(EngineConfig::default());
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
                 StrVariant::Static(

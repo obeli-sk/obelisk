@@ -10,7 +10,7 @@ use concepts::{
         ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
         LockResponse, Version,
     },
-    ComponentId, ExecutionId, FunctionFqn, StrVariant,
+    ComponentId, ExecutionId, FunctionFqn,
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -57,7 +57,7 @@ impl DbPool<DbConnectionProxy> for DbPoolEnum {
         }
     }
 
-    async fn close(&self) -> Result<(), StrVariant> {
+    async fn close(&self) -> Result<(), DbError> {
         match self {
             DbPoolEnum::Memory(pool) => pool.close().await,
             DbPoolEnum::Sqlite(pool) => pool.close().await,

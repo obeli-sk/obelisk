@@ -230,11 +230,12 @@ impl DbPool<SqlitePool> for SqlitePool {
         self.clone()
     }
 
-    async fn close(&self) -> Result<(), StrVariant> {
-        self.pool
-            .close()
-            .await
-            .map_err(|err| StrVariant::Arc(Arc::from(err.to_string())))
+    async fn close(&self) -> Result<(), DbError> {
+        self.pool.close().await.map_err(|err| {
+            DbError::Specific(SpecificError::GenericError(StrVariant::Arc(Arc::from(
+                err.to_string(),
+            ))))
+        })
     }
 }
 

@@ -400,6 +400,8 @@ pub enum SpecificError {
     NotFound,
     #[error("consistency error: `{0}`")]
     ConsistencyError(StrVariant),
+    #[error("{0}")]
+    GenericError(StrVariant),
 }
 
 #[derive(thiserror::Error, Debug, PartialEq, Eq, Clone)]
@@ -468,7 +470,7 @@ impl From<CreateRequest> for ExecutionEventInner {
 #[async_trait]
 pub trait DbPool<DB: DbConnection>: Send + Sync + Clone {
     fn connection(&self) -> DB;
-    async fn close(&self) -> Result<(), StrVariant>;
+    async fn close(&self) -> Result<(), DbError>;
 }
 
 #[derive(Debug, thiserror::Error)]
