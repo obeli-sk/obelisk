@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use concepts::FunctionFqn;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -55,17 +56,15 @@ pub(crate) enum Component {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Exe {
-    // Execution creation:
-    // interactive search for ffqn showing param types and result, file name
-    // enter parameters one by one, TODO: parameter names
-    // submit execution
-    // TODO: typecheck by the CLI
-    // Return ExecutionId, poll the status unless finishes or Ctrl-C
     Schedule {
+        #[arg(short, long)]
+        ffqn: FunctionFqn,
+        #[arg(short, long)]
+        params: Option<String>,
         // interactive
         // when: String,
-        // function: String,
-        // params: Vec<String>,
+        #[arg(short, long)]
+        verbose: bool,
     },
     List,
     Status {
