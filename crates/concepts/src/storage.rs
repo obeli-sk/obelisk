@@ -628,6 +628,11 @@ pub trait DbConnection: Send + Sync {
 
     async fn list_active_components(&self) -> Result<Vec<Component>, DbError>;
 
+    async fn get_component_metadata(
+        &self,
+        component_id: ComponentId,
+    ) -> Result<ComponentWithMetadata, DbError>;
+
     /*
 
 
@@ -650,9 +655,9 @@ pub trait DbConnection: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct Component {
     pub component_id: ComponentId,
-    pub component_type: ComponentType,
-    pub config: serde_json::Value, // Out of persistence scope
-    pub file_name: String,         // Additional identifier without path
+    pub component_type: ComponentType, // Defines the schema for `config`
+    pub config: serde_json::Value,     // Out of persistence scope
+    pub file_name: String,             // Additional identifier without path
 }
 
 #[derive(Debug, Clone)]

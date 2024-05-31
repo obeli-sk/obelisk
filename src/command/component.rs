@@ -1,8 +1,9 @@
+use crate::{FunctionMetadataVerbosity, WasmActivityConfig, WasmWorkflowConfig};
 use anyhow::Context;
 use concepts::storage::DbPool;
 use concepts::storage::{Component, ComponentWithMetadata, DbConnection};
 use concepts::{prefixed_ulid::ConfigId, StrVariant};
-use concepts::{ComponentId, ComponentType};
+use concepts::{ComponentId, ComponentType, FunctionMetadata};
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::ExecConfig;
 use std::path::Path;
@@ -15,8 +16,6 @@ use wasm_workers::workflow_worker::{NonBlockingEventBatching, WorkflowConfig};
 use wasm_workers::{
     activity_worker::RecycleInstancesSetting, workflow_worker::JoinNextBlockingStrategy,
 };
-
-use crate::{WasmActivityConfig, WasmWorkflowConfig};
 
 pub(crate) async fn add<P: AsRef<Path>>(
     replace: bool,
@@ -98,6 +97,28 @@ pub(crate) async fn add<P: AsRef<Path>>(
     Ok(())
 }
 
+pub(crate) async fn inspect<P: AsRef<Path>>(
+    wasm_path: P,
+    verbosity: FunctionMetadataVerbosity,
+) -> anyhow::Result<()> {
+    let wasm_path = wasm_path.as_ref();
+    let engine = DetectedComponent::get_engine();
+    let detected = DetectedComponent::new(
+        &StrVariant::Arc(Arc::from(wasm_path.to_string_lossy().into_owned())),
+        &engine,
+    )
+    .unwrap();
+    println!("Component type:");
+    println!("\t{}", detected.component_type);
+
+    println!("Exports:");
+    inspect_fns(&detected.exports, verbosity);
+
+    println!("Imports:");
+    inspect_fns(&detected.imports, verbosity);
+    Ok(())
+}
+
 fn hash<P: AsRef<Path>>(path: P) -> anyhow::Result<ComponentId> {
     use sha2::{Digest, Sha256};
     use std::{fs, io};
@@ -107,4 +128,53 @@ fn hash<P: AsRef<Path>>(path: P) -> anyhow::Result<ComponentId> {
     let hash = hasher.finalize();
     let hash_base64 = base16ct::lower::encode_string(&hash);
     Ok(ComponentId::new(concepts::HashType::Sha256, hash_base64))
+}
+
+fn inspect_fns(functions: &[FunctionMetadata], verbosity: FunctionMetadataVerbosity) {
+    for (ffqn, parameter_types, result) in functions {
+        print!("\t{ffqn}");
+        if verbosity == FunctionMetadataVerbosity::WithTypes {
+            print!(" {parameter_types}");
+            if let Some(result) = result {
+                let result = serde_json::to_string(&result).unwrap();
+                print!(" -> {result}");
+            }
+        }
+        println!();
+    }
+}
+
+pub(crate) async fn list<P: AsRef<Path>>(
+    db_file: P,
+    verbosity: Option<FunctionMetadataVerbosity>,
+) -> anyhow::Result<()> {
+    let db_file = db_file.as_ref();
+    let db_pool = SqlitePool::new(db_file)
+        .await
+        .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
+    let db_connection = db_pool.connection();
+    let components = db_connection
+        .list_active_components()
+        .await
+        .context("database error")?;
+    for component in components {
+        println!(
+            "{component_type}\t{hash}-{file_name}",
+            component_type = component.component_type,
+            hash = component.component_id,
+            file_name = component.file_name,
+        );
+        if let Some(verbosity) = verbosity {
+            let component = db_connection
+                .get_component_metadata(component.component_id)
+                .await
+                .context("database error")?;
+            println!("Exports");
+            inspect_fns(&component.exports, verbosity);
+            println!("Imports");
+            inspect_fns(&component.imports, verbosity);
+            println!();
+        }
+    }
+    Ok(())
 }

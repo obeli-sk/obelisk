@@ -221,14 +221,21 @@ impl DbConnection for InMemoryDbConnection {
     #[instrument(skip(self))]
     async fn append_component(
         &self,
-        created_at: DateTime<Utc>,
-        component: ComponentWithMetadata,
-        replace: bool,
+        _created_at: DateTime<Utc>,
+        _component: ComponentWithMetadata,
+        _replace: bool,
     ) -> Result<Vec<ComponentId>, DbError> {
         todo!()
     }
 
     async fn list_active_components(&self) -> Result<Vec<Component>, DbError> {
+        todo!()
+    }
+
+    async fn get_component_metadata(
+        &self,
+        _component_id: ComponentId,
+    ) -> Result<ComponentWithMetadata, DbError> {
         todo!()
     }
 }

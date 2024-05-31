@@ -37,28 +37,45 @@ async fn main() {
             command::server::run(db_file, clean).await.unwrap();
         }
         Subcommand::Component(args::Component::Inspect { wasm_path, verbose }) => {
-            let engine = DetectedComponent::get_engine();
-            let detected =
-                DetectedComponent::new(&StrVariant::Arc(Arc::from(wasm_path)), &engine).unwrap();
-            println!("Component type:");
-            println!("\t{}", detected.component_type);
-
-            println!("Exports:");
-            inspect(&detected.exports, verbose);
-
-            println!("Imports:");
-            inspect(&detected.imports, verbose);
+            command::component::inspect(
+                wasm_path,
+                if verbose {
+                    FunctionMetadataVerbosity::WithTypes
+                } else {
+                    FunctionMetadataVerbosity::FfqnOnly
+                },
+            )
+            .await
+            .unwrap();
         }
         Subcommand::Component(args::Component::Add { replace, wasm_path }) => {
             command::component::add(replace, wasm_path, db_file)
                 .await
                 .unwrap();
         }
+        Subcommand::Component(args::Component::List { verbosity }) => {
+            command::component::list(
+                db_file,
+                match verbosity {
+                    0 => None,
+                    1 => Some(FunctionMetadataVerbosity::FfqnOnly),
+                    _ => Some(FunctionMetadataVerbosity::WithTypes),
+                },
+            )
+            .await
+            .unwrap();
+        }
         other => {
             eprintln!("{other:?}");
             std::process::exit(1);
         }
     }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum FunctionMetadataVerbosity {
+    FfqnOnly,
+    WithTypes,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -73,20 +90,6 @@ struct WasmActivityConfig {
     wasm_path: String,
     exec_config: ExecConfig,
     activity_config: ActivityConfig,
-}
-
-fn inspect(functions: &[FunctionMetadata], verbose: bool) {
-    for (ffqn, parameter_types, result) in functions {
-        print!("\t{ffqn}");
-        if verbose {
-            print!(" {parameter_types}");
-            if let Some(result) = result {
-                let result = serde_json::to_string(&result).unwrap();
-                print!(" -> {result}");
-            }
-        }
-        println!();
-    }
 }
 
 #[allow(clippy::too_many_lines)]

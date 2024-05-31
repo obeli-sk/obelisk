@@ -43,7 +43,10 @@ pub(crate) enum Component {
         wasm_path: PathBuf,
         // TODO: interactive configuration based on component type
     },
-    List,
+    List {
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbosity: u8,
+    },
     Archive {
         #[arg(short, long)]
         component_id: String, // TODO: ComponentId,

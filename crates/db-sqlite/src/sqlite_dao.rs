@@ -11,7 +11,8 @@ use concepts::{
         LockResponse, LockedExecution, PendingState, SpecificError, Version, DUMMY_CREATED,
         DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
-    ComponentId, ComponentType, ExecutionId, FunctionFqn, StrVariant,
+    ComponentId, ComponentType, ExecutionId, FunctionFqn, FunctionMetadata, ParameterTypes,
+    ReturnType, StrVariant,
 };
 use itertools::Itertools;
 use rusqlite::{
@@ -1906,6 +1907,60 @@ impl DbConnection for SqlitePool {
             )
             .await
             .map_err(DbError::from)
+    }
+
+    async fn get_component_metadata(
+        &self,
+        component_id: ComponentId,
+    ) -> Result<ComponentWithMetadata, DbError> {
+        trace!("get_component_metadata");
+        self.pool.conn_with_err_and_span::<_, _, SqliteError>(
+            move |conn| {
+                let without_exports = conn.prepare(
+                        "SELECT component_type, config, file_name, imports FROM t_component WHERE component_id = :component_id",
+                    )?
+                    .query_row(named_params! {
+                        ":component_id": component_id.to_string()
+                    }, |row| {
+                        let component_type = row
+                            .get::<_, StringWrapper<ComponentType>>("component_type")?
+                            .0;
+                        let config = row.get::<_, serde_json::Value>("config")?;
+                        let imports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("imports")?.0;
+                        let file_name = row.get("file_name")?;
+                        let component = Component {
+                            component_id: component_id.clone(),
+                            component_type,
+                            config,
+                            file_name,
+                        };
+                        Ok(ComponentWithMetadata { component, imports, exports: vec![] })
+                    })
+                    .map_err(SqliteError::from)?;
+                let exports = conn.prepare("SELECT ffqn, parameter_types, return_type from t_component_export WHERE component_id = :component_id")?
+                    .query_map(named_params! {
+                        ":component_id": component_id.to_string()
+                    }, |row| {
+                        let ffqn = row.get::<_, StringWrapper<FunctionFqn>>("ffqn")?.0;
+                        let parameter_types = row.get::<_, JsonWrapper<ParameterTypes>>("parameter_types")?.0;
+                        let return_type = row.get::<_, JsonWrapper<ReturnType>>("return_type")?.0;
+                        Ok((
+                            ffqn,
+                            parameter_types,
+                            return_type,
+                        ))
+                    })?
+                    .collect::<Result<Vec<_>, _>>().map_err(SqliteError::from)?;
+                Ok(ComponentWithMetadata {
+                    component: without_exports.component,
+                    imports: without_exports.imports,
+                    exports
+                })
+            },
+            Span::current(),
+        )
+        .await
+        .map_err(DbError::from)
     }
 }
 
