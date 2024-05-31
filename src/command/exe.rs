@@ -13,7 +13,6 @@ use val_json::wast_val::WastValWithType;
 pub(crate) async fn schedule<P: AsRef<Path>>(
     ffqn: FunctionFqn,
     params: Params,
-    verbose: bool,
     db_file: P,
 ) -> anyhow::Result<()> {
     let db_file = db_file.as_ref();
@@ -55,20 +54,16 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
             })),
         ) => {
             println!("Finished OK in {duration:?}");
-            if verbose {
-                let value = match res {
-                    SupportedFunctionResult::Infallible(WastValWithType { value, .. }) => {
-                        Some(value)
-                    }
-                    SupportedFunctionResult::Fallible(WastValWithType {
-                        value: WastVal::Result(Ok(Some(value))),
-                        ..
-                    }) => Some(*value),
-                    _ => None,
-                };
-                if let Some(value) = value {
-                    println!("{value:?}");
-                }
+            let value = match res {
+                SupportedFunctionResult::Infallible(WastValWithType { value, .. }) => Some(value),
+                SupportedFunctionResult::Fallible(WastValWithType {
+                    value: WastVal::Result(Ok(Some(value))),
+                    ..
+                }) => Some(*value),
+                _ => None,
+            };
+            if let Some(value) = value {
+                println!("{value:?}");
             }
         }
         _ => {

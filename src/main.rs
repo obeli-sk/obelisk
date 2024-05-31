@@ -14,7 +14,6 @@ use wasm_workers::workflow_worker::WorkflowConfig;
 #[allow(clippy::too_many_lines)]
 async fn main() {
     let _guard = init::init();
-
     let db_file =
         // TODO: XDG specs or ~/.obelisk/obelisk.sqlite
         PathBuf::from("obelisk.sqlite");
@@ -50,11 +49,7 @@ async fn main() {
             .await
             .unwrap();
         }
-        Subcommand::Exe(args::Exe::Schedule {
-            ffqn,
-            params,
-            verbose,
-        }) => {
+        Subcommand::Exe(args::Exe::Schedule { ffqn, params }) => {
             // TODO interactive search for ffqn showing param types and result, file name
             // enter parameters one by one
             let params = if let Some(params) = params {
@@ -65,9 +60,7 @@ async fn main() {
                 Params::default()
             };
             // TODO: typecheck the params
-            command::exe::schedule(ffqn, params, verbose, db_file)
-                .await
-                .unwrap();
+            command::exe::schedule(ffqn, params, db_file).await.unwrap();
         }
         other => {
             eprintln!("TODO {other:?}");

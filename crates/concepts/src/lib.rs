@@ -775,7 +775,7 @@ pub enum ComponentType {
 
 pub type ReturnType = Option<TypeWrapper>;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParameterTypes(pub Vec<(String, TypeWrapper)>);
 
 impl ParameterTypes {
@@ -785,7 +785,7 @@ impl ParameterTypes {
     }
 }
 
-impl Display for ParameterTypes {
+impl Debug for ParameterTypes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "(")?;
         let mut iter = self.0.iter().peekable();

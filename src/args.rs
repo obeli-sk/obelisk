@@ -1,10 +1,11 @@
-use std::path::PathBuf;
-
 use clap::Parser;
 use concepts::FunctionFqn;
+use std::path::PathBuf;
+
+shadow_rs::shadow!(build);
 
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(version = const_format::formatcp!("{} {}", build::PKG_VERSION, build::SHORT_COMMIT), about = "Obelisk: deterministic backend")]
 pub(crate) struct Args {
     #[command(subcommand)]
     pub(crate) command: Subcommand,
@@ -48,6 +49,14 @@ pub(crate) enum Component {
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
     },
+    Get {
+        #[arg(short, long)]
+        /// Function in the fully qualified format
+        ffqn: String,
+        #[arg(short, long)]
+        // Component id consisting of a prefix and a hash
+        id: String,
+    },
     Archive {
         #[arg(short, long)]
         component_id: String, // TODO: ComponentId,
@@ -58,13 +67,14 @@ pub(crate) enum Component {
 pub(crate) enum Exe {
     Schedule {
         #[arg(short, long)]
+        /// Function in the fully qualified format
         ffqn: FunctionFqn,
         #[arg(short, long)]
+        /// Parameters encoded as an JSON array
         params: Option<String>,
-        // interactive
-        // when: String,
-        #[arg(short, long)]
-        verbose: bool,
+        // TODO: interactive
+        // TODO: when: String,
+        // TODO: poll?
     },
     List,
     Status {

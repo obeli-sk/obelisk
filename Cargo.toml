@@ -14,11 +14,14 @@ val-json.workspace = true
 wasm-workers.workspace = true
 
 anyhow.workspace = true
+base16ct.workspace = true
 clap.workspace = true
 console-subscriber = { workspace = true, optional = true }
-serde.workspace = true
+const_format.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 sha2.workspace = true
+shadow-rs.workspace = true
 tokio = { workspace = true, features = [
     "fs",
     "macros",
@@ -33,7 +36,7 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 utils.workspace = true
 wasmtime.workspace = true
-base16ct.workspace = true
+
 
 [features]
 parallel-compilation = ["wasmtime/parallel-compilation"]
@@ -42,6 +45,9 @@ default = ["parallel-compilation"]
 
 [lints]
 workspace = true
+
+[build-dependencies]
+shadow-rs.workspace = true
 
 [workspace]
 resolver = "2"
@@ -119,6 +125,7 @@ cfg-if = "1.0.0"
 chrono = { version = "0.4.34", features = ["arbitrary", "serde"] }
 clap = { version = "4.5.4", features = ["derive"] }
 console-subscriber = "0.2.0"
+const_format = "0.2.32"
 criterion = "0.5"
 derivative = "2.2.0"
 derive_more = "0.99.17"
@@ -140,6 +147,7 @@ serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
 serde_with = "3.7.0"
 sha2 = "0.10.8"
+shadow-rs = "0.28.0"
 strum = { version = "0.26.0", features = ["derive"] }
 tempfile = "3.10.1"
 thiserror = "1.0"
