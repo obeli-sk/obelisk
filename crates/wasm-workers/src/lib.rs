@@ -5,7 +5,7 @@ use utils::wasm_tools::{self, ExIm};
 use wasmtime::{component::Component, Engine};
 
 pub mod activity_worker;
-pub mod auto_worker;
+pub mod component_detector;
 pub mod epoch_ticker;
 mod event_history;
 mod workflow_ctx;

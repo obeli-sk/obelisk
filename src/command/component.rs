@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityConfig;
-use wasm_workers::auto_worker::DetectedComponent;
+use wasm_workers::component_detector::ComponentDetector;
 use wasm_workers::workflow_worker::{NonBlockingEventBatching, WorkflowConfig};
 use wasm_workers::{
     activity_worker::RecycleInstancesSetting, workflow_worker::JoinNextBlockingStrategy,
@@ -44,8 +44,8 @@ pub(crate) async fn add<P: AsRef<Path>>(
         tick_sleep: Duration::from_millis(200),
         config_id,
     };
-    let engine = DetectedComponent::get_engine();
-    let detected = DetectedComponent::new(
+    let engine = ComponentDetector::get_engine();
+    let detected = ComponentDetector::new(
         &StrVariant::Arc(Arc::from(wasm_path.to_string_lossy())),
         &engine,
     )
@@ -102,8 +102,8 @@ pub(crate) fn inspect<P: AsRef<Path>>(
     verbosity: FunctionMetadataVerbosity,
 ) -> anyhow::Result<()> {
     let wasm_path = wasm_path.as_ref();
-    let engine = DetectedComponent::get_engine();
-    let detected = DetectedComponent::new(
+    let engine = ComponentDetector::get_engine();
+    let detected = ComponentDetector::new(
         &StrVariant::Arc(Arc::from(wasm_path.to_string_lossy().into_owned())),
         &engine,
     )

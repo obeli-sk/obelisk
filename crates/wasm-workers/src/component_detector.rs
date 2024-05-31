@@ -9,13 +9,13 @@ use concepts::{ComponentType, FunctionMetadata, IfcFqnName, StrVariant};
 use std::ops::Deref;
 use wasmtime::Engine;
 
-pub struct DetectedComponent {
+pub struct ComponentDetector {
     pub component_type: ComponentType,
     pub exports: Vec<FunctionMetadata>,
     pub imports: Vec<FunctionMetadata>,
 }
 
-impl DetectedComponent {
+impl ComponentDetector {
     #[must_use]
     pub fn get_engine() -> Engine {
         let mut wasmtime_config = wasmtime::Config::new();
@@ -46,7 +46,7 @@ fn supported_wasi_imports<'a>(mut imported_packages: impl Iterator<Item = &'a If
 
 #[cfg(test)]
 mod tests {
-    use crate::auto_worker::DetectedComponent;
+    use crate::component_detector::ComponentDetector;
     use crate::{workflow_worker::get_workflow_engine, EngineConfig};
     use concepts::ComponentType;
     use concepts::StrVariant;
@@ -64,7 +64,7 @@ mod tests {
     #[tokio::test]
     async fn detection(#[case] file: &'static str, #[case] expected: ComponentType) {
         set_up();
-        let detected = DetectedComponent::new(
+        let detected = ComponentDetector::new(
             &StrVariant::Static(file),
             &get_workflow_engine(EngineConfig::default()),
         )
