@@ -4,25 +4,11 @@ mod init;
 
 use args::{Args, Server, Subcommand};
 use clap::Parser;
-use concepts::storage::DbConnection;
-use concepts::storage::{CreateRequest, DbPool};
-use concepts::StrVariant;
-use concepts::{ExecutionId, FunctionMetadata, Params, SupportedFunctionResult};
+use concepts::Params;
 use executor::executor::ExecConfig;
-use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
-use tracing::error;
-use utils::time::now;
-use val_json::wast_val::{WastVal, WastValWithType};
 use wasm_workers::activity_worker::ActivityConfig;
-use wasm_workers::auto_worker::DetectedComponent;
-use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::workflow_worker::WorkflowConfig;
-use wasm_workers::{
-    activity_worker::get_activity_engine, workflow_worker::get_workflow_engine, EngineConfig,
-};
 
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
@@ -45,7 +31,6 @@ async fn main() {
                     FunctionMetadataVerbosity::FfqnOnly
                 },
             )
-            .await
             .unwrap();
         }
         Subcommand::Component(args::Component::Add { replace, wasm_path }) => {
@@ -65,7 +50,11 @@ async fn main() {
             .await
             .unwrap();
         }
-        Subcommand::Exe(args::Exe::Schedule { ffqn, params, verbose }) => {
+        Subcommand::Exe(args::Exe::Schedule {
+            ffqn,
+            params,
+            verbose,
+        }) => {
             // TODO interactive search for ffqn showing param types and result, file name
             // enter parameters one by one
             let params = if let Some(params) = params {
@@ -76,7 +65,9 @@ async fn main() {
                 Params::default()
             };
             // TODO: typecheck the params
-            command::exe::schedule(ffqn, params, verbose, db_file).await.unwrap();
+            command::exe::schedule(ffqn, params, verbose, db_file)
+                .await
+                .unwrap();
         }
         other => {
             eprintln!("TODO {other:?}");

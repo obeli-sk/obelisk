@@ -246,14 +246,12 @@ struct CombinedStateDTO {
     executor_id: Option<ExecutorId>,
     run_id: Option<RunId>,
     join_set_id: Option<JoinSetId>,
-    ffqn: Option<String>,
 }
 
 #[derive(Debug)]
 struct CombinedState {
     pending_state: PendingState,
     next_version: Version,
-    ffqn: Option<FunctionFqn>, // Some for PendingAt
 }
 
 struct PendingAt {
@@ -268,53 +266,35 @@ struct IndexUpdated {
 }
 
 impl CombinedState {
-    fn new(dto: CombinedStateDTO, next_version: Version) -> Result<Self, SqliteError> {
-        let (pending_state, ffqn) = match dto {
+    fn new(dto: &CombinedStateDTO, next_version: Version) -> Result<Self, SqliteError> {
+        let pending_state = match dto {
             CombinedStateDTO {
                 pending_or_expires_at,
                 executor_id: None,
                 run_id: None,
                 join_set_id: None,
-                ffqn: Some(ffqn),
-            } => {
-                let ffqn = FunctionFqn::from_str(&ffqn).map_err(|err| {
-                    error!("Cannot parse ffqn `{ffqn}` - {err:?}");
-                    SqliteError::Parsing(StrVariant::Static("cannot parse ffqn"))
-                })?;
-                Ok((
-                    PendingState::PendingAt {
-                        scheduled_at: pending_or_expires_at,
-                    },
-                    Some(ffqn),
-                ))
-            } // merges PendingNow into PendingAt(default)
+            } => Ok(PendingState::PendingAt {
+                scheduled_at: *pending_or_expires_at,
+            }), // merges PendingNow into PendingAt(default)
             CombinedStateDTO {
                 pending_or_expires_at,
                 executor_id: Some(executor_id),
                 run_id: Some(run_id),
                 join_set_id: None,
-                ffqn: None,
-            } => Ok((
-                PendingState::Locked {
-                    executor_id,
-                    run_id,
-                    lock_expires_at: pending_or_expires_at,
-                },
-                None,
-            )),
+            } => Ok(PendingState::Locked {
+                executor_id: *executor_id,
+                run_id: *run_id,
+                lock_expires_at: *pending_or_expires_at,
+            }),
             CombinedStateDTO {
                 pending_or_expires_at,
                 executor_id: None,
                 run_id: None,
                 join_set_id: Some(join_set_id),
-                ffqn: None,
-            } => Ok((
-                PendingState::BlockedByJoinSet {
-                    join_set_id,
-                    lock_expires_at: pending_or_expires_at,
-                },
-                None,
-            )),
+            } => Ok(PendingState::BlockedByJoinSet {
+                join_set_id: *join_set_id,
+                lock_expires_at: *pending_or_expires_at,
+            }),
             _ => {
                 error!("Cannot deserialize pending state from  {dto:?}");
                 Err(SqliteError::Parsing(StrVariant::Static(
@@ -325,7 +305,6 @@ impl CombinedState {
         Ok(Self {
             pending_state,
             next_version,
-            ffqn,
         })
     }
 }
@@ -680,7 +659,7 @@ impl SqlitePool {
         execution_id: ExecutionId,
     ) -> Result<Option<CombinedState>, SqliteError> {
         let mut stmt = tx.prepare(
-            "SELECT next_version, pending_or_expires_at, ffqn, executor_id, run_id, join_set_id FROM t_state WHERE \
+            "SELECT next_version, pending_or_expires_at, executor_id, run_id, join_set_id FROM t_state WHERE \
         execution_id = :execution_id",
         )?;
         stmt.query_row(
@@ -689,7 +668,7 @@ impl SqlitePool {
             },
             |row| {
                 Ok(CombinedState::new(
-                    CombinedStateDTO {
+                    &CombinedStateDTO {
                         pending_or_expires_at: row
                             .get::<_, DateTime<Utc>>("pending_or_expires_at")?,
                         executor_id: row
@@ -699,7 +678,6 @@ impl SqlitePool {
                         join_set_id: row
                             .get::<_, Option<JoinSetIdW>>("join_set_id")?
                             .map(|w| w.0),
-                        ffqn: row.get::<_, Option<String>>("ffqn")?,
                     },
                     Version::new(row.get("next_version")?),
                 ))

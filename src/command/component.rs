@@ -49,7 +49,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
         &StrVariant::Arc(Arc::from(wasm_path.to_string_lossy())),
         &engine,
     )
-    .with_context(|| format!("cannot compile file `{wasm_path:?}`"))?;
+    .context("parsing error")?;
     let config = match detected.component_type {
         ComponentType::WasmActivity => serde_json::to_value(WasmActivityConfig {
             wasm_path: wasm_path.to_string_lossy().to_string(),
@@ -97,7 +97,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
     Ok(())
 }
 
-pub(crate) async fn inspect<P: AsRef<Path>>(
+pub(crate) fn inspect<P: AsRef<Path>>(
     wasm_path: P,
     verbosity: FunctionMetadataVerbosity,
 ) -> anyhow::Result<()> {
@@ -107,7 +107,7 @@ pub(crate) async fn inspect<P: AsRef<Path>>(
         &StrVariant::Arc(Arc::from(wasm_path.to_string_lossy().into_owned())),
         &engine,
     )
-    .unwrap();
+    .context("parsing error")?;
     println!("Component type:");
     println!("\t{}", detected.component_type);
 

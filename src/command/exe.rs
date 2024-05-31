@@ -47,12 +47,12 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
     let duration = (now() - created_at).to_std().unwrap();
     match res {
         Ok(
-            res @ SupportedFunctionResult::None
-            | res @ SupportedFunctionResult::Infallible(_)
-            | res @ SupportedFunctionResult::Fallible(WastValWithType {
+            res @ (SupportedFunctionResult::None
+            | SupportedFunctionResult::Infallible(_)
+            | SupportedFunctionResult::Fallible(WastValWithType {
                 value: WastVal::Result(Ok(_)),
                 ..
-            }),
+            })),
         ) => {
             println!("Finished OK in {duration:?}");
             if verbose {

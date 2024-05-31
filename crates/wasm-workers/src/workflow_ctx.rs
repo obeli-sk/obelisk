@@ -285,7 +285,6 @@ pub(crate) mod tests {
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::info;
     use utils::time::{now, ClockFn};
-    use val_json::type_wrapper::TypeWrapper;
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const FFQN_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
