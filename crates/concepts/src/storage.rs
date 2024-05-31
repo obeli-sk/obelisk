@@ -605,7 +605,7 @@ pub trait DbConnection: Send + Sync {
                     debug!(%execution_id, "Found: {expected_pending_state}");
                     return Ok(execution_log);
                 }
-                tokio::time::sleep(Duration::from_millis(1)).await; // TODO: Switch to subscription-based approach
+                tokio::time::sleep(Duration::from_millis(100)).await; // TODO: Switch to subscription-based approach
             }
         };
 

@@ -164,17 +164,17 @@ pub(crate) async fn list<P: AsRef<Path>>(
             hash = component.component_id,
             file_name = component.file_name,
         );
+        let component = db_connection
+            .get_component_metadata(component.component_id)
+            .await
+            .context("database error")?;
+        println!("Exports");
+        inspect_fns(&component.exports, FunctionMetadataVerbosity::WithTypes);
         if let Some(verbosity) = verbosity {
-            let component = db_connection
-                .get_component_metadata(component.component_id)
-                .await
-                .context("database error")?;
-            println!("Exports");
-            inspect_fns(&component.exports, verbosity);
             println!("Imports");
             inspect_fns(&component.imports, verbosity);
-            println!();
         }
+        println!();
     }
     Ok(())
 }
