@@ -2,10 +2,13 @@ use clap::Parser;
 use concepts::FunctionFqn;
 use std::path::PathBuf;
 
-shadow_rs::shadow!(build);
+mod shaddow {
+    #![allow(clippy::needless_raw_string_hashes)]
+    shadow_rs::shadow!(build);
+}
 
 #[derive(Parser, Debug)]
-#[command(version = const_format::formatcp!("{} {}", build::PKG_VERSION, build::SHORT_COMMIT), about = "Obelisk: deterministic backend")]
+#[command(version = const_format::formatcp!("{} {}", shaddow::build::PKG_VERSION, shaddow::build::SHORT_COMMIT), about = "Obelisk: deterministic backend")]
 pub(crate) struct Args {
     #[command(subcommand)]
     pub(crate) command: Subcommand,
