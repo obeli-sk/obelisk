@@ -1499,6 +1499,7 @@ checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 dependencies = [
  "ahash",
  "allocator-api2",
+ "serde",
 ]
 
 [[package]]
@@ -1770,6 +1771,7 @@ dependencies = [
  "console",
  "lazy_static",
  "linked-hash-map",
+ "serde",
  "similar",
 ]
 
@@ -3478,12 +3480,16 @@ dependencies = [
  "cfg-if",
  "chrono",
  "concepts",
+ "derivative",
+ "hashbrown 0.14.5",
  "hyper 1.3.1",
  "indexmap 2.2.6",
  "insta",
  "madsim",
  "madsim-tokio",
+ "rstest",
  "test-programs-fibo-workflow-builder",
+ "test-programs-http-get-workflow-builder",
  "test-utils",
  "thiserror",
  "tracing",
@@ -3491,6 +3497,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+ "wit-parser",
 ]
 
 [[package]]
@@ -3659,7 +3666,6 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wiremock",
- "wit-parser",
 ]
 
 [[package]]

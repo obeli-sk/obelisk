@@ -1,0 +1,21 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: exports
+---
+{
+  "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
+    "n"
+  ],
+  "testing:fibo-workflow/workflow.fiboa": [
+    "n",
+    "iterations"
+  ],
+  "testing:fibo-workflow/workflow.fiboa-concurrent": [
+    "n",
+    "iterations"
+  ],
+  "testing:fibo-workflow/workflow.fibow": [
+    "n",
+    "iterations"
+  ]
+}

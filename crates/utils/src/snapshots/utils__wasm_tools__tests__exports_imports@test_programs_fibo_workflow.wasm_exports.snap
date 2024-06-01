@@ -1,0 +1,54 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: exports
+---
+{
+  "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
+    [
+      [
+        "n",
+        "U8"
+      ]
+    ],
+    "U64"
+  ],
+  "testing:fibo-workflow/workflow.fiboa": [
+    [
+      [
+        "n",
+        "U8"
+      ],
+      [
+        "iterations",
+        "U32"
+      ]
+    ],
+    "U64"
+  ],
+  "testing:fibo-workflow/workflow.fiboa-concurrent": [
+    [
+      [
+        "n",
+        "U8"
+      ],
+      [
+        "iterations",
+        "U32"
+      ]
+    ],
+    "U64"
+  ],
+  "testing:fibo-workflow/workflow.fibow": [
+    [
+      [
+        "n",
+        "U8"
+      ],
+      [
+        "iterations",
+        "U32"
+      ]
+    ],
+    "U64"
+  ]
+}

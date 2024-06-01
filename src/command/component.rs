@@ -2,12 +2,11 @@ use crate::{FunctionMetadataVerbosity, WasmActivityConfig, WasmWorkflowConfig};
 use anyhow::Context;
 use concepts::storage::DbPool;
 use concepts::storage::{Component, ComponentWithMetadata, DbConnection};
-use concepts::{prefixed_ulid::ConfigId, StrVariant};
+use concepts::{prefixed_ulid::ConfigId};
 use concepts::{ComponentId, ComponentType, FunctionMetadata};
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::ExecConfig;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityConfig;
@@ -45,11 +44,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
         config_id,
     };
     let engine = ComponentDetector::get_engine();
-    let detected = ComponentDetector::new(
-        &StrVariant::Arc(Arc::from(wasm_path.to_string_lossy())),
-        &engine,
-    )
-    .context("parsing error")?;
+    let detected = ComponentDetector::new(&wasm_path, &engine).context("parsing error")?;
     let config = match detected.component_type {
         ComponentType::WasmActivity => serde_json::to_value(WasmActivityConfig {
             wasm_path: wasm_path.to_string_lossy().to_string(),
@@ -103,11 +98,7 @@ pub(crate) fn inspect<P: AsRef<Path>>(
 ) -> anyhow::Result<()> {
     let wasm_path = wasm_path.as_ref();
     let engine = ComponentDetector::get_engine();
-    let detected = ComponentDetector::new(
-        &StrVariant::Arc(Arc::from(wasm_path.to_string_lossy().into_owned())),
-        &engine,
-    )
-    .context("parsing error")?;
+    let detected = ComponentDetector::new(wasm_path, &engine).context("parsing error")?;
     println!("Component type:");
     println!("\t{}", detected.component_type);
 
@@ -121,10 +112,9 @@ pub(crate) fn inspect<P: AsRef<Path>>(
 
 fn hash<P: AsRef<Path>>(path: P) -> anyhow::Result<ComponentId> {
     use sha2::{Digest, Sha256};
-    use std::{fs, io};
-    let mut file = fs::File::open(&path)?;
+    let mut file = std::fs::File::open(&path)?;
     let mut hasher = Sha256::new();
-    io::copy(&mut file, &mut hasher)?;
+    std::io::copy(&mut file, &mut hasher)?;
     let hash = hasher.finalize();
     let hash_base64 = base16ct::lower::encode_string(&hash);
     Ok(ComponentId::new(concepts::HashType::Sha256, hash_base64))

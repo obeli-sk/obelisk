@@ -1,0 +1,40 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: imports
+---
+{
+  "my-org:workflow-engine/host-activities.new-join-set": [
+    [],
+    "my-org:workflow-engine/host-activities",
+    "new-join-set"
+  ],
+  "testing:fibo-obelisk-ext/fibo.fibo-await-next": [
+    [
+      "join-set-id"
+    ],
+    "testing:fibo-obelisk-ext/fibo",
+    "fibo-await-next"
+  ],
+  "testing:fibo-obelisk-ext/fibo.fibo-future": [
+    [
+      "join-set-id",
+      "n"
+    ],
+    "testing:fibo-obelisk-ext/fibo",
+    "fibo-future"
+  ],
+  "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
+    [
+      "n"
+    ],
+    "testing:fibo-workflow/workflow-nesting",
+    "fibo-nested-workflow"
+  ],
+  "testing:fibo/fibo.fibo": [
+    [
+      "n"
+    ],
+    "testing:fibo/fibo",
+    "fibo"
+  ]
+}

@@ -1,0 +1,84 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: exports
+---
+{
+  "testing:http-workflow/workflow.get": [
+    [
+      [
+        "authority",
+        "String"
+      ],
+      [
+        "path",
+        "String"
+      ]
+    ],
+    {
+      "Result": {
+        "ok": "String",
+        "err": "String"
+      }
+    }
+  ],
+  "testing:http-workflow/workflow.get-successful": [
+    [
+      [
+        "authority",
+        "String"
+      ],
+      [
+        "path",
+        "String"
+      ]
+    ],
+    {
+      "Result": {
+        "ok": "String",
+        "err": "String"
+      }
+    }
+  ],
+  "testing:http-workflow/workflow.get-successful-concurrently": [
+    [
+      [
+        "authorities",
+        {
+          "List": "String"
+        }
+      ]
+    ],
+    {
+      "Result": {
+        "ok": {
+          "List": "String"
+        },
+        "err": "String"
+      }
+    }
+  ],
+  "testing:http-workflow/workflow.get-successful-concurrently-stress": [
+    [
+      [
+        "authority",
+        "String"
+      ],
+      [
+        "path",
+        "String"
+      ],
+      [
+        "concurrency",
+        "U32"
+      ]
+    ],
+    {
+      "Result": {
+        "ok": {
+          "List": "String"
+        },
+        "err": "String"
+      }
+    }
+  ]
+}

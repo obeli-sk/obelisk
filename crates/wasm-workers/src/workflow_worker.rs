@@ -1,5 +1,5 @@
 use crate::workflow_ctx::{FunctionError, WorkflowCtx};
-use crate::{EngineConfig, WasmComponent, WasmFileError};
+use crate::{EngineConfig, WasmFileError};
 use async_trait::async_trait;
 use concepts::prefixed_ulid::ConfigId;
 use concepts::storage::{DbConnection, DbPool, Version};
@@ -9,11 +9,12 @@ use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::error::Error;
 use std::ops::Deref;
+use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
-use utils::wasm_tools::ExIm;
+use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -69,17 +70,19 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
     #[tracing::instrument(skip_all, fields(config_id = %config.config_id))]
     pub fn new_with_config(
-        wasm_path: StrVariant,
+        wasm_path: impl AsRef<Path>,
         config: WorkflowConfig,
         engine: Arc<Engine>,
         db_pool: P,
         clock_fn: C,
     ) -> Result<Self, WasmFileError> {
         const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
+        let wasm_path = wasm_path.as_ref();
         let mut linker = wasmtime::component::Linker::new(&engine);
 
         // Mock imported functions
-        let wasm_component = WasmComponent::new(&wasm_path, &engine)?;
+        let wasm_component = WasmComponent::new(wasm_path, &engine)
+            .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
         for import in &wasm_component.exim.imports {
             if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
                 // Skip host-implemented functions
@@ -118,7 +121,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                             debug!("Skipping mocking of {ffqn}");
                         } else {
                             return Err(WasmFileError::LinkingError {
-                                file: wasm_path.clone(),
+                                file: wasm_path.to_owned(),
                                 reason: StrVariant::Arc(Arc::from(format!(
                                     "cannot add mock for imported function {ffqn}"
                                 ))),
@@ -132,7 +135,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
             }
         }
         WorkflowCtx::add_to_linker(&mut linker).map_err(|err| WasmFileError::LinkingError {
-            file: wasm_path.clone(),
+            file: wasm_path.to_owned(),
             reason: StrVariant::Arc(Arc::from("cannot add host activities".to_string())),
             err: err.into(),
         })?;
@@ -355,7 +358,7 @@ mod tests {
         let workflow_engine = get_workflow_engine(EngineConfig::default());
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
-                StrVariant::Static(wasm_path),
+                wasm_path,
                 WorkflowConfig {
                     config_id: ConfigId::generate(),
                     join_next_blocking_strategy,
@@ -512,9 +515,7 @@ mod tests {
         let workflow_engine = get_workflow_engine(EngineConfig::default());
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
-                StrVariant::Static(
-                    test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
-                ),
+                test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 WorkflowConfig {
                     config_id: ConfigId::generate(),
                     join_next_blocking_strategy,

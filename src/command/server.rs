@@ -2,7 +2,6 @@ use anyhow::Context;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::ComponentType;
-use concepts::StrVariant;
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::ExecTask;
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
@@ -65,7 +64,7 @@ pub(crate) async fn run<P: AsRef<Path>>(db_file: P, clean: bool) -> anyhow::Resu
                 .context("could not deserialize `WasmActivityConfig`, try cleaning the database")?;
                 let worker = Arc::new(
                     ActivityWorker::new_with_config(
-                        StrVariant::Arc(Arc::from(wasm_activity_config.wasm_path)),
+                        wasm_activity_config.wasm_path,
                         wasm_activity_config.activity_config,
                         engines.activity_engine.clone(),
                         now,
@@ -87,7 +86,7 @@ pub(crate) async fn run<P: AsRef<Path>>(db_file: P, clean: bool) -> anyhow::Resu
                 .context("could not deserialize `WasmWorkflowConfig`, try cleaning the database")?;
                 let worker = Arc::new(
                     WorkflowWorker::new_with_config(
-                        StrVariant::Arc(Arc::from(wasm_workflow_config.wasm_path)),
+                        wasm_workflow_config.wasm_path,
                         wasm_workflow_config.workflow_config,
                         engines.workflow_engine.clone(),
                         db_pool.clone(),

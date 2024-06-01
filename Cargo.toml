@@ -131,12 +131,12 @@ derivative = "2.2.0"
 derive_more = "0.99.17"
 futures-util = "0.3.30"
 getrandom = "=0.2.11" # For madsim patch
-hashbrown = "0.14.3"
+hashbrown = { version = "0.14.3", features = ["serde"] }
 http-body-util = "0.1"
 hyper = "1.1.0"
 hyper-util = "0.1"
 indexmap = "2.1"
-insta = "1.38.0"
+insta = { version = "1.38.0", features = ["json"] }
 itertools = "0.12.1"
 lazy_static = "1.4"
 madsim = "0.2.28"

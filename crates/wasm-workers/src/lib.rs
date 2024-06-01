@@ -1,8 +1,7 @@
-use concepts::{FunctionMetadata, StrVariant};
-use std::{error::Error, ops::Deref, sync::Arc};
-use tracing::{info, instrument, trace};
-use utils::wasm_tools::{self, ExIm};
-use wasmtime::{component::Component, Engine};
+use concepts::{StrVariant};
+use std::{error::Error, path::PathBuf, sync::Arc};
+use utils::wasm_tools::{self};
+use wasmtime::{Engine};
 
 pub mod activity_worker;
 pub mod component_detector;
@@ -27,12 +26,12 @@ impl Default for EngineConfig {
 #[derive(thiserror::Error, Debug)]
 pub enum WasmFileError {
     #[error("cannot read wasm component from `{0}` - {1}")]
-    CannotReadComponent(StrVariant, wasmtime::Error),
+    CannotReadComponent(PathBuf, wasmtime::Error),
     #[error("cannot decode `{0}` - {1}")]
-    DecodeError(StrVariant, wasm_tools::DecodeError),
+    DecodeError(PathBuf, wasm_tools::DecodeError),
     #[error("cannot link `{file}` - {reason}, details: {err}")]
     LinkingError {
-        file: StrVariant,
+        file: PathBuf,
         reason: StrVariant,
         err: Box<dyn Error + Send + Sync>,
     },
@@ -50,36 +49,5 @@ impl Engines {
             activity_engine: activity_worker::get_activity_engine(engine_config.clone()),
             workflow_engine: workflow_worker::get_workflow_engine(engine_config),
         }
-    }
-}
-
-#[derive(derivative::Derivative)]
-#[derivative(Debug)]
-struct WasmComponent {
-    #[derivative(Debug = "ignore")]
-    component: Component,
-    exim: ExIm,
-}
-
-impl WasmComponent {
-    #[instrument(skip_all, fields(%wasm_path))]
-    fn new(wasm_path: &StrVariant, engine: &Engine) -> Result<Self, WasmFileError> {
-        info!("Reading");
-        let component =
-            Component::from_file(engine, wasm_path.deref()).map_err(|err: wasmtime::Error| {
-                WasmFileError::CannotReadComponent(wasm_path.clone(), err)
-            })?;
-        let exim = wasm_tools::decode(&component, engine)
-            .map_err(|err| WasmFileError::DecodeError(wasm_path.clone(), err))?;
-        trace!(?exim, "Exports and imports");
-        Ok(Self { component, exim })
-    }
-
-    fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> + '_ {
-        self.exim.exported_functions()
-    }
-
-    fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> + '_ {
-        self.exim.imported_functions()
     }
 }

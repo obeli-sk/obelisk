@@ -4,9 +4,10 @@
 //! * If there are no imports except for standard WASI -> Activity
 //! * Otherwise -> Workflow
 
-use crate::{WasmComponent, WasmFileError};
-use concepts::{ComponentType, FunctionMetadata, IfcFqnName, StrVariant};
-use std::ops::Deref;
+use crate::WasmFileError;
+use concepts::{ComponentType, FunctionMetadata, IfcFqnName};
+use std::{ops::Deref, path::Path};
+use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
 
 pub struct ComponentDetector {
@@ -23,8 +24,10 @@ impl ComponentDetector {
         Engine::new(&wasmtime_config).unwrap()
     }
 
-    pub fn new(wasm_path: &StrVariant, engine: &Engine) -> Result<Self, WasmFileError> {
-        let wasm_component = WasmComponent::new(wasm_path, engine)?;
+    pub fn new<P: AsRef<Path>>(wasm_path: P, engine: &Engine) -> Result<Self, WasmFileError> {
+        let wasm_path = wasm_path.as_ref();
+        let wasm_component = WasmComponent::new(wasm_path, engine)
+            .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
         let component_type =
             if supported_wasi_imports(wasm_component.exim.imports.iter().map(|pif| &pif.ifc_fqn)) {
                 ComponentType::WasmActivity
@@ -49,7 +52,7 @@ mod tests {
     use crate::component_detector::ComponentDetector;
     use crate::{workflow_worker::get_workflow_engine, EngineConfig};
     use concepts::ComponentType;
-    use concepts::StrVariant;
+    
     use test_utils::set_up;
 
     #[rstest::rstest]
@@ -64,11 +67,8 @@ mod tests {
     #[tokio::test]
     async fn detection(#[case] file: &'static str, #[case] expected: ComponentType) {
         set_up();
-        let detected = ComponentDetector::new(
-            &StrVariant::Static(file),
-            &get_workflow_engine(EngineConfig::default()),
-        )
-        .unwrap();
+        let detected =
+            ComponentDetector::new(file, &get_workflow_engine(EngineConfig::default())).unwrap();
         assert_eq!(expected, detected.component_type);
     }
 }

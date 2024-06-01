@@ -30,7 +30,6 @@ ulid.workspace = true
 wasmtime-wasi-http.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
-wit-parser.workspace = true
 
 [dev-dependencies]
 db-mem.workspace = true

@@ -1,0 +1,77 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: imports
+---
+{
+  "my-org:workflow-engine/host-activities.new-join-set": [
+    [],
+    "String"
+  ],
+  "testing:http-obelisk-ext/http-get.get-successful-await-next": [
+    [
+      [
+        "join-set-id",
+        "String"
+      ]
+    ],
+    {
+      "Result": {
+        "ok": "String",
+        "err": "String"
+      }
+    }
+  ],
+  "testing:http-obelisk-ext/http-get.get-successful-future": [
+    [
+      [
+        "join-set-id",
+        "String"
+      ],
+      [
+        "authority",
+        "String"
+      ],
+      [
+        "path",
+        "String"
+      ]
+    ],
+    "String"
+  ],
+  "testing:http/http-get.get": [
+    [
+      [
+        "authority",
+        "String"
+      ],
+      [
+        "path",
+        "String"
+      ]
+    ],
+    {
+      "Result": {
+        "ok": "String",
+        "err": "String"
+      }
+    }
+  ],
+  "testing:http/http-get.get-successful": [
+    [
+      [
+        "authority",
+        "String"
+      ],
+      [
+        "path",
+        "String"
+      ]
+    ],
+    {
+      "Result": {
+        "ok": "String",
+        "err": "String"
+      }
+    }
+  ]
+}

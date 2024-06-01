@@ -1,15 +1,16 @@
-use crate::{EngineConfig, WasmComponent, WasmFileError};
+use crate::{EngineConfig, WasmFileError};
 use async_trait::async_trait;
 use concepts::prefixed_ulid::ConfigId;
 use concepts::SupportedFunctionResult;
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
+use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
-use utils::wasm_tools::ExIm;
+use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -75,7 +76,7 @@ pub struct ActivityWorker<C: ClockFn> {
 impl<C: ClockFn> ActivityWorker<C> {
     #[tracing::instrument(skip_all, fields(config_id = %config.config_id))]
     pub fn new_with_config(
-        wasm_path: StrVariant,
+        wasm_path: impl AsRef<Path>,
         config: ActivityConfig,
         engine: Arc<Engine>,
         clock_fn: C,
@@ -89,9 +90,11 @@ impl<C: ClockFn> ActivityWorker<C> {
             val
         }
         let closure = type_annotate::<_, _>(|t| t);
-        let wasm_component = WasmComponent::new(&wasm_path, &engine)?;
+        let wasm_path = wasm_path.as_ref();
+        let wasm_component = WasmComponent::new(wasm_path, &engine)
+            .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
         let map_err = |err: wasmtime::Error| WasmFileError::LinkingError {
-            file: wasm_path.clone(),
+            file: wasm_path.to_owned(),
             reason: StrVariant::Static("linking error"),
             err: err.into(),
         };
@@ -294,7 +297,7 @@ pub(crate) mod tests {
         let engine = get_activity_engine(EngineConfig::default());
         let worker = Arc::new(
             ActivityWorker::new_with_config(
-                StrVariant::Static(wasm_path),
+                wasm_path,
                 ActivityConfig {
                     config_id: ConfigId::generate(),
                     recycled_instances: RecycleInstancesSetting::Disable,
@@ -384,7 +387,7 @@ pub(crate) mod tests {
             allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
         });
         let fibo_worker = ActivityWorker::new_with_config(
-            StrVariant::Static(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY),
+            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             ActivityConfig {
                 config_id: ConfigId::generate(),
                 recycled_instances,
@@ -472,9 +475,7 @@ pub(crate) mod tests {
                 env_or_default("RECYCLE", recycle).into();
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
-                    StrVariant::Static(
-                        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                    ),
+                    test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                     ActivityConfig {
                         config_id: ConfigId::generate(),
                         recycled_instances,
@@ -553,9 +554,7 @@ pub(crate) mod tests {
 
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
-                    StrVariant::Static(
-                        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                    ),
+                    test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                     ActivityConfig {
                         config_id: ConfigId::generate(),
                         recycled_instances: RecycleInstancesSetting::Disable,
@@ -601,9 +600,7 @@ pub(crate) mod tests {
             let engine = get_activity_engine(EngineConfig::default());
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
-                    StrVariant::Static(
-                        test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                    ),
+                    test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                     ActivityConfig {
                         config_id: ConfigId::generate(),
                         recycled_instances: RecycleInstancesSetting::Disable,

@@ -5,8 +5,8 @@ use std::{
 
 use cargo_metadata::camino::Utf8Path;
 use indexmap::IndexMap;
-use utils::wasm_tools;
-use wasmtime::{component::Component, Engine};
+use utils::wasm_tools::{WasmComponent};
+use wasmtime::{Engine};
 
 fn to_snake_case(input: &str) -> String {
     input.replace(['-', '.'], "_")
@@ -65,11 +65,11 @@ fn build_internal(tripple: &str) {
             }
         }
 
-        let component = Component::from_file(&engine, wasm_path).unwrap();
-        let exim = wasm_tools::decode(&component, &engine).expect("cannot decode wasm component");
+        let component =
+            WasmComponent::new(wasm_path, &engine).expect("cannot decode wasm component");
         generated_code += "pub mod exports {\n";
         let mut outer_map: IndexMap<String, Value> = IndexMap::new();
-        for export in exim.exports {
+        for export in component.exim.exports {
             let ifc_fqn_split = export
                 .ifc_fqn
                 .split_terminator([':', '/', '@'])
