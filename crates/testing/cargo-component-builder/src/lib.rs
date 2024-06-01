@@ -5,8 +5,8 @@ use std::{
 
 use cargo_metadata::camino::Utf8Path;
 use indexmap::IndexMap;
-use utils::wasm_tools::{WasmComponent};
-use wasmtime::{Engine};
+use utils::wasm_tools::WasmComponent;
+use wasmtime::Engine;
 
 fn to_snake_case(input: &str) -> String {
     input.replace(['-', '.'], "_")

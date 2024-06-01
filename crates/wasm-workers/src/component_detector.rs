@@ -52,7 +52,7 @@ mod tests {
     use crate::component_detector::ComponentDetector;
     use crate::{workflow_worker::get_workflow_engine, EngineConfig};
     use concepts::ComponentType;
-    
+
     use test_utils::set_up;
 
     #[rstest::rstest]

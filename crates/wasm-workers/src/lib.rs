@@ -1,7 +1,7 @@
-use concepts::{StrVariant};
+use concepts::StrVariant;
 use std::{error::Error, path::PathBuf, sync::Arc};
 use utils::wasm_tools::{self};
-use wasmtime::{Engine};
+use wasmtime::Engine;
 
 pub mod activity_worker;
 pub mod component_detector;
