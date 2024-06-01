@@ -633,6 +633,8 @@ pub trait DbConnection: Send + Sync {
         component_id: ComponentId,
     ) -> Result<ComponentWithMetadata, DbError>;
 
+    async fn get_exported_function(&self, ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError>;
+
     /*
 
 

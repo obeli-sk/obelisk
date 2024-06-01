@@ -10,7 +10,7 @@ use concepts::{
         ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
         LockResponse, Version,
     },
-    ComponentId, ExecutionId, FunctionFqn,
+    ComponentId, ExecutionId, FunctionFqn, FunctionMetadata,
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -202,5 +202,9 @@ impl DbConnection for DbConnectionProxy {
         component_id: ComponentId,
     ) -> Result<ComponentWithMetadata, DbError> {
         self.0.get_component_metadata(component_id).await
+    }
+
+    async fn get_exported_function(&self, ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError> {
+        self.0.get_exported_function(ffqn).await
     }
 }

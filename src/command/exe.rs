@@ -1,3 +1,4 @@
+use anyhow::bail;
 use anyhow::Context;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
@@ -11,15 +12,31 @@ use val_json::wast_val::WastVal;
 use val_json::wast_val::WastValWithType;
 
 pub(crate) async fn schedule<P: AsRef<Path>>(
-    ffqn: FunctionFqn,
+    mut ffqn: FunctionFqn,
     params: Params,
     db_file: P,
+    force: bool,
 ) -> anyhow::Result<()> {
     let db_file = db_file.as_ref();
     let db_pool = SqlitePool::new(db_file)
         .await
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
     let db_connection = db_pool.connection();
+
+    if !force {
+        // Check that ffqn exists
+        let (ffqn2, param_types, _return_type) = db_connection.get_exported_function(ffqn).await?;
+        ffqn = ffqn2;
+        // Check parameter cardinality
+        if params.len() != param_types.len() {
+            bail!(
+                "incorrect number of parameters. Expected {expected}, got {got}",
+                expected = param_types.len(),
+                got = params.len()
+            );
+        }
+        // TODO: Typecheck parameters
+    }
 
     let execution_id = ExecutionId::generate();
     let created_at = now();

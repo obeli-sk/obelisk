@@ -134,11 +134,24 @@ CREATE TABLE IF NOT EXISTS t_component_export (
 #[derive(Debug, thiserror::Error)]
 pub enum SqliteError {
     #[error(transparent)]
-    Sqlite(#[from] async_sqlite::Error),
+    Sqlite(async_sqlite::Error),
     #[error("parsing error - `{0}`")]
     Parsing(StrVariant),
     #[error(transparent)]
     DbError(#[from] DbError),
+}
+
+impl From<async_sqlite::Error> for SqliteError {
+    fn from(value: async_sqlite::Error) -> Self {
+        if matches!(
+            value,
+            async_sqlite::Error::Rusqlite(rusqlite::Error::QueryReturnedNoRows)
+        ) {
+            SqliteError::DbError(DbError::Specific(SpecificError::NotFound))
+        } else {
+            SqliteError::Sqlite(value)
+        }
+    }
 }
 
 impl From<SqliteError> for DbError {
@@ -1934,6 +1947,30 @@ impl DbConnection for SqlitePool {
                     imports: without_exports.imports,
                     exports
                 })
+            },
+            Span::current(),
+        )
+        .await
+        .map_err(DbError::from)
+    }
+
+    async fn get_exported_function(&self, ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError> {
+        trace!("get_exported_function");
+        self.pool.conn_with_err_and_span::<_, _, SqliteError>(
+            move |conn| {
+                conn.prepare("SELECT parameter_types, return_type from t_component_export WHERE ffqn = :ffqn")?
+                    .query_row(named_params! {
+                        ":ffqn": ffqn.to_string()
+                    }, |row| {
+                        let parameter_types = row.get::<_, JsonWrapper<ParameterTypes>>("parameter_types")?.0;
+                        let return_type = row.get::<_, JsonWrapper<ReturnType>>("return_type")?.0;
+                        Ok((
+                            ffqn,
+                            parameter_types,
+                            return_type,
+                        ))
+                    })
+                    .map_err(SqliteError::from)
             },
             Span::current(),
         )

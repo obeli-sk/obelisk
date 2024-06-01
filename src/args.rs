@@ -69,12 +69,15 @@ pub(crate) enum Component {
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Exe {
     Schedule {
-        #[arg(short, long)]
+        /// Force execution creation without name or parameter validation
+        #[arg(long)]
+        force: bool,
         /// Function in the fully qualified format
+        #[arg(value_name = "FUNCTION")]
         ffqn: FunctionFqn,
-        #[arg(short, long)]
         /// Parameters encoded as an JSON array
-        params: Option<String>,
+        #[arg(value_name = "PARAMETERS")]
+        params: Vec<String>,
         // TODO: interactive
         // TODO: when: String,
         // TODO: poll?
