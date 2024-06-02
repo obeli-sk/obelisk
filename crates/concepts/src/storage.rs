@@ -89,7 +89,7 @@ impl ExecutionLog {
     #[must_use]
     pub fn finished_result(&self) -> Option<&FinishedExecutionResult> {
         if let ExecutionEvent {
-            event: ExecutionEventInner::Finished { result, .. },
+            event: ExecutionEventInner::Finished { result },
             ..
         } = self.last_event()
         {

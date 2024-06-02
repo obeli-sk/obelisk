@@ -2,6 +2,8 @@ use anyhow::bail;
 use anyhow::Context;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
+use concepts::storage::ExecutionEventInner;
+use concepts::storage::PendingState;
 use concepts::SupportedFunctionResult;
 use concepts::{storage::CreateRequest, ExecutionId, FunctionFqn, Params};
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -55,12 +57,24 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
         .unwrap();
 
     println!("{execution_id}\nWaiting for result...");
-    let res = db_connection
-        .wait_for_finished_result(execution_id, None)
-        .await
+
+    let execution_log = db_connection
+        .wait_for_pending_state(execution_id, PendingState::Finished, None)
+        .await?;
+    let res = execution_log
+        .finished_result()
+        .expect("pending state was checked");
+
+    let first_locked_at = execution_log
+        .events
+        .iter()
+        .find(|event| matches!(event.event, ExecutionEventInner::Locked { .. }))
+        .expect("must have been locked")
+        .created_at;
+    let duration = (execution_log.last_event().created_at - first_locked_at)
+        .to_std()
         .unwrap();
 
-    let duration = (now() - created_at).to_std().unwrap();
     match res {
         Ok(
             res @ (SupportedFunctionResult::None
@@ -70,13 +84,13 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
                 ..
             })),
         ) => {
-            println!("Finished OK in {duration:?}");
+            println!("Finished OK, took {duration:?}");
             let value = match res {
                 SupportedFunctionResult::Infallible(WastValWithType { value, .. }) => Some(value),
                 SupportedFunctionResult::Fallible(WastValWithType {
                     value: WastVal::Result(Ok(Some(value))),
                     ..
-                }) => Some(*value),
+                }) => Some(value.as_ref()),
                 _ => None,
             };
             if let Some(value) = value {
