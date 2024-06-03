@@ -4,7 +4,7 @@ mod init;
 
 use args::{Args, Executor, Subcommand};
 use clap::Parser;
-use command::exe::ExecutionVerbosity;
+use command::execution::ExecutionVerbosity;
 use concepts::Params;
 use executor::executor::ExecConfig;
 use std::path::PathBuf;
@@ -63,7 +63,7 @@ async fn main() {
             .await
             .unwrap();
         }
-        Subcommand::Exe(args::Exe::Schedule {
+        Subcommand::Execution(args::Execution::Schedule {
             ffqn,
             params,
             force,
@@ -75,15 +75,15 @@ async fn main() {
                 .expect("parameters should be passed as an json array");
             let params = Params::from_json_array(params).expect("cannot parse parameters");
             // TODO: typecheck the params
-            command::exe::schedule(ffqn, params, db_file, force)
+            command::execution::schedule(ffqn, params, db_file, force)
                 .await
                 .unwrap();
         }
-        Subcommand::Exe(args::Exe::Get {
+        Subcommand::Execution(args::Execution::Get {
             execution_id,
             verbosity,
         }) => {
-            command::exe::get(
+            command::execution::get(
                 db_file,
                 execution_id,
                 match verbosity {

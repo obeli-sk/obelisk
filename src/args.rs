@@ -21,7 +21,7 @@ pub(crate) enum Subcommand {
     #[command(subcommand)]
     Component(Component),
     #[command(subcommand)]
-    Exe(Exe),
+    Execution(Execution),
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -73,7 +73,7 @@ pub(crate) enum Component {
 }
 
 #[derive(Debug, clap::Subcommand)]
-pub(crate) enum Exe {
+pub(crate) enum Execution {
     Schedule {
         /// Force execution creation without name or parameter validation
         #[arg(long)]
