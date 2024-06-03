@@ -1,5 +1,5 @@
 use clap::Parser;
-use concepts::FunctionFqn;
+use concepts::{ComponentId, ExecutionId, FunctionFqn};
 use std::path::PathBuf;
 
 mod shaddow {
@@ -34,12 +34,14 @@ pub(crate) enum Server {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Component {
+    /// Parse WASM file and output its metadata.
     Inspect {
         #[arg(required(true))]
-        wasm_path: String, // TODO: PathBuf
+        wasm_path: PathBuf,
         #[arg(short, long)]
         verbose: bool,
     },
+    /// Load WASM file into the blob store and populate database.
     Add {
         #[arg(short, long)]
         /// Replace component(s) with overlapping exports
@@ -48,21 +50,21 @@ pub(crate) enum Component {
         wasm_path: PathBuf,
         // TODO: interactive configuration based on component type
     },
+    /// List active components.
     List {
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
     },
+    /// Get metadata of a stored component.
     Get {
-        #[arg(short, long)]
-        /// Function in the fully qualified format
-        ffqn: String,
-        #[arg(short, long)]
+        #[arg()]
         // Component id consisting of a prefix and a hash
-        id: String,
+        id: ComponentId,
     },
+    /// Delete the WASM from the blob store.
     Archive {
-        #[arg(short, long)]
-        component_id: String, // TODO: ComponentId,
+        #[arg(short, long)] // , value_parser = clap::value_parser!(ComponentId)
+        component_id: ComponentId,
     },
 }
 
@@ -82,8 +84,7 @@ pub(crate) enum Exe {
         // TODO: when: String,
         // TODO: poll?
     },
-    List,
     Status {
-        execution_id: String,
+        execution_id: ExecutionId,
     },
 }

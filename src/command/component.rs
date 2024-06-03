@@ -70,7 +70,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
     };
     let component = ComponentWithMetadata {
         component: Component {
-            component_id,
+            component_id: component_id.clone(),
             component_type: detected.component_type,
             config,
             file_name,
@@ -89,6 +89,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
             println!("\t{replaced}");
         }
     }
+    println!("{component_id} added");
     Ok(())
 }
 
@@ -116,8 +117,8 @@ fn hash<P: AsRef<Path>>(path: P) -> anyhow::Result<ComponentId> {
     let mut hasher = Sha256::new();
     std::io::copy(&mut file, &mut hasher)?;
     let hash = hasher.finalize();
-    let hash_base64 = base16ct::lower::encode_string(&hash);
-    Ok(ComponentId::new(concepts::HashType::Sha256, hash_base64))
+    let hash_base16 = base16ct::lower::encode_string(&hash);
+    Ok(ComponentId::new(concepts::HashType::Sha256, hash_base16))
 }
 
 fn inspect_fns(functions: &[FunctionMetadata], verbosity: FunctionMetadataVerbosity) {
@@ -148,7 +149,7 @@ pub(crate) async fn list<P: AsRef<Path>>(
         .context("database error")?;
     for component in components {
         println!(
-            "{component_type}\t{hash}-{file_name}",
+            "{component_type}\t{file_name}\tid: {hash}",
             component_type = component.component_type,
             hash = component.component_id,
             file_name = component.file_name,
@@ -157,10 +158,10 @@ pub(crate) async fn list<P: AsRef<Path>>(
             .get_component_metadata(component.component_id)
             .await
             .context("database error")?;
-        println!("Exports");
+        println!("Exports:");
         inspect_fns(&component.exports, FunctionMetadataVerbosity::WithTypes);
         if let Some(verbosity) = verbosity {
-            println!("Imports");
+            println!("Imports:");
             inspect_fns(&component.imports, verbosity);
         }
         println!();
