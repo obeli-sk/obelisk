@@ -13,7 +13,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, instrument, trace};
+use tracing::{debug, error, instrument, trace};
 use utils::time::ClockFn;
 use wasmtime::component::{Linker, Val};
 
@@ -29,6 +29,8 @@ pub(crate) enum FunctionError {
     DbError(#[from] DbError),
     #[error("child finished with an execution error: {0}")]
     ChildExecutionError(FinishedExecutionError), // FIXME Add parameter/result parsing errors
+    #[error("uncategorized error - {0}")]
+    UncategorizedError(&'static str),
 }
 
 impl FunctionError {
@@ -43,6 +45,10 @@ impl FunctionError {
             Self::DbError(db_error) => WorkerResult::Err(WorkerError::DbError(db_error)),
             Self::ChildExecutionError(err) => WorkerResult::Err(WorkerError::FatalError(
                 FatalError::ChildExecutionError(err),
+                version,
+            )),
+            Self::UncategorizedError(err) => WorkerResult::Err(WorkerError::FatalError(
+                FatalError::UncategorizedError(err),
                 version,
             )),
         }
@@ -114,12 +120,17 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         results: &mut [Val],
     ) -> Result<(), FunctionError> {
         trace!(?params, "call_imported_fn start");
-        let event_call = self.imported_fn_to_event_call(ffqn, params).expect("FIXME");
+        let event_call = self.imported_fn_to_event_call(ffqn, params)?;
         let res = self
             .event_history
             .replay_or_interrupt(event_call, &self.db_pool.connection(), &mut self.version)
             .await?;
-        assert_eq!(results.len(), res.len(), "unexpected results length"); // FIXME: FunctionError
+        if results.len() != res.len() {
+            error!("Unexpected results length");
+            return Err(FunctionError::UncategorizedError(
+                "Unexpected results length",
+            ));
+        }
         for (idx, item) in res.value().into_iter().enumerate() {
             results[idx] = item.as_val();
         }
@@ -159,7 +170,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         &mut self,
         ffqn: FunctionFqn,
         params: &[Val],
-    ) -> Result<EventCall, StrVariant> {
+    ) -> Result<EventCall, FunctionError> {
         if let Some(package_name) = ffqn.ifc_fqn.package_name().strip_suffix(SUFFIX_PKG_EXT) {
             let ifc_fqn = IfcFqnName::from_parts(
                 ffqn.ifc_fqn.namespace(),
@@ -168,11 +179,13 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 ffqn.ifc_fqn.version(),
             );
             if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_START_ASYNC) {
+                debug!("Got -future extension for function `{function_name}`");
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 if params.is_empty() {
-                    return Err(StrVariant::Static(
-                        "got empty params for {ffqn}, expected JoinSetId",
+                    error!("Got empty params, expected JoinSetId");
+                    return Err(FunctionError::UncategorizedError(
+                        "error running `-future` extension function: exepcted at least one parameter with JoinSetId, got empty parameter list",
                     ));
                     // TODO Replace with `split_at_checked` once stable
                 }
@@ -180,11 +193,15 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 
                 let join_set_id = join_set_id.first().expect("split so that the size is 1");
                 let Val::String(join_set_id) = join_set_id else {
-                    return Err(StrVariant::Arc(Arc::from(format!(
-                        "wrong type for JoinSetId for {ffqn}, expected string, got `{join_set_id:?}`"
-                    ))));
+                    error!("Wrong type for JoinSetId, expected string, got `{join_set_id:?}`");
+                    return Err(FunctionError::UncategorizedError(
+                        "error running `-future` extension function: wrong first parameter type, string parameter containing JoinSetId`"
+                    ));
                 };
-                let join_set_id = join_set_id.parse()?;
+                let join_set_id = join_set_id.parse().map_err(|parse_err| {
+                    error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
+                    FunctionError::UncategorizedError("cannot parse JoinSetId")
+                })?;
                 let execution_id =
                     ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
                 Ok(EventCall::StartAsync {
@@ -196,25 +213,30 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             } else if let Some(function_name) =
                 ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
             {
-                let ffqn =
-                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
+                debug!("Got await-next extension for function `{function_name}`"); // FIXME: handle multiple functions in the same join set
                 if params.len() != 1 {
-                    return Err(StrVariant::Static(
-                        "expected single parameter with JoinSetId for {ffqn}, got {params:?}",
+                    error!("Expected single parameter with JoinSetId got {params:?}");
+                    return Err(FunctionError::UncategorizedError(
+                        "error running `-await-next` extension function: wrong parameter length, expected single string parameter containing JoinSetId`"
                     ));
                 }
                 let join_set_id = params.first().expect("checked that the size is 1");
                 let Val::String(join_set_id) = join_set_id else {
-                    return Err(StrVariant::Arc(Arc::from(format!(
-                        "wrong type for JoinSetId for {ffqn}, expected string, got `{join_set_id:?}`"
-                    ))));
+                    error!("Wrong type for JoinSetId, expected string, got `{join_set_id:?}`");
+                    return Err(FunctionError::UncategorizedError(
+                        "error running `-await-next` extension function: wrong parameter type, expected single string parameter containing JoinSetId`"
+                    ));
                 };
-                let join_set_id = join_set_id.parse()?;
+                let join_set_id = join_set_id.parse().map_err(|parse_err| {
+                    error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
+                    FunctionError::UncategorizedError("cannot parse JoinSetId")
+                })?;
                 Ok(EventCall::BlockingChildJoinNext { join_set_id })
             } else {
-                Err(StrVariant::Arc(Arc::from(format!(
-                    "unrecognized extension function {ffqn}"
-                ))))
+                error!("unrecognized extension function {ffqn}");
+                return Err(FunctionError::UncategorizedError(
+                    "unrecognized extension function",
+                ));
             }
         } else {
             let join_set_id =

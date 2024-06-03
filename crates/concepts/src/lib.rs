@@ -620,33 +620,42 @@ pub mod prefixed_ulid {
     }
 
     mod impls {
-        use crate::StrVariant;
+
+        #[derive(Debug, thiserror::Error)]
+        pub enum ParseError {
+            #[error("wrong prefix in `{input}`, expected prefix `{expected}`")]
+            WrongPrefix { input: String, expected: String },
+            #[error("cannot parse ulid from `{input}`")]
+            CannotParseUlid { input: String },
+        }
 
         use super::{PrefixedUlid, Ulid};
         use std::{fmt::Debug, fmt::Display, hash::Hash, marker::PhantomData, str::FromStr};
 
         impl<T> FromStr for PrefixedUlid<T> {
-            type Err = StrVariant;
+            type Err = ParseError;
 
             fn from_str(input: &str) -> Result<Self, Self::Err> {
                 let prefix = Self::prefix();
                 let mut input_chars = input.chars();
                 for exp in prefix.chars() {
                     if input_chars.next() != Some(exp) {
-                        return Err(StrVariant::Arc(
-                            format!("wrong prefix - `{input}`, expected `{prefix}_`").into(),
-                        ));
+                        return Err(ParseError::WrongPrefix {
+                            input: input.to_string(),
+                            expected: format!("{prefix}_"),
+                        });
                     }
                 }
                 if input_chars.next() != Some('_') {
-                    return Err(StrVariant::Arc(
-                        format!("wrong prefix - `{input}`, expected `{prefix}_`").into(),
-                    ));
+                    return Err(ParseError::WrongPrefix {
+                        input: input.to_string(),
+                        expected: format!("{prefix}_"),
+                    });
                 }
                 let Ok(ulid) = Ulid::from_string(input_chars.as_str()) else {
-                    return Err(StrVariant::Arc(
-                        format!("Cannot parse ulid - `{input}`").into(),
-                    ));
+                    return Err(ParseError::CannotParseUlid {
+                        input: input.to_string(),
+                    });
                 };
                 Ok(Self {
                     ulid,
@@ -731,37 +740,56 @@ pub enum HashType {
 }
 
 #[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Hash)]
-#[display(fmt = "{hash_type}:{hash_base64}")]
+#[display(fmt = "{hash_type}:{hash_base16}")]
 pub struct ComponentId {
     hash_type: HashType,
-    hash_base64: String,
+    hash_base16: String,
 }
 
 impl ComponentId {
     #[must_use]
-    pub fn new(hash_type: HashType, hash_base64: String) -> Self {
+    pub fn new(hash_type: HashType, hash_base16: String) -> Self {
         Self {
             hash_type,
-            hash_base64,
+            hash_base16,
         }
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+
+pub enum ComponentIdParseErrror {
+    #[error("cannot parse ComponentId - delimiter ':' not found")]
+    DelimiterNotFound,
+    #[error("cannot parse ComponentId - invalid prefix `{hash_type}`")]
+    TypeParseError { hash_type: String },
+    #[error("cannot parse ComponentId - invalid suffix length")]
+    SuffixLength,
+    #[error("cannot parse ComponentId - {0}")]
+    Other(String),
+}
+
 impl FromStr for ComponentId {
-    type Err = StrVariant;
+    type Err = ComponentIdParseErrror;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let (hash_type, hash_base64) = input
+        let (hash_type, hash_base16) = input
             .split_once(':')
-            .ok_or(StrVariant::Static("delimiter ':' not found"))?;
-        let hash_type = HashType::from_str(hash_type).map_err(|err| {
-            StrVariant::Arc(Arc::from(format!(
-                "cannot parse HashType from `{hash_type}` - {err}"
-            )))
+            .ok_or(ComponentIdParseErrror::DelimiterNotFound)?;
+        let hash_type = HashType::from_str(hash_type).map_err(|_err| {
+            ComponentIdParseErrror::TypeParseError {
+                hash_type: hash_type.to_string(),
+            }
         })?;
+        if hash_base16.len() != 64 {
+            return Err(ComponentIdParseErrror::SuffixLength);
+        }
+        if let Err(err) = base16ct::lower::decode_vec(hash_base16) {
+            return Err(ComponentIdParseErrror::Other(err.to_string()));
+        }
         Ok(Self {
             hash_type,
-            hash_base64: hash_base64.to_string(),
+            hash_base16: hash_base16.to_string(),
         })
     }
 }

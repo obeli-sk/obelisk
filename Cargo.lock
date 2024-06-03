@@ -556,6 +556,7 @@ dependencies = [
  "arbitrary",
  "assert_matches",
  "async-trait",
+ "base16ct",
  "chrono",
  "derive_more",
  "getrandom",

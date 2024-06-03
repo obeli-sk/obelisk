@@ -429,6 +429,15 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
+                    WorkerError::FatalError(FatalError::UncategorizedError(err), version) => {
+                        info!("Uncategorized error - {err}");
+                        let result =
+                            Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
+                                Arc::from(format!("uncategorized error: `{err}`, detail: {err:?}")),
+                            )));
+                        let parent = parent.map(|(p, j)| (p, j, result.clone()));
+                        (ExecutionEventInner::Finished { result }, parent, version)
+                    }
                 };
                 Some(Append {
                     created_at: result_obtained_at,

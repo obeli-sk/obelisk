@@ -22,6 +22,7 @@ use rusqlite::{
 use std::{
     cmp::max,
     collections::VecDeque,
+    error::Error,
     fmt::Debug,
     path::Path,
     str::FromStr,
@@ -136,7 +137,7 @@ pub enum SqliteError {
     #[error(transparent)]
     Sqlite(async_sqlite::Error),
     #[error("parsing error - `{0}`")]
-    Parsing(StrVariant),
+    Parsing(Box<dyn Error + Send + Sync>),
     #[error(transparent)]
     DbError(#[from] DbError),
 }
@@ -310,8 +311,8 @@ impl CombinedState {
             }),
             _ => {
                 error!("Cannot deserialize pending state from  {dto:?}");
-                Err(SqliteError::Parsing(StrVariant::Static(
-                    "invalid `t_state`",
+                Err(SqliteError::DbError(DbError::Specific(
+                    SpecificError::ConsistencyError(StrVariant::Static("invalid `t_state`")),
                 )))
             }
         }?;
@@ -394,7 +395,7 @@ impl SqlitePool {
                 .map(|event| (created_at, event))
                 .map_err(|serde| {
                     error!("cannot deserialize `Created` event: {row:?} - `{serde:?}`");
-                    SqliteError::Parsing(StrVariant::Static("cannot deserialize"))
+                    SqliteError::Parsing(serde.into())
                 });
                 Ok(event)
             },
@@ -420,8 +421,10 @@ impl SqlitePool {
             })
         } else {
             error!("Cannt match `Created` event - {event:?}");
-            Err(SqliteError::Parsing(StrVariant::Static(
-                "Cannot deserialize `Created` event",
+            Err(SqliteError::DbError(DbError::Specific(
+                SpecificError::ConsistencyError(StrVariant::Static(
+                    "Cannot deserialize `Created` event",
+                )),
             )))
         }
     }
@@ -784,7 +787,7 @@ impl SqlitePool {
                     )
                     .map_err(|serde| {
                         error!("Cannot deserialize {row:?} - {serde:?}");
-                        SqliteError::Parsing(StrVariant::Arc(Arc::from(serde.to_string())))
+                        SqliteError::Parsing(serde.into())
                     });
                     Ok(event)
                 },
@@ -1198,7 +1201,7 @@ impl SqlitePool {
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(SqliteError::Parsing)?;
+                .map_err(|err| SqliteError::Parsing(err.into()))?;
             execution_ids_versions.extend(execs_and_versions);
             if execution_ids_versions.len() == batch_size {
                 // Prioritieze lowering of db requests, although ffqns later in the list might get starved.
@@ -1601,9 +1604,7 @@ impl DbConnection for SqlitePool {
                                 .map(|event| ExecutionEvent { created_at, event })
                                 .map_err(|serde| {
                                     error!("Cannot deserialize {row:?} - {serde:?}");
-                                    SqliteError::Parsing(StrVariant::Arc(Arc::from(
-                                        serde.to_string(),
-                                    )))
+                                    SqliteError::Parsing(serde.into())
                                 });
                                 Ok(event)
                             },
@@ -1805,7 +1806,7 @@ impl DbConnection for SqlitePool {
         trace!("append_component");
         let imports = serde_json::to_string(&component.imports).map_err(|serde| {
             error!("Cannot serialize {:?} - {serde:?}", component.imports);
-            SqliteError::Parsing(StrVariant::Arc(Arc::from(serde.to_string())))
+            SqliteError::Parsing(serde.into())
         })?;
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(

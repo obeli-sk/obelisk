@@ -65,9 +65,11 @@ pub enum FatalError {
     #[error("non-determinism detected: `{0}`")]
     NonDeterminismDetected(StrVariant),
     #[error("parameters cannot be parsed: {0}")]
-    ParamsParsingError(ParamsParsingError), // FIXME: Add FFQN
+    ParamsParsingError(ParamsParsingError),
     #[error("result cannot be parsed: {0}")]
-    ResultParsingError(ResultParsingError), // FIXME: Add FFQN
+    ResultParsingError(ResultParsingError),
     #[error("child finished with an execution error: {0}")]
     ChildExecutionError(FinishedExecutionError),
+    #[error("uncategorized error: {0}")]
+    UncategorizedError(&'static str),
 }

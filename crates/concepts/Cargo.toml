@@ -11,6 +11,7 @@ val-json.workspace = true
 arbitrary.workspace = true
 assert_matches.workspace = true
 async-trait.workspace = true
+base16ct.workspace = true
 chrono.workspace = true
 derive_more.workspace = true
 getrandom.workspace = true      # Only needed for the madsim patch
