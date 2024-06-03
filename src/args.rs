@@ -8,10 +8,14 @@ mod shaddow {
 }
 
 #[derive(Parser, Debug)]
-#[command(version = const_format::formatcp!("{} {}", shaddow::build::PKG_VERSION, shaddow::build::SHORT_COMMIT), about = "Obelisk: deterministic backend")]
+#[command(version = const_format::formatcp!("{} {}", shaddow::build::PKG_VERSION, shaddow::build::SHORT_COMMIT), about = "Obelisk: deterministic backend", disable_version_flag = true)]
 pub(crate) struct Args {
     #[command(subcommand)]
     pub(crate) command: Subcommand,
+
+    /// Print version
+    #[arg(short, long, action = clap::ArgAction::Version)]
+    version: Option<bool>,
 }
 
 #[derive(Debug, clap::Subcommand)]
