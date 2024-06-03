@@ -52,14 +52,16 @@ pub(crate) enum Component {
     },
     /// List active components.
     List {
+        /// Enable full verbosity with `-vv`
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
     },
     /// Get metadata of a stored component.
     Get {
         #[arg()]
-        // Component id consisting of a prefix and a hash
+        /// Component id consisting of a prefix and a hash
         id: ComponentId,
+        /// Enable full verbosity with `-vv`
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
     },
@@ -86,7 +88,10 @@ pub(crate) enum Exe {
         // TODO: when: String,
         // TODO: poll?
     },
-    Status {
+    Get {
         execution_id: ExecutionId,
+        /// Enable full verbosity with `-vv`
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbosity: u8,
     },
 }

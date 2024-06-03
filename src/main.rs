@@ -4,6 +4,7 @@ mod init;
 
 use args::{Args, Server, Subcommand};
 use clap::Parser;
+use command::exe::ExecutionVerbosity;
 use concepts::Params;
 use executor::executor::ExecConfig;
 use std::path::PathBuf;
@@ -77,6 +78,22 @@ async fn main() {
             command::exe::schedule(ffqn, params, db_file, force)
                 .await
                 .unwrap();
+        }
+        Subcommand::Exe(args::Exe::Get {
+            execution_id,
+            verbosity,
+        }) => {
+            command::exe::get(
+                db_file,
+                execution_id,
+                match verbosity {
+                    0 => None,
+                    1 => Some(ExecutionVerbosity::EventHistory),
+                    _ => Some(ExecutionVerbosity::Full),
+                },
+            )
+            .await
+            .unwrap();
         }
         other => {
             eprintln!("TODO {other:?}");

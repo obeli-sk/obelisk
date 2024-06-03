@@ -2,7 +2,9 @@ use anyhow::bail;
 use anyhow::Context;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
+use concepts::storage::ExecutionEvent;
 use concepts::storage::ExecutionEventInner;
+use concepts::storage::ExecutionLog;
 use concepts::storage::PendingState;
 use concepts::SupportedFunctionResult;
 use concepts::{storage::CreateRequest, ExecutionId, FunctionFqn, Params};
@@ -57,50 +59,93 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
         .unwrap();
 
     println!("{execution_id}\nWaiting for result...");
-
     let execution_log = db_connection
         .wait_for_pending_state(execution_id, PendingState::Finished, None)
         .await?;
-    let res = execution_log
-        .finished_result()
-        .expect("pending state was checked");
+    print_result_if_finished(&execution_log);
+    Ok(())
+}
 
-    let first_locked_at = execution_log
-        .events
-        .iter()
-        .find(|event| matches!(event.event, ExecutionEventInner::Locked { .. }))
-        .expect("must have been locked")
-        .created_at;
-    let duration = (execution_log.last_event().created_at - first_locked_at)
-        .to_std()
-        .unwrap();
+fn print_result_if_finished(execution_log: &ExecutionLog) -> Option<()> {
+    let finished = execution_log.finished_result();
+    if let Some(res) = finished {
+        let first_locked_at = execution_log
+            .events
+            .iter()
+            .find(|event| matches!(event.event, ExecutionEventInner::Locked { .. }))
+            .expect("must have been locked")
+            .created_at;
+        let duration = (execution_log.last_event().created_at - first_locked_at)
+            .to_std()
+            .unwrap();
 
-    match res {
-        Ok(
-            res @ (SupportedFunctionResult::None
-            | SupportedFunctionResult::Infallible(_)
-            | SupportedFunctionResult::Fallible(WastValWithType {
-                value: WastVal::Result(Ok(_)),
-                ..
-            })),
-        ) => {
-            println!("Finished OK, took {duration:?}");
-            let value = match res {
-                SupportedFunctionResult::Infallible(WastValWithType { value, .. }) => Some(value),
-                SupportedFunctionResult::Fallible(WastValWithType {
-                    value: WastVal::Result(Ok(Some(value))),
+        match res {
+            Ok(
+                res @ (SupportedFunctionResult::None
+                | SupportedFunctionResult::Infallible(_)
+                | SupportedFunctionResult::Fallible(WastValWithType {
+                    value: WastVal::Result(Ok(_)),
                     ..
-                }) => Some(value.as_ref()),
-                _ => None,
-            };
-            if let Some(value) = value {
-                println!("{value:?}");
+                })),
+            ) => {
+                println!("Finished OK");
+                let value = match res {
+                    SupportedFunctionResult::Infallible(WastValWithType { value, .. }) => {
+                        Some(value)
+                    }
+                    SupportedFunctionResult::Fallible(WastValWithType {
+                        value: WastVal::Result(Ok(Some(value))),
+                        ..
+                    }) => Some(value.as_ref()),
+                    _ => None,
+                };
+                if let Some(value) = value {
+                    println!("{value:?}");
+                }
+            }
+            _ => {
+                println!("Finished with an error\n{res:?}");
             }
         }
-        _ => {
-            println!("Finished with an error in {duration:?} - {res:?}");
+        println!("Execution took {duration:?}");
+    }
+    finished.map(|_| ())
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum ExecutionVerbosity {
+    EventHistory,
+    Full,
+}
+
+pub(crate) async fn get<P: AsRef<Path>>(
+    db_file: P,
+    execution_id: ExecutionId,
+    verbosity: Option<ExecutionVerbosity>,
+) -> anyhow::Result<()> {
+    let db_file = db_file.as_ref();
+    let db_pool = SqlitePool::new(db_file)
+        .await
+        .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
+    let db_connection = db_pool.connection();
+    let execution_log = db_connection.get(execution_id).await?;
+    println!("Function: {}", execution_log.ffqn());
+    if print_result_if_finished(&execution_log).is_none() {
+        println!("Current state: {}", execution_log.pending_state);
+    }
+    if let Some(verbosity) = verbosity {
+        println!();
+        println!("Event history:");
+        for event in execution_log.event_history() {
+            println!("{event}");
+        }
+        if verbosity == ExecutionVerbosity::Full {
+            println!();
+            println!("Execution log:");
+            for ExecutionEvent { created_at, event } in execution_log.events {
+                println!("{created_at}\t{event}");
+            }
         }
     }
-
     Ok(())
 }
