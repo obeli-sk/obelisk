@@ -66,10 +66,10 @@ cargo run --release
 ## Usage
 
 ```sh
-obeli-sk server run &
-obeli-sk worker load github:obeli-sk/examples@latest
-obeli-sk function list
-obeli-sk function run ...
+obelisk executor serve &
+obelisk component add github:obeli-sk/examples@latest
+obelisk component list
+obelisk execution run ...
 ```
 
 # Planned features

@@ -37,6 +37,10 @@ tracing.workspace = true
 utils.workspace = true
 wasmtime.workspace = true
 
+[[bin]]
+name = "obelisk"
+path = "src/main.rs"
+
 
 [features]
 parallel-compilation = ["wasmtime/parallel-compilation"]
