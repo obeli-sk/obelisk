@@ -2,7 +2,7 @@ mod args;
 mod command;
 mod init;
 
-use args::{Args, Server, Subcommand};
+use args::{Args, Executor, Subcommand};
 use clap::Parser;
 use command::exe::ExecutionVerbosity;
 use concepts::Params;
@@ -19,7 +19,7 @@ async fn main() {
         // TODO: XDG specs or ~/.obelisk/obelisk.sqlite
         PathBuf::from("obelisk.sqlite");
     match Args::parse().command {
-        Subcommand::Server(Server::Run { clean }) => {
+        Subcommand::Executor(Executor::Serve { clean }) => {
             command::server::run(db_file, clean).await.unwrap();
         }
         Subcommand::Component(args::Component::Inspect { wasm_path, verbose }) => {

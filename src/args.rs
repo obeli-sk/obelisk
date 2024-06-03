@@ -17,7 +17,7 @@ pub(crate) struct Args {
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Subcommand {
     #[command(subcommand)]
-    Server(Server),
+    Executor(Executor),
     #[command(subcommand)]
     Component(Component),
     #[command(subcommand)]
@@ -25,8 +25,8 @@ pub(crate) enum Subcommand {
 }
 
 #[derive(Debug, clap::Subcommand)]
-pub(crate) enum Server {
-    Run {
+pub(crate) enum Executor {
+    Serve {
         #[arg(short, long)]
         clean: bool,
     },
