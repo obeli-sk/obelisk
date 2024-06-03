@@ -342,7 +342,7 @@ pub enum HistoryEvent {
         join_set_id: JoinSetId,
         // TODO: add JoinSetKind (unordered, ordered)
     },
-    #[display(fmt = "JoinSetRequest({join_set_id})")]
+    #[display(fmt = "JoinSetRequest({join_set_id}, {request})")]
     JoinSetRequest {
         join_set_id: JoinSetId,
         request: JoinSetRequest,
@@ -367,7 +367,7 @@ pub enum HistoryEvent {
 #[serde(tag = "type")]
 pub enum JoinSetRequest {
     // Must be created by the executor in `PendingState::Locked`.
-    #[display(fmt = "DelayRequest({delay_id})")]
+    #[display(fmt = "DelayRequest({delay_id}, expires_at: `{expires_at}`)")]
     DelayRequest {
         delay_id: DelayId,
         expires_at: DateTime<Utc>,
