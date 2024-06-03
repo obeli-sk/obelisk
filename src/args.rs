@@ -8,7 +8,8 @@ mod shaddow {
 }
 
 #[derive(Parser, Debug)]
-#[command(version = const_format::formatcp!("{} {}", shaddow::build::PKG_VERSION, shaddow::build::SHORT_COMMIT), about = "Obelisk: deterministic backend", disable_version_flag = true)]
+#[command(version = const_format::formatcp!("{} {}", shaddow::build::PKG_VERSION, shaddow::build::SHORT_COMMIT),
+about = "Obelisk: deterministic backend", disable_version_flag = true, disable_help_subcommand = true)]
 pub(crate) struct Args {
     #[command(subcommand)]
     pub(crate) command: Subcommand,
@@ -47,8 +48,8 @@ pub(crate) enum Component {
     },
     /// Load WASM file into the blob store and populate database.
     Add {
-        #[arg(short, long)]
         /// Replace component(s) with overlapping exports
+        #[arg(short, long)]
         replace: bool,
         #[arg(required(true))]
         wasm_path: PathBuf,
@@ -62,8 +63,8 @@ pub(crate) enum Component {
     },
     /// Get metadata of a stored component.
     Get {
-        #[arg()]
         /// Component id consisting of a prefix and a hash
+        #[arg()]
         id: ComponentId,
         /// Enable full verbosity with `-vv`
         #[arg(short, long, action = clap::ArgAction::Count)]
@@ -71,7 +72,8 @@ pub(crate) enum Component {
     },
     /// Delete the WASM from the blob store.
     Archive {
-        #[arg(short, long)] // , value_parser = clap::value_parser!(ComponentId)
+        /// Component id consisting of a prefix and a hash
+        #[arg()]
         component_id: ComponentId,
     },
 }
