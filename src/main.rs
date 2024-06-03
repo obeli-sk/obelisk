@@ -49,6 +49,19 @@ async fn main() {
             .await
             .unwrap();
         }
+        Subcommand::Component(args::Component::Get { id, verbosity }) => {
+            command::component::get(
+                db_file,
+                id,
+                match verbosity {
+                    0 => None,
+                    1 => Some(FunctionMetadataVerbosity::FfqnOnly),
+                    _ => Some(FunctionMetadataVerbosity::WithTypes),
+                },
+            )
+            .await
+            .unwrap();
+        }
         Subcommand::Exe(args::Exe::Schedule {
             ffqn,
             params,

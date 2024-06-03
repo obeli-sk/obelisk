@@ -168,3 +168,33 @@ pub(crate) async fn list<P: AsRef<Path>>(
     }
     Ok(())
 }
+
+pub(crate) async fn get<P: AsRef<Path>>(
+    db_file: P,
+    component_id: ComponentId,
+    verbosity: Option<FunctionMetadataVerbosity>,
+) -> anyhow::Result<()> {
+    let db_file = db_file.as_ref();
+    let db_pool = SqlitePool::new(db_file)
+        .await
+        .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
+    let db_connection = db_pool.connection();
+    let component = db_connection
+        .get_component_metadata(component_id)
+        .await
+        .context("database error")?;
+
+    println!(
+        "{component_type}\t{file_name}\tid: {hash}",
+        component_type = component.component.component_type,
+        hash = component.component.component_id,
+        file_name = component.component.file_name,
+    );
+    println!("Exports:");
+    inspect_fns(&component.exports, FunctionMetadataVerbosity::WithTypes);
+    if let Some(verbosity) = verbosity {
+        println!("Imports:");
+        inspect_fns(&component.imports, verbosity);
+    }
+    Ok(())
+}

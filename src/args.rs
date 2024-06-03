@@ -60,6 +60,8 @@ pub(crate) enum Component {
         #[arg()]
         // Component id consisting of a prefix and a hash
         id: ComponentId,
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbosity: u8,
     },
     /// Delete the WASM from the blob store.
     Archive {

@@ -625,7 +625,7 @@ pub mod prefixed_ulid {
         pub enum ParseError {
             #[error("wrong prefix in `{input}`, expected prefix `{expected}`")]
             WrongPrefix { input: String, expected: String },
-            #[error("cannot parse ulid from `{input}`")]
+            #[error("cannot parse ULID suffix from `{input}`")]
             CannotParseUlid { input: String },
         }
 
