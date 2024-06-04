@@ -321,6 +321,7 @@ pub(crate) mod tests {
     #[derive(Clone, Derivative)]
     #[derivative(Debug)]
     struct WorkflowWorkerMock<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+        ffqn: FunctionFqn,
         steps: Vec<WorkflowStep>,
         clock_fn: C,
         #[derivative(Debug = "ignore")]
@@ -371,7 +372,7 @@ pub(crate) mod tests {
         }
 
         fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            Some((FFQN_MOCK, ParameterTypes::empty(), None)).into_iter()
+            Some((self.ffqn.clone(), ParameterTypes::empty(), None)).into_iter()
         }
 
         fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
@@ -394,7 +395,7 @@ pub(crate) mod tests {
         let _guard = test_utils::set_up();
         let mut builder_a = madsim::runtime::Builder::from_env();
         builder_a.check = false;
-
+        info!("MADSIM_TEST_SEED={}", builder_a.seed);
         let mut builder_b = madsim::runtime::Builder::from_env(); // Builder: Clone would be useful
         builder_b.check = false;
         builder_b.seed = builder_a.seed;
@@ -438,6 +439,7 @@ pub(crate) mod tests {
         );
         let workflow_exec_task = {
             let worker = Arc::new(WorkflowWorkerMock {
+                ffqn: FFQN_MOCK,
                 steps,
                 clock_fn: sim_clock.get_clock_fn(),
                 db_pool: db_pool.clone(),
@@ -517,6 +519,7 @@ pub(crate) mod tests {
                     // execute
                     let child_exec_task = {
                         let worker = Arc::new(WorkflowWorkerMock {
+                            ffqn: child_request.ffqn().clone(),
                             steps: vec![],
                             clock_fn: sim_clock.get_clock_fn(),
                             db_pool: db_pool.clone(),
