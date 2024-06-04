@@ -198,3 +198,29 @@ pub(crate) async fn get<P: AsRef<Path>>(
     }
     Ok(())
 }
+
+pub(crate) async fn deactivate<P: AsRef<Path>>(
+    db_file: P,
+    component_id: ComponentId,
+) -> anyhow::Result<()> {
+    let db_file = db_file.as_ref();
+    let db_pool = SqlitePool::new(db_file)
+        .await
+        .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
+    let db_connection = db_pool.connection();
+    db_connection.component_deactivate(component_id).await?;
+    Ok(())
+}
+
+pub(crate) async fn activate<P: AsRef<Path>>(
+    db_file: P,
+    component_id: ComponentId,
+) -> anyhow::Result<()> {
+    let db_file = db_file.as_ref();
+    let db_pool = SqlitePool::new(db_file)
+        .await
+        .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
+    let db_connection = db_pool.connection();
+    db_connection.component_activate(component_id).await?;
+    Ok(())
+}

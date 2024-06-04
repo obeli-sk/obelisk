@@ -114,6 +114,7 @@ const CREATE_TABLE_T_COMPONENT: &str = r"
 CREATE TABLE IF NOT EXISTS t_component (
     created_at TEXT NOT NULL,
     component_id TEXT NOT NULL,
+    active INTEGER NOT NULL,
     component_type TEXT NOT NULL,
     config JSONB NOT NULL,
     file_name TEXT NOT NULL,
@@ -1246,6 +1247,68 @@ impl SqlitePool {
         .optional()
         .map_err(|err| SqliteError::Sqlite(err.into()))
     }
+
+    fn component_get_with_metadata(
+        conn: &Connection,
+        component_id: ComponentId,
+    ) -> Result<ComponentWithMetadata, SqliteError> {
+        conn.prepare(
+                "SELECT component_type, config, file_name, exports, imports FROM t_component WHERE component_id = :component_id",
+            )?
+            .query_row(named_params! {
+                ":component_id": component_id.to_string()
+            }, |row| {
+                let component_type = row
+                    .get::<_, StringWrapper<ComponentType>>("component_type")?
+                    .0;
+                let config = row.get::<_, serde_json::Value>("config")?;
+                let exports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("exports")?.0;
+                let imports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("imports")?.0;
+                let file_name = row.get("file_name")?;
+                let component = Component {
+                    component_id,
+                    component_type,
+                    config,
+                    file_name,
+                };
+                Ok(ComponentWithMetadata { component, imports, exports })
+            })
+            .map_err(SqliteError::from)
+    }
+
+    fn component_set_exports(
+        tx: &Transaction,
+        component: &ComponentWithMetadata,
+    ) -> Result<(), SqliteError> {
+        for (ffqn, parameter_types, return_type) in &component.exports {
+            let parameter_types = serde_json::to_string(&parameter_types).map_err(|err| {
+                error!("Cannot serialize {:?} - {err:?}", parameter_types);
+                rusqlite::Error::ToSqlConversionFailure(err.into())
+            })?;
+            let return_type = return_type
+                .as_ref()
+                .map(|return_type| {
+                    serde_json::to_string(return_type).map_err(|err| {
+                        error!("Cannot serialize {return_type:?} - {err:?}");
+                        rusqlite::Error::ToSqlConversionFailure(err.into())
+                    })
+                })
+                .transpose()?;
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO t_component_export \
+            (component_id, ffqn, parameter_types, return_type)
+            VALUES \
+            (:component_id, :ffqn, :parameter_types, :return_type)",
+            )?;
+            stmt.execute(named_params! {
+                ":component_id": component.component.component_id.to_string(),
+                ":ffqn": ffqn.to_string(),
+                ":parameter_types": parameter_types,
+                ":return_type": return_type
+            })?;
+        }
+        Ok(())
+    }
 }
 
 enum IndexAction {
@@ -1835,38 +1898,21 @@ impl DbConnection for SqlitePool {
                     }
                     let mut stmt = tx.prepare(
                         "INSERT INTO t_component \
-                            (created_at, component_id, component_type, config, file_name, exports, imports) \
+                            (created_at, component_id, active, component_type, config, file_name, exports, imports) \
                             VALUES \
-                            (:created_at, :component_id, :component_type, :config, :file_name, :exports, :imports)",
+                            (:created_at, :component_id, :active, :component_type, :config, :file_name, :exports, :imports)",
                     )?;
                     stmt.execute(named_params! {
                         ":created_at": created_at,
                         ":component_id": component.component.component_id.to_string(),
+                        ":active": true,
                         ":component_type": component.component.component_type.to_string(),
                         ":config": component.component.config,
                         ":file_name": component.component.file_name,
                         ":exports": exports,
                         ":imports": imports
                         })?;
-                    for (ffqn, parameter_types, return_type) in component.exports {
-                        let parameter_types = serde_json::to_string(&parameter_types)
-                            .map_err(|err| {
-                                error!("Cannot serialize {:?} - {err:?}", parameter_types);
-                                rusqlite::Error::ToSqlConversionFailure(err.into())})?;
-                        let return_type = return_type.map(|return_type|serde_json::to_string(&return_type).map_err(|err| {
-                            error!("Cannot serialize {return_type:?} - {err:?}");
-                            rusqlite::Error::ToSqlConversionFailure(err.into())})).transpose()?;
-                        let mut stmt = tx.prepare_cached("INSERT INTO t_component_export \
-                            (component_id, ffqn, parameter_types, return_type)
-                            VALUES \
-                            (:component_id, :ffqn, :parameter_types, :return_type)")?;
-                        stmt.execute(named_params! {
-                            ":component_id": component.component.component_id.to_string(),
-                            ":ffqn": ffqn.to_string(),
-                            ":parameter_types": parameter_types,
-                            ":return_type": return_type
-                        })?;
-                    }
+                    Self::component_set_exports(tx, &component)?;
                     Ok(conflicts.into_iter().collect_vec())
                 },
                 Span::current(),
@@ -1881,7 +1927,7 @@ impl DbConnection for SqlitePool {
             .conn_with_err_and_span::<_, _, SqliteError>(
                 move |conn| {
                     conn.prepare(
-                        "SELECT component_id, component_type, config, file_name FROM t_component",
+                        "SELECT component_id, component_type, config, file_name FROM t_component WHERE active = true",
                     )?
                     .query_map(named_params! {}, |row| {
                         let component_id =
@@ -1912,37 +1958,16 @@ impl DbConnection for SqlitePool {
         component_id: ComponentId,
     ) -> Result<ComponentWithMetadata, DbError> {
         trace!("get_component_metadata");
-        self.pool.conn_with_err_and_span::<_, _, SqliteError>(
-            move |conn| {
-                conn.prepare(
-                        "SELECT component_type, config, file_name, exports, imports FROM t_component WHERE component_id = :component_id",
-                    )?
-                    .query_row(named_params! {
-                        ":component_id": component_id.to_string()
-                    }, |row| {
-                        let component_type = row
-                            .get::<_, StringWrapper<ComponentType>>("component_type")?
-                            .0;
-                        let config = row.get::<_, serde_json::Value>("config")?;
-                        let exports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("exports")?.0;
-                        let imports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("imports")?.0;
-                        let file_name = row.get("file_name")?;
-                        let component = Component {
-                            component_id: component_id.clone(),
-                            component_type,
-                            config,
-                            file_name,
-                        };
-                        Ok(ComponentWithMetadata { component, imports, exports })
-                    })
-                    .map_err(SqliteError::from)
-            },
-            Span::current(),
-        )
-        .await
-        .map_err(DbError::from)
+        self.pool
+            .conn_with_err_and_span::<_, _, SqliteError>(
+                move |conn| Self::component_get_with_metadata(conn, component_id),
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
     }
 
+    #[instrument(skip(self))]
     async fn get_exported_function(&self, ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError> {
         trace!("get_exported_function");
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
@@ -1965,6 +1990,48 @@ impl DbConnection for SqlitePool {
         )
         .await
         .map_err(DbError::from)
+    }
+
+    #[instrument(skip(self))]
+    async fn component_deactivate(&self, id: ComponentId) -> Result<(), DbError> {
+        trace!("component_deactivate");
+        self.pool
+            .transaction_write_with_span::<_, _, SqliteError>(
+                move |tx| {
+                    tx.prepare(
+                        "UPDATE t_component SET active = false WHERE component_id = :component_id and active = true",
+                    )?
+                    .execute(named_params! {":component_id": id.to_string(),})?;
+                    tx.prepare(
+                        "DELETE FROM t_component_export WHERE component_id = :component_id",
+                    )?
+                    .execute(named_params! {":component_id": id.to_string(),})?;
+                    Ok(())
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
+    }
+
+    #[instrument(skip(self))]
+    async fn component_activate(&self, component_id: ComponentId) -> Result<(), DbError> {
+        trace!("component_activate");
+        self.pool
+            .transaction_write_with_span::<_, _, SqliteError>(
+                move |tx| {
+                    tx.prepare(
+                        "UPDATE t_component SET active = true WHERE component_id = :component_id AND active = false",
+                    )?
+                    .execute(named_params! {":component_id": component_id.to_string(),})?;
+                    let component = Self::component_get_with_metadata(tx, component_id)?;
+                    Self::component_set_exports(tx, &component)?;
+                    Ok(())
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
     }
 }
 

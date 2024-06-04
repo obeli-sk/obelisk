@@ -635,6 +635,10 @@ pub trait DbConnection: Send + Sync {
 
     async fn get_exported_function(&self, ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError>;
 
+    async fn component_deactivate(&self, component_id: ComponentId) -> Result<(), DbError>;
+
+    async fn component_activate(&self, component_id: ComponentId) -> Result<(), DbError>;
+
     /*
 
 

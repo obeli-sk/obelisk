@@ -242,6 +242,14 @@ impl DbConnection for InMemoryDbConnection {
     async fn get_exported_function(&self, _ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError> {
         todo!()
     }
+
+    async fn component_deactivate(&self, _id: ComponentId) -> Result<(), DbError> {
+        todo!()
+    }
+
+    async fn component_activate(&self, _id: ComponentId) -> Result<(), DbError> {
+        todo!()
+    }
 }
 
 mod index {

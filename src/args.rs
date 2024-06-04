@@ -65,13 +65,17 @@ pub(crate) enum Component {
     Get {
         /// Component id consisting of a prefix and a hash
         #[arg()]
-        id: ComponentId,
+        component_id: ComponentId,
         /// Enable full verbosity with `-vv`
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
     },
-    /// Delete the WASM from the blob store.
-    Archive {
+    Deactivate {
+        /// Component id consisting of a prefix and a hash
+        #[arg()]
+        component_id: ComponentId,
+    },
+    Activate {
         /// Component id consisting of a prefix and a hash
         #[arg()]
         component_id: ComponentId,

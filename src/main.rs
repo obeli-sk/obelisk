@@ -50,10 +50,13 @@ async fn main() {
             .await
             .unwrap();
         }
-        Subcommand::Component(args::Component::Get { id, verbosity }) => {
+        Subcommand::Component(args::Component::Get {
+            component_id,
+            verbosity,
+        }) => {
             command::component::get(
                 db_file,
-                id,
+                component_id,
                 match verbosity {
                     0 => None,
                     1 => Some(FunctionMetadataVerbosity::FfqnOnly),
@@ -62,6 +65,16 @@ async fn main() {
             )
             .await
             .unwrap();
+        }
+        Subcommand::Component(args::Component::Deactivate { component_id }) => {
+            command::component::deactivate(db_file, component_id)
+                .await
+                .unwrap();
+        }
+        Subcommand::Component(args::Component::Activate { component_id }) => {
+            command::component::activate(db_file, component_id)
+                .await
+                .unwrap();
         }
         Subcommand::Execution(args::Execution::Schedule {
             ffqn,
@@ -94,10 +107,6 @@ async fn main() {
             )
             .await
             .unwrap();
-        }
-        other => {
-            eprintln!("TODO {other:?}");
-            std::process::exit(1);
         }
     }
 }
