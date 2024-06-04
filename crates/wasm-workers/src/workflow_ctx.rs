@@ -305,7 +305,7 @@ pub(crate) mod tests {
     };
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
-    use tracing::info;
+    use tracing::{error, info};
     use utils::time::{now, ClockFn};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
@@ -342,13 +342,13 @@ pub(crate) mod tests {
                 ctx.responses,
                 seed,
                 self.clock_fn.clone(),
-                JoinNextBlockingStrategy::default(),
+                JoinNextBlockingStrategy::Interrupt, // Cannot Await: when moving time forward both worker and timers watcher would race.
                 self.db_pool.clone(),
                 ctx.version,
                 ctx.execution_deadline,
                 Duration::ZERO,
                 0,
-                NonBlockingEventBatching::default(),
+                NonBlockingEventBatching::Disabled, // TODO: parametrize
                 Arc::new(std::sync::Mutex::new(WorkerResult::Err(
                     WorkerError::IntermittentTimeout,
                 ))),
@@ -395,7 +395,7 @@ pub(crate) mod tests {
         let _guard = test_utils::set_up();
         let mut builder_a = madsim::runtime::Builder::from_env();
         builder_a.check = false;
-        info!("MADSIM_TEST_SEED={}", builder_a.seed);
+        error!("MADSIM_TEST_SEED={}", builder_a.seed);
         let mut builder_b = madsim::runtime::Builder::from_env(); // Builder: Clone would be useful
         builder_b.check = false;
         builder_b.seed = builder_a.seed;
@@ -477,7 +477,6 @@ pub(crate) mod tests {
             .unwrap();
 
         let mut processed = Vec::new();
-        let mut spawned_child_executors = Vec::new();
         while let Some((join_set_id, req)) = wait_for_pending_state_fn(
             &db_connection,
             execution_id,
@@ -517,7 +516,7 @@ pub(crate) mod tests {
                     let child_request = db_connection.get(*child_execution_id).await.unwrap();
                     assert_eq!(Some((execution_id, join_set_id)), child_request.parent());
                     // execute
-                    let child_exec_task = {
+                    let child_exec_tick = {
                         let worker = Arc::new(WorkflowWorkerMock {
                             ffqn: child_request.ffqn().clone(),
                             steps: vec![],
@@ -531,16 +530,17 @@ pub(crate) mod tests {
                             tick_sleep: TICK_SLEEP,
                             config_id: ConfigId::generate(),
                         };
-                        ExecTask::spawn_new(
+                        let exec_task = ExecTask::new(
                             worker,
                             exec_config,
                             sim_clock.get_clock_fn(),
                             db_pool.clone(),
+                            Arc::new([child_request.ffqn().clone()]),
                             None,
-                        )
+                        );
+                        exec_task.tick2(sim_clock.now()).await.unwrap()
                     };
-                    tokio::time::sleep(Duration::ZERO).await; // Hack that makes sure the other task has a chance to start
-                    spawned_child_executors.push(child_exec_task);
+                    assert_eq!(child_exec_tick.wait_for_tasks().await.unwrap(), 1);
                     child_execution_count -= 1;
                 }
             }
@@ -550,9 +550,6 @@ pub(crate) mod tests {
         let execution_log = db_connection.get(execution_id).await.unwrap();
         assert_eq!(PendingState::Finished, execution_log.pending_state);
         drop(db_connection);
-        for child_task in spawned_child_executors {
-            child_task.close().await;
-        }
         workflow_exec_task.close().await;
         timers_watcher_task.close().await;
         db_pool.close().await.unwrap();

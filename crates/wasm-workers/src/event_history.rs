@@ -16,6 +16,7 @@ use executor::worker::WorkerResult;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::instrument;
 use tracing::{debug, error, trace};
 use utils::time::ClockFn;
 use val_json::type_wrapper::TypeWrapper;
@@ -401,6 +402,7 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
+    #[instrument(skip(self, db_connection))]
     async fn flush_non_blocking_event_cache<DB: DbConnection>(
         &mut self,
         db_connection: &DB,
@@ -442,6 +444,7 @@ impl<C: ClockFn> EventHistory<C> {
     }
 
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    #[instrument(skip_all, fields(%version))]
     async fn append_to_db<DB: DbConnection>(
         &mut self,
         event_call: EventCall,
@@ -453,6 +456,7 @@ impl<C: ClockFn> EventHistory<C> {
         child_retry_exp_backoff: Duration,
         child_max_retries: u32,
     ) -> Result<Vec<HistoryEvent>, DbError> {
+        trace!(%version, "append_to_db");
         match event_call {
             EventCall::CreateJoinSet { join_set_id } => {
                 let event = HistoryEvent::JoinSet { join_set_id };

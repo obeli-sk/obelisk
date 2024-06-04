@@ -71,7 +71,7 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
         config: TimersWatcherConfig<C>,
     ) -> TaskHandle {
         let executor_id = ExecutorId::generate();
-        let span = info_span!("lock_watcher",
+        let span = info_span!("expired_timers_watcher",
             executor = %executor_id,
         );
         let is_closing = Arc::new(AtomicBool::default());
