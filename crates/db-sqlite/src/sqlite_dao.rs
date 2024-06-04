@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS t_component (
     component_type TEXT NOT NULL,
     config JSONB NOT NULL,
     file_name TEXT NOT NULL,
+    exports JSONB NOT NULL,
     imports JSONB NOT NULL,
     PRIMARY KEY (component_id)
 )
@@ -1225,7 +1226,7 @@ impl SqlitePool {
         }
     }
 
-    fn get_component_id_by_export(
+    fn get_active_component_id_by_export(
         tx: &Transaction,
         ffqn: &FunctionFqn,
     ) -> Result<Option<ComponentId>, SqliteError> {
@@ -1804,8 +1805,12 @@ impl DbConnection for SqlitePool {
         replace: bool,
     ) -> Result<Vec<ComponentId>, DbError> {
         trace!("append_component");
+        let exports = serde_json::to_string(&component.exports).map_err(|serde| {
+            error!("Cannot serialize exports - {serde:?}");
+            SqliteError::Parsing(serde.into())
+        })?;
         let imports = serde_json::to_string(&component.imports).map_err(|serde| {
-            error!("Cannot serialize {:?} - {serde:?}", component.imports);
+            error!("Cannot serialize imports - {serde:?}");
             SqliteError::Parsing(serde.into())
         })?;
         self.pool
@@ -1814,7 +1819,7 @@ impl DbConnection for SqlitePool {
                     let mut conflicts = hashbrown::HashSet::new();
                     if replace {
                         for (export_ffqn, _, _) in &component.exports {
-                            if let Some(conflict) = Self::get_component_id_by_export(tx, export_ffqn)? {
+                            if let Some(conflict) = Self::get_active_component_id_by_export(tx, export_ffqn)? {
                                 conflicts.insert(conflict);
                             }
                         }
@@ -1830,9 +1835,9 @@ impl DbConnection for SqlitePool {
                     }
                     let mut stmt = tx.prepare(
                         "INSERT INTO t_component \
-                            (created_at, component_id, component_type, config, file_name, imports) \
+                            (created_at, component_id, component_type, config, file_name, exports, imports) \
                             VALUES \
-                            (:created_at, :component_id, :component_type, :config, :file_name, :imports)",
+                            (:created_at, :component_id, :component_type, :config, :file_name, :exports, :imports)",
                     )?;
                     stmt.execute(named_params! {
                         ":created_at": created_at,
@@ -1840,6 +1845,7 @@ impl DbConnection for SqlitePool {
                         ":component_type": component.component.component_type.to_string(),
                         ":config": component.component.config,
                         ":file_name": component.component.file_name,
+                        ":exports": exports,
                         ":imports": imports
                         })?;
                     for (ffqn, parameter_types, return_type) in component.exports {
@@ -1908,8 +1914,8 @@ impl DbConnection for SqlitePool {
         trace!("get_component_metadata");
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
             move |conn| {
-                let without_exports = conn.prepare(
-                        "SELECT component_type, config, file_name, imports FROM t_component WHERE component_id = :component_id",
+                conn.prepare(
+                        "SELECT component_type, config, file_name, exports, imports FROM t_component WHERE component_id = :component_id",
                     )?
                     .query_row(named_params! {
                         ":component_id": component_id.to_string()
@@ -1918,6 +1924,7 @@ impl DbConnection for SqlitePool {
                             .get::<_, StringWrapper<ComponentType>>("component_type")?
                             .0;
                         let config = row.get::<_, serde_json::Value>("config")?;
+                        let exports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("exports")?.0;
                         let imports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("imports")?.0;
                         let file_name = row.get("file_name")?;
                         let component = Component {
@@ -1926,28 +1933,9 @@ impl DbConnection for SqlitePool {
                             config,
                             file_name,
                         };
-                        Ok(ComponentWithMetadata { component, imports, exports: vec![] })
+                        Ok(ComponentWithMetadata { component, imports, exports })
                     })
-                    .map_err(SqliteError::from)?;
-                let exports = conn.prepare("SELECT ffqn, parameter_types, return_type from t_component_export WHERE component_id = :component_id")?
-                    .query_map(named_params! {
-                        ":component_id": component_id.to_string()
-                    }, |row| {
-                        let ffqn = row.get::<_, StringWrapper<FunctionFqn>>("ffqn")?.0;
-                        let parameter_types = row.get::<_, JsonWrapper<ParameterTypes>>("parameter_types")?.0;
-                        let return_type = row.get::<_, JsonWrapper<ReturnType>>("return_type")?.0;
-                        Ok((
-                            ffqn,
-                            parameter_types,
-                            return_type,
-                        ))
-                    })?
-                    .collect::<Result<Vec<_>, _>>().map_err(SqliteError::from)?;
-                Ok(ComponentWithMetadata {
-                    component: without_exports.component,
-                    imports: without_exports.imports,
-                    exports
-                })
+                    .map_err(SqliteError::from)
             },
             Span::current(),
         )
