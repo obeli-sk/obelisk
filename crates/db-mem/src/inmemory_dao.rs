@@ -227,7 +227,7 @@ impl DbConnection for InMemoryDbConnection {
         todo!()
     }
 
-    async fn list_components(&self, _active: bool) -> Result<Vec<Component>, DbError> {
+    async fn component_list(&self, _active: bool) -> Result<Vec<Component>, DbError> {
         todo!()
     }
 

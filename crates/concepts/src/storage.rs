@@ -630,7 +630,7 @@ pub trait DbConnection: Send + Sync {
         active: bool,
     ) -> Result<Result<(), Vec<ComponentId>>, DbError>;
 
-    async fn list_components(&self, active: bool) -> Result<Vec<Component>, DbError>;
+    async fn component_list(&self, active: bool) -> Result<Vec<Component>, DbError>;
 
     /// Get component and its activation state.
     async fn component_get_metadata(

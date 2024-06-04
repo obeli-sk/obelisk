@@ -145,7 +145,7 @@ pub(crate) async fn list<P: AsRef<Path>>(
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
     let db_connection = db_pool.connection();
     let components = db_connection
-        .list_components(active)
+        .component_list(active)
         .await
         .context("database error")?;
     for component in components {

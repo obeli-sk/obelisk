@@ -1920,7 +1920,7 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn list_components(&self, active: bool) -> Result<Vec<Component>, DbError> {
+    async fn component_list(&self, active: bool) -> Result<Vec<Component>, DbError> {
         trace!("list_components");
         self.pool
             .conn_with_err_and_span::<_, _, SqliteError>(

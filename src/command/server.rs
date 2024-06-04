@@ -46,7 +46,7 @@ pub(crate) async fn run<P: AsRef<Path>>(db_file: P, clean: bool) -> anyhow::Resu
     // Attempt to start executors for every active component
     let components = db_pool
         .connection()
-        .list_components(true)
+        .component_list(true)
         .await
         .context("cannot list active components")?;
     let mut exec_join_handles = Vec::with_capacity(components.len());
