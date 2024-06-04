@@ -1272,7 +1272,7 @@ impl SqlitePool {
                     config,
                     file_name,
                 };
-                Ok((ComponentWithMetadata { component, imports, exports }, active))
+                Ok((ComponentWithMetadata { component, exports, imports }, active))
             })
             .map_err(SqliteError::from)
     }
