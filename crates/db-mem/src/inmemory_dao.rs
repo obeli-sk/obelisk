@@ -218,13 +218,12 @@ impl DbConnection for InMemoryDbConnection {
         }
     }
 
-    #[instrument(skip(self))]
-    async fn append_component(
+    async fn component_add(
         &self,
         _created_at: DateTime<Utc>,
         _component: ComponentWithMetadata,
-        _replace: bool,
-    ) -> Result<Vec<ComponentId>, DbError> {
+        _active: bool,
+    ) -> Result<Result<(), Vec<ComponentId>>, DbError> {
         todo!()
     }
 

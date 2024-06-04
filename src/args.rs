@@ -48,9 +48,9 @@ pub(crate) enum Component {
     },
     /// Load WASM file into the blob store and populate database.
     Add {
-        /// Replace component(s) with overlapping exports
+        /// Set the component to inactive state.
         #[arg(short, long)]
-        replace: bool,
+        inactive: bool,
         #[arg(required(true))]
         wasm_path: PathBuf,
         // TODO: interactive configuration based on component type

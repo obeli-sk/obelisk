@@ -619,12 +619,16 @@ pub trait DbConnection: Send + Sync {
         }
     }
 
-    async fn append_component(
+    /// Append a component. If the component is set to `active` and there are
+    /// components with overlapping exports, the operation will not append the
+    /// component and the inner result will contain the list of components that
+    /// must be deactivated first.
+    async fn component_add(
         &self,
         created_at: DateTime<Utc>,
         component: ComponentWithMetadata,
-        replace: bool,
-    ) -> Result<Vec<ComponentId>, DbError>;
+        active: bool,
+    ) -> Result<Result<(), Vec<ComponentId>>, DbError>;
 
     async fn list_components(&self, active: bool) -> Result<Vec<Component>, DbError>;
 

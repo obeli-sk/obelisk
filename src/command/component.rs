@@ -17,7 +17,7 @@ use wasm_workers::{
 };
 
 pub(crate) async fn add<P: AsRef<Path>>(
-    replace: bool,
+    active: bool,
     wasm_path: P,
     db_file: P,
 ) -> anyhow::Result<()> {
@@ -78,18 +78,19 @@ pub(crate) async fn add<P: AsRef<Path>>(
         exports: detected.exports,
         imports: detected.imports,
     };
-    let replaced = db_pool
+    let result = db_pool
         .connection()
-        .append_component(now(), component, replace)
+        .component_add(now(), component, active)
         .await
         .context("database error")?;
-    if !replaced.is_empty() {
-        println!("Replaced components:");
-        for replaced in replaced {
-            println!("\t{replaced}");
+    if let Err(conflicts) = result {
+        println!("Cannot append component with state set to active. Following components have conflicting exports:");
+        for conflict in conflicts {
+            println!("{conflict}");
         }
+    } else {
+        println!("{component_id} added");
     }
-    println!("{component_id} added");
     Ok(())
 }
 
@@ -98,14 +99,13 @@ pub(crate) fn inspect<P: AsRef<Path>>(
     verbosity: FunctionMetadataVerbosity,
 ) -> anyhow::Result<()> {
     let wasm_path = wasm_path.as_ref();
+    let component_id = hash(wasm_path)?;
+    println!("Id:\n\t{component_id}");
     let engine = ComponentDetector::get_engine();
     let detected = ComponentDetector::new(wasm_path, &engine).context("parsing error")?;
-    println!("Component type:");
-    println!("\t{}", detected.component_type);
-
+    println!("Component type:\n\t{}", detected.component_type);
     println!("Exports:");
     inspect_fns(&detected.exports, verbosity);
-
     println!("Imports:");
     inspect_fns(&detected.imports, verbosity);
     Ok(())

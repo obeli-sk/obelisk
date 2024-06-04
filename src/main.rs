@@ -33,8 +33,11 @@ async fn main() {
             )
             .unwrap();
         }
-        Subcommand::Component(args::Component::Add { replace, wasm_path }) => {
-            command::component::add(replace, wasm_path, db_file)
+        Subcommand::Component(args::Component::Add {
+            inactive,
+            wasm_path,
+        }) => {
+            command::component::add(!inactive, wasm_path, db_file)
                 .await
                 .unwrap();
         }

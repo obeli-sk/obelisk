@@ -1256,7 +1256,7 @@ impl SqlitePool {
                 "SELECT component_type, config, file_name, exports, imports FROM t_component WHERE component_id = :component_id",
             )?
             .query_row(named_params! {
-                ":component_id": component_id.to_string()
+                ":component_id": component_id.to_string(),
             }, |row| {
                 let component_type = row
                     .get::<_, StringWrapper<ComponentType>>("component_type")?
@@ -1861,13 +1861,13 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip_all, fields(component_id = %component.component.component_id))]
-    async fn append_component(
+    async fn component_add(
         &self,
         created_at: DateTime<Utc>,
         component: ComponentWithMetadata,
-        replace: bool,
-    ) -> Result<Vec<ComponentId>, DbError> {
-        trace!("append_component");
+        active: bool,
+    ) -> Result<Result<(), Vec<ComponentId>>, DbError> {
+        trace!("component_add");
         let exports = serde_json::to_string(&component.exports).map_err(|serde| {
             error!("Cannot serialize exports - {serde:?}");
             SqliteError::Parsing(serde.into())
@@ -1879,23 +1879,18 @@ impl DbConnection for SqlitePool {
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
-                    let mut conflicts = hashbrown::HashSet::new();
-                    if replace {
+                    if active {
+                        let mut conflicts = hashbrown::HashSet::new();
                         for (export_ffqn, _, _) in &component.exports {
                             if let Some(conflict) = Self::get_active_component_id_by_export(tx, export_ffqn)? {
                                 conflicts.insert(conflict);
                             }
                         }
-                        for conflict in &conflicts {
-                            debug!("Deleting {conflict}");
-                            tx.prepare(
-                                "DELETE FROM t_component_export WHERE component_id = :component_id",
-                            )?.execute(named_params! {":component_id": conflict.to_string(),})?;
-                            tx.prepare(
-                                "DELETE FROM t_component WHERE component_id = :component_id",
-                            )?.execute(named_params! {":component_id": conflict.to_string(),})?;
+                        if !conflicts.is_empty() {
+                            return Ok(Result::Err(conflicts.into_iter().collect_vec()));
                         }
                     }
+
                     let mut stmt = tx.prepare(
                         "INSERT INTO t_component \
                             (created_at, component_id, active, component_type, config, file_name, exports, imports) \
@@ -1905,15 +1900,17 @@ impl DbConnection for SqlitePool {
                     stmt.execute(named_params! {
                         ":created_at": created_at,
                         ":component_id": component.component.component_id.to_string(),
-                        ":active": true,
+                        ":active": active,
                         ":component_type": component.component.component_type.to_string(),
                         ":config": component.component.config,
                         ":file_name": component.component.file_name,
                         ":exports": exports,
                         ":imports": imports
                         })?;
-                    Self::component_set_exports(tx, &component)?;
-                    Ok(conflicts.into_iter().collect_vec())
+                    if active {
+                        Self::component_set_exports(tx, &component)?;
+                    }
+                    Ok(Result::Ok(()))
                 },
                 Span::current(),
             )
