@@ -231,10 +231,10 @@ impl DbConnection for InMemoryDbConnection {
         todo!()
     }
 
-    async fn get_component_metadata(
+    async fn component_get_metadata(
         &self,
         _component_id: ComponentId,
-    ) -> Result<ComponentWithMetadata, DbError> {
+    ) -> Result<(ComponentWithMetadata, bool), DbError> {
         todo!()
     }
 

@@ -632,11 +632,13 @@ pub trait DbConnection: Send + Sync {
 
     async fn list_components(&self, active: bool) -> Result<Vec<Component>, DbError>;
 
-    async fn get_component_metadata(
+    /// Get component and its activation state.
+    async fn component_get_metadata(
         &self,
         component_id: ComponentId,
-    ) -> Result<ComponentWithMetadata, DbError>;
+    ) -> Result<(ComponentWithMetadata, bool), DbError>;
 
+    /// Find exported function in the active component list.
     async fn get_exported_function(&self, ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError>;
 
     async fn component_deactivate(&self, component_id: ComponentId) -> Result<(), DbError>;

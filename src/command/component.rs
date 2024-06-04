@@ -155,8 +155,8 @@ pub(crate) async fn list<P: AsRef<Path>>(
             hash = component.component_id,
             file_name = component.file_name,
         );
-        let component = db_connection
-            .get_component_metadata(component.component_id)
+        let (component, _) = db_connection
+            .component_get_metadata(component.component_id)
             .await
             .context("database error")?;
         println!("Exports:");
@@ -180,13 +180,13 @@ pub(crate) async fn get<P: AsRef<Path>>(
         .await
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
     let db_connection = db_pool.connection();
-    let component = db_connection
-        .get_component_metadata(component_id)
+    let (component, active) = db_connection
+        .component_get_metadata(component_id)
         .await
         .context("database error")?;
 
     println!(
-        "{component_type}\t{file_name}\tid: {hash}",
+        "{component_type}\t{file_name}\tid: {hash}\tActive: {active}",
         component_type = component.component.component_type,
         hash = component.component.component_id,
         file_name = component.component.file_name,

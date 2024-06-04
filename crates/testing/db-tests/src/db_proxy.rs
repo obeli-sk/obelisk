@@ -195,11 +195,11 @@ impl DbConnection for DbConnectionProxy {
         self.0.list_components(active).await
     }
 
-    async fn get_component_metadata(
+    async fn component_get_metadata(
         &self,
         component_id: ComponentId,
-    ) -> Result<ComponentWithMetadata, DbError> {
-        self.0.get_component_metadata(component_id).await
+    ) -> Result<(ComponentWithMetadata, bool), DbError> {
+        self.0.component_get_metadata(component_id).await
     }
 
     async fn get_exported_function(&self, ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError> {

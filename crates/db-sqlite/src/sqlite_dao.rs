@@ -1251,13 +1251,14 @@ impl SqlitePool {
     fn component_get_with_metadata(
         conn: &Connection,
         component_id: ComponentId,
-    ) -> Result<ComponentWithMetadata, SqliteError> {
+    ) -> Result<(ComponentWithMetadata, bool), SqliteError> {
         conn.prepare(
-                "SELECT component_type, config, file_name, exports, imports FROM t_component WHERE component_id = :component_id",
+                "SELECT active, component_type, config, file_name, exports, imports FROM t_component WHERE component_id = :component_id",
             )?
             .query_row(named_params! {
                 ":component_id": component_id.to_string(),
             }, |row| {
+                let active = row.get("active")?;
                 let component_type = row
                     .get::<_, StringWrapper<ComponentType>>("component_type")?
                     .0;
@@ -1271,7 +1272,7 @@ impl SqlitePool {
                     config,
                     file_name,
                 };
-                Ok(ComponentWithMetadata { component, imports, exports })
+                Ok((ComponentWithMetadata { component, imports, exports }, active))
             })
             .map_err(SqliteError::from)
     }
@@ -1952,10 +1953,10 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn get_component_metadata(
+    async fn component_get_metadata(
         &self,
         component_id: ComponentId,
-    ) -> Result<ComponentWithMetadata, DbError> {
+    ) -> Result<(ComponentWithMetadata, bool), DbError> {
         trace!("get_component_metadata");
         self.pool
             .conn_with_err_and_span::<_, _, SqliteError>(
@@ -2023,7 +2024,8 @@ impl DbConnection for SqlitePool {
                         "UPDATE t_component SET active = true WHERE component_id = :component_id AND active = false",
                     )?
                     .execute(named_params! {":component_id": component_id.to_string(),})?;
-                    let component = Self::component_get_with_metadata(tx, component_id)?;
+                    let (component, active) = Self::component_get_with_metadata(tx, component_id)?;
+                    assert!(active);
                     Self::component_set_exports(tx, &component)?;
                     Ok(())
                 },
