@@ -1968,7 +1968,10 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn get_exported_function(&self, ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError> {
+    async fn component_active_get_exported_function(
+        &self,
+        ffqn: FunctionFqn,
+    ) -> Result<FunctionMetadata, DbError> {
         trace!("get_exported_function");
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
             move |conn| {

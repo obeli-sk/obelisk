@@ -238,7 +238,10 @@ impl DbConnection for InMemoryDbConnection {
         todo!()
     }
 
-    async fn get_exported_function(&self, _ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError> {
+    async fn component_active_get_exported_function(
+        &self,
+        _ffqn: FunctionFqn,
+    ) -> Result<FunctionMetadata, DbError> {
         todo!()
     }
 

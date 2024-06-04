@@ -29,7 +29,7 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
 
     if !force {
         // Check that ffqn exists
-        let (ffqn2, param_types, _return_type) = db_connection.get_exported_function(ffqn).await?;
+        let (ffqn2, param_types, _return_type) = db_connection.component_active_get_exported_function(ffqn).await?;
         ffqn = ffqn2;
         // Check parameter cardinality
         if params.len() != param_types.len() {

@@ -639,29 +639,14 @@ pub trait DbConnection: Send + Sync {
     ) -> Result<(ComponentWithMetadata, bool), DbError>;
 
     /// Find exported function in the active component list.
-    async fn get_exported_function(&self, ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError>;
+    async fn component_active_get_exported_function(
+        &self,
+        ffqn: FunctionFqn,
+    ) -> Result<FunctionMetadata, DbError>;
 
     async fn component_deactivate(&self, component_id: ComponentId) -> Result<(), DbError>;
 
     async fn component_activate(&self, component_id: ComponentId) -> Result<(), DbError>;
-
-    /*
-
-
-    async fn archive_component(&self, component_id: ComponentId);
-
-
-
-    async fn list_ffqns(
-        &self,
-    ) -> Vec<(
-        FunctionFqn,
-        ParameterTypes,
-        ResultType,
-        String, /* file name */
-        ComponentType,
-    )>;
-    */
 }
 
 #[derive(Debug, Clone)]

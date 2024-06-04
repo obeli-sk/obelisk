@@ -202,8 +202,11 @@ impl DbConnection for DbConnectionProxy {
         self.0.component_get_metadata(component_id).await
     }
 
-    async fn get_exported_function(&self, ffqn: FunctionFqn) -> Result<FunctionMetadata, DbError> {
-        self.0.get_exported_function(ffqn).await
+    async fn component_active_get_exported_function(
+        &self,
+        ffqn: FunctionFqn,
+    ) -> Result<FunctionMetadata, DbError> {
+        self.0.component_active_get_exported_function(ffqn).await
     }
 
     async fn component_deactivate(&self, id: ComponentId) -> Result<(), DbError> {
