@@ -193,8 +193,8 @@ impl DbConnection for DbConnectionProxy {
             .await
     }
 
-    async fn list_active_components(&self) -> Result<Vec<Component>, DbError> {
-        self.0.list_active_components().await
+    async fn list_components(&self, active: bool) -> Result<Vec<Component>, DbError> {
+        self.0.list_components(active).await
     }
 
     async fn get_component_metadata(

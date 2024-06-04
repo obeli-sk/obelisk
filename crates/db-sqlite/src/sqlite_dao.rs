@@ -1921,15 +1921,16 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
-    async fn list_active_components(&self) -> Result<Vec<Component>, DbError> {
-        trace!("list_active_components");
+    #[instrument(skip(self))]
+    async fn list_components(&self, active: bool) -> Result<Vec<Component>, DbError> {
+        trace!("list_components");
         self.pool
             .conn_with_err_and_span::<_, _, SqliteError>(
                 move |conn| {
                     conn.prepare(
-                        "SELECT component_id, component_type, config, file_name FROM t_component WHERE active = true",
+                        "SELECT component_id, component_type, config, file_name FROM t_component WHERE active = :active",
                     )?
-                    .query_map(named_params! {}, |row| {
+                    .query_map(named_params! {":active": active}, |row| {
                         let component_id =
                             row.get::<_, StringWrapper<ComponentId>>("component_id")?.0;
                         let component_type = row
@@ -1953,6 +1954,7 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
+    #[instrument(skip(self))]
     async fn get_component_metadata(
         &self,
         component_id: ComponentId,

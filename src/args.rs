@@ -55,8 +55,11 @@ pub(crate) enum Component {
         wasm_path: PathBuf,
         // TODO: interactive configuration based on component type
     },
-    /// List active components.
+    /// List components.
     List {
+        // Switch from showing active to inactive components.
+        #[arg(short, long)]
+        inactive: bool,
         /// Enable full verbosity with `-vv`
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,

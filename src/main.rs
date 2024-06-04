@@ -38,9 +38,13 @@ async fn main() {
                 .await
                 .unwrap();
         }
-        Subcommand::Component(args::Component::List { verbosity }) => {
+        Subcommand::Component(args::Component::List {
+            inactive,
+            verbosity,
+        }) => {
             command::component::list(
                 db_file,
+                !inactive,
                 match verbosity {
                     0 => None,
                     1 => Some(FunctionMetadataVerbosity::FfqnOnly),

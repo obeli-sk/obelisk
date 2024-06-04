@@ -136,6 +136,7 @@ fn inspect_fns(functions: &[FunctionMetadata], verbosity: FunctionMetadataVerbos
 
 pub(crate) async fn list<P: AsRef<Path>>(
     db_file: P,
+    active: bool,
     verbosity: Option<FunctionMetadataVerbosity>,
 ) -> anyhow::Result<()> {
     let db_file = db_file.as_ref();
@@ -144,7 +145,7 @@ pub(crate) async fn list<P: AsRef<Path>>(
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
     let db_connection = db_pool.connection();
     let components = db_connection
-        .list_active_components()
+        .list_components(active)
         .await
         .context("database error")?;
     for component in components {
