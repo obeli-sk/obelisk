@@ -16,7 +16,7 @@ impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Compo
     }
 
     fn get_successful_concurrently(authorities: Vec<String>) -> Result<Vec<String>, String> {
-        let join_set_id = bindings::my_org::workflow_engine::host_activities::new_join_set();
+        let join_set_id = bindings::obelisk::workflow::host_activities::new_join_set();
         let length = authorities.len();
         for authority in authorities {
             let _execution_id =
@@ -43,7 +43,7 @@ impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Compo
         path: String,
         concurrency: u32,
     ) -> Result<Vec<String>, String> {
-        let join_set_id = bindings::my_org::workflow_engine::host_activities::new_join_set();
+        let join_set_id = bindings::obelisk::workflow::host_activities::new_join_set();
         for _ in 0..concurrency {
             let _execution_id =
                 crate::bindings::testing::http_obelisk_ext::http_get::get_successful_future(

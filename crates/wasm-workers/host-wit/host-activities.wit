@@ -1,4 +1,4 @@
-package my-org:workflow-engine;
+package obelisk:workflow;
 
 interface host-activities {
     sleep: func(millis: u32);

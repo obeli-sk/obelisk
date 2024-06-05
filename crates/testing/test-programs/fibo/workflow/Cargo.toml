@@ -19,4 +19,4 @@ wasm = []
 [package.metadata.component.target.dependencies]
 "testing:fibo" = { path = "../wit" }
 "testing:fibo-obelisk-ext" = { path = "../wit-obelisk-ext" }
-"my-org:workflow-engine".path = "../../../../wasm-workers/host-wit/"
+"obelisk:workflow".path = "../../../../wasm-workers/host-wit/"

@@ -6,7 +6,7 @@ interface workflow {
 }
 
 world any {
-    import my-org:workflow-engine/host-activities;
+    import obelisk:workflow/host-activities;
     import testing:sleep/sleep;
     export workflow;
 }

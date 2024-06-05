@@ -8,7 +8,7 @@ struct Component;
 
 impl crate::bindings::exports::testing::sleep_workflow::workflow::Guest for Component {
     fn sleep_host_activity(millis: u32) {
-        crate::bindings::my_org::workflow_engine::host_activities::sleep(millis);
+        crate::bindings::obelisk::workflow::host_activities::sleep(millis);
     }
 
     fn sleep_activity(millis: u32) {

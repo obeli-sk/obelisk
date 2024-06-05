@@ -73,18 +73,17 @@ obelisk execution run ...
 ```
 
 # Planned features
+* Fatal error mapping to supported result types, e.g. permanent timeout to a numeric or string representation.
+* WASM upgrades - disabling work stealing by executors with outdated wasm hashes
 * UI
 * External Activity RPC
 * OpenAPI generator for activities
-* Fatal error mapping to supported result types, e.g. permanent timeout to a numeric or string representation.
-* WASM upgrades - disabling work stealing by executors with outdated wasm hashes
 * Params typecheck on creation, introspection of types of all functions in the system
 * Host function: generate a random value, store it in the event history - wasi random,available for workflows as wel
 * Cancellation with recursion
 * Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
 * Labels restricting workflows/activities to executors
 * ErrId that is passed back to parent, error detail
-* Ability to run activities in any language using an RPC protocol
 
 
 ## Running

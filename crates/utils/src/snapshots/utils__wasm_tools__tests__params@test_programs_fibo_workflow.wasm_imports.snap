@@ -3,9 +3,9 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "my-org:workflow-engine/host-activities.new-join-set": [
+  "obelisk:workflow/host-activities.new-join-set": [
     [],
-    "my-org:workflow-engine/host-activities",
+    "obelisk:workflow/host-activities",
     "new-join-set"
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": [

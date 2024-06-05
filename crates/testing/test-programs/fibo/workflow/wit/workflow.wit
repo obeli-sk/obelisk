@@ -12,7 +12,7 @@ interface workflow-nesting {
 
 world any {
     import testing:fibo/fibo;
-    import my-org:workflow-engine/host-activities;
+    import obelisk:workflow/host-activities;
     import testing:fibo-obelisk-ext/fibo;
     export workflow;
     import workflow;

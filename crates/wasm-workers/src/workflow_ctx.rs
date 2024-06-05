@@ -59,7 +59,7 @@ impl FunctionError {
 wasmtime::component::bindgen!({
     path: "host-wit/",
     async: true,
-    interfaces: "import my-org:workflow-engine/host-activities;",
+    interfaces: "import obelisk:workflow/host-activities;",
     trappable_imports: true,
 });
 
@@ -163,7 +163,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), wasmtime::Error> {
-        my_org::workflow_engine::host_activities::add_to_linker(linker, |state: &mut Self| state)
+        obelisk::workflow::host_activities::add_to_linker(linker, |state: &mut Self| state)
     }
 
     fn imported_fn_to_event_call(
@@ -254,7 +254,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 }
 
 #[async_trait::async_trait]
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> my_org::workflow_engine::host_activities::Host
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activities::Host
     for WorkflowCtx<C, DB, P>
 {
     async fn sleep(&mut self, millis: u32) -> wasmtime::Result<()> {

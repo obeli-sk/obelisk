@@ -67,6 +67,8 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     clock_fn: C,
 }
 
+pub(crate) const HOST_ACTIVITY_IFC_STRING: &str = "obelisk:workflow/host-activities";
+
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
     #[tracing::instrument(skip_all, fields(config_id = %config.config_id))]
     pub fn new_with_config(
@@ -76,7 +78,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         db_pool: P,
         clock_fn: C,
     ) -> Result<Self, WasmFileError> {
-        const HOST_ACTIVITY_IFC_STRING: &str = "my-org:workflow-engine/host-activities";
+
         let wasm_path = wasm_path.as_ref();
         let mut linker = wasmtime::component::Linker::new(&engine);
 

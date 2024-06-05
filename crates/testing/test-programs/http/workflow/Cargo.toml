@@ -19,4 +19,4 @@ wasm = []
 [package.metadata.component.target.dependencies]
 "testing:http" = { path = "../wit" }
 "testing:http-obelisk-ext" = { path = "../wit-obelisk-ext" }
-"my-org:workflow-engine".path = "../../../../wasm-workers/host-wit/"
+"obelisk:workflow".path = "../../../../wasm-workers/host-wit/"
