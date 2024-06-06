@@ -359,6 +359,30 @@ pub enum HistoryEvent {
         /// Set to a future time if the executor is keeping the execution warm waiting for the result.
         lock_expires_at: DateTime<Utc>,
     },
+    #[display(fmt = "Schedule({execution_id}, {scheduled_at})")]
+    Schedule {
+        execution_id: ExecutionId,
+        scheduled_at: HistoryEventScheduledAt,
+    },
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
+)]
+pub enum HistoryEventScheduledAt {
+    Now,
+    At(DateTime<Utc>),
+    #[display(fmt = "In({_0:?})")]
+    In(Duration),
+}
+impl HistoryEventScheduledAt {
+    pub fn as_date_time(&self, now: DateTime<Utc>) -> DateTime<Utc> {
+        match self {
+            Self::Now => now,
+            Self::At(date_time) => *date_time,
+            Self::In(duration) => now + *duration,
+        }
+    }
 }
 
 #[derive(
@@ -529,7 +553,7 @@ pub trait DbConnection: Send + Sync {
     ) -> Result<AppendBatchResponse, DbError>;
 
     /// Append one or more events to the parent execution log, and create zero or more child execution logs.
-    async fn append_batch_create_child(
+    async fn append_batch_create_new_execution(
         &self,
         created_at: DateTime<Utc>,
         batch: Vec<ExecutionEventInner>,

@@ -54,8 +54,8 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
             params,
             parent: None,
             scheduled_at: created_at,
-            retry_exp_backoff: Duration::ZERO, // TODO pass from args
-            max_retries: 5,                    // TODO pass from args
+            retry_exp_backoff: Duration::from_millis(100), // TODO pass from args
+            max_retries: 5,                                // TODO pass from args
         })
         .await
         .unwrap();

@@ -33,7 +33,7 @@ pub fn get_workflow_engine(config: EngineConfig) -> Arc<Engine> {
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum JoinNextBlockingStrategy {
-    /// Shut down the current runtime. When the `JoinSetResponse` is appended, workflow is reexecuted with a new `RunId`.
+    /// Shut down the current runtime. When the [`JoinSetResponse`] is appended, workflow is reexecuted with a new `RunId`.
     Interrupt,
     /// Keep the execution hot. Worker will poll the database until the execution lock expires.
     #[default]
@@ -78,7 +78,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         db_pool: P,
         clock_fn: C,
     ) -> Result<Self, WasmFileError> {
-
         let wasm_path = wasm_path.as_ref();
         let mut linker = wasmtime::component::Linker::new(&engine);
 
@@ -302,7 +301,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             };
                             info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an error");
                             WorkerResult::Err(err)
-
                         }
                     }
                     Err(RunError::WorkerError(err)) => WorkerResult::Err(err),

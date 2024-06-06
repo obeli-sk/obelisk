@@ -249,14 +249,20 @@ impl FunctionFqn {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum FunctionFqnParseError {
+    #[error("delimiter `.` not found")]
+    DelimiterNotFound,
+}
+
 impl FromStr for FunctionFqn {
-    type Err = &'static str;
+    type Err = FunctionFqnParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((ifc_fqn, function_name)) = s.split_once('.') {
             Ok(Self::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)))
         } else {
-            Err("cannot find '.' delimiter")
+            Err(FunctionFqnParseError::DelimiterNotFound)
         }
     }
 }
@@ -508,6 +514,12 @@ pub enum ParamsParsingError {
     ParamsDeserializationError(#[from] serde_json::Error),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ParamsFromJsonError {
+    #[error("value must be a json array containing function parameters")]
+    MustBeArray,
+}
+
 impl Params {
     #[must_use]
     pub const fn default() -> Self {
@@ -523,11 +535,11 @@ impl Params {
         }
     }
 
-    pub fn from_json_array(value: Value) -> Result<Self, &'static str> {
+    pub fn from_json_array(value: Value) -> Result<Self, ParamsFromJsonError> {
         match value {
             Value::Array(vec) if vec.is_empty() => Ok(Self::default()),
             Value::Array(_) => Ok(Self(ParamsInternal::Json(value))),
-            _ => Err("passed `Value` must be `Array`"),
+            _ => Err(ParamsFromJsonError::MustBeArray),
         }
     }
 

@@ -5,6 +5,7 @@ use crate::workflow_worker::JoinNextBlockingStrategy;
 use crate::workflow_worker::NonBlockingEventBatching;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
+use concepts::storage::HistoryEventScheduledAt;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse,
     JoinSetResponseEvent, Version,
@@ -249,6 +250,7 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
+    // TODO: Check params, scheduled_at etc to catch non-deterministic errors.
     #[allow(clippy::too_many_lines)]
     fn process_event_by_key(
         &mut self,
@@ -375,6 +377,21 @@ impl<C: ClockFn> EventHistory<C> {
                 }
             }
 
+            (
+                EventHistoryKey::Schedule { execution_id },
+                HistoryEvent::Schedule {
+                    execution_id: found_execution_id,
+                    ..
+                },
+            ) if execution_id == *found_execution_id => {
+                trace!(%execution_id, "Matched Schedule");
+                // return execution id
+                Ok(Some(SupportedFunctionResult::Infallible(WastValWithType {
+                    r#type: TypeWrapper::String,
+                    value: WastVal::String(execution_id.to_string()),
+                })))
+            }
+
             (key, found) => Err(FunctionError::NonDeterminismDetected(StrVariant::Arc(
                 Arc::from(format!(
                     "unexpected key {key:?} not matching {found:?} at index {found_idx}",
@@ -429,7 +446,7 @@ impl<C: ClockFn> EventHistory<C> {
                     }
                 }
                 db_connection
-                    .append_batch_create_child(
+                    .append_batch_create_new_execution(
                         created_at,
                         batches,
                         self.execution_id,
@@ -506,7 +523,7 @@ impl<C: ClockFn> EventHistory<C> {
                         Version::new(version.0 + 1)
                     } else {
                         db_connection
-                            .append_batch_create_child(
+                            .append_batch_create_new_execution(
                                 created_at,
                                 vec![child_exec_req],
                                 execution_id,
@@ -515,6 +532,54 @@ impl<C: ClockFn> EventHistory<C> {
                             )
                             .await?
                     };
+                Ok(history_events)
+            }
+            EventCall::ScheduleRequest {
+                scheduled_at,
+                execution_id: new_execution_id,
+                ffqn,
+                params,
+            } => {
+                let at = scheduled_at.as_date_time(created_at);
+                let event = HistoryEvent::Schedule {
+                    execution_id: new_execution_id,
+                    scheduled_at,
+                };
+                let history_events = vec![event.clone()];
+                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
+                debug!(%new_execution_id, "ScheduleRequest: appending");
+                let child_req = CreateRequest {
+                    created_at,
+                    execution_id: new_execution_id,
+                    ffqn,
+                    params,
+                    parent: None,
+                    scheduled_at: at,
+                    retry_exp_backoff: child_retry_exp_backoff,
+                    max_retries: child_max_retries,
+                };
+                *version =
+                    // if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
+                    //     non_blocking_event_batch.push(NonBlockingCache::StartAsync {
+                    //         batch: vec![child_exec_req],
+                    //         version: version.clone(),
+                    //         child_req,
+                    //     });
+                    //     self.flush_non_blocking_event_cache_if_full(db_connection, created_at)
+                    //         .await?;
+                    //     Version::new(version.0 + 1)
+                    // } else {
+                        db_connection
+                            .append_batch_create_new_execution(
+                                created_at,
+                                vec![child_exec_req],
+                                execution_id,
+                                version.clone(),
+                                vec![child_req],
+                            )
+                            .await?
+                    //}
+                    ;
                 Ok(history_events)
             }
             EventCall::BlockingChildJoinNext { join_set_id } => {
@@ -571,7 +636,7 @@ impl<C: ClockFn> EventHistory<C> {
                     max_retries: child_max_retries,
                 };
                 *version = db_connection
-                    .append_batch_create_child(
+                    .append_batch_create_new_execution(
                         created_at,
                         vec![join_set, child_exec_req, join_next],
                         execution_id,
@@ -672,6 +737,12 @@ pub(crate) enum EventCall {
         child_execution_id: ExecutionId,
         params: Params,
     },
+    ScheduleRequest {
+        scheduled_at: HistoryEventScheduledAt,
+        execution_id: ExecutionId,
+        ffqn: FunctionFqn,
+        params: Params,
+    },
     BlockingChildJoinNext {
         join_set_id: JoinSetId,
     },
@@ -700,7 +771,9 @@ impl EventCall {
             EventCall::BlockingDelayRequest { join_set_id, .. } => {
                 Some(PollVariant::JoinNextDelay(*join_set_id))
             }
-            EventCall::CreateJoinSet { .. } | EventCall::StartAsync { .. } => None, // continue the execution
+            EventCall::CreateJoinSet { .. }
+            | EventCall::StartAsync { .. }
+            | EventCall::ScheduleRequest { .. } => None, // continue the execution
         }
     }
 }
@@ -725,7 +798,9 @@ enum EventHistoryKey {
     JoinNextDelay {
         join_set_id: JoinSetId,
     },
-    // TODO: JoinNextAny
+    Schedule {
+        execution_id: ExecutionId,
+    },
 }
 
 impl EventCall {
@@ -781,6 +856,11 @@ impl EventCall {
                     join_set_id: *join_set_id,
                 },
             ],
+            EventCall::ScheduleRequest { execution_id, .. } => {
+                vec![EventHistoryKey::Schedule {
+                    execution_id: *execution_id,
+                }]
+            }
         }
     }
 }

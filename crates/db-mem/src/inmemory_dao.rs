@@ -113,7 +113,7 @@ impl DbConnection for InMemoryDbConnection {
     }
 
     #[instrument(skip_all, %execution_id)]
-    async fn append_batch_create_child(
+    async fn append_batch_create_new_execution(
         &self,
         created_at: DateTime<Utc>,
         batch: Vec<ExecutionEventInner>,

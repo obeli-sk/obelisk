@@ -1,20 +1,26 @@
 use crate::event_history::{EventCall, EventHistory};
 use crate::workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching};
+use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
-use concepts::storage::{DbConnection, DbError, DbPool, Version};
+use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
-use concepts::{ExecutionId, FinishedExecutionError, IfcFqnName, StrVariant};
+use concepts::{
+    ExecutionId, FinishedExecutionError, IfcFqnName, StrVariant, SupportedFunctionResult,
+};
 use concepts::{FunctionFqn, Params};
 use executor::worker::{FatalError, WorkerError, WorkerResult};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, instrument, trace};
 use utils::time::ClockFn;
+use val_json::type_wrapper::TypeWrapper;
+use val_json::wast_val::{WastVal, WastValWithType};
 use wasmtime::component::{Linker, Val};
 
 #[derive(thiserror::Error, Debug, Clone)]
@@ -156,6 +162,53 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         Ok(())
     }
 
+    async fn call_schedule(
+        &mut self,
+        ffqn: String,
+        params_json: String,
+        scheduled_at: obelisk::workflow::host_activities::ScheduledAt,
+    ) -> wasmtime::Result<String> {
+        trace!("schedule");
+        let execution_id =
+            ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+        let ffqn = FunctionFqn::from_str(&ffqn)?;
+        let params = serde_json::from_str(&params_json)?;
+        let params = Params::from_json_array(params)?;
+        let scheduled_at = match scheduled_at {
+            obelisk::workflow::host_activities::ScheduledAt::Now => HistoryEventScheduledAt::Now,
+            obelisk::workflow::host_activities::ScheduledAt::At(
+                wasi::clocks::wall_clock::Datetime {
+                    seconds,
+                    nanoseconds,
+                },
+            ) => HistoryEventScheduledAt::At(
+                DateTime::from_timestamp(seconds.try_into().unwrap(), nanoseconds).unwrap(),
+            ),
+            obelisk::workflow::host_activities::ScheduledAt::In(duration_nanos) => {
+                HistoryEventScheduledAt::In(Duration::from_nanos(duration_nanos))
+            }
+        };
+        let res = self
+            .event_history
+            .replay_or_interrupt(
+                EventCall::ScheduleRequest {
+                    scheduled_at,
+                    execution_id,
+                    ffqn,
+                    params,
+                },
+                &self.db_pool.connection(),
+                &mut self.version,
+            )
+            .await?;
+        Ok(
+            assert_matches!(res, SupportedFunctionResult::Infallible(WastValWithType {
+            r#type: TypeWrapper::String,
+            value: WastVal::String(execution_id),
+        }) => execution_id),
+        )
+    }
+
     pub(crate) fn next_u128(&mut self) -> u128 {
         let mut bytes = [0; 16];
         self.rng.fill_bytes(&mut bytes);
@@ -264,14 +317,32 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
     async fn new_join_set(&mut self) -> wasmtime::Result<String> {
         let join_set_id =
             JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
-        self.event_history
+        let res = self
+            .event_history
             .replay_or_interrupt(
                 EventCall::CreateJoinSet { join_set_id },
                 &self.db_pool.connection(),
                 &mut self.version,
             )
             .await?;
-        Ok(join_set_id.to_string())
+        Ok(
+            assert_matches!(res, SupportedFunctionResult::Infallible(WastValWithType {
+            r#type: TypeWrapper::String,
+            value: WastVal::String(join_set_id),
+        }) => join_set_id),
+        )
+    }
+
+    #[instrument(skip(self))]
+    async fn schedule(
+        &mut self,
+        ffqn: String,
+        params_json: String,
+        scheduled_at: obelisk::workflow::host_activities::ScheduledAt,
+    ) -> wasmtime::Result<String> {
+        self.call_schedule(ffqn, params_json, scheduled_at)
+            .await
+            .inspect_err(|err| error!("{err:?}"))
     }
 }
 

@@ -949,7 +949,8 @@ impl SqlitePool {
                         request: JoinSetRequest::ChildExecutionRequest { .. },
                         ..
                     }
-                    | HistoryEvent::Persist { .. },
+                    | HistoryEvent::Persist { .. }
+                    | HistoryEvent::Schedule { .. },
             } => IndexAction::NoPendingStateChange(None),
 
             ExecutionEventInner::HistoryEvent {
@@ -1498,7 +1499,7 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip(self, batch, child_req))]
-    async fn append_batch_create_child(
+    async fn append_batch_create_new_execution(
         &self,
         created_at: DateTime<Utc>,
         batch: Vec<ExecutionEventInner>,

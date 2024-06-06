@@ -1042,7 +1042,7 @@ mod tests {
             };
             db_pool
                 .connection()
-                .append_batch_create_child(
+                .append_batch_create_new_execution(
                     sim_clock.now(),
                     vec![join_set, child_exec_req, join_next],
                     parent_execution_id,

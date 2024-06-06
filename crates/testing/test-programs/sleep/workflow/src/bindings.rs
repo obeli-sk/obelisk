@@ -12,6 +12,24 @@ pub mod obelisk {
             static __FORCE_SECTION_REF: fn() =
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
+            pub type Datetime = super::super::super::wasi::clocks::wall_clock::Datetime;
+            /// A duration of time, in nanoseconds.
+            pub type Duration = u64;
+            #[derive(Clone, Copy)]
+            pub enum ScheduledAt {
+                Now,
+                At(Datetime),
+                In(Duration),
+            }
+            impl ::core::fmt::Debug for ScheduledAt {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    match self {
+                        ScheduledAt::Now => f.debug_tuple("ScheduledAt::Now").finish(),
+                        ScheduledAt::At(e) => f.debug_tuple("ScheduledAt::At").field(e).finish(),
+                        ScheduledAt::In(e) => f.debug_tuple("ScheduledAt::In").field(e).finish(),
+                    }
+                }
+            }
             #[allow(unused_unsafe, clippy::all)]
             pub fn sleep(millis: u32) {
                 unsafe {
@@ -53,6 +71,81 @@ pub mod obelisk {
                     let len3 = l2;
                     let bytes3 = _rt::Vec::from_raw_parts(l1.cast(), len3, len3);
                     _rt::string_lift(bytes3)
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn schedule(
+                ffqn: &str,
+                params_json: &str,
+                scheduled_at: ScheduledAt,
+            ) -> _rt::String {
+                unsafe {
+                    #[repr(align(4))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
+                    let vec0 = ffqn;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    let vec1 = params_json;
+                    let ptr1 = vec1.as_ptr().cast::<u8>();
+                    let len1 = vec1.len();
+                    let (result3_0, result3_1, result3_2) = match scheduled_at {
+                        ScheduledAt::Now => (0i32, 0i64, 0i32),
+                        ScheduledAt::At(e) => {
+                            let super::super::super::wasi::clocks::wall_clock::Datetime {
+                                seconds: seconds2,
+                                nanoseconds: nanoseconds2,
+                            } = e;
+
+                            (1i32, _rt::as_i64(seconds2), _rt::as_i32(nanoseconds2))
+                        }
+                        ScheduledAt::In(e) => (2i32, _rt::as_i64(e), 0i32),
+                    };
+                    let ptr4 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "obelisk:workflow/host-activities")]
+                    extern "C" {
+                        #[link_name = "schedule"]
+                        fn wit_import(
+                            _: *mut u8,
+                            _: usize,
+                            _: *mut u8,
+                            _: usize,
+                            _: i32,
+                            _: i64,
+                            _: i32,
+                            _: *mut u8,
+                        );
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(
+                        _: *mut u8,
+                        _: usize,
+                        _: *mut u8,
+                        _: usize,
+                        _: i32,
+                        _: i64,
+                        _: i32,
+                        _: *mut u8,
+                    ) {
+                        unreachable!()
+                    }
+                    wit_import(
+                        ptr0.cast_mut(),
+                        len0,
+                        ptr1.cast_mut(),
+                        len1,
+                        result3_0,
+                        result3_1,
+                        result3_2,
+                        ptr4,
+                    );
+                    let l5 = *ptr4.add(0).cast::<*mut u8>();
+                    let l6 = *ptr4.add(4).cast::<usize>();
+                    let len7 = l6;
+                    let bytes7 = _rt::Vec::from_raw_parts(l5.cast(), len7, len7);
+                    _rt::string_lift(bytes7)
                 }
             }
         }
@@ -108,6 +201,105 @@ pub mod testing {
     }
 }
 #[allow(dead_code)]
+pub mod wasi {
+    #[allow(dead_code)]
+    pub mod clocks {
+        #[allow(dead_code, clippy::all)]
+        pub mod wall_clock {
+            #[used]
+            #[doc(hidden)]
+            #[cfg(target_arch = "wasm32")]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+            /// A time and date in seconds plus nanoseconds.
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct Datetime {
+                pub seconds: u64,
+                pub nanoseconds: u32,
+            }
+            impl ::core::fmt::Debug for Datetime {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    f.debug_struct("Datetime")
+                        .field("seconds", &self.seconds)
+                        .field("nanoseconds", &self.nanoseconds)
+                        .finish()
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Read the current value of the clock.
+            ///
+            /// This clock is not monotonic, therefore calling this function repeatedly
+            /// will not necessarily produce a sequence of non-decreasing values.
+            ///
+            /// The returned timestamps represent the number of seconds since
+            /// 1970-01-01T00:00:00Z, also known as [POSIX's Seconds Since the Epoch],
+            /// also known as [Unix Time].
+            ///
+            /// The nanoseconds field of the output is always less than 1000000000.
+            ///
+            /// [POSIX's Seconds Since the Epoch]: https://pubs.opengroup.org/onlinepubs/9699919799/xrat/V4_xbd_chap04.html#tag_21_04_16
+            /// [Unix Time]: https://en.wikipedia.org/wiki/Unix_time
+            pub fn now() -> Datetime {
+                unsafe {
+                    #[repr(align(8))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 16]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 16]);
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "wasi:clocks/wall-clock@0.2.0")]
+                    extern "C" {
+                        #[link_name = "now"]
+                        fn wit_import(_: *mut u8);
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0);
+                    let l1 = *ptr0.add(0).cast::<i64>();
+                    let l2 = *ptr0.add(8).cast::<i32>();
+                    Datetime {
+                        seconds: l1 as u64,
+                        nanoseconds: l2 as u32,
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Query the resolution of the clock.
+            ///
+            /// The nanoseconds field of the output is always less than 1000000000.
+            pub fn resolution() -> Datetime {
+                unsafe {
+                    #[repr(align(8))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 16]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 16]);
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "wasi:clocks/wall-clock@0.2.0")]
+                    extern "C" {
+                        #[link_name = "resolution"]
+                        fn wit_import(_: *mut u8);
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0);
+                    let l1 = *ptr0.add(0).cast::<i64>();
+                    let l2 = *ptr0.add(8).cast::<i32>();
+                    Datetime {
+                        seconds: l1 as u64,
+                        nanoseconds: l2 as u32,
+                    }
+                }
+            }
+        }
+    }
+}
+#[allow(dead_code)]
 pub mod exports {
     #[allow(dead_code)]
     pub mod testing {
@@ -135,25 +327,37 @@ pub mod exports {
                     _rt::run_ctors_once();
                     T::sleep_activity(arg0 as u32);
                 }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_reschedule_cabi<T: Guest>(arg0: i32) {
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
+                    T::reschedule(arg0 as u32);
+                }
                 pub trait Guest {
                     fn sleep_host_activity(millis: u32);
                     fn sleep_activity(millis: u32);
+                    fn reschedule(schedule_millis: u32);
                 }
                 #[doc(hidden)]
 
                 macro_rules! __export_testing_sleep_workflow_workflow_cabi{
-      ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
+    ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
 
-        #[export_name = "testing:sleep-workflow/workflow#sleep-host-activity"]
-        unsafe extern "C" fn export_sleep_host_activity(arg0: i32,) {
-          $($path_to_types)*::_export_sleep_host_activity_cabi::<$ty>(arg0)
-        }
-        #[export_name = "testing:sleep-workflow/workflow#sleep-activity"]
-        unsafe extern "C" fn export_sleep_activity(arg0: i32,) {
-          $($path_to_types)*::_export_sleep_activity_cabi::<$ty>(arg0)
-        }
-      };);
-    }
+      #[export_name = "testing:sleep-workflow/workflow#sleep-host-activity"]
+      unsafe extern "C" fn export_sleep_host_activity(arg0: i32,) {
+        $($path_to_types)*::_export_sleep_host_activity_cabi::<$ty>(arg0)
+      }
+      #[export_name = "testing:sleep-workflow/workflow#sleep-activity"]
+      unsafe extern "C" fn export_sleep_activity(arg0: i32,) {
+        $($path_to_types)*::_export_sleep_activity_cabi::<$ty>(arg0)
+      }
+      #[export_name = "testing:sleep-workflow/workflow#reschedule"]
+      unsafe extern "C" fn export_reschedule(arg0: i32,) {
+        $($path_to_types)*::_export_reschedule_cabi::<$ty>(arg0)
+      }
+    };);
+  }
                 #[doc(hidden)]
                 pub(crate) use __export_testing_sleep_workflow_workflow_cabi;
             }
@@ -241,6 +445,34 @@ mod _rt {
         }
     }
 
+    pub fn as_i64<T: AsI64>(t: T) -> i64 {
+        t.as_i64()
+    }
+
+    pub trait AsI64 {
+        fn as_i64(self) -> i64;
+    }
+
+    impl<'a, T: Copy + AsI64> AsI64 for &'a T {
+        fn as_i64(self) -> i64 {
+            (*self).as_i64()
+        }
+    }
+
+    impl AsI64 for i64 {
+        #[inline]
+        fn as_i64(self) -> i64 {
+            self as i64
+        }
+    }
+
+    impl AsI64 for u64 {
+        #[inline]
+        fn as_i64(self) -> i64 {
+            self as i64
+        }
+    }
+
     #[cfg(target_arch = "wasm32")]
     pub fn run_ctors_once() {
         wit_bindgen_rt::run_ctors_once();
@@ -279,16 +511,23 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.25.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 429] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb3\x02\x01A\x02\x01\
-A\x06\x01B\x04\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\0\0s\x04\0\x0c\
-new-join-set\x01\x01\x03\x01\x20obelisk:workflow/host-activities\x05\0\x01B\x04\x01\
-@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\x02\x06millisy\x0aiterationsy\x01\
-\0\x04\0\x0asleep-loop\x01\x01\x03\x01\x13testing:sleep/sleep\x05\x01\x01B\x03\x01\
-@\x01\x06millisy\x01\0\x04\0\x13sleep-host-activity\x01\0\x04\0\x0esleep-activit\
-y\x01\0\x04\x01\x1ftesting:sleep-workflow/workflow\x05\x02\x04\x01\x1atesting:sl\
-eep-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cproce\
-ssed-by\x02\x0dwit-component\x070.208.1\x10wit-bindgen-rust\x060.25.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 707] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc9\x04\x01A\x02\x01\
+A\x09\x01B\x05\x01r\x02\x07secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\0\x01\
+@\0\0\x01\x04\0\x03now\x01\x02\x04\0\x0aresolution\x01\x02\x03\x01\x1cwasi:clock\
+s/wall-clock@0.2.0\x05\0\x02\x03\0\0\x08datetime\x01B\x0c\x02\x03\x02\x01\x01\x04\
+\0\x08datetime\x03\0\0\x01w\x04\0\x08duration\x03\0\x02\x01q\x03\x03now\0\0\x02a\
+t\x01\x01\0\x02in\x01\x03\0\x04\0\x0cscheduled-at\x03\0\x04\x01@\x01\x06millisy\x01\
+\0\x04\0\x05sleep\x01\x06\x01@\0\0s\x04\0\x0cnew-join-set\x01\x07\x01@\x03\x04ff\
+qns\x0bparams-jsons\x0cscheduled-at\x05\0s\x04\0\x08schedule\x01\x08\x03\x01\x20\
+obelisk:workflow/host-activities\x05\x02\x01B\x04\x01@\x01\x06millisy\x01\0\x04\0\
+\x05sleep\x01\0\x01@\x02\x06millisy\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\
+\x01\x03\x01\x13testing:sleep/sleep\x05\x03\x01B\x05\x01@\x01\x06millisy\x01\0\x04\
+\0\x13sleep-host-activity\x01\0\x04\0\x0esleep-activity\x01\0\x01@\x01\x0fschedu\
+le-millisy\x01\0\x04\0\x0areschedule\x01\x01\x04\x01\x1ftesting:sleep-workflow/w\
+orkflow\x05\x04\x04\x01\x1atesting:sleep-workflow/any\x04\0\x0b\x09\x01\0\x03any\
+\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.208.1\x10\
+wit-bindgen-rust\x060.25.0";
 
 #[inline(never)]
 #[doc(hidden)]

@@ -20,3 +20,4 @@ wasm = []
 "testing:http" = { path = "../wit" }
 "testing:http-obelisk-ext" = { path = "../wit-obelisk-ext" }
 "obelisk:workflow".path = "../../../../wasm-workers/host-wit/"
+"wasi:clocks".path = "../../../../wasm-workers/host-wit/deps/clocks"

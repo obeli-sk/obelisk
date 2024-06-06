@@ -112,7 +112,7 @@ impl DbConnection for DbConnectionProxy {
             .await
     }
 
-    async fn append_batch_create_child(
+    async fn append_batch_create_new_execution(
         &self,
         created_at: DateTime<Utc>,
         batch: Vec<ExecutionEventInner>,
@@ -121,7 +121,7 @@ impl DbConnection for DbConnectionProxy {
         child_req: Vec<CreateRequest>,
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
-            .append_batch_create_child(created_at, batch, execution_id, version, child_req)
+            .append_batch_create_new_execution(created_at, batch, execution_id, version, child_req)
             .await
     }
 

@@ -19,3 +19,4 @@ wasm = []
 [package.metadata.component.target.dependencies]
 "testing:sleep".path = "../wit"
 "obelisk:workflow".path = "../../../../wasm-workers/host-wit/"
+"wasi:clocks".path = "../../../../wasm-workers/host-wit/deps/clocks"
