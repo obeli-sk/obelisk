@@ -376,6 +376,7 @@ pub enum HistoryEventScheduledAt {
     In(Duration),
 }
 impl HistoryEventScheduledAt {
+    #[must_use]
     pub fn as_date_time(&self, now: DateTime<Utc>) -> DateTime<Utc> {
         match self {
             Self::Now => now,
