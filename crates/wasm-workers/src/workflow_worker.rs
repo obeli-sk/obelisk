@@ -2,7 +2,7 @@ use crate::workflow_ctx::{FunctionError, WorkflowCtx};
 use crate::{EngineConfig, WasmFileError};
 use async_trait::async_trait;
 use concepts::prefixed_ulid::ConfigId;
-use concepts::storage::{DbConnection, DbPool, Version};
+use concepts::storage::{DbConnection, DbPool};
 use concepts::SupportedFunctionResult;
 use concepts::{FunctionFqn, FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
@@ -166,12 +166,12 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
     #[allow(clippy::too_many_lines)]
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
-        #[derive(Debug, thiserror::Error)]
-        enum RunError {
-            #[error(transparent)]
-            WorkerError(#[from] WorkerError),
+        #[derive(thiserror::Error)]
+        enum RunError<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
+            #[error("worker error: `{0}`")]
+            WorkerError(WorkerError, WorkflowCtx<C, DB, P>),
             #[error("wasm function call error: `{0}`")]
-            FunctionCall(Box<dyn Error + Send + Sync>, Version),
+            FunctionCall(Box<dyn Error + Send + Sync>, WorkflowCtx<C, DB, P>),
         }
         trace!("Params: {params:?}", params = ctx.params);
         let timeout_error = Arc::new(std::sync::Mutex::new(WorkerResult::Err(
@@ -232,42 +232,51 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             let params = match ctx.params.as_vals(func.params(&store)) {
                 Ok(params) => params,
                 Err(err) => {
-                    return Err(RunError::WorkerError(WorkerError::FatalError(
-                        FatalError::ParamsParsingError(err),
-                        store.into_data().version,
-                    )));
+                    let workflow_ctx = store.into_data();
+                    return Err(RunError::WorkerError(
+                        WorkerError::FatalError(
+                            FatalError::ParamsParsingError(err),
+                            workflow_ctx.version.clone(),
+                        ),
+                        workflow_ctx,
+                    ));
                 }
             };
             let result_types = func.results(&mut store);
             let mut results = vec![Val::Bool(false); result_types.len()];
             if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
-                return Err(RunError::FunctionCall(
-                    err.into(),
-                    store.into_data().version,
-                ));
+                return Err(RunError::FunctionCall(err.into(), store.into_data()));
             } // guest panic exits here
             let result = match SupportedFunctionResult::new(
                 results.into_iter().zip(result_types.iter().cloned()),
             ) {
                 Ok(result) => result,
                 Err(err) => {
-                    return Err(RunError::WorkerError(WorkerError::FatalError(
-                        FatalError::ResultParsingError(err),
-                        store.into_data().version,
-                    )));
+                    let workflow_ctx = store.into_data();
+                    return Err(RunError::WorkerError(
+                        WorkerError::FatalError(
+                            FatalError::ResultParsingError(err),
+                            workflow_ctx.version.clone(),
+                        ),
+                        workflow_ctx,
+                    ));
                 }
             };
             if let Err(err) = func.post_return_async(&mut store).await {
-                return Err(RunError::WorkerError(WorkerError::IntermittentError {
-                    reason: StrVariant::Arc(Arc::from(format!(
-                        "wasm post function call error - {err}"
-                    ))),
-                    err: Some(err.into()),
-                    version: store.into_data().version,
-                }));
+                let workflow_ctx = store.into_data();
+                return Err(RunError::WorkerError(
+                    WorkerError::IntermittentError {
+                        reason: StrVariant::Arc(Arc::from(format!(
+                            "wasm post function call error - {err}"
+                        ))),
+                        err: Some(err.into()),
+                        version: workflow_ctx.version.clone(),
+                    },
+                    workflow_ctx,
+                ));
             }
 
-            Ok((result, store.into_data().version))
+            Ok((result, store.into_data()))
         };
         let started_at = (self.clock_fn)();
         let deadline_duration = (ctx.execution_deadline - started_at).to_std().unwrap();
@@ -275,11 +284,19 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         tokio::select! {
             res = call_function => {
                 match res {
-                    Ok((supported_result, version)) => {
+                    Ok((supported_result, mut workflow_ctx)) => {
                         debug!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline= %ctx.execution_deadline, "Finished");
-                        WorkerResult::Ok(supported_result, version)
+                        if let Err(db_err) = workflow_ctx.flush().await {
+                            WorkerResult::Err(WorkerError::DbError(db_err))
+                        } else {
+                            WorkerResult::Ok(supported_result, workflow_ctx.version)
+                        }
                     },
-                    Err(RunError::FunctionCall(err, version)) => {
+                    Err(RunError::FunctionCall(err, mut workflow_ctx)) => {
+                        if let Err(db_err) = workflow_ctx.flush().await {
+                            return WorkerResult::Err(WorkerError::DbError(db_err));
+                        }
+                        let version = workflow_ctx.version;
                         if let Some(err) =  err
                             .source()
                             .and_then(|source| source.downcast_ref::<FunctionError>())
@@ -303,10 +320,17 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             WorkerResult::Err(err)
                         }
                     }
-                    Err(RunError::WorkerError(err)) => WorkerResult::Err(err),
+                    Err(RunError::WorkerError(err, mut workflow_ctx)) => {
+                        if let Err(db_err) = workflow_ctx.flush().await {
+                            WorkerResult::Err(WorkerError::DbError(db_err))
+                        } else {
+                            WorkerResult::Err(err)
+                        }
+                    },
                 }
             },
             () = tokio::time::sleep(deadline_duration) => {
+                // not flushing the workflow_ctx as it would introduce locking.
                 let worker_result = std::mem::replace(&mut *timeout_error.lock().unwrap(), WorkerResult::Err(WorkerError::IntermittentTimeout));
                 info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.clock_fn)(), "Timing out with {worker_result:?}");
                 worker_result

@@ -400,6 +400,14 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
+    pub(crate) async fn flush<DB: DbConnection>(
+        &mut self,
+        db_connection: &DB,
+    ) -> Result<(), DbError> {
+        self.flush_non_blocking_event_cache(db_connection, (self.clock_fn)())
+            .await
+    }
+
     async fn flush_non_blocking_event_cache_if_full<DB: DbConnection>(
         &mut self,
         db_connection: &DB,
@@ -559,16 +567,16 @@ impl<C: ClockFn> EventHistory<C> {
                     max_retries: child_max_retries,
                 };
                 *version =
-                    // if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
-                    //     non_blocking_event_batch.push(NonBlockingCache::StartAsync {
-                    //         batch: vec![child_exec_req],
-                    //         version: version.clone(),
-                    //         child_req,
-                    //     });
-                    //     self.flush_non_blocking_event_cache_if_full(db_connection, created_at)
-                    //         .await?;
-                    //     Version::new(version.0 + 1)
-                    // } else {
+                    if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
+                        non_blocking_event_batch.push(NonBlockingCache::StartAsync {
+                            batch: vec![child_exec_req],
+                            version: version.clone(),
+                            child_req,
+                        });
+                        self.flush_non_blocking_event_cache_if_full(db_connection, created_at)
+                            .await?;
+                        Version::new(version.0 + 1)
+                    } else {
                         db_connection
                             .append_batch_create_new_execution(
                                 created_at,
@@ -578,8 +586,7 @@ impl<C: ClockFn> EventHistory<C> {
                                 vec![child_req],
                             )
                             .await?
-                    //}
-                    ;
+                    };
                 Ok(history_events)
             }
             EventCall::BlockingChildJoinNext { join_set_id } => {

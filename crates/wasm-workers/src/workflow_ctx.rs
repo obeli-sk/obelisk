@@ -118,6 +118,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         }
     }
 
+    pub(crate) async fn flush(&mut self) -> Result<(), DbError> {
+        self.event_history.flush(&self.db_pool.connection()).await
+    }
+
     #[instrument(skip_all, fields(%ffqn))]
     pub(crate) async fn call_imported_fn(
         &mut self,
