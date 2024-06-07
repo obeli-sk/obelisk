@@ -197,6 +197,74 @@ pub mod testing {
                     wit_import(_rt::as_i32(&millis), _rt::as_i32(&iterations));
                 }
             }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn sleep_result(millis: u32) -> Result<(), ()> {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "testing:sleep/sleep")]
+                    extern "C" {
+                        #[link_name = "sleep-result"]
+                        fn wit_import(_: i32) -> i32;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: i32) -> i32 {
+                        unreachable!()
+                    }
+                    let ret = wit_import(_rt::as_i32(&millis));
+                    match ret {
+                        0 => {
+                            let e = ();
+                            Ok(e)
+                        }
+                        1 => {
+                            let e = ();
+                            Err(e)
+                        }
+                        _ => _rt::invalid_enum_discriminant(),
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn sleep_result_err_string(millis: u32) -> Result<(), _rt::String> {
+                unsafe {
+                    #[repr(align(4))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 12]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 12]);
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "testing:sleep/sleep")]
+                    extern "C" {
+                        #[link_name = "sleep-result-err-string"]
+                        fn wit_import(_: i32, _: *mut u8);
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: i32, _: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(_rt::as_i32(&millis), ptr0);
+                    let l1 = i32::from(*ptr0.add(0).cast::<u8>());
+                    match l1 {
+                        0 => {
+                            let e = ();
+                            Ok(e)
+                        }
+                        1 => {
+                            let e = {
+                                let l2 = *ptr0.add(4).cast::<*mut u8>();
+                                let l3 = *ptr0.add(8).cast::<usize>();
+                                let len4 = l3;
+                                let bytes4 = _rt::Vec::from_raw_parts(l2.cast(), len4, len4);
+
+                                _rt::string_lift(bytes4)
+                            };
+                            Err(e)
+                        }
+                        _ => _rt::invalid_enum_discriminant(),
+                    }
+                }
+            }
         }
     }
 }
@@ -472,6 +540,13 @@ mod _rt {
             self as i64
         }
     }
+    pub unsafe fn invalid_enum_discriminant<T>() -> T {
+        if cfg!(debug_assertions) {
+            panic!("invalid enum discriminant")
+        } else {
+            core::hint::unreachable_unchecked()
+        }
+    }
 
     #[cfg(target_arch = "wasm32")]
     pub fn run_ctors_once() {
@@ -511,8 +586,8 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.25.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 707] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc9\x04\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 787] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x99\x05\x01A\x02\x01\
 A\x09\x01B\x05\x01r\x02\x07secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\0\x01\
 @\0\0\x01\x04\0\x03now\x01\x02\x04\0\x0aresolution\x01\x02\x03\x01\x1cwasi:clock\
 s/wall-clock@0.2.0\x05\0\x02\x03\0\0\x08datetime\x01B\x0c\x02\x03\x02\x01\x01\x04\
@@ -520,14 +595,16 @@ s/wall-clock@0.2.0\x05\0\x02\x03\0\0\x08datetime\x01B\x0c\x02\x03\x02\x01\x01\x0
 t\x01\x01\0\x02in\x01\x03\0\x04\0\x0cscheduled-at\x03\0\x04\x01@\x01\x06millisy\x01\
 \0\x04\0\x05sleep\x01\x06\x01@\0\0s\x04\0\x0cnew-join-set\x01\x07\x01@\x03\x04ff\
 qns\x0bparams-jsons\x0cscheduled-at\x05\0s\x04\0\x08schedule\x01\x08\x03\x01\x20\
-obelisk:workflow/host-activities\x05\x02\x01B\x04\x01@\x01\x06millisy\x01\0\x04\0\
+obelisk:workflow/host-activities\x05\x02\x01B\x0a\x01@\x01\x06millisy\x01\0\x04\0\
 \x05sleep\x01\0\x01@\x02\x06millisy\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\
-\x01\x03\x01\x13testing:sleep/sleep\x05\x03\x01B\x05\x01@\x01\x06millisy\x01\0\x04\
-\0\x13sleep-host-activity\x01\0\x04\0\x0esleep-activity\x01\0\x01@\x01\x0fschedu\
-le-millisy\x01\0\x04\0\x0areschedule\x01\x01\x04\x01\x1ftesting:sleep-workflow/w\
-orkflow\x05\x04\x04\x01\x1atesting:sleep-workflow/any\x04\0\x0b\x09\x01\0\x03any\
-\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.208.1\x10\
-wit-bindgen-rust\x060.25.0";
+\x01\x01j\0\0\x01@\x01\x06millisy\0\x02\x04\0\x0csleep-result\x01\x03\x01j\0\x01\
+s\x01@\x01\x06millisy\0\x04\x04\0\x17sleep-result-err-string\x01\x05\x03\x01\x13\
+testing:sleep/sleep\x05\x03\x01B\x05\x01@\x01\x06millisy\x01\0\x04\0\x13sleep-ho\
+st-activity\x01\0\x04\0\x0esleep-activity\x01\0\x01@\x01\x0fschedule-millisy\x01\
+\0\x04\0\x0areschedule\x01\x01\x04\x01\x1ftesting:sleep-workflow/workflow\x05\x04\
+\x04\x01\x1atesting:sleep-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09\
+producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.208.1\x10wit-bindgen-rus\
+t\x060.25.0";
 
 #[inline(never)]
 #[doc(hidden)]

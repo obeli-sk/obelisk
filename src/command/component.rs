@@ -39,7 +39,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
     let config_id = ConfigId::generate();
     let exec_config = ExecConfig {
         batch_size: 10,
-        lock_expiry: Duration::from_secs(10),
+        lock_expiry: Duration::from_secs(1),
         tick_sleep: Duration::from_millis(200),
         config_id,
     };
@@ -78,6 +78,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
         exports: detected.exports,
         imports: detected.imports,
     };
+    // TODO: Add "Already exists" error
     let result = db_pool
         .connection()
         .component_add(now(), component, active)
@@ -88,6 +89,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
         for conflict in conflicts {
             println!("{conflict}");
         }
+        std::process::exit(1);
     } else {
         println!("{component_id} added");
     }
