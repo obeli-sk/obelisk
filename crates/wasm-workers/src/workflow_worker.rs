@@ -530,14 +530,13 @@ mod tests {
         activity_exec_task.close().await;
     }
 
-    pub(crate) fn spawn_workflow_sleep<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    fn get_workflow_worker<C: ClockFn, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
-        clock_fn: impl ClockFn + 'static,
+        clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: NonBlockingEventBatching,
-    ) -> ExecutorTaskHandle {
-        let workflow_engine = get_workflow_engine(EngineConfig::default());
-        let worker = Arc::new(
+    ) -> Arc<WorkflowWorker<C, DB, P>> {
+        Arc::new(
             WorkflowWorker::new_with_config(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 WorkflowConfig {
@@ -547,11 +546,25 @@ mod tests {
                     child_max_retries: 0,
                     non_blocking_event_batching,
                 },
-                workflow_engine,
-                db_pool.clone(),
-                clock_fn.clone(),
+                get_workflow_engine(EngineConfig::default()),
+                db_pool,
+                clock_fn,
             )
             .unwrap(),
+        )
+    }
+
+    pub(crate) fn spawn_workflow_sleep<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+        db_pool: P,
+        clock_fn: impl ClockFn + 'static,
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        non_blocking_event_batching: NonBlockingEventBatching,
+    ) -> ExecutorTaskHandle {
+        let worker = get_workflow_worker(
+            db_pool.clone(),
+            clock_fn.clone(),
+            join_next_blocking_strategy,
+            non_blocking_event_batching,
         );
 
         let exec_config = ExecConfig {
@@ -815,6 +828,99 @@ mod tests {
         activity_exec_task.close().await;
         workflow_exec_task.close().await;
         drop(db_connection);
+        db_pool.close().await.unwrap();
+    }
+
+    #[cfg(not(madsim))]
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn schedule(
+        #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        join_next_strategy: JoinNextBlockingStrategy,
+        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
+        batching: NonBlockingEventBatching,
+    ) {
+        use concepts::prefixed_ulid::ExecutorId;
+
+        const SLEEP_MILLIS: u32 = 100;
+        const RESCHEDULE_FFQN: FunctionFqn =
+            FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::RESCHEDULE);
+        let _guard = test_utils::set_up();
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool) = db.set_up().await;
+        let worker = get_workflow_worker(
+            db_pool.clone(),
+            sim_clock.get_clock_fn(),
+            join_next_strategy,
+            batching,
+        );
+        let execution_id = ExecutionId::generate();
+        let db_connection = db_pool.connection();
+        let params = Params::from_json_array(json!([SLEEP_MILLIS])).unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at: sim_clock.now(),
+                execution_id,
+                ffqn: RESCHEDULE_FFQN,
+                params: params.clone(),
+                parent: None,
+                scheduled_at: sim_clock.now(),
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+            })
+            .await
+            .unwrap();
+        // tick2 + await should mark the execution finished.
+        let exec_task = ExecTask::new(
+            worker,
+            ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: TICK_SLEEP,
+                config_id: ConfigId::generate(),
+            },
+            sim_clock.get_clock_fn(),
+            db_pool.clone(),
+            Arc::new([RESCHEDULE_FFQN]),
+            None,
+        );
+        assert_eq!(
+            1,
+            exec_task
+                .tick2(sim_clock.now())
+                .await
+                .unwrap()
+                .wait_for_tasks()
+                .await
+                .unwrap()
+        );
+        let res = db_pool.connection().get(execution_id).await.unwrap();
+        assert_matches!(
+            res.finished_result().unwrap(),
+            Ok(SupportedFunctionResult::None)
+        );
+        // New execution should be pending in SLEEP_MILLIS.
+        sim_clock
+            .move_time_forward(Duration::from_millis(SLEEP_MILLIS as u64))
+            .await;
+        let mut next_pending = db_pool
+            .connection()
+            .lock_pending(
+                10,
+                sim_clock.now(),
+                Arc::from([RESCHEDULE_FFQN]),
+                sim_clock.now(),
+                ExecutorId::generate(),
+                sim_clock.now() + Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        assert_eq!(1, next_pending.len());
+        let next_pending = next_pending.pop().unwrap();
+        assert!(next_pending.parent.is_none());
+        assert_eq!(params, next_pending.params);
+        drop(exec_task);
         db_pool.close().await.unwrap();
     }
 }
