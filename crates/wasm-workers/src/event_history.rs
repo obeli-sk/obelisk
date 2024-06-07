@@ -43,7 +43,7 @@ pub(crate) struct EventHistory<C: ClockFn> {
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     clock_fn: C,
-    timeout_error: Arc<std::sync::Mutex<WorkerResult>>,
+    timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
     // TODO: optimize using start_from_idx: usize,
 }
 
@@ -68,7 +68,7 @@ impl<C: ClockFn> EventHistory<C> {
         child_max_retries: u32,
         non_blocking_event_batching: NonBlockingEventBatching,
         clock_fn: C,
-        timeout_error: Arc<std::sync::Mutex<WorkerResult>>,
+        timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
     ) -> Self {
         EventHistory {
             execution_id,
@@ -89,7 +89,7 @@ impl<C: ClockFn> EventHistory<C> {
                 NonBlockingEventBatching::Enabled => Some(Vec::new()),
             },
             clock_fn,
-            timeout_error,
+            timeout_error_container,
         }
     }
 
@@ -169,7 +169,7 @@ impl<C: ClockFn> EventHistory<C> {
             // JoinNext was written, wait for next response.
             let join_set_id = poll_variant.join_set_id();
             debug!(%join_set_id,  "Waiting for {poll_variant:?}");
-            *self.timeout_error.lock().unwrap() = poll_variant.as_worker_result();
+            *self.timeout_error_container.lock().unwrap() = poll_variant.as_worker_result();
             let key = poll_variant.as_key();
 
             // Subscribe to the next response.
