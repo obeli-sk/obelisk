@@ -88,9 +88,6 @@ pub(crate) enum Component {
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Execution {
     Schedule {
-        /// Force execution creation without name or parameter validation
-        #[arg(long)]
-        force: bool,
         /// Function in the fully qualified format
         #[arg(value_name = "FUNCTION")]
         ffqn: FunctionFqn,

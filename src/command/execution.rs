@@ -19,7 +19,6 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
     mut ffqn: FunctionFqn,
     params: Params,
     db_file: P,
-    force: bool,
 ) -> anyhow::Result<()> {
     let db_file = db_file.as_ref();
     let db_pool = SqlitePool::new(db_file)
@@ -27,22 +26,23 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
     let db_connection = db_pool.connection();
 
-    if !force {
-        // Check that ffqn exists
-        let (ffqn2, param_types, _return_type) = db_connection
+    // Check that ffqn exists
+    let (param_types, return_type) = {
+        let (ffqn2, param_types, return_type) = db_connection
             .component_active_get_exported_function(ffqn)
             .await?;
         ffqn = ffqn2;
-        // Check parameter cardinality
-        if params.len() != param_types.len() {
-            bail!(
-                "incorrect number of parameters. Expected {expected}, got {got}",
-                expected = param_types.len(),
-                got = params.len()
-            );
-        }
-        // TODO: Typecheck parameters
+        (param_types, return_type)
+    };
+    // Check parameter cardinality
+    if params.len() != param_types.len() {
+        bail!(
+            "incorrect number of parameters. Expected {expected}, got {got}",
+            expected = param_types.len(),
+            got = params.len()
+        );
     }
+    // TODO: Typecheck parameters
 
     let execution_id = ExecutionId::generate();
     let created_at = now();
@@ -56,6 +56,7 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
             scheduled_at: created_at,
             retry_exp_backoff: Duration::from_millis(100), // TODO pass from args
             max_retries: 5,                                // TODO pass from args
+            return_type,
         })
         .await
         .unwrap();

@@ -27,6 +27,7 @@ async fn diff_proptest() {
         scheduled_at: now(),
         retry_exp_backoff: Duration::ZERO,
         max_retries: 0,
+        return_type: None,
     };
     let mut append_requests = vec![];
     while append_requests.is_empty() {

@@ -489,6 +489,7 @@ impl DbTask {
             scheduled_at: req.scheduled_at,
             retry_exp_backoff: req.retry_exp_backoff,
             max_retries: req.max_retries,
+            return_type: req.return_type,
         });
         let version = journal.version();
         self.index.update(&mut journal);
@@ -586,6 +587,7 @@ impl DbTask {
                     intermittent_event_count: journal.intermittent_event_count(),
                     retry_exp_backoff: journal.retry_exp_backoff(),
                     parent: journal.parent(),
+                    return_type: journal.return_type().cloned(),
                 },
             });
         }

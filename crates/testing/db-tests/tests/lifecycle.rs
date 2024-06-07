@@ -17,6 +17,7 @@ use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
 use tracing::{debug, info};
 use utils::time::now;
+use val_json::type_wrapper::TypeWrapper;
 
 #[tokio::test]
 async fn test_lifecycle_mem() {
@@ -212,6 +213,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
+            return_type: None,
         })
         .await
         .unwrap();
@@ -227,6 +229,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
+            return_type: None,
         })
         .await
         .unwrap_err();
@@ -496,6 +499,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: RETRY_EXP_BACKOFF,
                 max_retries: MAX_RETRIES,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -534,15 +538,17 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
             max_retries,
             retry_exp_backoff,
             parent,
+            return_type,
         ) = assert_matches!(expired,
-            ExpiredTimer::Lock { execution_id, version, intermittent_event_count, max_retries, retry_exp_backoff, parent } =>
-            (execution_id, version, intermittent_event_count, max_retries, retry_exp_backoff, parent));
+            ExpiredTimer::Lock { execution_id, version, intermittent_event_count, max_retries, retry_exp_backoff, parent, return_type } =>
+            (execution_id, version, intermittent_event_count, max_retries, retry_exp_backoff, parent, return_type));
         assert_eq!(execution_id, *found_execution_id);
         assert_eq!(Version::new(2), *version);
         assert_eq!(0, *already_retried_count);
         assert_eq!(MAX_RETRIES, *max_retries);
         assert_eq!(RETRY_EXP_BACKOFF, *retry_exp_backoff);
         assert_eq!(None, *parent);
+        assert_eq!(None, *return_type);
     }
 }
 
@@ -564,6 +570,7 @@ pub async fn append_batch_respond_to_parent(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
+            return_type: None,
         })
         .await
         .unwrap();
@@ -603,6 +610,7 @@ pub async fn append_batch_respond_to_parent(
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -670,6 +678,7 @@ pub async fn append_batch_respond_to_parent(
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -764,6 +773,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
+            return_type: None,
         })
         .await
         .unwrap();
@@ -780,6 +790,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
+            return_type: None,
         })
         .await
         .unwrap();
@@ -796,6 +807,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
+            return_type: None,
         })
         .await
         .unwrap();
@@ -832,6 +844,7 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
+            return_type: None,
         })
         .await
         .unwrap();
@@ -883,6 +896,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
+            return_type: Some(TypeWrapper::U8),
         })
         .await
         .unwrap();
@@ -920,6 +934,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
         max_retries: 0,
         retry_exp_backoff: Duration::ZERO,
         parent: None,
+        return_type: Some(TypeWrapper::U8),
     };
     assert_eq!(expected, actual);
 }
@@ -938,6 +953,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
+            return_type: None,
         })
         .await
         .unwrap();

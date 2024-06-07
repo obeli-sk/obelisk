@@ -771,6 +771,7 @@ mod tests {
                 scheduled_at: config.created_at,
                 retry_exp_backoff: config.retry_exp_backoff,
                 max_retries: config.max_retries,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -994,6 +995,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -1024,6 +1026,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             };
             let join_set = ExecutionEventInner::HistoryEvent {
                 event: HistoryEvent::JoinSet { join_set_id },
@@ -1184,6 +1187,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: timeout_duration,
                 max_retries: 1,
+                return_type: None,
             })
             .await
             .unwrap();

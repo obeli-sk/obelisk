@@ -496,6 +496,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .await?;
                 Ok(history_events)
             }
+
             EventCall::StartAsync {
                 ffqn,
                 join_set_id,
@@ -509,6 +510,9 @@ impl<C: ClockFn> EventHistory<C> {
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
+                let (ffqn, _param_types, return_type) = db_connection
+                    .component_active_get_exported_function(ffqn)
+                    .await?; // TODO: consider caching
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: child_execution_id,
@@ -518,6 +522,7 @@ impl<C: ClockFn> EventHistory<C> {
                     scheduled_at: created_at,
                     retry_exp_backoff: child_retry_exp_backoff,
                     max_retries: child_max_retries,
+                    return_type,
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
@@ -542,6 +547,7 @@ impl<C: ClockFn> EventHistory<C> {
                     };
                 Ok(history_events)
             }
+
             EventCall::ScheduleRequest {
                 scheduled_at,
                 execution_id: new_execution_id,
@@ -556,6 +562,9 @@ impl<C: ClockFn> EventHistory<C> {
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%new_execution_id, "ScheduleRequest: appending");
+                let (ffqn, _param_types, return_type) = db_connection
+                    .component_active_get_exported_function(ffqn)
+                    .await?;
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: new_execution_id,
@@ -565,6 +574,7 @@ impl<C: ClockFn> EventHistory<C> {
                     scheduled_at: at,
                     retry_exp_backoff: child_retry_exp_backoff,
                     max_retries: child_max_retries,
+                    return_type,
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
@@ -589,6 +599,7 @@ impl<C: ClockFn> EventHistory<C> {
                     };
                 Ok(history_events)
             }
+
             EventCall::BlockingChildJoinNext { join_set_id } => {
                 self.flush_non_blocking_event_cache(db_connection, created_at)
                     .await?;
@@ -607,6 +618,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .await?;
                 Ok(history_events)
             }
+
             EventCall::BlockingChildExecutionRequest {
                 ffqn,
                 join_set_id,
@@ -632,15 +644,19 @@ impl<C: ClockFn> EventHistory<C> {
                 history_events.push(event.clone());
                 let join_next = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Appending JoinSet,ChildExecutionRequest,JoinNext");
+                let (ffqn, _param_types, return_type) = db_connection
+                    .component_active_get_exported_function(ffqn)
+                    .await?;
                 let child = CreateRequest {
                     created_at,
                     execution_id: child_execution_id,
-                    ffqn: ffqn.clone(),
-                    params: params.clone(),
+                    ffqn,
+                    params,
                     parent: Some((execution_id, join_set_id)),
                     scheduled_at: created_at,
                     retry_exp_backoff: child_retry_exp_backoff,
                     max_retries: child_max_retries,
+                    return_type,
                 };
                 *version = db_connection
                     .append_batch_create_new_execution(
@@ -653,6 +669,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .await?;
                 Ok(history_events)
             }
+
             EventCall::BlockingDelayRequest {
                 join_set_id,
                 delay_id,
@@ -952,6 +969,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -1107,6 +1125,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -1273,6 +1292,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();

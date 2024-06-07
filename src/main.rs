@@ -83,11 +83,7 @@ async fn main() {
                 .await
                 .unwrap();
         }
-        Subcommand::Execution(args::Execution::Schedule {
-            ffqn,
-            params,
-            force,
-        }) => {
+        Subcommand::Execution(args::Execution::Schedule { ffqn, params }) => {
             // TODO interactive search for ffqn showing param types and result, file name
             // enter parameters one by one
             let params = format!("[{}]", params.join(","));
@@ -95,7 +91,7 @@ async fn main() {
                 serde_json::from_str(&params).expect("parameters should be passed as json values");
             let params = Params::from_json_array(params).expect("cannot parse parameters");
             // TODO: typecheck the params
-            command::execution::schedule(ffqn, params, db_file, force)
+            command::execution::schedule(ffqn, params, db_file)
                 .await
                 .unwrap();
         }

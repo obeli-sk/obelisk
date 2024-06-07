@@ -11,6 +11,7 @@ db-mem.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
 test-utils.workspace = true
 utils.workspace = true
+val-json.workspace = true
 
 arbitrary.workspace = true
 assert_matches.workspace = true

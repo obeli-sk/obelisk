@@ -31,6 +31,7 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, instrument, trace, warn, Span};
+use val_json::type_wrapper::TypeWrapper;
 
 #[derive(Debug, Clone, Copy)]
 struct DelayReq {
@@ -77,8 +78,8 @@ CREATE TABLE IF NOT EXISTS t_join_set_response (
 /// Stores executions in state: `Pending`, `PendingAt`, `Locked`, and delay requests.
 /// State to column mapping:
 /// `PendingAt`:  `ffqn`
-/// `Locked`:                `executor_id`, `run_id`, `intermittent_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>
 /// `BlockedByJoinSet`:      `join_set_id`
+/// `Locked`:                `executor_id`, `run_id`, `intermittent_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>, `return_type`
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
@@ -86,7 +87,9 @@ CREATE TABLE IF NOT EXISTS t_state (
     pending_or_expires_at TEXT NOT NULL,
 
     ffqn TEXT,
+
     join_set_id TEXT,
+
     executor_id TEXT,
     run_id TEXT,
     intermittent_event_count INTEGER,
@@ -94,12 +97,12 @@ CREATE TABLE IF NOT EXISTS t_state (
     retry_exp_backoff_millis INTEGER,
     parent_execution_id TEXT,
     parent_join_set_id TEXT,
+    return_type TEXT,
     PRIMARY KEY (execution_id, join_set_id)
 )
 "; // TODO: index by `pending_at` + `ffqn`
 
-/// Stores delay requests.
-/// State to column mapping:
+/// Represents [`ExpiredTimer::AsyncDelay`]
 const CREATE_TABLE_T_DELAY: &str = r"
 CREATE TABLE IF NOT EXISTS t_delay (
     execution_id TEXT NOT NULL,
@@ -409,6 +412,7 @@ impl SqlitePool {
             scheduled_at,
             retry_exp_backoff,
             max_retries,
+            return_type,
         } = event
         {
             Ok(CreateRequest {
@@ -420,6 +424,7 @@ impl SqlitePool {
                 scheduled_at,
                 retry_exp_backoff,
                 max_retries,
+                return_type,
             })
         } else {
             error!("Cannt match `Created` event - {event:?}");
@@ -589,10 +594,19 @@ impl SqlitePool {
                 let create_req = Self::fetch_created_event(tx, execution_id)?;
                 let mut stmt = tx.prepare_cached(
                 "INSERT INTO t_state \
-                (execution_id, next_version, pending_or_expires_at, executor_id, run_id, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id) \
+                (execution_id, next_version, pending_or_expires_at, executor_id, run_id, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id, return_type) \
                 VALUES \
-                (:execution_id, :next_version, :pending_or_expires_at, :executor_id, :run_id, :intermittent_event_count, :max_retries, :retry_exp_backoff_millis, :parent_execution_id, :parent_join_set_id)",
+                (:execution_id, :next_version, :pending_or_expires_at, :executor_id, :run_id, :intermittent_event_count, :max_retries, :retry_exp_backoff_millis, :parent_execution_id, :parent_join_set_id, :return_type)",
                 )?;
+                let return_type = create_req
+                    .return_type
+                    .map(|return_type| {
+                        serde_json::to_string(&return_type).map_err(|err| {
+                            error!("Cannot serialize {return_type:?} - {err:?}");
+                            rusqlite::Error::ToSqlConversionFailure(err.into())
+                        })
+                    })
+                    .transpose()?;
                 stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
                     ":next_version": next_version.0, // If the lock expires, this version will be used by `expired_timers_watcher`.
@@ -604,6 +618,7 @@ impl SqlitePool {
                     ":retry_exp_backoff_millis": u64::try_from(create_req.retry_exp_backoff.as_millis()).unwrap(),
                     ":parent_execution_id": create_req.parent.map(|(pid, _) | pid.to_string()),
                     ":parent_join_set_id": create_req.parent.map(|(_, join_set_id)| join_set_id.to_string()),
+                    ":return_type": return_type,
                 })?;
                 Ok(IndexUpdated {
                     intermittent_event_count: Some(intermittent_event_count),
@@ -1792,7 +1807,7 @@ impl DbConnection for SqlitePool {
                     ;
 
                     expired_timers.extend(conn.prepare(
-                        "SELECT execution_id, next_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id FROM t_state \
+                        "SELECT execution_id, next_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id, return_type FROM t_state \
                         WHERE pending_or_expires_at <= :at AND executor_id IS NOT NULL",
                     )?.query_map(
                             named_params! {
@@ -1807,9 +1822,10 @@ impl DbConnection for SqlitePool {
                                 let retry_exp_backoff = Duration::from_millis(row.get::<_, u64>("retry_exp_backoff_millis")?);
                                 let parent_execution_id = row.get::<_, Option<ExecutionIdW>>("parent_execution_id")?.map(|it|it.0);
                                 let parent_join_set_id = row.get::<_, Option<JoinSetIdW>>("parent_join_set_id")?.map(|it|it.0);
+                                let return_type = row.get::<_, JsonWrapper<Option<TypeWrapper>>>("return_type")?.0;
 
                                 Ok(ExpiredTimer::Lock { execution_id, version, intermittent_event_count, max_retries,
-                                    retry_exp_backoff, parent: parent_execution_id.and_then(|pexe| parent_join_set_id.map(|pjs| (pexe, pjs))) })
+                                    retry_exp_backoff, parent: parent_execution_id.and_then(|pexe| parent_join_set_id.map(|pjs| (pexe, pjs))), return_type })
                             },
                         )?
                         .collect::<Result<Vec<_>, _>>()?

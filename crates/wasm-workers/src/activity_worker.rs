@@ -348,6 +348,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -511,6 +512,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: Duration::ZERO,
                     max_retries: 0,
+                    return_type: None,
                 })
                 .await
                 .unwrap();
@@ -649,6 +651,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
+                    return_type: None,
                 })
                 .await
                 .unwrap();

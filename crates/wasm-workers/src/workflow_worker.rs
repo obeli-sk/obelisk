@@ -494,6 +494,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -615,6 +616,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -718,6 +720,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -806,6 +809,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::from_millis(0),
                 max_retries: concurrency - 1, // response can conflict with next ChildExecutionRequest
+                return_type: None,
             })
             .await
             .unwrap();
@@ -868,6 +872,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -902,7 +907,7 @@ mod tests {
         );
         // New execution should be pending in SLEEP_MILLIS.
         sim_clock
-            .move_time_forward(Duration::from_millis(SLEEP_MILLIS as u64))
+            .move_time_forward(Duration::from_millis(u64::from(SLEEP_MILLIS)))
             .await;
         let mut next_pending = db_pool
             .connection()

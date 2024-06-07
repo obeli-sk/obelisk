@@ -22,6 +22,7 @@ use std::time::Duration;
 use strum::IntoStaticStr;
 use tracing::debug;
 use tracing::trace;
+use val_json::type_wrapper::TypeWrapper;
 
 /// Remote client representation of the execution journal.
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -207,6 +208,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     scheduled_at: DateTime::from_timestamp_nanos(0),
     retry_exp_backoff: Duration::ZERO,
     max_retries: 0,
+    return_type: None,
 };
 pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
     event: HistoryEvent::JoinSet {
@@ -248,6 +250,9 @@ pub enum ExecutionEventInner {
         scheduled_at: DateTime<Utc>,
         retry_exp_backoff: Duration,
         max_retries: u32,
+        // FIXME: Add ComponentId
+        #[arbitrary(default)]
+        return_type: Option<TypeWrapper>,
     },
     // Created by an executor.
     // Either immediately followed by an execution request by an executor or
@@ -477,6 +482,7 @@ pub struct CreateRequest {
     pub scheduled_at: DateTime<Utc>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
+    pub return_type: Option<TypeWrapper>,
 }
 
 impl From<CreateRequest> for ExecutionEventInner {
@@ -488,6 +494,7 @@ impl From<CreateRequest> for ExecutionEventInner {
             scheduled_at: value.scheduled_at,
             retry_exp_backoff: value.retry_exp_backoff,
             max_retries: value.max_retries,
+            return_type: value.return_type,
         }
     }
 }
@@ -726,6 +733,7 @@ pub enum ExpiredTimer {
         max_retries: u32,
         retry_exp_backoff: Duration,
         parent: Option<(ExecutionId, JoinSetId)>,
+        return_type: Option<TypeWrapper>,
     },
     AsyncDelay {
         execution_id: ExecutionId,

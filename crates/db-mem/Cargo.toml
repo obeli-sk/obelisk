@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 concepts.workspace = true
 utils.workspace = true
+val-json.workspace = true
 
 arbitrary.workspace = true
 assert_matches.workspace = true

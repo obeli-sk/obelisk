@@ -937,6 +937,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "utils",
+ "val-json",
 ]
 
 [[package]]
@@ -960,6 +961,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+ "val-json",
 ]
 
 [[package]]
@@ -980,6 +982,7 @@ dependencies = [
  "test-utils",
  "tracing",
  "utils",
+ "val-json",
 ]
 
 [[package]]
