@@ -125,7 +125,7 @@ fn inspect_fns(functions: &[FunctionMetadata], verbosity: FunctionMetadataVerbos
     for (ffqn, parameter_types, result) in functions {
         print!("\t{ffqn}");
         if verbosity == FunctionMetadataVerbosity::WithTypes {
-            print!(" {parameter_types:?}");
+            print!(" func{parameter_types:?}");
             if let Some(result) = result {
                 print!(" -> {result:?}");
             }

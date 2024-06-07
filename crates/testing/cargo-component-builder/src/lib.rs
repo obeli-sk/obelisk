@@ -90,13 +90,14 @@ fn build_internal(tripple: &str) {
             }
             let vec = export
                 .fns
-                .keys()
-                .map(|function_name| {
+                .iter()
+                .map(|(function_name, (parameter_types, ret_type))| {
                     format!(
-                        "pub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\");\n",
+                        "pub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\"); // func{parameter_types:?} {arrow_ret_type}\n",
                         name_upper = to_snake_case(function_name).to_uppercase(),
                         ifc = export.ifc_fqn,
                         fn = function_name,
+                        arrow_ret_type = if let Some(ret_type) = ret_type { format!("-> {ret_type:?}") } else { String::new() }
                     )
                 })
                 .collect();
