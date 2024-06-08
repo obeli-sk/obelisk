@@ -35,6 +35,8 @@ pub(crate) enum FunctionError {
     DbError(#[from] DbError),
     #[error("child finished with an execution error: {0}")]
     ChildExecutionError(FinishedExecutionError), // FIXME Add parameter/result parsing errors
+    #[error("scheduling failed, metadata for {ffqn} not found")]
+    FunctionMetadataNotFound { ffqn: FunctionFqn },
     #[error("uncategorized error - {0}")]
     UncategorizedError(&'static str),
 }
@@ -53,6 +55,14 @@ impl FunctionError {
                 FatalError::ChildExecutionError(err),
                 version,
             )),
+            Self::FunctionMetadataNotFound { ffqn } => {
+                WorkerResult::Err(WorkerError::IntermittentError {
+                    reason: StrVariant::Arc(Arc::from(format!(
+                        "attempted to schedule an execution with no active component, function metadata not found for {ffqn}"))),
+                    err: None,
+                    version,
+                })
+            }
             Self::UncategorizedError(err) => WorkerResult::Err(WorkerError::FatalError(
                 FatalError::UncategorizedError(err),
                 version,
@@ -358,9 +368,11 @@ const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::{
+        tests::component_add_dummy,
         workflow_ctx::WorkflowCtx,
         workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching},
     };
+    use assert_matches::assert_matches;
     use async_trait::async_trait;
     use concepts::{prefixed_ulid::ConfigId, FunctionMetadata, ParameterTypes};
     use concepts::{
@@ -378,6 +390,7 @@ pub(crate) mod tests {
         expired_timers_watcher,
         worker::{Worker, WorkerContext, WorkerError, WorkerResult},
     };
+    use std::collections::HashSet;
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{error, info};
@@ -438,7 +451,7 @@ pub(crate) mod tests {
                     }
                 };
                 if let Err(err) = res {
-                    info!("Sending {err}");
+                    info!("Sending {err:?}");
                     return err.into_worker_result(workflow_ctx.version);
                 }
             }
@@ -512,6 +525,18 @@ pub(crate) mod tests {
                 clock_fn: sim_clock.get_clock_fn(),
             },
         );
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection();
+        for child_ffqn in steps
+            .iter()
+            .filter_map(|step| match step {
+                WorkflowStep::Call { ffqn } => Some(ffqn.clone()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>()
+        {
+            component_add_dummy(&db_connection, created_at, child_ffqn).await;
+        }
         let workflow_exec_task = {
             let worker = Arc::new(WorkflowWorkerMock {
                 ffqn: FFQN_MOCK,
@@ -535,8 +560,7 @@ pub(crate) mod tests {
             )
         };
         // Create an execution.
-        let created_at = sim_clock.now();
-        let db_connection = db_pool.connection();
+
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -547,6 +571,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                return_type: None,
             })
             .await
             .unwrap();
@@ -588,12 +613,12 @@ pub(crate) mod tests {
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
                     info!("Executing child {child_execution_id}");
                     assert!(child_execution_count > 0);
-                    let child_request = db_connection.get(*child_execution_id).await.unwrap();
-                    assert_eq!(Some((execution_id, join_set_id)), child_request.parent());
+                    let child_log = db_connection.get(*child_execution_id).await.unwrap();
+                    assert_eq!(Some((execution_id, join_set_id)), child_log.parent());
                     // execute
                     let child_exec_tick = {
                         let worker = Arc::new(WorkflowWorkerMock {
-                            ffqn: child_request.ffqn().clone(),
+                            ffqn: child_log.ffqn().clone(),
                             steps: vec![],
                             clock_fn: sim_clock.get_clock_fn(),
                             db_pool: db_pool.clone(),
@@ -610,18 +635,24 @@ pub(crate) mod tests {
                             exec_config,
                             sim_clock.get_clock_fn(),
                             db_pool.clone(),
-                            Arc::new([child_request.ffqn().clone()]),
+                            Arc::new([child_log.ffqn().clone()]),
                             None,
                         );
                         exec_task.tick2(sim_clock.now()).await.unwrap()
                     };
                     assert_eq!(child_exec_tick.wait_for_tasks().await.unwrap(), 1);
                     child_execution_count -= 1;
+                    let child_log = db_connection.get(*child_execution_id).await.unwrap();
+                    let child_res = child_log.finished_result().unwrap();
+                    println!("***{child_res:?}");
+                    assert_matches!(child_res, Ok(SupportedFunctionResult::None));
                 }
             }
             processed.push(join_set_id);
         }
         // must be finished at this point
+        assert_eq!(0, child_execution_count);
+        assert_eq!(0, delay_request_count);
         let execution_log = db_connection.get(execution_id).await.unwrap();
         assert_eq!(PendingState::Finished, execution_log.pending_state);
         drop(db_connection);

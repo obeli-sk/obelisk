@@ -51,3 +51,74 @@ impl Engines {
         }
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use crate::component_detector::ComponentDetector;
+    use chrono::{DateTime, Utc};
+    use concepts::{
+        storage::{Component, ComponentWithMetadata, DbConnection},
+        ComponentId, ComponentType, FunctionFqn, ParameterTypes,
+    };
+    use std::path::Path;
+
+    pub(crate) async fn component_add_dummy<DB: DbConnection>(
+        db_connection: &DB,
+        created_at: DateTime<Utc>,
+        ffqn: FunctionFqn,
+    ) {
+        db_connection
+            .component_add(
+                created_at,
+                ComponentWithMetadata {
+                    component: Component {
+                        component_id: ComponentId::new(
+                            concepts::HashType::Sha256,
+                            ulid::Ulid::new().to_string(),
+                        ),
+                        component_type: ComponentType::WasmActivity,
+                        config: serde_json::Value::String(String::new()),
+                        file_name: String::new(),
+                    },
+                    exports: vec![(ffqn, ParameterTypes::default(), None)],
+                    imports: vec![],
+                },
+                true,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    pub(crate) async fn component_add_real<DB: DbConnection>(
+        db_connection: &DB,
+        created_at: DateTime<Utc>,
+        wasm_path: impl AsRef<Path>,
+    ) {
+        let wasm_path = wasm_path.as_ref();
+        let file_name = wasm_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let component_id = crate::component_detector::hash(wasm_path).unwrap();
+        let engine = ComponentDetector::get_engine();
+        let detected = ComponentDetector::new(wasm_path, &engine).unwrap();
+        let config = serde_json::Value::String("fake, not deserialized in tests".to_string());
+        let component = ComponentWithMetadata {
+            component: Component {
+                component_id,
+                component_type: detected.component_type,
+                config,
+                file_name,
+            },
+            exports: detected.exports,
+            imports: detected.imports,
+        };
+        db_connection
+            .component_add(created_at, component, true)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}

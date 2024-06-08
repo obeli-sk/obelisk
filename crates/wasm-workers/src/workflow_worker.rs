@@ -345,11 +345,15 @@ mod tests {
     use super::*;
     use crate::{
         activity_worker::tests::{spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT},
+        tests::component_add_real,
         EngineConfig,
     };
     use assert_matches::assert_matches;
-    use concepts::storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState};
     use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
+    use concepts::{
+        storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState},
+        FinishedExecutionError,
+    };
     use db_tests::Database;
     use executor::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
@@ -483,6 +487,18 @@ mod tests {
         let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
+        component_add_real(
+            &db_connection,
+            created_at,
+            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+        )
+        .await;
+        component_add_real(
+            &db_connection,
+            created_at,
+            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+        )
+        .await;
         let params = Params::from_json_array(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
         db_connection
             .create(CreateRequest {
@@ -529,6 +545,74 @@ mod tests {
         );
         workflow_exec_task.close().await;
         activity_exec_task.close().await;
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn fibo_workflow_with_no_activity_should_fail(
+        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
+        join_next_blocking_strategy: JoinNextBlockingStrategy,
+        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
+        batching: NonBlockingEventBatching,
+    ) {
+        const INPUT_ITERATIONS: u32 = 1;
+        let sim_clock = SimClock::default();
+        let (_guard, db_pool) = Database::Memory.set_up().await;
+        let _guard = test_utils::set_up();
+        let workflow_exec_task = spawn_workflow_fibo(
+            db_pool.clone(),
+            sim_clock.get_clock_fn(),
+            join_next_blocking_strategy,
+            batching,
+        );
+        // Create an execution.
+        let execution_id = ExecutionId::from_parts(0, 0);
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection();
+        component_add_real(
+            &db_connection,
+            created_at,
+            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+        )
+        .await;
+        let params = Params::from_json_array(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id,
+                ffqn: FIBO_WORKFLOW_FFQN,
+                params,
+                parent: None,
+                scheduled_at: created_at,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+                return_type: None,
+            })
+            .await
+            .unwrap();
+        info!("Should end as Failed");
+        let finished_result = wait_for_pending_state_fn(
+            &db_connection,
+            execution_id,
+            |exe_history| exe_history.finished_result().cloned(),
+            None,
+        )
+        .await
+        .unwrap();
+        let finished_result = finished_result.unwrap_err();
+        let finished_result = assert_matches!(
+            finished_result,
+            FinishedExecutionError::PermanentFailure( reason) => reason.to_string()
+        );
+        assert_eq!(
+            "attempted to schedule an execution with no active component, \
+                function metadata not found for testing:fibo/fibo.fibo",
+            finished_result
+        );
+
+        workflow_exec_task.close().await;
+        drop(db_connection);
+        db_pool.close().await.unwrap();
     }
 
     fn get_workflow_worker<C: ClockFn, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -683,7 +767,20 @@ mod tests {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = Database::Memory.set_up().await;
-
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection();
+        component_add_real(
+            &db_connection,
+            created_at,
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+        )
+        .await;
+        component_add_real(
+            &db_connection,
+            created_at,
+            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+        )
+        .await;
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -708,8 +805,6 @@ mod tests {
         let params = Params::from_json_array(json!([authority, "/"])).unwrap();
         // Create an execution.
         let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        let db_connection = db_pool.connection();
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -773,7 +868,21 @@ mod tests {
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
+        let created_at = sim_clock.now();
         let (_guard, db_pool) = db.set_up().await;
+        let db_connection = db_pool.connection();
+        component_add_real(
+            &db_connection,
+            created_at,
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+        )
+        .await;
+        component_add_real(
+            &db_connection,
+            created_at,
+            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+        )
+        .await;
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -797,8 +906,7 @@ mod tests {
         let params = Params::from_json_array(json!([authority, "/", concurrency])).unwrap();
         // Create an execution.
         let execution_id = ExecutionId::generate();
-        let created_at = sim_clock.now();
-        let db_connection = db_pool.connection();
+
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -847,6 +955,8 @@ mod tests {
     ) {
         use concepts::prefixed_ulid::ExecutorId;
 
+        use crate::tests::component_add_dummy;
+
         const SLEEP_MILLIS: u32 = 100;
         const RESCHEDULE_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::RESCHEDULE);
@@ -861,6 +971,7 @@ mod tests {
         );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
+        component_add_dummy(&db_connection, sim_clock.now(), RESCHEDULE_FFQN).await;
         let params = Params::from_json_array(json!([SLEEP_MILLIS])).unwrap();
         db_connection
             .create(CreateRequest {

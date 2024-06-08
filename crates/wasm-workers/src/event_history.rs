@@ -6,11 +6,13 @@ use crate::workflow_worker::NonBlockingEventBatching;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::HistoryEventScheduledAt;
+use concepts::storage::SpecificError;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse,
     JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
+use concepts::FunctionMetadata;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionResult};
 use executor::worker::WorkerResult;
@@ -480,7 +482,22 @@ impl<C: ClockFn> EventHistory<C> {
         version: &mut Version,
         child_retry_exp_backoff: Duration,
         child_max_retries: u32,
-    ) -> Result<Vec<HistoryEvent>, DbError> {
+    ) -> Result<Vec<HistoryEvent>, FunctionError> {
+        async fn component_active_get_exported_function<DB: DbConnection>(
+            db_connection: &DB,
+            ffqn: FunctionFqn,
+        ) -> Result<FunctionMetadata, FunctionError> {
+            db_connection
+                .component_active_get_exported_function(ffqn.clone())
+                .await
+                .map_err(|db_error| match db_error {
+                    DbError::Specific(SpecificError::NotFound) => {
+                        FunctionError::FunctionMetadataNotFound { ffqn }
+                    }
+                    _ => FunctionError::DbError(db_error),
+                }) // TODO: consider caching
+        }
+
         trace!(%version, "append_to_db");
         match event_call {
             EventCall::CreateJoinSet { join_set_id } => {
@@ -510,9 +527,8 @@ impl<C: ClockFn> EventHistory<C> {
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
-                let (ffqn, _param_types, return_type) = db_connection
-                    .component_active_get_exported_function(ffqn)
-                    .await?; // TODO: consider caching
+                let (ffqn, _param_types, return_type) =
+                    component_active_get_exported_function(db_connection, ffqn).await?; // TODO: consider caching
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: child_execution_id,
@@ -562,9 +578,8 @@ impl<C: ClockFn> EventHistory<C> {
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%new_execution_id, "ScheduleRequest: appending");
-                let (ffqn, _param_types, return_type) = db_connection
-                    .component_active_get_exported_function(ffqn)
-                    .await?;
+                let (ffqn, _param_types, return_type) =
+                    component_active_get_exported_function(db_connection, ffqn).await?;
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: new_execution_id,
@@ -644,9 +659,8 @@ impl<C: ClockFn> EventHistory<C> {
                 history_events.push(event.clone());
                 let join_next = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Appending JoinSet,ChildExecutionRequest,JoinNext");
-                let (ffqn, _param_types, return_type) = db_connection
-                    .component_active_get_exported_function(ffqn)
-                    .await?;
+                let (ffqn, _param_types, return_type) =
+                    component_active_get_exported_function(db_connection, ffqn).await?;
                 let child = CreateRequest {
                     created_at,
                     execution_id: child_execution_id,
@@ -892,6 +906,7 @@ impl EventCall {
 #[cfg(test)]
 mod tests {
     use crate::event_history::{EventCall, EventHistory};
+    use crate::tests::component_add_dummy;
     use crate::workflow_ctx::FunctionError;
     use crate::workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching};
     use assert_matches::assert_matches;
@@ -958,6 +973,7 @@ mod tests {
         // Create an execution.
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
+        component_add_dummy(&db_connection, created_at, MOCK_FFQN).await;
         let execution_id = ExecutionId::generate();
         db_connection
             .create(CreateRequest {
@@ -1110,10 +1126,10 @@ mod tests {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = Database::Memory.set_up().await;
-
-        // Create an execution.
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
+        component_add_dummy(&db_connection, created_at, MOCK_FFQN).await;
+        // Create an execution.
         let execution_id = ExecutionId::generate();
         db_connection
             .create(CreateRequest {
@@ -1281,6 +1297,7 @@ mod tests {
         // Create an execution.
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
+        component_add_dummy(&db_connection, created_at, MOCK_FFQN).await;
         let execution_id = ExecutionId::generate();
         db_connection
             .create(CreateRequest {

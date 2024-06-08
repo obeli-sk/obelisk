@@ -815,7 +815,7 @@ pub enum ComponentType {
 
 pub type ReturnType = Option<TypeWrapper>;
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default)]
 pub struct ParameterTypes(pub Vec<(String, TypeWrapper)>);
 
 impl ParameterTypes {

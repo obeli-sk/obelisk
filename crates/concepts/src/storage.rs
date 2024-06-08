@@ -655,6 +655,7 @@ pub trait DbConnection: Send + Sync {
     /// components with overlapping exports, the operation will not append the
     /// component and the inner result will contain the list of components that
     /// must be deactivated first.
+    // FIXME: Flatten the Result
     async fn component_add(
         &self,
         created_at: DateTime<Utc>,

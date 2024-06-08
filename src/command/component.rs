@@ -34,8 +34,8 @@ pub(crate) async fn add<P: AsRef<Path>>(
         .with_context(|| format!("cannot file name of `{wasm_path:?}`"))?
         .to_string_lossy()
         .into_owned();
-    let component_id =
-        hash(&wasm_path).with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
+    let component_id = wasm_workers::component_detector::hash(&wasm_path)
+        .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
     let config_id = ConfigId::generate();
     let exec_config = ExecConfig {
         batch_size: 10,
@@ -101,7 +101,7 @@ pub(crate) fn inspect<P: AsRef<Path>>(
     verbosity: FunctionMetadataVerbosity,
 ) -> anyhow::Result<()> {
     let wasm_path = wasm_path.as_ref();
-    let component_id = hash(wasm_path)?;
+    let component_id = wasm_workers::component_detector::hash(wasm_path)?;
     println!("Id:\n\t{component_id}");
     let engine = ComponentDetector::get_engine();
     let detected = ComponentDetector::new(wasm_path, &engine).context("parsing error")?;
@@ -111,16 +111,6 @@ pub(crate) fn inspect<P: AsRef<Path>>(
     println!("Imports:");
     inspect_fns(&detected.imports, verbosity);
     Ok(())
-}
-
-fn hash<P: AsRef<Path>>(path: P) -> anyhow::Result<ComponentId> {
-    use sha2::{Digest, Sha256};
-    let mut file = std::fs::File::open(&path)?;
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher)?;
-    let hash = hasher.finalize();
-    let hash_base16 = base16ct::lower::encode_string(&hash);
-    Ok(ComponentId::new(concepts::HashType::Sha256, hash_base16))
 }
 
 fn inspect_fns(functions: &[FunctionMetadata], verbosity: FunctionMetadataVerbosity) {

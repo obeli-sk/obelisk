@@ -25,7 +25,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::instrument;
 use tracing::{debug, error};
 
-pub struct InMemoryDbConnection(Arc<tokio::sync::Mutex<DbTask>>);
+pub struct InMemoryDbConnection(Arc<tokio::sync::Mutex<DbHolder>>);
 
 #[async_trait]
 impl DbConnection for InMemoryDbConnection {
@@ -221,10 +221,21 @@ impl DbConnection for InMemoryDbConnection {
     async fn component_add(
         &self,
         _created_at: DateTime<Utc>,
-        _component: ComponentWithMetadata,
-        _active: bool,
+        component: ComponentWithMetadata,
+        active: bool,
     ) -> Result<Result<(), Vec<ComponentId>>, DbError> {
-        todo!()
+        assert!(active);
+        let mut guard = self.0.lock().await;
+        for (ffqn, params, return_value) in component.exports {
+            assert!(guard
+                .exported_ffqn_to_metadata
+                .insert(
+                    ffqn.clone(),
+                    (ffqn.clone(), params.clone(), return_value.clone())
+                )
+                .is_none());
+        }
+        Ok(Ok(()))
     }
 
     async fn component_list(&self, _active: bool) -> Result<Vec<Component>, DbError> {
@@ -240,9 +251,13 @@ impl DbConnection for InMemoryDbConnection {
 
     async fn component_active_get_exported_function(
         &self,
-        _ffqn: FunctionFqn,
+        ffqn: FunctionFqn,
     ) -> Result<FunctionMetadata, DbError> {
-        todo!()
+        let guard = self.0.lock().await;
+        match guard.exported_ffqn_to_metadata.get(&ffqn) {
+            Some(metadata) => Ok(metadata.clone()),
+            None => Err(DbError::Specific(SpecificError::NotFound)),
+        }
     }
 
     async fn component_deactivate(&self, _id: ComponentId) -> Result<(), DbError> {
@@ -386,7 +401,7 @@ mod index {
 }
 
 #[derive(Clone)]
-pub struct InMemoryPool(Arc<tokio::sync::Mutex<DbTask>>);
+pub struct InMemoryPool(Arc<tokio::sync::Mutex<DbHolder>>);
 
 impl Default for InMemoryPool {
     fn default() -> Self {
@@ -397,10 +412,11 @@ impl Default for InMemoryPool {
 impl InMemoryPool {
     #[must_use]
     pub fn new() -> Self {
-        Self(Arc::new(tokio::sync::Mutex::new(DbTask {
+        Self(Arc::new(tokio::sync::Mutex::new(DbHolder {
             journals: BTreeMap::default(),
             index: JournalsIndex::default(),
             ffqn_to_pending_subscription: hashbrown::HashMap::default(),
+            exported_ffqn_to_metadata: hashbrown::HashMap::default(),
         })))
     }
 }
@@ -417,13 +433,14 @@ impl DbPool<InMemoryDbConnection> for InMemoryPool {
 }
 
 #[derive(Debug, Default)]
-struct DbTask {
+struct DbHolder {
     journals: BTreeMap<ExecutionId, ExecutionJournal>,
     index: JournalsIndex,
     ffqn_to_pending_subscription: hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>,
+    exported_ffqn_to_metadata: hashbrown::HashMap<FunctionFqn, FunctionMetadata>,
 }
 
-impl DbTask {
+impl DbHolder {
     #[allow(clippy::too_many_arguments)]
     fn lock_pending(
         &mut self,

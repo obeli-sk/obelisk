@@ -5,7 +5,7 @@
 //! * Otherwise -> Workflow
 
 use crate::WasmFileError;
-use concepts::{ComponentType, FunctionMetadata, IfcFqnName};
+use concepts::{ComponentId, ComponentType, FunctionMetadata, IfcFqnName};
 use std::{ops::Deref, path::Path};
 use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
@@ -40,6 +40,15 @@ impl ComponentDetector {
             imports: wasm_component.imported_functions().collect(),
         })
     }
+}
+pub fn hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error> {
+    use sha2::{Digest, Sha256};
+    let mut file = std::fs::File::open(&path)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    let hash = hasher.finalize();
+    let hash_base16 = base16ct::lower::encode_string(&hash);
+    Ok(ComponentId::new(concepts::HashType::Sha256, hash_base16))
 }
 
 fn supported_wasi_imports<'a>(mut imported_packages: impl Iterator<Item = &'a IfcFqnName>) -> bool {
