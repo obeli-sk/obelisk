@@ -1,8 +1,8 @@
 use crate::{FunctionMetadataVerbosity, WasmActivityConfig, WasmWorkflowConfig};
 use anyhow::Context;
 use concepts::prefixed_ulid::ConfigId;
-use concepts::storage::DbPool;
 use concepts::storage::{Component, ComponentWithMetadata, DbConnection};
+use concepts::storage::{ComponentAddError, DbPool};
 use concepts::{ComponentId, ComponentType, FunctionMetadata};
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::ExecConfig;
@@ -79,21 +79,24 @@ pub(crate) async fn add<P: AsRef<Path>>(
         imports: detected.imports,
     };
     // TODO: Add "Already exists" error
-    let result = db_pool
+    match db_pool
         .connection()
         .component_add(now(), component, active)
         .await
-        .context("database error")?;
-    if let Err(conflicts) = result {
-        println!("Cannot append component with state set to active. Following components have conflicting exports:");
-        for conflict in conflicts {
-            println!("{conflict}");
+    {
+        Ok(()) => {
+            println!("{component_id} added");
+            Ok(())
         }
-        std::process::exit(1);
-    } else {
-        println!("{component_id} added");
+        Err(ComponentAddError::Conflict(conflicts)) => {
+            println!("Cannot append component with state set to active. Following components have conflicting exports:");
+            for conflict in conflicts {
+                println!("{conflict}");
+            }
+            Err(anyhow::anyhow!("cannot add componnent"))
+        }
+        Err(db_error) => Err(db_error).context("database error"),
     }
-    Ok(())
 }
 
 pub(crate) fn inspect<P: AsRef<Path>>(

@@ -9,10 +9,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentWithMetadata,
-    CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEventInner,
-    ExecutionLog, ExpiredTimer, JoinSetResponseEventOuter, LockPendingResponse, LockResponse,
-    LockedExecution, SpecificError, Version,
+    AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError, ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentId, ExecutionId, FunctionFqn, FunctionMetadata, StrVariant};
@@ -223,7 +220,7 @@ impl DbConnection for InMemoryDbConnection {
         _created_at: DateTime<Utc>,
         component: ComponentWithMetadata,
         active: bool,
-    ) -> Result<Result<(), Vec<ComponentId>>, DbError> {
+    ) -> Result<(), ComponentAddError> {
         assert!(active);
         let mut guard = self.0.lock().await;
         for (ffqn, params, return_value) in component.exports {
@@ -235,7 +232,7 @@ impl DbConnection for InMemoryDbConnection {
                 )
                 .is_none());
         }
-        Ok(Ok(()))
+        Ok(())
     }
 
     async fn component_list(&self, _active: bool) -> Result<Vec<Component>, DbError> {

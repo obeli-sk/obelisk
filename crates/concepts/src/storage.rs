@@ -655,13 +655,12 @@ pub trait DbConnection: Send + Sync {
     /// components with overlapping exports, the operation will not append the
     /// component and the inner result will contain the list of components that
     /// must be deactivated first.
-    // FIXME: Flatten the Result
     async fn component_add(
         &self,
         created_at: DateTime<Utc>,
         component: ComponentWithMetadata,
         active: bool,
-    ) -> Result<Result<(), Vec<ComponentId>>, DbError>;
+    ) -> Result<(), ComponentAddError>;
 
     async fn component_list(&self, active: bool) -> Result<Vec<Component>, DbError>;
 
@@ -680,6 +679,14 @@ pub trait DbConnection: Send + Sync {
     async fn component_deactivate(&self, component_id: ComponentId) -> Result<(), DbError>;
 
     async fn component_activate(&self, component_id: ComponentId) -> Result<(), DbError>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ComponentAddError {
+    #[error("conflict")]
+    Conflict(Vec<ComponentId>),
+    #[error(transparent)]
+    DbError(DbError),
 }
 
 #[derive(Debug, Clone)]

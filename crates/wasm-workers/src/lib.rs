@@ -86,7 +86,6 @@ pub(crate) mod tests {
                 true,
             )
             .await
-            .unwrap()
             .unwrap();
     }
 
@@ -118,7 +117,6 @@ pub(crate) mod tests {
         db_connection
             .component_add(created_at, component, true)
             .await
-            .unwrap()
             .unwrap();
     }
 }

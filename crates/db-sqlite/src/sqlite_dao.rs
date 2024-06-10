@@ -4,12 +4,12 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{DelayId, ExecutorId, JoinSetId, PrefixedUlid, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentWithMetadata,
-        CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent,
-        ExecutionEventInner, ExecutionLog, ExpiredTimer, HistoryEvent, JoinSetRequest,
-        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
-        LockResponse, LockedExecution, PendingState, SpecificError, Version, DUMMY_CREATED,
-        DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
+        AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError,
+        ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool,
+        ExecutionEvent, ExecutionEventInner, ExecutionLog, ExpiredTimer, HistoryEvent,
+        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        LockPendingResponse, LockResponse, LockedExecution, PendingState, SpecificError, Version,
+        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
     ComponentId, ComponentType, ExecutionId, FunctionFqn, FunctionMetadata, ParameterTypes,
     ReturnType, StrVariant,
@@ -1884,15 +1884,15 @@ impl DbConnection for SqlitePool {
         created_at: DateTime<Utc>,
         component: ComponentWithMetadata,
         active: bool,
-    ) -> Result<Result<(), Vec<ComponentId>>, DbError> {
+    ) -> Result<(), ComponentAddError> {
         trace!("component_add");
         let exports = serde_json::to_string(&component.exports).map_err(|serde| {
             error!("Cannot serialize exports - {serde:?}");
-            SqliteError::Parsing(serde.into())
+            ComponentAddError::DbError(DbError::from(SqliteError::Parsing(serde.into())))
         })?;
         let imports = serde_json::to_string(&component.imports).map_err(|serde| {
             error!("Cannot serialize imports - {serde:?}");
-            SqliteError::Parsing(serde.into())
+            ComponentAddError::DbError(DbError::from(SqliteError::Parsing(serde.into())))
         })?;
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(
@@ -1933,7 +1933,8 @@ impl DbConnection for SqlitePool {
                 Span::current(),
             )
             .await
-            .map_err(DbError::from)
+            .map_err(|err| ComponentAddError::DbError(DbError::from(err)))?
+            .map_err(|conflicts| ComponentAddError::Conflict(conflicts))
     }
 
     #[instrument(skip(self))]
