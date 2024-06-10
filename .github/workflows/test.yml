@@ -34,7 +34,7 @@ jobs:
         uses: cachix/install-nix-action@V27
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
-      - name: Load nix store
+      - name: Populate the nix store
         run: nix develop --command echo
       - name: Build tests
         run: nix develop --command cargo nextest run --workspace --all-features --no-run
@@ -65,7 +65,7 @@ jobs:
         uses: cachix/install-nix-action@V27
         with:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
-      - name: Load nix store
+      - name: Populate the nix store
         run: nix develop --command echo
       - name: Build tests
         env:

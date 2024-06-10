@@ -1,0 +1,22 @@
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:   # Allow manual triggering
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@V27
+        with:
+          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+      - name: Populate the nix store
+        run: nix develop --command echo
+      - name: cargo publish
+        run: nix develop --command cargo publish --token ${CRATES_TOKEN}
+        env:
+          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
