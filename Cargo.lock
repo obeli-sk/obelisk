@@ -437,7 +437,7 @@ version = "0.1.0"
 dependencies = [
  "cargo_metadata",
  "indexmap 2.2.6",
- "utils",
+ "obeli-sk-utils",
  "wasmtime",
 ]
 
@@ -548,30 +548,6 @@ name = "colorchoice"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b6a852b24ab71dffc585bcb46eaf7959d175cb865a7152e35b348d1b2960422"
-
-[[package]]
-name = "concepts"
-version = "0.1.0"
-dependencies = [
- "arbitrary",
- "assert_matches",
- "async-trait",
- "base16ct",
- "chrono",
- "derive_more",
- "getrandom",
- "madsim",
- "madsim-tokio",
- "serde",
- "serde_json",
- "serde_with",
- "strum",
- "thiserror",
- "tracing",
- "ulid",
- "val-json",
- "wasmtime",
-]
 
 [[package]]
 name = "concurrent-queue"
@@ -928,40 +904,16 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "chrono",
- "concepts",
  "derivative",
  "derive_more",
  "hashbrown 0.14.5",
  "itertools",
  "madsim-tokio",
+ "obeli-sk-concepts",
+ "obeli-sk-utils",
+ "obeli-sk-val-json",
  "thiserror",
  "tracing",
- "utils",
- "val-json",
-]
-
-[[package]]
-name = "db-sqlite"
-version = "0.1.0"
-dependencies = [
- "arbitrary",
- "assert_matches",
- "async-sqlite",
- "async-trait",
- "chrono",
- "concepts",
- "derivative",
- "derive_more",
- "hashbrown 0.14.5",
- "itertools",
- "madsim-tokio",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tracing",
- "val-json",
 ]
 
 [[package]]
@@ -972,17 +924,17 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "chrono",
- "concepts",
  "db-mem",
- "db-sqlite",
  "madsim",
  "madsim-tokio",
+ "obeli-sk-concepts",
+ "obeli-sk-db-sqlite",
+ "obeli-sk-utils",
+ "obeli-sk-val-json",
  "serde_json",
  "tempfile",
  "test-utils",
  "tracing",
- "utils",
- "val-json",
 ]
 
 [[package]]
@@ -1176,36 +1128,6 @@ checksum = "0f214dc438f977e6d4e3500aaa277f5ad94ca83fbbd9b1a15713ce2344ccc5a1"
 dependencies = [
  "event-listener",
  "pin-project-lite",
-]
-
-[[package]]
-name = "executor"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arbitrary",
- "assert_matches",
- "async-channel",
- "async-trait",
- "cfg-if",
- "chrono",
- "concepts",
- "db-mem",
- "db-sqlite",
- "db-tests",
- "derivative",
- "derive_more",
- "indexmap 2.2.6",
- "madsim",
- "madsim-tokio",
- "rstest",
- "serde",
- "test-utils",
- "thiserror",
- "tracing",
- "ulid",
- "utils",
- "val-json",
 ]
 
 [[package]]
@@ -2168,14 +2090,16 @@ dependencies = [
  "anyhow",
  "base16ct",
  "clap",
- "concepts",
  "console-subscriber",
  "const_format",
- "db-mem",
- "db-sqlite",
- "executor",
  "hashbrown 0.14.5",
  "madsim-tokio",
+ "obeli-sk-concepts",
+ "obeli-sk-db-sqlite",
+ "obeli-sk-executor",
+ "obeli-sk-utils",
+ "obeli-sk-val-json",
+ "obeli-sk-wasm-workers",
  "serde",
  "serde_json",
  "sha2",
@@ -2183,10 +2107,171 @@ dependencies = [
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
- "utils",
- "val-json",
- "wasm-workers",
  "wasmtime",
+]
+
+[[package]]
+name = "obeli-sk-concepts"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "assert_matches",
+ "async-trait",
+ "base16ct",
+ "chrono",
+ "derive_more",
+ "getrandom",
+ "madsim",
+ "madsim-tokio",
+ "obeli-sk-val-json",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "strum",
+ "thiserror",
+ "tracing",
+ "ulid",
+ "wasmtime",
+]
+
+[[package]]
+name = "obeli-sk-db-sqlite"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "assert_matches",
+ "async-sqlite",
+ "async-trait",
+ "chrono",
+ "derivative",
+ "derive_more",
+ "hashbrown 0.14.5",
+ "itertools",
+ "madsim-tokio",
+ "obeli-sk-concepts",
+ "obeli-sk-val-json",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "obeli-sk-executor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arbitrary",
+ "assert_matches",
+ "async-channel",
+ "async-trait",
+ "cfg-if",
+ "chrono",
+ "db-mem",
+ "db-tests",
+ "derivative",
+ "derive_more",
+ "indexmap 2.2.6",
+ "madsim",
+ "madsim-tokio",
+ "obeli-sk-concepts",
+ "obeli-sk-db-sqlite",
+ "obeli-sk-utils",
+ "obeli-sk-val-json",
+ "rstest",
+ "serde",
+ "test-utils",
+ "thiserror",
+ "tracing",
+ "ulid",
+]
+
+[[package]]
+name = "obeli-sk-utils"
+version = "0.1.0"
+dependencies = [
+ "cfg-if",
+ "chrono",
+ "derivative",
+ "hashbrown 0.14.5",
+ "hyper 1.3.1",
+ "indexmap 2.2.6",
+ "insta",
+ "madsim",
+ "madsim-tokio",
+ "obeli-sk-concepts",
+ "obeli-sk-val-json",
+ "rstest",
+ "test-programs-fibo-workflow-builder",
+ "test-programs-http-get-workflow-builder",
+ "test-utils",
+ "thiserror",
+ "tracing",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+ "wit-parser",
+]
+
+[[package]]
+name = "obeli-sk-val-json"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "indexmap 2.2.6",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "wasmtime",
+ "wast 207.0.0",
+]
+
+[[package]]
+name = "obeli-sk-wasm-workers"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "assert_matches",
+ "async-channel",
+ "async-trait",
+ "base16ct",
+ "cfg-if",
+ "chrono",
+ "db-mem",
+ "db-tests",
+ "derivative",
+ "derive_more",
+ "futures-util",
+ "indexmap 2.2.6",
+ "itertools",
+ "madsim",
+ "madsim-tokio",
+ "obeli-sk-concepts",
+ "obeli-sk-db-sqlite",
+ "obeli-sk-executor",
+ "obeli-sk-utils",
+ "obeli-sk-val-json",
+ "rand",
+ "rstest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "test-programs-fibo-activity-builder",
+ "test-programs-fibo-workflow-builder",
+ "test-programs-http-get-activity-builder",
+ "test-programs-http-get-workflow-builder",
+ "test-programs-sleep-activity-builder",
+ "test-programs-sleep-workflow-builder",
+ "test-utils",
+ "thiserror",
+ "tracing",
+ "ulid",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+ "wiremock",
 ]
 
 [[package]]
@@ -3030,10 +3115,10 @@ dependencies = [
  "chrono",
  "madsim",
  "madsim-tokio",
+ "obeli-sk-utils",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
- "utils",
 ]
 
 [[package]]
@@ -3479,50 +3564,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "711b9620af191e0cdc7468a8d14e709c3dcdb115b36f838e601583af800a370a"
 
 [[package]]
-name = "utils"
-version = "0.1.0"
-dependencies = [
- "cfg-if",
- "chrono",
- "concepts",
- "derivative",
- "hashbrown 0.14.5",
- "hyper 1.3.1",
- "indexmap 2.2.6",
- "insta",
- "madsim",
- "madsim-tokio",
- "rstest",
- "test-programs-fibo-workflow-builder",
- "test-programs-http-get-workflow-builder",
- "test-utils",
- "thiserror",
- "tracing",
- "val-json",
- "wasmtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
- "wit-parser",
-]
-
-[[package]]
 name = "uuid"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a183cf7feeba97b4dd1c0d46788634f6221d87fa961b305bed08c851829efcc0"
-
-[[package]]
-name = "val-json"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "indexmap 2.2.6",
- "serde",
- "serde_json",
- "thiserror",
- "wasmtime",
- "wast 207.0.0",
-]
 
 [[package]]
 name = "valuable"
@@ -3627,52 +3672,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6425e84e42f7f558478e40ecc2287912cb319f2ca68e5c0bb93c61d4fc63fa17"
 dependencies = [
  "leb128",
-]
-
-[[package]]
-name = "wasm-workers"
-version = "0.1.0"
-dependencies = [
- "arbitrary",
- "assert_matches",
- "async-channel",
- "async-trait",
- "base16ct",
- "cfg-if",
- "chrono",
- "concepts",
- "db-mem",
- "db-sqlite",
- "db-tests",
- "derivative",
- "derive_more",
- "executor",
- "futures-util",
- "indexmap 2.2.6",
- "itertools",
- "madsim",
- "madsim-tokio",
- "rand",
- "rstest",
- "serde",
- "serde_json",
- "sha2",
- "test-programs-fibo-activity-builder",
- "test-programs-fibo-workflow-builder",
- "test-programs-http-get-activity-builder",
- "test-programs-http-get-workflow-builder",
- "test-programs-sleep-activity-builder",
- "test-programs-sleep-workflow-builder",
- "test-utils",
- "thiserror",
- "tracing",
- "ulid",
- "utils",
- "val-json",
- "wasmtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
- "wiremock",
 ]
 
 [[package]]

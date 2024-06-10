@@ -1,9 +1,14 @@
 [package]
-name = "utils"
-version.workspace = true
+name = "obeli-sk-utils"
+description = "Internal package of obeli-sk"
+
 authors.workspace = true
 edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 concepts.workspace = true

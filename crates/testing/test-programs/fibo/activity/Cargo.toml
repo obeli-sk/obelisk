@@ -1,9 +1,12 @@
 [package]
 name = "test-programs-fibo-activity"
-version.workspace = true
 authors.workspace = true
 edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 wit-bindgen-rt.workspace = true

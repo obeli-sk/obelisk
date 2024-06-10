@@ -1,9 +1,13 @@
 [package]
-name = "concepts"
-version.workspace = true
+name = "obeli-sk-concepts"
+description = "Internal package of obeli-sk"
+
 authors.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 val-json.workspace = true
