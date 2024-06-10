@@ -1,5 +1,6 @@
 use crate::{WasmActivityConfig, WasmWorkflowConfig};
 use anyhow::Context;
+use concepts::storage::Component;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::ComponentId;
@@ -11,7 +12,6 @@ use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::info;
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::epoch_ticker::EpochTicker;
@@ -101,10 +101,10 @@ async fn update_components<DB: DbConnection + 'static>(
         deactivating.remove(component_id);
     }
     for component_id in deactivating {
-        println!("Shutting down {component_id}");
+        println!("Shutting down executor of component {component_id}");
         component_to_exec_join_handle
             .remove(&component_id)
-            .unwrap()
+            .expect("comonent id was taken from `component_to_exec_join_handle` so it must exist")
             .close()
             .await;
     }
@@ -114,64 +114,76 @@ async fn update_components<DB: DbConnection + 'static>(
         if component_to_exec_join_handle.contains_key(&component.component_id) {
             continue;
         }
-        info!(
-            "Starting {component_type} executor `{file_name}`",
-            component_type = component.component_type,
+        let component_id = component.component_id.clone();
+        println!(
+            "Starting new executor of component `{file_name}` {component_id}",
             file_name = component.file_name
         );
-        match component.component_type {
-            ComponentType::WasmActivity => {
-                let wasm_activity_config: WasmActivityConfig = serde_json::from_value(
-                    component.config,
-                )
-                .context("could not deserialize `WasmActivityConfig`, try cleaning the database")?;
-                let worker = Arc::new(
-                    ActivityWorker::new_with_config(
-                        wasm_activity_config.wasm_path,
-                        wasm_activity_config.activity_config,
-                        engines.activity_engine.clone(),
-                        now,
-                    )
-                    .context("cannot start activity worker")?,
-                );
-                component_to_exec_join_handle.insert(
-                    component.component_id,
-                    ExecTask::spawn_new(
-                        worker,
-                        wasm_activity_config.exec_config,
-                        now,
-                        db_pool.clone(),
-                        None,
-                    ),
-                );
+        match activate_component(component, db_pool.clone(), engines) {
+            Ok(exec) => {
+                component_to_exec_join_handle.insert(component_id, exec);
             }
-            ComponentType::WasmWorkflow => {
-                let wasm_workflow_config: WasmWorkflowConfig = serde_json::from_value(
-                    component.config,
-                )
-                .context("could not deserialize `WasmWorkflowConfig`, try cleaning the database")?;
-                let worker = Arc::new(
-                    WorkflowWorker::new_with_config(
-                        wasm_workflow_config.wasm_path,
-                        wasm_workflow_config.workflow_config,
-                        engines.workflow_engine.clone(),
-                        db_pool.clone(),
-                        now,
-                    )
-                    .context("cannot start workflow worker")?,
-                );
-                component_to_exec_join_handle.insert(
-                    component.component_id,
-                    ExecTask::spawn_new(
-                        worker,
-                        wasm_workflow_config.exec_config,
-                        now,
-                        db_pool.clone(),
-                        None,
-                    ),
-                );
+            Err(err) => {
+                eprintln!("Error activating component {component_id}, deactivating - {err}");
+                if let Err(err) = db_pool
+                    .connection()
+                    .component_deactivate(component_id)
+                    .await
+                {
+                    eprintln!("Cannot deactivate component - {err}");
+                }
             }
         }
     }
     Ok(())
+}
+
+fn activate_component<DB: DbConnection + 'static>(
+    component: Component,
+    db_pool: impl DbPool<DB> + 'static,
+    engines: &Engines,
+) -> Result<ExecutorTaskHandle, anyhow::Error> {
+    match component.component_type {
+        ComponentType::WasmActivity => {
+            let wasm_activity_config: WasmActivityConfig = serde_json::from_value(component.config)
+                .context("could not deserialize `WasmActivityConfig`, try cleaning the database")?;
+            let worker = Arc::new(
+                ActivityWorker::new_with_config(
+                    wasm_activity_config.wasm_path,
+                    wasm_activity_config.activity_config,
+                    engines.activity_engine.clone(),
+                    now,
+                )
+                .context("cannot start activity worker")?,
+            );
+            Ok(ExecTask::spawn_new(
+                worker,
+                wasm_activity_config.exec_config,
+                now,
+                db_pool,
+                None,
+            ))
+        }
+        ComponentType::WasmWorkflow => {
+            let wasm_workflow_config: WasmWorkflowConfig = serde_json::from_value(component.config)
+                .context("could not deserialize `WasmWorkflowConfig`, try cleaning the database")?;
+            let worker = Arc::new(
+                WorkflowWorker::new_with_config(
+                    wasm_workflow_config.wasm_path,
+                    wasm_workflow_config.workflow_config,
+                    engines.workflow_engine.clone(),
+                    db_pool.clone(),
+                    now,
+                )
+                .context("cannot start workflow worker")?,
+            );
+            Ok(ExecTask::spawn_new(
+                worker,
+                wasm_workflow_config.exec_config,
+                now,
+                db_pool,
+                None,
+            ))
+        }
+    }
 }
