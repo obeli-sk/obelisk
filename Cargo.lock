@@ -2174,6 +2174,7 @@ dependencies = [
  "db-mem",
  "db-sqlite",
  "executor",
+ "hashbrown 0.14.5",
  "madsim-tokio",
  "serde",
  "serde_json",

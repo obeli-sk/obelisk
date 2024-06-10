@@ -1934,7 +1934,7 @@ impl DbConnection for SqlitePool {
             )
             .await
             .map_err(|err| ComponentAddError::DbError(DbError::from(err)))?
-            .map_err(|conflicts| ComponentAddError::Conflict(conflicts))
+            .map_err(ComponentAddError::Conflict)
     }
 
     #[instrument(skip(self))]
