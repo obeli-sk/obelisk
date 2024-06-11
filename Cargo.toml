@@ -86,7 +86,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 license = "AGPL-3.0-only"
 repository = "https://github.com/obeli-sk/obeli-sk"
 authors = ["Project Developers"]
@@ -95,11 +95,11 @@ rust-version = "1.77.0"
 
 [workspace.dependencies]
 cargo-component-builder = { path = "crates/testing/cargo-component-builder" }
-concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.1.1" }
+concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.1.2" }
 db-mem = { path = "crates/db-mem" }
 db-tests = { path = "crates/testing/db-tests" }
-db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.1.1" }
-executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.1.1" }
+db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.1.2" }
+executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.1.2" }
 test-programs-fibo-activity-builder = { path = "crates/testing/test-programs/fibo/activity/builder" }
 test-programs-fibo-workflow-builder = { path = "crates/testing/test-programs/fibo/workflow/builder" }
 test-programs-http-get-activity-builder = { path = "crates/testing/test-programs/http/activity/builder" }
@@ -107,9 +107,9 @@ test-programs-http-get-workflow-builder = { path = "crates/testing/test-programs
 test-programs-sleep-activity-builder = { path = "crates/testing/test-programs/sleep/activity/builder" }
 test-programs-sleep-workflow-builder = { path = "crates/testing/test-programs/sleep/workflow/builder" }
 test-utils = { path = "crates/testing/test-utils" }
-utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.1.1" }
-val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.1.1" }
-wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.1.1" }
+utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.1.2" }
+val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.1.2" }
+wasm-workers = { package = "obeli-sk-wasm-workers", path = "crates/wasm-workers", version = "0.1.2" }
 
 anyhow = { version = "1.0", features = ["backtrace"] }
 arbitrary = { version = "1.3.2", features = ["derive"] }
