@@ -1,4 +1,4 @@
-name: Release-plz
+name: Release-plz-release
 
 permissions:
   pull-requests: write
@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  release-plz:
-    name: Release-plz
+  release-plz-release:
+    name: Release-plz-release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -23,3 +23,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        with:
+          command: release
