@@ -1,0 +1,15 @@
+[workspace]
+semver_check = false     # disable API breaking changes checks
+changelog_update = false
+
+[[package]]
+name = "obeli-sk"
+changelog_update = true
+changelog_include = [
+    "obeli-sk-concepts",
+    "obeli-sk-db-sqlite",
+    "obeli-sk-executor",
+    "obeli-sk-utils",
+    "obeli-sk-val-json",
+    "obeli-sk-wasm-workers",
+]
