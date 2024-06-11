@@ -115,7 +115,7 @@ anyhow = { version = "1.0", features = ["backtrace"] }
 arbitrary = { version = "1.3.2", features = ["derive"] }
 assert_matches = "1.5.0"
 async-channel = "2.1.1"
-async-sqlite = { version = "0.2.2", features = [
+async-sqlite = { package = "obeli-sk-deps-async-sqlite", version = "0.1.0", features = [
     "serde_json",
     "chrono",
     "tracing",
@@ -194,7 +194,6 @@ wit-bindgen-rt = "0.24.0"
 
 [patch.crates-io]
 madsim = { git = "https://github.com/tomasol/madsim", rev = "4232484d49b036cf68b56220ccac3e8e060bb9c7" }
-async-sqlite = { git = "https://github.com/tomasol/async-sqlite", rev = "fe2d8d704eb45b61f2bf0af772ce24c72a033c14" } # rusqlite 0.31.0, sqlite 3.45
 getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" } # madsim
 
 [workspace.lints]
