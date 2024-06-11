@@ -13,3 +13,10 @@ changelog_include = [
     "obeli-sk-val-json",
     "obeli-sk-wasm-workers",
 ]
+
+[changelog]
+header = """# Changelog
+All notable changes to this project will be documented in this file.
+
+## [Unreleased]
+"""
