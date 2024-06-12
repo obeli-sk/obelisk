@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/obeli-sk/obeli-sk/compare/v0.1.2...v0.1.3) - 2024-06-12
+
+### Other
+- Remove tag creation from `release.yml`
+- Fix dependencies for release
+- Add `--allow-dirty` to `cargo dist`
+
 ## [0.1.2](https://github.com/obeli-sk/obeli-sk/compare/v0.1.1...v0.1.2) - 2024-06-12
 
 ### Other
