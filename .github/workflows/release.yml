@@ -131,7 +131,7 @@ jobs:
           merge-multiple: true
       - name: Install dependencies
         run: |
-          ${{ matrix.packages_install }}
+          cargo install --locked cargo-component
       - name: Build artifacts
         run: |
           # Actually do builds and make zips and whatnot
