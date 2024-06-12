@@ -236,7 +236,6 @@ pr-run-mode = "skip"
 install-updater = false
 
 [profile.release]
-debug-assertions = true
 overflow-checks = true
 lto = true
 
