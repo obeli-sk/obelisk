@@ -24,6 +24,7 @@
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = with pkgs; [
               cargo-component
+              cargo-dist
               cargo-expand
               cargo-insta
               cargo-nextest
