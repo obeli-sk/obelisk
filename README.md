@@ -41,24 +41,34 @@ Please exercise caution if attempting to use it for production.
 TODO
 
 ### Pre-built binary
-TODO
+Download [latest release](https://github.com/obeli-sk/obeli-sk/releases/latest) from the GitHub Release page.
 
-### Building from crates.io
+### Using latest version from crates.io
+Download using [cargo-binstall](https://crates.io/crates/cargo-binstall)
 ```sh
-# Install rust from https://rustup.rs/
+cargo binstall obeli-sk
+```
+or build
+```sh
 cargo install --locked obeli-sk
 ```
 
-## Building from source
-Set up the environment using nix flakes:
+### Nix flakes
 ```sh
-nix develop # or direnv allow, after simlinking .envrc-example -> .envrc
+nix run github:obeli-sk/obeli-sk
 ```
-Or manually:
+
+## Local development
+Set up the development dependencies using nix flakes:
+```sh
+nix develop
+# or `direnv allow`, after simlinking .envrc-example -> .envrc
+```
+Or manually download
 ```sh
 cargo install cargo-component --locked
 ```
-Run the program:
+Run the program
 ```sh
 cargo run --release
 ```
