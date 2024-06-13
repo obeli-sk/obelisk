@@ -1,0 +1,53 @@
+name: release-artifacts
+
+permissions:
+  contents: write
+
+on:
+  release:
+    types: [published]
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTUP_MAX_RETRIES: 10
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  upload-assets:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+        if: startsWith(matrix.os, 'ubuntu') && !contains(matrix.target, '-musl')
+      - uses: taiki-e/install-action@cross
+        if: contains(matrix.target, '-musl')
+      - run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "${GITHUB_ENV}"
+        if: endsWith(matrix.target, 'windows-msvc')
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: obelisk
+          target: ${{ matrix.target }}
+          tar: all
+          zip: windows
+          token: ${{ secrets.GITHUB_TOKEN }}
