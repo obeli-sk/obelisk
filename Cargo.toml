@@ -238,11 +238,6 @@ install-updater = false
 overflow-checks = true
 lto = true
 
-# The profile that 'cargo dist' will build with
-[profile.dist]
-inherits = "release"
-lto = "thin"
-
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/obelisk-{ target }.tar.gz"
 pkg-fmt = "tgz"
