@@ -141,7 +141,7 @@ indexmap = "2.1"
 insta = { version = "1.38.0", features = ["json"] }
 itertools = "0.12.1"
 lazy_static = "1.4"
-madsim = "0.2.28"
+madsim = "0.2.30"
 rand = "0.8.5"
 rstest = "0.18.2"
 rusqlite = { version = "0.31.0" }
@@ -153,7 +153,7 @@ shadow-rs = "0.28.0"
 strum = { version = "0.26.0", features = ["derive"] }
 tempfile = "3.10.1"
 thiserror = "1.0"
-tokio = { version = "0.2.25", package = "madsim-tokio", features = [
+tokio = { version = "0.2.28", package = "madsim-tokio", features = [
     "sync",
     "rt",
     "time",
@@ -193,7 +193,6 @@ wit-parser = "0.207.0"
 wit-bindgen-rt = "0.24.0"
 
 [patch.crates-io]
-madsim = { git = "https://github.com/tomasol/madsim", rev = "4232484d49b036cf68b56220ccac3e8e060bb9c7" }
 getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" } # madsim
 
 [workspace.lints]
