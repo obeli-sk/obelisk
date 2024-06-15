@@ -23,6 +23,7 @@
         {
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = with pkgs; [
+              cargo-binstall
               cargo-component
               cargo-dist
               cargo-expand
