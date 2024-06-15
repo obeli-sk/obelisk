@@ -2,13 +2,13 @@ use clap::Parser;
 use concepts::{ComponentId, ExecutionId, FunctionFqn};
 use std::path::PathBuf;
 
-mod shaddow {
+mod shadow {
     #![allow(clippy::needless_raw_string_hashes)]
     shadow_rs::shadow!(build);
 }
 
 #[derive(Parser, Debug)]
-#[command(version = const_format::formatcp!("{} {}", shaddow::build::PKG_VERSION, shaddow::build::SHORT_COMMIT),
+#[command(version = const_format::formatcp!("{} {}", shadow::build::PKG_VERSION, shadow::build::SHORT_COMMIT),
 about = "Obelisk: deterministic backend", disable_version_flag = true, disable_help_subcommand = true)]
 pub(crate) struct Args {
     #[command(subcommand)]
