@@ -24,6 +24,7 @@ cfg-if.workspace = true
 chrono.workspace = true
 derivative.workspace = true
 derive_more.workspace = true
+hashbrown.workspace = true
 indexmap.workspace = true
 itertools.workspace = true
 rand.workspace = true

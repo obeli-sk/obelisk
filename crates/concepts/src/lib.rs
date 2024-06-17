@@ -806,7 +806,7 @@ impl FromStr for ComponentId {
     }
 }
 
-#[derive(Debug, Clone, Copy, strum::Display, PartialEq, Eq, strum::EnumString)]
+#[derive(Debug, Clone, Copy, strum::Display, PartialEq, Eq, strum::EnumString, Hash)]
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentType {
     WasmActivity,

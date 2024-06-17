@@ -1,12 +1,8 @@
-//! Worker that acts as wrapper for `activity_worker` or `workflow_worker`.
-//! Apply following heuristic to distinguish between an activity and workflow:
-//! * Read all imported functions of the component's world
-//! * If there are no imports except for standard WASI -> Activity
-//! * Otherwise -> Workflow
+//! * Every exported function must be in an exported interface containing the string `workflow`.
 
 use crate::WasmFileError;
-use concepts::{ComponentId, ComponentType, FunctionMetadata, IfcFqnName};
-use std::{ops::Deref, path::Path};
+use concepts::{ComponentId, ComponentType, FunctionMetadata};
+use std::path::Path;
 use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
 
@@ -24,16 +20,28 @@ impl ComponentDetector {
         Engine::new(&wasmtime_config).unwrap()
     }
 
+    // TODO: Allow workflows and activities in the same world.
     pub fn new<P: AsRef<Path>>(wasm_path: P, engine: &Engine) -> Result<Self, WasmFileError> {
         let wasm_path = wasm_path.as_ref();
         let wasm_component = WasmComponent::new(wasm_path, engine)
             .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
-        let component_type =
-            if supported_wasi_imports(wasm_component.exim.imports.iter().map(|pif| &pif.ifc_fqn)) {
-                ComponentType::WasmActivity
-            } else {
-                ComponentType::WasmWorkflow
-            };
+        let types = wasm_component
+            .exim
+            .exports
+            .iter()
+            .map(|pkg_ifc_fns| {
+                if pkg_ifc_fns.ifc_fqn.contains("workflow") {
+                    ComponentType::WasmWorkflow
+                } else {
+                    ComponentType::WasmActivity
+                }
+            })
+            .collect::<hashbrown::HashSet<_>>();
+        let component_type = match types.into_iter().collect::<Vec<_>>().as_slice() {
+            [item] => Ok(*item),
+            [] => Err(WasmFileError::NoExportedInterfaces),
+            _ => Err(WasmFileError::MixedWorkflowsAndActivities),
+        }?;
         Ok(Self {
             component_type,
             exports: wasm_component.exported_functions().collect(),
@@ -41,7 +49,7 @@ impl ComponentDetector {
         })
     }
 }
-pub fn hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error> {
+pub fn file_hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error> {
     use sha2::{Digest, Sha256};
     let mut file = std::fs::File::open(&path)?;
     let mut hasher = Sha256::new();
@@ -49,11 +57,6 @@ pub fn hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error> {
     let hash = hasher.finalize();
     let hash_base16 = base16ct::lower::encode_string(&hash);
     Ok(ComponentId::new(concepts::HashType::Sha256, hash_base16))
-}
-
-fn supported_wasi_imports<'a>(mut imported_packages: impl Iterator<Item = &'a IfcFqnName>) -> bool {
-    // FIXME Fail if both wasi and host imports are present
-    imported_packages.all(|ifc| ifc.deref().starts_with("wasi:"))
 }
 
 #[cfg(test)]
