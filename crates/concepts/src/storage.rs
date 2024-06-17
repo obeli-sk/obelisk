@@ -208,6 +208,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     scheduled_at: DateTime::from_timestamp_nanos(0),
     retry_exp_backoff: Duration::ZERO,
     max_retries: 0,
+    component_id: ComponentId::empty(),
     return_type: None,
 };
 pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
@@ -250,7 +251,8 @@ pub enum ExecutionEventInner {
         scheduled_at: DateTime<Utc>,
         retry_exp_backoff: Duration,
         max_retries: u32,
-        // FIXME: Add ComponentId
+        #[arbitrary(value = ComponentId::empty())]
+        component_id: ComponentId,
         #[arbitrary(default)]
         return_type: Option<TypeWrapper>,
     },
@@ -482,6 +484,7 @@ pub struct CreateRequest {
     pub scheduled_at: DateTime<Utc>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
+    pub component_id: ComponentId,
     pub return_type: Option<TypeWrapper>,
 }
 
@@ -494,6 +497,7 @@ impl From<CreateRequest> for ExecutionEventInner {
             scheduled_at: value.scheduled_at,
             retry_exp_backoff: value.retry_exp_backoff,
             max_retries: value.max_retries,
+            component_id: value.component_id,
             return_type: value.return_type,
         }
     }
@@ -674,7 +678,7 @@ pub trait DbConnection: Send + Sync {
     async fn component_active_get_exported_function(
         &self,
         ffqn: FunctionFqn,
-    ) -> Result<FunctionMetadata, DbError>;
+    ) -> Result<(ComponentId, FunctionMetadata), DbError>;
 
     async fn component_deactivate(&self, component_id: ComponentId) -> Result<(), DbError>;
 

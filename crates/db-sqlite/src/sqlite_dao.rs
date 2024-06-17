@@ -228,8 +228,8 @@ impl<T: serde::de::DeserializeOwned + 'static> FromSql for JsonWrapper<T> {
     }
 }
 
-struct StringWrapper<T: FromStr>(T);
-impl<T: FromStr<Err = D>, D: Debug> FromSql for StringWrapper<T> {
+struct FromStrWrapper<T: FromStr>(T);
+impl<T: FromStr<Err = D>, D: Debug> FromSql for FromStrWrapper<T> {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         let value = String::column_result(value)?;
         let value = T::from_str(&value).map_err(|err| {
@@ -412,6 +412,7 @@ impl SqlitePool {
             scheduled_at,
             retry_exp_backoff,
             max_retries,
+            component_id,
             return_type,
         } = event
         {
@@ -424,6 +425,7 @@ impl SqlitePool {
                 scheduled_at,
                 retry_exp_backoff,
                 max_retries,
+                component_id,
                 return_type,
             })
         } else {
@@ -1256,7 +1258,7 @@ impl SqlitePool {
                 ":ffqn": ffqn.to_string(),
             },
             |row| {
-                row.get::<_, StringWrapper<ComponentId>>("component_id")
+                row.get::<_, FromStrWrapper<ComponentId>>("component_id")
                     .map(|it| it.0)
             },
         )
@@ -1276,7 +1278,7 @@ impl SqlitePool {
             }, |row| {
                 let active = row.get("active")?;
                 let component_type = row
-                    .get::<_, StringWrapper<ComponentType>>("component_type")?
+                    .get::<_, FromStrWrapper<ComponentType>>("component_type")?
                     .0;
                 let config = row.get::<_, serde_json::Value>("config")?;
                 let exports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("exports")?.0;
@@ -1948,9 +1950,9 @@ impl DbConnection for SqlitePool {
                     )?
                     .query_map(named_params! {":active": active}, |row| {
                         let component_id =
-                            row.get::<_, StringWrapper<ComponentId>>("component_id")?.0;
+                            row.get::<_, FromStrWrapper<ComponentId>>("component_id")?.0;
                         let component_type = row
-                            .get::<_, StringWrapper<ComponentType>>("component_type")?
+                            .get::<_, FromStrWrapper<ComponentType>>("component_type")?
                             .0;
                         let config = row.get::<_, serde_json::Value>("config")?;
                         let file_name = row.get("file_name")?;
@@ -1989,21 +1991,23 @@ impl DbConnection for SqlitePool {
     async fn component_active_get_exported_function(
         &self,
         ffqn: FunctionFqn,
-    ) -> Result<FunctionMetadata, DbError> {
+    ) -> Result<(ComponentId, FunctionMetadata), DbError> {
         trace!("get_exported_function");
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
             move |conn| {
-                conn.prepare("SELECT parameter_types, return_type from t_component_export WHERE ffqn = :ffqn")?
+                conn.prepare("SELECT component_id, parameter_types, return_type from t_component_export WHERE ffqn = :ffqn")?
                     .query_row(named_params! {
                         ":ffqn": ffqn.to_string()
                     }, |row| {
+                        let component_id = row.get::<_, FromStrWrapper<ComponentId>>("component_id")?.0;
                         let parameter_types = row.get::<_, JsonWrapper<ParameterTypes>>("parameter_types")?.0;
                         let return_type = row.get::<_, JsonWrapper<ReturnType>>("return_type")?.0;
-                        Ok((
+                        Ok((component_id,
+                            (
                             ffqn,
                             parameter_types,
                             return_type,
-                        ))
+                        )))
                     })
                     .map_err(SqliteError::from)
             },

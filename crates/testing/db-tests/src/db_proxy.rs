@@ -205,7 +205,7 @@ impl DbConnection for DbConnectionProxy {
     async fn component_active_get_exported_function(
         &self,
         ffqn: FunctionFqn,
-    ) -> Result<FunctionMetadata, DbError> {
+    ) -> Result<(ComponentId, FunctionMetadata), DbError> {
         self.0.component_active_get_exported_function(ffqn).await
     }
 

@@ -231,7 +231,10 @@ impl DbConnection for InMemoryDbConnection {
                 .exported_ffqn_to_metadata
                 .insert(
                     ffqn.clone(),
-                    (ffqn.clone(), params.clone(), return_value.clone())
+                    (
+                        component.component.component_id.clone(),
+                        (ffqn.clone(), params.clone(), return_value.clone())
+                    )
                 )
                 .is_none());
         }
@@ -252,7 +255,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn component_active_get_exported_function(
         &self,
         ffqn: FunctionFqn,
-    ) -> Result<FunctionMetadata, DbError> {
+    ) -> Result<(ComponentId, FunctionMetadata), DbError> {
         let guard = self.0.lock().await;
         match guard.exported_ffqn_to_metadata.get(&ffqn) {
             Some(metadata) => Ok(metadata.clone()),
@@ -437,7 +440,7 @@ struct DbHolder {
     journals: BTreeMap<ExecutionId, ExecutionJournal>,
     index: JournalsIndex,
     ffqn_to_pending_subscription: hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>,
-    exported_ffqn_to_metadata: hashbrown::HashMap<FunctionFqn, FunctionMetadata>,
+    exported_ffqn_to_metadata: hashbrown::HashMap<FunctionFqn, (ComponentId, FunctionMetadata)>,
 }
 
 impl DbHolder {
@@ -506,6 +509,7 @@ impl DbHolder {
             scheduled_at: req.scheduled_at,
             retry_exp_backoff: req.retry_exp_backoff,
             max_retries: req.max_retries,
+            component_id: req.component_id,
             return_type: req.return_type,
         });
         let version = journal.version();

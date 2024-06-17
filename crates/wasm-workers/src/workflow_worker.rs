@@ -349,7 +349,7 @@ mod tests {
         EngineConfig,
     };
     use assert_matches::assert_matches;
-    use concepts::{prefixed_ulid::ConfigId, ExecutionId, Params};
+    use concepts::{prefixed_ulid::ConfigId, ComponentId, ExecutionId, Params};
     use concepts::{
         storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState},
         FinishedExecutionError,
@@ -510,6 +510,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                component_id: ComponentId::empty(),
                 return_type: None,
             })
             .await
@@ -586,6 +587,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                component_id: ComponentId::empty(),
                 return_type: None,
             })
             .await
@@ -700,6 +702,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                component_id: ComponentId::empty(),
                 return_type: None,
             })
             .await
@@ -815,6 +818,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                component_id: ComponentId::empty(),
                 return_type: None,
             })
             .await
@@ -917,6 +921,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::from_millis(0),
                 max_retries: concurrency - 1, // response can conflict with next ChildExecutionRequest
+                component_id: ComponentId::empty(),
                 return_type: None,
             })
             .await
@@ -983,6 +988,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                component_id: ComponentId::empty(),
                 return_type: None,
             })
             .await

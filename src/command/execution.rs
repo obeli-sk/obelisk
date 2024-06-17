@@ -27,12 +27,12 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
     let db_connection = db_pool.connection();
 
     // Check that ffqn exists
-    let (param_types, return_type) = {
-        let (ffqn2, param_types, return_type) = db_connection
+    let (component_id, param_types, return_type) = {
+        let (component_id, (ffqn2, param_types, return_type)) = db_connection
             .component_active_get_exported_function(ffqn)
             .await?;
         ffqn = ffqn2;
-        (param_types, return_type)
+        (component_id, param_types, return_type)
     };
     // Check parameter cardinality
     if params.len() != param_types.len() {
@@ -56,6 +56,7 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
             scheduled_at: created_at,
             retry_exp_backoff: Duration::from_millis(100), // TODO pass from args
             max_retries: 5,                                // TODO pass from args
+            component_id,
             return_type,
         })
         .await

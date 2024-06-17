@@ -751,19 +751,38 @@ pub enum HashType {
     Sha256,
 }
 
-#[derive(Debug, Clone, derive_more::Display, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
 #[display(fmt = "{hash_type}:{hash_base16}")]
 pub struct ComponentId {
     hash_type: HashType,
-    hash_base16: String,
+    hash_base16: StrVariant,
 }
 
 impl ComponentId {
     #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            hash_type: HashType::Sha256,
+            hash_base16: StrVariant::Static(
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+        }
+    }
+
+    #[must_use]
     pub fn new(hash_type: HashType, hash_base16: String) -> Self {
         Self {
             hash_type,
-            hash_base16,
+            hash_base16: StrVariant::Arc(Arc::from(hash_base16)),
         }
     }
 }
@@ -801,7 +820,7 @@ impl FromStr for ComponentId {
         }
         Ok(Self {
             hash_type,
-            hash_base16: hash_base16.to_string(),
+            hash_base16: StrVariant::Arc(Arc::from(hash_base16)),
         })
     }
 }

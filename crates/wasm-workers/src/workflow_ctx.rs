@@ -374,7 +374,7 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::{prefixed_ulid::ConfigId, FunctionMetadata, ParameterTypes};
+    use concepts::{prefixed_ulid::ConfigId, ComponentId, FunctionMetadata, ParameterTypes};
     use concepts::{
         storage::{
             wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
@@ -571,6 +571,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                component_id: ComponentId::empty(),
                 return_type: None,
             })
             .await

@@ -36,6 +36,7 @@ impl ExecutionJournal {
                 parent: req.parent,
                 retry_exp_backoff: req.retry_exp_backoff,
                 max_retries: req.max_retries,
+                component_id: req.component_id,
                 return_type: req.return_type,
             },
             created_at: req.created_at,

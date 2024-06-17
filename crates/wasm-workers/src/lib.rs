@@ -76,10 +76,7 @@ pub(crate) mod tests {
                 created_at,
                 ComponentWithMetadata {
                     component: Component {
-                        component_id: ComponentId::new(
-                            concepts::HashType::Sha256,
-                            ulid::Ulid::new().to_string(),
-                        ),
+                        component_id: ComponentId::empty(),
                         component_type: ComponentType::WasmActivity,
                         config: serde_json::Value::String(String::new()),
                         file_name: String::new(),

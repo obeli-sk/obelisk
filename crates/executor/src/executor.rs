@@ -568,7 +568,9 @@ mod tests {
     use concepts::storage::{
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
-    use concepts::{FunctionMetadata, ParameterTypes, Params, SupportedFunctionResult};
+    use concepts::{
+        ComponentId, FunctionMetadata, ParameterTypes, Params, SupportedFunctionResult,
+    };
     use db_tests::Database;
     use indexmap::IndexMap;
     use simple_worker::FFQN_SOME;
@@ -771,6 +773,7 @@ mod tests {
                 scheduled_at: config.created_at,
                 retry_exp_backoff: config.retry_exp_backoff,
                 max_retries: config.max_retries,
+                component_id: ComponentId::empty(),
                 return_type: None,
             })
             .await
@@ -995,6 +998,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                component_id: ComponentId::empty(),
                 return_type: None,
             })
             .await
@@ -1026,6 +1030,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                component_id: ComponentId::empty(),
                 return_type: None,
             };
             let join_set = ExecutionEventInner::HistoryEvent {
@@ -1187,6 +1192,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: timeout_duration,
                 max_retries: 1,
+                component_id: ComponentId::empty(),
                 return_type: None,
             })
             .await

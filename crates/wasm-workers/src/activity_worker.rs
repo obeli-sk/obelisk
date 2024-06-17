@@ -270,7 +270,7 @@ pub(crate) mod tests {
     use assert_matches::assert_matches;
     use concepts::{
         storage::{CreateRequest, DbConnection, DbPool, Version},
-        ExecutionId, FunctionFqn, Params, SupportedFunctionResult,
+        ComponentId, ExecutionId, FunctionFqn, Params, SupportedFunctionResult,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -348,6 +348,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
+                component_id: ComponentId::empty(),
                 return_type: None,
             })
             .await
@@ -512,6 +513,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: Duration::ZERO,
                     max_retries: 0,
+                    component_id: ComponentId::empty(),
                     return_type: None,
                 })
                 .await
@@ -651,6 +653,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
+                    component_id: ComponentId::empty(),
                     return_type: None,
                 })
                 .await
