@@ -148,11 +148,8 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     ffqns: ffqns.clone(),
                     clock_fn: clock_fn.clone(),
                 };
-                let mut old_err = None;
-
                 loop {
-                    let res = task.tick(clock_fn()).await;
-                    Self::log_err_if_new(res, &mut old_err);
+                    let _ = task.tick(clock_fn()).await;
                     let executed_at = clock_fn();
                     task.db_pool
                         .connection()
@@ -170,19 +167,6 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             executor_id,
             is_closing,
             abort_handle,
-        }
-    }
-
-    fn log_err_if_new(res: Result<ExecutionProgress, DbError>, old_err: &mut Option<DbError>) {
-        match (res, &old_err) {
-            (Ok(_), _) => {
-                *old_err = None;
-            }
-            (Err(err), Some(old)) if err == *old => {}
-            (Err(err), _) => {
-                error!("Tick failed: {err:?}");
-                *old_err = Some(err);
-            }
         }
     }
 
@@ -210,12 +194,12 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
     }
 
     #[cfg(feature = "test")]
-    pub async fn tick2(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, DbError> {
+    pub async fn tick2(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
         self.tick(executed_at).await
     }
 
     #[instrument(skip_all)]
-    async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, DbError> {
+    async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
         let locked_executions = {
             let db_connection = self.db_pool.connection();
             let mut permits = self.acquire_task_permits();
@@ -232,7 +216,10 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                     self.executor_id,
                     lock_expires_at,
                 )
-                .await?;
+                .await
+                .map_err(|err| {
+                    warn!("lock_pending error {err:?}");
+                })?;
             // Drop permits if too many were allocated.
             while permits.len() > locked_executions.len() {
                 permits.pop();
