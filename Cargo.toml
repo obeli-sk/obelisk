@@ -234,6 +234,9 @@ pr-run-mode = "skip"
 # Whether to install an updater program
 install-updater = false
 
+[profile.dev]
+debug = 0
+
 [profile.release]
 overflow-checks = true
 lto = true
