@@ -19,6 +19,24 @@
             inherit system overlays;
           };
           rustToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+          obelisk = pkgs.rustPlatform.buildRustPackage {
+            pname = "obelisk";
+            version = "0.0.1";
+            src = ./.;
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+              outputHashes = {
+                "getrandom-0.2.11" = "sha256-fBPB5ptPPBQqvsxTJd+LwKXBdChrVm75DQewyQUhM2Q=";
+              };
+            };
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
+            doCheck = false;
+          };
+          docker = pkgs.dockerTools.buildImage {
+            name = "obelisk";
+            config = { Entrypoint = [ "${obelisk}/bin/obelisk" ]; };
+          };
         in
         {
           devShells.default = pkgs.mkShell {
@@ -40,20 +58,8 @@
           };
 
           packages = {
-            default = pkgs.rustPlatform.buildRustPackage {
-              pname = "obelisk";
-              version = "0.0.1";
-              src = ./.;
-              cargoLock = {
-                lockFile = ./Cargo.lock;
-                outputHashes = {
-                  "getrandom-0.2.11" = "sha256-fBPB5ptPPBQqvsxTJd+LwKXBdChrVm75DQewyQUhM2Q=";
-                };
-              };
-              nativeBuildInputs = [ pkgs.pkg-config ];
-              PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
-              doCheck = false;
-            };
+            inherit obelisk docker;
+            default = obelisk;
           };
         }
       );
