@@ -119,26 +119,19 @@ async fn update_components<DB: DbConnection + 'static>(
             "Starting new executor of component `{file_name}` {component_id}",
             file_name = component.file_name
         );
-        match activate_component(component, db_pool.clone(), engines) {
+        match instantiate_component(component, db_pool.clone(), engines) {
             Ok(exec) => {
                 component_to_exec_join_handle.insert(component_id, exec);
             }
             Err(err) => {
-                eprintln!("Error activating component {component_id}, deactivating - {err}");
-                if let Err(err) = db_pool
-                    .connection()
-                    .component_deactivate(component_id)
-                    .await
-                {
-                    eprintln!("Cannot deactivate component - {err}");
-                }
+                eprintln!("Error activating component {component_id} - {err}");
             }
         }
     }
     Ok(())
 }
 
-fn activate_component<DB: DbConnection + 'static>(
+fn instantiate_component<DB: DbConnection + 'static>(
     component: Component,
     db_pool: impl DbPool<DB> + 'static,
     engines: &Engines,
