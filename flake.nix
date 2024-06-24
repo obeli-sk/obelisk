@@ -50,6 +50,10 @@
                 paths = [ obelisk ];
                 pathsToLink = [ "/bin" ];
               };
+              runAsRoot = ''
+                #!${pkgs.runtimeShell}
+                mkdir -p /data
+              '';
               config = {
                 Entrypoint = [ "/bin/obelisk" ];
                 WorkingDir = "/data";
@@ -82,7 +86,7 @@
           packages = rec {
             obelisk = makeObelisk pkgs;
             obeliskMusl = makeObelisk pkgsMusl;
-            docker = makeDocker pkgsMusl obeliskMusl;
+            docker = makeDocker pkgs obeliskMusl;
             default = obelisk;
           };
         }
