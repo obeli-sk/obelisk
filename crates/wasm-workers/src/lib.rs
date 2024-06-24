@@ -144,8 +144,8 @@ impl EngineConfig {
     // Adapted from https://github.com/bytecodealliance/wasmtime/pull/8610
     fn use_pooling_allocator_by_default(
     ) -> Result<wasmtime::InstanceAllocationStrategy, EngineConfigError> {
-        let opts = OptimizeOptions::from_env();
         const BITS_TO_TEST: u32 = 42;
+        let opts = OptimizeOptions::from_env();
         let mut config = wasmtime::Config::new();
         config.wasm_memory64(true);
         config.static_memory_maximum_size(1 << BITS_TO_TEST);
