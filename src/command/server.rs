@@ -12,6 +12,7 @@ use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::debug;
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::epoch_ticker::EpochTicker;
@@ -26,7 +27,9 @@ pub(crate) async fn run<P: AsRef<Path>>(db_file: P, clean: bool) -> anyhow::Resu
             .await
             .with_context(|| format!("cannot delete database file `{db_file:?}`"))?;
     }
-    let engines = Engines::new(EngineConfig::default());
+    let engine_config = EngineConfig::new()?;
+    debug!("Using {engine_config:?}");
+    let engines = Engines::new(engine_config);
     let _epoch_ticker = EpochTicker::spawn_new(
         vec![
             engines.activity_engine.weak(),

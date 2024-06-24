@@ -80,7 +80,8 @@ mod tests {
     async fn detection(#[case] file: &'static str, #[case] expected: ComponentType) {
         set_up();
         let detected =
-            ComponentDetector::new(file, &get_workflow_engine(EngineConfig::default())).unwrap();
+            ComponentDetector::new(file, &get_workflow_engine(EngineConfig::new().unwrap()))
+                .unwrap();
         assert_eq!(expected, detected.component_type);
     }
 }

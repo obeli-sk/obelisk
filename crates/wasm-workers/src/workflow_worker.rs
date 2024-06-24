@@ -383,7 +383,7 @@ mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: NonBlockingEventBatching,
     ) -> ExecutorTaskHandle {
-        let workflow_engine = get_workflow_engine(EngineConfig::default());
+        let workflow_engine = get_workflow_engine(EngineConfig::new().unwrap());
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
                 wasm_path,
@@ -633,7 +633,7 @@ mod tests {
                     child_max_retries: 0,
                     non_blocking_event_batching,
                 },
-                get_workflow_engine(EngineConfig::default()),
+                get_workflow_engine(EngineConfig::new().unwrap()),
                 db_pool,
                 clock_fn,
             )
