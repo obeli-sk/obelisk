@@ -45,7 +45,15 @@
           makeDocker = pkgs: obelisk:
             pkgs.dockerTools.buildImage {
               name = "obelisk";
-              config = { Entrypoint = [ "${obelisk}/bin/obelisk" ]; };
+              copyToRoot = pkgs.buildEnv {
+                name = "image-root";
+                paths = [ obelisk ];
+                pathsToLink = [ "/bin" ];
+              };
+              config = {
+                Entrypoint = [ "/bin/obelisk" ];
+                WorkingDir = "/data";
+              };
             };
           pkgs = makePkgs null;
           pkgsMusl = makePkgs "x86_64-unknown-linux-musl";
@@ -60,6 +68,7 @@
                 cargo-expand
                 cargo-insta
                 cargo-nextest
+                dive
                 litecli
                 lldb
                 nixpkgs-fmt
