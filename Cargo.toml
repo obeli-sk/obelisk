@@ -167,7 +167,7 @@ ulid = { version = "1.1.0", features = ["serde"] }
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "21.0.1", default-features = false, features = [
+wasmtime = { version = "22.0.0", default-features = false, features = [
     # remove "parallel-compilation"
     "component-model",
     "addr2line",
@@ -183,11 +183,11 @@ wasmtime = { version = "21.0.1", default-features = false, features = [
     "profiling",
     "wat",
 ] }
-wasmtime-wasi = "21.0.1"
-wasmtime-wasi-http = "21.0.1"
-wast = "207.0.0"
-wit-component = "0.207.0"
-wit-parser = "0.207.0"
+wasmtime-wasi = "22.0.0"
+wasmtime-wasi-http = "22.0.0"
+wast = "209.0.1"
+wit-component = "0.209.0"
+wit-parser = "0.209.0"
 
 # cargo-component
 wit-bindgen-rt = "0.24.0"

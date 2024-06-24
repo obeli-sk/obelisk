@@ -204,8 +204,11 @@ fn ffqn_to_param_names<'a>(
     iter: impl Iterator<Item = (&'a WorldKey, &'a WorldItem)>,
 ) -> hashbrown::HashMap<FunctionFqn, Vec<String>> {
     iter.filter_map(|(_, item)| match item {
-        wit_parser::WorldItem::Interface(ifc) => {
-            let ifc = resolve.interfaces.get(*ifc).unwrap();
+        wit_parser::WorldItem::Interface {
+            id: ifc_id,
+            stability: _,
+        } => {
+            let ifc = resolve.interfaces.get(*ifc_id).unwrap();
             let Some(package_name) = ifc
                 .package
                 .and_then(|pkg| resolve.packages.get(pkg))

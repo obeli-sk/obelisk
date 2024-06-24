@@ -13,6 +13,7 @@ use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
+use wasmtime_wasi_http::WasiHttpImpl;
 
 type StoreCtx = utils::wasi_http::Ctx;
 
@@ -81,15 +82,15 @@ impl<C: ClockFn> ActivityWorker<C> {
         engine: Arc<Engine>,
         clock_fn: C,
     ) -> Result<Self, WasmFileError> {
-        // NB: workaround some rustc inference - a future refactoring may make this
-        // obsolete.
-        fn type_annotate<T: wasmtime_wasi::WasiView, F>(val: F) -> F
+        // See wasmtime/crates/wasi-http/tests/all/main.rs and wasmtime/crates/wasi-http/src/proxy.rs
+        fn type_annotate_http<T, F>(val: F) -> F
         where
-            F: Fn(&mut T) -> &mut T,
+            F: Fn(&mut T) -> WasiHttpImpl<&mut T>,
         {
             val
         }
-        let closure = type_annotate::<_, _>(|t| t);
+        let closure = type_annotate_http::<StoreCtx, _>(|t| WasiHttpImpl(t));
+
         let wasm_path = wasm_path.as_ref();
         let wasm_component = WasmComponent::new(wasm_path, &engine)
             .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
