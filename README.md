@@ -55,7 +55,7 @@ cargo install --locked obeli-sk
 
 ### Nix flakes
 ```sh
-nix run github:obeli-sk/obeli-sk
+nix run github:obeli-sk/obelisk
 ```
 
 ## Local development
@@ -77,9 +77,9 @@ cargo run --release
 
 ```sh
 obelisk executor serve &
-obelisk component add github:obeli-sk/examples@latest
+obelisk component add github:obeli-sk/examples@latest # TODO
 obelisk component list
-obelisk execution run ...
+obelisk execution schedule ... # TODO
 ```
 
 # Planned features
