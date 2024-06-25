@@ -42,12 +42,22 @@
               PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
               doCheck = false;
             };
-          makeDocker = pkgs: obelisk:
+          makeDocker = pkgs: obelisk: binSh:
             pkgs.dockerTools.buildImage {
               name = "obelisk";
               copyToRoot = pkgs.buildEnv {
                 name = "image-root";
-                paths = [ obelisk ];
+                paths =
+                  let
+                    list1 = [ obelisk ];
+                    list2 =
+                      if binSh then [
+                        pkgs.dockerTools.usrBinEnv
+                        pkgs.dockerTools.binSh
+                        pkgs.dockerTools.caCertificates
+                      ] else [ ];
+                  in
+                  list1 ++ list2;
                 pathsToLink = [ "/bin" ];
               };
               runAsRoot = ''
@@ -86,7 +96,8 @@
           packages = rec {
             obelisk = makeObelisk pkgs;
             obeliskMusl = makeObelisk pkgsMusl;
-            docker = makeDocker pkgs obeliskMusl;
+            docker = makeDocker pkgs obeliskMusl false;
+            dockerBinSh = makeDocker pkgs obeliskMusl true;
             default = obelisk;
           };
         }
