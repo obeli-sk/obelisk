@@ -1,5 +1,5 @@
 # Obelisk
-Deterministic workflow engine built on top of WASI 0.2
+Deterministic workflow engine built on top of WASI Component Model
 
 ## Project status / Disclaimer
 This is a pre-release.
@@ -9,8 +9,8 @@ Please exercise caution if attempting to use it for production.
 
 ## Core principles
 * Schema first, using [WIT](https://component-model.bytecodealliance.org/design/wit.html) as the interface specification between workflows and activities.
-* Local first development, single process, with an escape hatch for external activities (planned).
 * Backend developer's delight
+    * Single process for running the executor, wasm workflows and wasm activities, with an escape hatch for external activities (planned).
     * Automatic retries on errors, timeouts, workflow executions continuing after a server crash.
     * Observability (planned)
     * Time traveling debugger (planned), ability to replay and fork existing workflow executions.
@@ -79,35 +79,45 @@ cargo run --release
 obelisk executor serve &
 obelisk component add github:obeli-sk/examples@latest # TODO
 obelisk component list
-obelisk execution schedule ... # TODO
+obelisk execution schedule <function> <params>
 ```
 
-# Planned features
-* Fatal error mapping to supported result types, e.g. permanent timeout to a numeric or string representation.
-* WASM upgrades - disabling work stealing by executors with outdated wasm hashes
-* UI
+# Milestones
+
+## Milestone 1 (done)
+* Getting the `obelisk` application up and running as a Linux binary
+* Scheduling of workflows and wasm activities, retries on timeouts and failures
+* Persistence using sqlite
+* Launching child workflows/activities concurrently using join sets
+* Github release, docker image
+* Basic CLI for wasm component configuration and scheduling
+
+## Milestone 2
+* Push components to a OCI registry
+* HTTP API for execution and component management
+* Interactive CLI for execution and component management
+* Params typecheck on creation, introspection of types of all functions in the system
+* External process activities
+* HTML based UI for showing executions, event history and relations
+
+## Milestone 3
+* URL paths with HTTP handlers registered by workflows, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs)
 * External Activity RPC
 * OpenAPI generator for activities
-* Params typecheck on creation, introspection of types of all functions in the system
-* Host function: generate a random value, store it in the event history - wasi random,available for workflows as wel
 * Cancellation with recursion
 * Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
+
+## Milestone 4
+* Multi process executors
 * Labels restricting workflows/activities to executors
 * ErrId that is passed back to parent, error detail
-
-
-## Running
-
-```sh
-cargo run
-```
 
 ## Running Tests
 ```sh
 cargo nextest run --workspace --target-dir=target/debug/nosim
 ```
 
-### Deterministic tests using madsim simulator
+### Deterministic tests using the `madsim` simulator
 ```sh
 MADSIM_ALLOW_SYSTEM_THREAD=1 RUSTFLAGS="--cfg madsim" cargo nextest run --workspace --target-dir=target/debug/madsim
 ```
