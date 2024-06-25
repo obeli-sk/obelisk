@@ -269,7 +269,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         let started_at = (self.clock_fn)();
         let deadline_duration = (ctx.execution_deadline - started_at).to_std().unwrap();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
-        tokio::select! {
+        tokio::select! { // future's liveness: Dropping the loser immediately.
             res = call_function => {
                 match res {
                     Ok((supported_result, mut workflow_ctx)) => {

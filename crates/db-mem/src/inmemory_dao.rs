@@ -210,7 +210,7 @@ impl DbConnection for InMemoryDbConnection {
         match either {
             Either::Left(()) => {} // Got results imediately
             Either::Right(mut receiver) => {
-                tokio::select! {
+                tokio::select! { // future's liveness: Dropping the loser immediately.
                     _ = receiver.recv() => {} // Got results eventually
                     () = tokio::time::sleep(max_wait) => {} // Timeout
                 }

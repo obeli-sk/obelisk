@@ -1874,7 +1874,7 @@ impl DbConnection for SqlitePool {
                 ffqn_to_pending_subscription.insert(ffqn.clone(), sender.clone());
             }
         }
-        tokio::select! {
+        tokio::select! { // future's liveness: Dropping the loser immediately.
             _ = receiver.recv() => {} // Got results eventually
             () = tokio::time::sleep(max_wait) => {} // Timeout
         }

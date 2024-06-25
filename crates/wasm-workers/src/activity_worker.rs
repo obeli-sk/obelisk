@@ -231,23 +231,19 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         let deadline_delta = ctx.execution_deadline - started_at;
         let deadline_duration = deadline_delta.to_std().unwrap();
         let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
-        loop {
-            // loop to make the timeout testable with `SimClock`
-            tokio::select! {
-                res = &mut call_function => {
-                    if let WorkerResult::Err(err) = &res {
-                        info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an error");
-                    } else {
-                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration,  execution_deadline = %ctx.execution_deadline, "Finished");
-                    }
-                    return res;
-                },
-                ()   = tokio::time::sleep(TIMEOUT_SLEEP_UNIT) => {
-                    if (self.clock_fn)() - started_at >= deadline_delta {
-                        debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.clock_fn)(), "Timed out");
-                        return WorkerResult::Err(WorkerError::IntermittentTimeout);
-                    }
+
+        tokio::select! { // future's liveness: Dropping the loser immediately.
+            res = &mut call_function => {
+                if let WorkerResult::Err(err) = &res {
+                    info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an error");
+                } else {
+                    debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration,  execution_deadline = %ctx.execution_deadline, "Finished");
                 }
+                return res;
+            },
+            ()   = tokio::time::sleep(deadline_duration) => {
+                    debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.clock_fn)(), "Timed out");
+                    return WorkerResult::Err(WorkerError::IntermittentTimeout);
             }
         }
     }

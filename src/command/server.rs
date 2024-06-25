@@ -61,7 +61,7 @@ pub(crate) async fn run<P: AsRef<Path>>(db_file: P, clean: bool) -> anyhow::Resu
                 eprintln!("Error while updating components - {err:?}");
                 break;
             }
-            tokio::select! {
+            tokio::select! { // future's liveness: Dropping the loser immediately.
                 signal_res = tokio::signal::ctrl_c() => {
                     if signal_res.is_err() {
                         eprintln!("Cannot listen to ctrl-c event");

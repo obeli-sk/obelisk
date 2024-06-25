@@ -646,7 +646,7 @@ pub trait DbConnection: Send + Sync {
         };
 
         if let Some(timeout) = timeout {
-            tokio::select! {
+            tokio::select! { // future's liveness: Dropping the loser immediately.
                 res = fut => res,
                 () = tokio::time::sleep(timeout) => Err(ClientError::Timeout)
             }
@@ -727,7 +727,7 @@ pub async fn wait_for_pending_state_fn<T: Debug>(
     };
 
     if let Some(timeout) = timeout {
-        tokio::select! {
+        tokio::select! { // future's liveness: Dropping the loser immediately.
             res = fut => res,
             () = tokio::time::sleep(timeout) => Err(ClientError::Timeout)
         }
