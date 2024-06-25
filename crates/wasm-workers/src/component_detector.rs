@@ -1,4 +1,7 @@
-//! * Every exported function must be in an exported interface containing the string `workflow`.
+//! Read the wasm component, iterate over all its exported interfaces.
+//! If the interface contains the string `workflow`, assume the component defines a workflow.
+//! Otherwise it defines an activity.
+//! Mixing is not allowed.
 
 use crate::WasmFileError;
 use concepts::{ComponentId, ComponentType, FunctionMetadata};
@@ -49,6 +52,7 @@ impl ComponentDetector {
         })
     }
 }
+
 pub fn file_hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error> {
     use sha2::{Digest, Sha256};
     let mut file = std::fs::File::open(&path)?;
@@ -62,7 +66,8 @@ pub fn file_hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error>
 #[cfg(test)]
 mod tests {
     use crate::component_detector::ComponentDetector;
-    use crate::{workflow_worker::get_workflow_engine, EngineConfig};
+    use crate::engines::EngineConfig;
+    use crate::workflow_worker::get_workflow_engine;
     use concepts::ComponentType;
 
     use test_utils::set_up;
@@ -80,8 +85,7 @@ mod tests {
     async fn detection(#[case] file: &'static str, #[case] expected: ComponentType) {
         set_up();
         let detected =
-            ComponentDetector::new(file, &get_workflow_engine(EngineConfig::new().unwrap()))
-                .unwrap();
+            ComponentDetector::new(file, &get_workflow_engine(EngineConfig::default())).unwrap();
         assert_eq!(expected, detected.component_type);
     }
 }

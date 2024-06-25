@@ -1,5 +1,6 @@
+use crate::engines::EngineConfig;
 use crate::workflow_ctx::{FunctionError, WorkflowCtx};
-use crate::{EngineConfig, WasmFileError};
+use crate::WasmFileError;
 use async_trait::async_trait;
 use concepts::prefixed_ulid::ConfigId;
 use concepts::storage::{DbConnection, DbPool};
@@ -346,7 +347,6 @@ mod tests {
     use crate::{
         activity_worker::tests::{spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT},
         tests::component_add_real,
-        EngineConfig,
     };
     use assert_matches::assert_matches;
     use concepts::{prefixed_ulid::ConfigId, ComponentId, ExecutionId, Params};
@@ -383,7 +383,7 @@ mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: NonBlockingEventBatching,
     ) -> ExecutorTaskHandle {
-        let workflow_engine = get_workflow_engine(EngineConfig::new().unwrap());
+        let workflow_engine = get_workflow_engine(EngineConfig::default());
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
                 wasm_path,
@@ -633,7 +633,7 @@ mod tests {
                     child_max_retries: 0,
                     non_blocking_event_batching,
                 },
-                get_workflow_engine(EngineConfig::new().unwrap()),
+                get_workflow_engine(EngineConfig::default()),
                 db_pool,
                 clock_fn,
             )
