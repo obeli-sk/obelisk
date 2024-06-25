@@ -66,8 +66,7 @@ pub fn file_hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error>
 #[cfg(test)]
 mod tests {
     use crate::component_detector::ComponentDetector;
-    use crate::engines::EngineConfig;
-    use crate::workflow_worker::get_workflow_engine;
+    use crate::engines::{EngineConfig, Engines};
     use concepts::ComponentType;
 
     use test_utils::set_up;
@@ -84,8 +83,11 @@ mod tests {
     #[tokio::test]
     async fn detection(#[case] file: &'static str, #[case] expected: ComponentType) {
         set_up();
-        let detected =
-            ComponentDetector::new(file, &get_workflow_engine(EngineConfig::default())).unwrap();
+        let detected = ComponentDetector::new(
+            file,
+            &Engines::get_workflow_engine(EngineConfig::on_demand()).unwrap(),
+        )
+        .unwrap();
         assert_eq!(expected, detected.component_type);
     }
 }

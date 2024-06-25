@@ -1,4 +1,3 @@
-use crate::engines::EngineConfig;
 use crate::workflow_ctx::{FunctionError, WorkflowCtx};
 use crate::WasmFileError;
 use async_trait::async_trait;
@@ -18,18 +17,6 @@ use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
-
-#[must_use]
-pub fn get_workflow_engine(config: EngineConfig) -> Arc<Engine> {
-    let mut wasmtime_config = wasmtime::Config::new();
-    wasmtime_config.wasm_backtrace(true);
-    wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Disable);
-    wasmtime_config.wasm_component_model(true);
-    wasmtime_config.async_support(true);
-    wasmtime_config.allocation_strategy(config.allocation_strategy);
-    wasmtime_config.epoch_interruption(true);
-    Arc::new(Engine::new(&wasmtime_config).unwrap())
-}
 
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -346,6 +333,7 @@ mod tests {
     use super::*;
     use crate::{
         activity_worker::tests::{spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT},
+        engines::{EngineConfig, Engines},
         tests::component_add_real,
     };
     use assert_matches::assert_matches;
@@ -383,7 +371,7 @@ mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: NonBlockingEventBatching,
     ) -> ExecutorTaskHandle {
-        let workflow_engine = get_workflow_engine(EngineConfig::default());
+        let workflow_engine = Engines::get_workflow_engine(EngineConfig::on_demand()).unwrap();
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
                 wasm_path,
@@ -633,7 +621,7 @@ mod tests {
                     child_max_retries: 0,
                     non_blocking_event_batching,
                 },
-                get_workflow_engine(EngineConfig::default()),
+                Engines::get_workflow_engine(EngineConfig::on_demand()).unwrap(),
                 db_pool,
                 clock_fn,
             )

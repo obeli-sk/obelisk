@@ -1,44 +1,14 @@
-use crate::{activity_worker, workflow_worker};
 use std::{error::Error, fmt::Debug, sync::Arc};
+use tracing::warn;
 use wasmtime::Engine;
-
-#[derive(Clone)]
-pub struct EngineConfig {
-    pub allocation_strategy: wasmtime::InstanceAllocationStrategy,
-}
-
-impl Debug for EngineConfig {
-    // Workaround for missing debug in InstanceAllocationStrategy
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.allocation_strategy {
-            wasmtime::InstanceAllocationStrategy::OnDemand => f
-                .debug_struct("EngineConfig")
-                .field("allocation_strategy", &"OnDemand")
-                .finish(),
-            wasmtime::InstanceAllocationStrategy::Pooling(polling) => f
-                .debug_struct("EngineConfig")
-                .field("allocation_strategy", &"Polling")
-                .field("polling_config", &polling)
-                .finish(),
-        }
-    }
-}
-
-impl Default for EngineConfig {
-    fn default() -> Self {
-        Self {
-            allocation_strategy: wasmtime::InstanceAllocationStrategy::OnDemand,
-        }
-    }
-}
 
 #[derive(thiserror::Error, Debug)]
 #[error(transparent)]
-pub struct EngineConfigError(Box<dyn Error + Send + Sync>);
+pub struct EngineError(Box<dyn Error + Send + Sync>);
 
 // Copied from wasmtime/crates/cli-flags
-#[derive(PartialEq, Clone, Default)]
-pub struct OptimizeOptions {
+#[derive(PartialEq, Clone, Default, Debug)]
+pub struct PoolingOptions {
     /// Byte size of the guard region after dynamic memories are allocated
     // pub dynamic_memory_guard_size: Option<u64>,
 
@@ -103,56 +73,33 @@ pub struct OptimizeOptions {
     pub pooling_max_memory_size: Option<usize>,
 }
 
+#[derive(Clone)]
+pub struct EngineConfig {
+    pub allocation_strategy: wasmtime::InstanceAllocationStrategy,
+}
+
+impl Debug for EngineConfig {
+    // Workaround for missing debug in InstanceAllocationStrategy
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.allocation_strategy {
+            wasmtime::InstanceAllocationStrategy::OnDemand => f
+                .debug_struct("EngineConfig")
+                .field("allocation_strategy", &"OnDemand")
+                .finish(),
+            wasmtime::InstanceAllocationStrategy::Pooling(polling) => f
+                .debug_struct("EngineConfig")
+                .field("allocation_strategy", &"Polling")
+                .field("polling_config", &polling)
+                .finish(),
+        }
+    }
+}
+
 impl EngineConfig {
-    // Adapted from https://github.com/bytecodealliance/wasmtime/pull/8610
-    pub fn detect_allocation_strategy(opts: OptimizeOptions) -> Result<Self, EngineConfigError> {
-        const BITS_TO_TEST: u32 = 42;
-        let mut config = wasmtime::Config::new();
-        config.wasm_memory64(true);
-        config.static_memory_maximum_size(1 << BITS_TO_TEST);
-        let engine = Engine::new(&config).map_err(|err| EngineConfigError(err.into()))?;
-        let mut store = wasmtime::Store::new(&engine, ());
-        // NB: the maximum size is in wasm pages to take out the 16-bits of wasm
-        // page size here from the maximum size.
-        let ty = wasmtime::MemoryType::new64(0, Some(1 << (BITS_TO_TEST - 16)));
-        let allocation_strategy = if wasmtime::Memory::new(&mut store, ty).is_ok() {
-            let mut cfg = wasmtime::PoolingAllocationConfig::default();
-            if let Some(size) = opts.pooling_memory_keep_resident {
-                cfg.linear_memory_keep_resident(size);
-            }
-            if let Some(size) = opts.pooling_table_keep_resident {
-                cfg.table_keep_resident(size);
-            }
-            if let Some(limit) = opts.pooling_total_core_instances {
-                cfg.total_core_instances(limit);
-            }
-            if let Some(limit) = opts.pooling_total_component_instances {
-                cfg.total_component_instances(limit);
-            }
-            if let Some(limit) = opts.pooling_total_memories {
-                cfg.total_memories(limit);
-            }
-            if let Some(limit) = opts.pooling_total_tables {
-                cfg.total_tables(limit);
-            }
-            if let Some(limit) = opts.pooling_total_stacks {
-                cfg.total_stacks(limit);
-            }
-            if let Some(limit) = opts.pooling_max_memory_size {
-                cfg.max_memory_size(limit);
-            }
-            if let Some(enable) = opts.memory_protection_keys {
-                if enable {
-                    cfg.memory_protection_keys(wasmtime::MpkEnabled::Enable);
-                }
-            }
-            wasmtime::InstanceAllocationStrategy::Pooling(cfg)
-        } else {
-            wasmtime::InstanceAllocationStrategy::OnDemand
-        };
-        Ok(Self {
-            allocation_strategy,
-        })
+    pub(crate) fn on_demand() -> Self {
+        Self {
+            allocation_strategy: wasmtime::InstanceAllocationStrategy::OnDemand,
+        }
     }
 }
 
@@ -162,11 +109,83 @@ pub struct Engines {
 }
 
 impl Engines {
-    #[must_use]
-    pub fn new(engine_config: EngineConfig) -> Self {
-        Engines {
-            activity_engine: activity_worker::get_activity_engine(engine_config.clone()),
-            workflow_engine: workflow_worker::get_workflow_engine(engine_config),
+    pub(crate) fn get_activity_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+        let mut wasmtime_config = wasmtime::Config::new();
+        wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+        wasmtime_config.wasm_component_model(true);
+        wasmtime_config.async_support(true);
+        wasmtime_config.allocation_strategy(config.allocation_strategy);
+        wasmtime_config.epoch_interruption(true);
+        Ok(Arc::new(
+            Engine::new(&wasmtime_config).map_err(|err| EngineError(err.into()))?,
+        ))
+    }
+
+    pub(crate) fn get_workflow_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+        let mut wasmtime_config = wasmtime::Config::new();
+        wasmtime_config.wasm_backtrace(true);
+        wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Disable);
+        wasmtime_config.wasm_component_model(true);
+        wasmtime_config.async_support(true);
+        wasmtime_config.allocation_strategy(config.allocation_strategy);
+        wasmtime_config.epoch_interruption(true);
+        Ok(Arc::new(
+            Engine::new(&wasmtime_config).map_err(|err| EngineError(err.into()))?,
+        ))
+    }
+
+    pub fn on_demand() -> Result<Self, EngineError> {
+        Ok(Engines {
+            activity_engine: Self::get_activity_engine(EngineConfig::on_demand())?,
+            workflow_engine: Self::get_workflow_engine(EngineConfig::on_demand())?,
+        })
+    }
+
+    pub fn pooling(opts: &PoolingOptions) -> Result<Self, EngineError> {
+        let mut cfg = wasmtime::PoolingAllocationConfig::default();
+        if let Some(size) = opts.pooling_memory_keep_resident {
+            cfg.linear_memory_keep_resident(size);
         }
+        if let Some(size) = opts.pooling_table_keep_resident {
+            cfg.table_keep_resident(size);
+        }
+        if let Some(limit) = opts.pooling_total_core_instances {
+            cfg.total_core_instances(limit);
+        }
+        if let Some(limit) = opts.pooling_total_component_instances {
+            cfg.total_component_instances(limit);
+        }
+        if let Some(limit) = opts.pooling_total_memories {
+            cfg.total_memories(limit);
+        }
+        if let Some(limit) = opts.pooling_total_tables {
+            cfg.total_tables(limit);
+        }
+        if let Some(limit) = opts.pooling_total_stacks {
+            cfg.total_stacks(limit);
+        }
+        if let Some(limit) = opts.pooling_max_memory_size {
+            cfg.max_memory_size(limit);
+        }
+        if let Some(enable) = opts.memory_protection_keys {
+            if enable {
+                cfg.memory_protection_keys(wasmtime::MpkEnabled::Enable);
+            }
+        }
+        let allocation_strategy = wasmtime::InstanceAllocationStrategy::Pooling(cfg.clone());
+        let engine_config = EngineConfig {
+            allocation_strategy,
+        };
+        Ok(Engines {
+            activity_engine: Self::get_activity_engine(engine_config.clone())?,
+            workflow_engine: Self::get_workflow_engine(engine_config)?,
+        })
+    }
+
+    pub fn auto_detect(pooling_opts: &PoolingOptions) -> Result<Self, EngineError> {
+        Self::pooling(pooling_opts).or_else(|err| {
+            warn!("Falling back to on-demand allocator - {err:?}");
+            Self::on_demand()
+        })
     }
 }

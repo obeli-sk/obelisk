@@ -1,4 +1,3 @@
-use crate::engines::EngineConfig;
 use crate::WasmFileError;
 use async_trait::async_trait;
 use concepts::prefixed_ulid::ConfigId;
@@ -44,17 +43,6 @@ impl RecycleInstancesSetting {
             Self::Disable => None,
         }
     }
-}
-
-#[must_use]
-pub fn get_activity_engine(config: EngineConfig) -> Arc<Engine> {
-    let mut wasmtime_config = wasmtime::Config::new();
-    wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
-    wasmtime_config.wasm_component_model(true);
-    wasmtime_config.async_support(true);
-    wasmtime_config.allocation_strategy(config.allocation_strategy);
-    wasmtime_config.epoch_interruption(true);
-    Arc::new(Engine::new(&wasmtime_config).unwrap())
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -267,7 +255,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::engines::EngineConfig;
+    use crate::engines::{EngineConfig, Engines};
 
     use super::*;
     use assert_matches::assert_matches;
@@ -297,7 +285,7 @@ pub(crate) mod tests {
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
-        let engine = get_activity_engine(EngineConfig::default());
+        let engine = Engines::get_activity_engine(EngineConfig::on_demand()).unwrap();
         let worker = Arc::new(
             ActivityWorker::new_with_config(
                 wasm_path,
@@ -388,9 +376,11 @@ pub(crate) mod tests {
         pool.total_memories(max_instances);
         pool.total_tables(max_instances);
 
-        let engine = get_activity_engine(EngineConfig {
+        let engine = Engines::get_activity_engine(EngineConfig {
             allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
-        });
+        })
+        .unwrap();
+
         let fibo_worker = ActivityWorker::new_with_config(
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             ActivityConfig {
@@ -470,7 +460,7 @@ pub(crate) mod tests {
                         clock_fn: now,
                     },
                 );
-            let engine = get_activity_engine(EngineConfig::default());
+            let engine = Engines::get_activity_engine(EngineConfig::on_demand()).unwrap();
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
                 Duration::from_millis(EPOCH_MILLIS),
@@ -553,7 +543,7 @@ pub(crate) mod tests {
             const TIMEOUT: Duration = Duration::from_millis(200);
             test_utils::set_up();
 
-            let engine = get_activity_engine(EngineConfig::default());
+            let engine = Engines::get_activity_engine(EngineConfig::on_demand()).unwrap();
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
                 Duration::from_millis(EPOCH_MILLIS),
@@ -604,7 +594,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             let sim_clock = SimClock::default();
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let engine = get_activity_engine(EngineConfig::default());
+            let engine = Engines::get_activity_engine(EngineConfig::on_demand()).unwrap();
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
