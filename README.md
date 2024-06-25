@@ -77,23 +77,23 @@ cargo run --release
 
 ```sh
 obelisk executor serve &
-obelisk component add github:obeli-sk/examples@latest # TODO
+obelisk component add component.wasm # created by cargo component
 obelisk component list
 obelisk execution schedule <function> <params>
 ```
 
 # Milestones
 
-## Milestone 1 (done)
+## Milestone 1: Release the binary - done
 * Getting the `obelisk` application up and running as a Linux binary
 * Scheduling of workflows and wasm activities, retries on timeouts and failures
 * Persistence using sqlite
 * Launching child workflows/activities concurrently using join sets
-* Github release, docker image
 * Basic CLI for wasm component configuration and scheduling
+* Github release, docker image, publish to crates.io, support `cargo-binstall`
 
-## Milestone 2
-* Push components to a OCI registry
+## Milestone 2: Allow remote interaction via CLI and web UI
+* Push/pull components to/from an OCI registry
 * HTTP API for execution and component management
 * Interactive CLI for execution and component management
 * Params typecheck on creation, introspection of types of all functions in the system
