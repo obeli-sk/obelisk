@@ -9,9 +9,13 @@ use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::ExecTask;
 use executor::executor::ExecutorTaskHandle;
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
+use std::fmt::Debug;
+use std::fmt::Display;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::info;
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
@@ -25,8 +29,7 @@ pub(crate) async fn run<P: AsRef<Path>>(db_file: P, clean: bool) -> anyhow::Resu
             .await
             .with_context(|| format!("cannot delete database file `{db_file:?}`"))?;
     }
-
-    let engines = Engines::auto_detect(&wasm_workers::engines::PoolingOptions::default())?;
+    let engines = Engines::auto_detect(&get_opts_from_env())?;
     let _epoch_ticker = EpochTicker::spawn_new(
         vec![
             engines.activity_engine.weak(),
@@ -78,6 +81,57 @@ pub(crate) async fn run<P: AsRef<Path>>(db_file: P, clean: bool) -> anyhow::Resu
     })
     .await
     .unwrap()
+}
+
+fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
+    fn get_env<T: FromStr + Display>(key: &str, into: &mut Option<T>)
+    where
+        <T as FromStr>::Err: Debug,
+    {
+        if let Ok(val) = std::env::var(key) {
+            let val = val.parse().unwrap();
+            info!("Setting {key}={val}");
+            *into = Some(val);
+        }
+    }
+    let mut opts = wasm_workers::engines::PoolingOptions::default();
+    get_env(
+        "WASMTIME_POOLING_MEMORY_KEEP_RESIDENT",
+        &mut opts.pooling_memory_keep_resident,
+    );
+    get_env(
+        "WASMTIME_POOLING_TABLE_KEEP_RESIDENT",
+        &mut opts.pooling_table_keep_resident,
+    );
+    get_env(
+        "WASMTIME_MEMORY_PROTECTION_KEYS",
+        &mut opts.memory_protection_keys,
+    );
+    get_env(
+        "WASMTIME_POOLING_TOTAL_CORE_INSTANCES",
+        &mut opts.pooling_total_core_instances,
+    );
+    get_env(
+        "WASMTIME_POOLING_TOTAL_COMPONENT_INSTANCES",
+        &mut opts.pooling_total_component_instances,
+    );
+    get_env(
+        "WASMTIME_POOLING_TOTAL_MEMORIES",
+        &mut opts.pooling_total_memories,
+    );
+    get_env(
+        "WASMTIME_POOLING_TOTAL_TABLES",
+        &mut opts.pooling_total_tables,
+    );
+    get_env(
+        "WASMTIME_POOLING_TOTAL_STACKS",
+        &mut opts.pooling_total_stacks,
+    );
+    get_env(
+        "WASMTIME_POOLING_MAX_MEMORY_SIZE",
+        &mut opts.pooling_max_memory_size,
+    );
+    opts
 }
 
 async fn update_components<DB: DbConnection + 'static>(

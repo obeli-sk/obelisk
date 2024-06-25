@@ -9,33 +9,6 @@ pub struct EngineError(Box<dyn Error + Send + Sync>);
 // Copied from wasmtime/crates/cli-flags
 #[derive(PartialEq, Clone, Default, Debug)]
 pub struct PoolingOptions {
-    /// Byte size of the guard region after dynamic memories are allocated
-    // pub dynamic_memory_guard_size: Option<u64>,
-
-    /// Force using a "static" style for all wasm memories
-    // pub static_memory_forced: Option<bool>,
-
-    /// Maximum size in bytes of wasm memory before it becomes dynamically
-    /// relocatable instead of up-front-reserved.
-    // pub static_memory_maximum_size: Option<u64>,
-
-    /// Byte size of the guard region after static memories are allocated
-    // pub static_memory_guard_size: Option<u64>,
-
-    /// Bytes to reserve at the end of linear memory for growth for dynamic
-    /// memories.
-    // pub dynamic_memory_reserved_for_growth: Option<u64>,
-
-    /// Indicates whether an unmapped region of memory is placed before all
-    /// linear memories.
-    // pub guard_before_linear_memory: Option<bool>,
-
-    /// Whether to initialize tables lazily, so that instantiation is
-    /// fast but indirect calls are a little slower. If no, tables are
-    /// initialized eagerly from any active element segments that apply to
-    /// them during instantiation. (default: yes)
-    // pub table_lazy_init: Option<bool>,
-
     /// How many bytes to keep resident between instantiations for the
     /// pooling allocator in linear memories.
     pub pooling_memory_keep_resident: Option<usize>,
