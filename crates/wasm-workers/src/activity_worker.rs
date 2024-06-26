@@ -575,8 +575,117 @@ pub(crate) mod tests {
             assert_matches!(err, WorkerError::IntermittentTimeout);
         }
 
+        #[tokio::test]
+        async fn http_get_simple() {
+            use std::ops::Deref;
+            use wiremock::{
+                matchers::{method, path},
+                Mock, MockServer, ResponseTemplate,
+            };
+            const BODY: &str = "ok";
+            const RETRY_EXP_BACKOFF: Duration = Duration::from_millis(10);
+            test_utils::set_up();
+            info!("All set up");
+            let sim_clock = SimClock::default();
+            let (_guard, db_pool) = Database::Memory.set_up().await;
+            let engine = Engines::get_activity_engine(EngineConfig::on_demand()).unwrap();
+            let worker = Arc::new(
+                ActivityWorker::new_with_config(
+                    test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+                    ActivityConfig {
+                        config_id: ConfigId::generate(),
+                        recycled_instances: RecycleInstancesSetting::Disable,
+                    },
+                    engine,
+                    sim_clock.get_clock_fn(),
+                )
+                .unwrap(),
+            );
+            let exec_config = ExecConfig {
+                batch_size: 1,
+                lock_expiry: Duration::from_secs(1),
+                tick_sleep: Duration::ZERO,
+                config_id: ConfigId::generate(),
+            };
+            let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
+            let exec_task = ExecTask::new(
+                worker,
+                exec_config,
+                sim_clock.get_clock_fn(),
+                db_pool.clone(),
+                ffqns,
+                None,
+            );
+
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let server_address = listener
+                .local_addr()
+                .expect("Failed to get server address.");
+
+            let params = Params::from_json_array(json!([format!(
+                "http://127.0.0.1:{port}/",
+                port = server_address.port()
+            )]))
+            .unwrap();
+            let execution_id = ExecutionId::generate();
+            let created_at = sim_clock.now();
+            let db_connection = db_pool.connection();
+            info!("Creating execution");
+            let stopwatch = std::time::Instant::now();
+            db_connection
+                .create(CreateRequest {
+                    created_at,
+                    execution_id,
+                    ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
+                    params,
+                    parent: None,
+                    scheduled_at: created_at,
+                    retry_exp_backoff: RETRY_EXP_BACKOFF,
+                    max_retries: 1,
+                    component_id: ComponentId::empty(),
+                    return_type: None,
+                })
+                .await
+                .unwrap();
+
+            let server = MockServer::builder().listener(listener).start().await;
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(BODY))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            assert_eq!(
+                1,
+                exec_task
+                    .tick2(sim_clock.now())
+                    .await
+                    .unwrap()
+                    .wait_for_tasks()
+                    .await
+                    .unwrap()
+            );
+            let exec_log = db_connection.get(execution_id).await.unwrap();
+            let stopwatch = stopwatch.elapsed();
+            info!("Finished in {stopwatch:?}");
+            let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionEventInner::Finished { result } => result);
+            let res = res.unwrap();
+            let wast_val = assert_matches!(res.fallible_ok(), Some(Some(wast_val)) => wast_val);
+            let val = assert_matches!(wast_val, WastVal::String(val) => val);
+            assert_eq!(BODY, val.deref());
+            // check types
+            let (ok, err) = assert_matches!(res, SupportedFunctionResult::Fallible(WastValWithType{value: _,
+                r#type: TypeWrapper::Result{ok, err}}) => (ok, err));
+            assert_eq!(Some(Box::new(TypeWrapper::String)), ok);
+            assert_eq!(Some(Box::new(TypeWrapper::String)), err);
+            drop(db_connection);
+            drop(exec_task);
+            db_pool.close().await.unwrap();
+        }
+
         #[rstest::rstest(
-            succeed_eventually => [false, true]
+            succeed_eventually => [false, true],
         )]
         #[tokio::test]
         async fn http_get_retry_on_fallible_err(succeed_eventually: bool) {
