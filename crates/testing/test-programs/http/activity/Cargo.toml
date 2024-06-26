@@ -10,6 +10,7 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+waki.workspace = true
 wit-bindgen-rt.workspace = true
 
 [lib]
@@ -21,8 +22,4 @@ wasm = []
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]
-"wasi:http" = { path = "wit/deps/http" }
-"wasi:clocks" = { path = "wit/deps/clocks" }
-"wasi:io" = { path = "wit/deps/io" }
-"wasi:random" = { path = "wit/deps/random" }
 "testing:http" = { path = "../wit" }

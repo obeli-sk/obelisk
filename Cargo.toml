@@ -46,7 +46,6 @@ wasmtime.workspace = true
 name = "obelisk"
 path = "src/main.rs"
 
-
 [features]
 parallel-compilation = ["wasmtime/parallel-compilation"]
 tokio-console = ["dep:console-subscriber"]
@@ -164,6 +163,7 @@ tracing = { version = "0.1", features = ["log"] }
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 ulid = { version = "1.1.0", features = ["serde"] }
+waki = "0.3.0"
 wiremock = "0.6"
 
 # wasmtime
