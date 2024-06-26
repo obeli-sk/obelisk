@@ -42,7 +42,7 @@ jobs:
         env:
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
           CI: true
-        run: nix develop --command cargo nextest run --workspace --all-features  --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
+        run: nix develop --command cargo nextest run --workspace --all-features  --profile ${{ github.job }} --test-threads=1
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
@@ -77,7 +77,7 @@ jobs:
           RUST_LOG: "info,executor=trace,wasm_workers=trace,db=info"
           MADSIM_ALLOW_SYSTEM_THREAD: "1"
           CI: true
-        run: nix develop --command cargo nextest run --workspace --profile ${{ github.job }} --no-capture --filter-expr '!test(/perf/)'
+        run: nix develop --command cargo nextest run --workspace --profile ${{ github.job }} --test-threads=1
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
