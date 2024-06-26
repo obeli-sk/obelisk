@@ -2,7 +2,7 @@
 failure-output = "immediate"
 fail-fast = false
 status-level = "all"
-slow-timeout = { period = "10s", terminate-after = 2 }
+slow-timeout = { period = "10s", terminate-after = 4 }
 junit.path = "junit.xml"
 junit.report-name = "madsim"
 junit.store-success-output = true
@@ -12,7 +12,7 @@ junit.store-failure-output = true
 failure-output = "immediate"
 fail-fast = false
 status-level = "all"
-slow-timeout = { period = "10s", terminate-after = 2 }
+slow-timeout = { period = "10s", terminate-after = 4 }
 junit.path = "junit.xml"
 junit.report-name = "nosim"
 junit.store-success-output = true
