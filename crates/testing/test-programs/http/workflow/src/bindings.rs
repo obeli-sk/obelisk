@@ -164,51 +164,48 @@ pub mod testing {
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn get(authority: &str, path: &str) -> Result<_rt::String, _rt::String> {
+            pub fn get(url: &str) -> Result<_rt::String, _rt::String> {
                 unsafe {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 12]);
                     let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 12]);
-                    let vec0 = authority;
+                    let vec0 = url;
                     let ptr0 = vec0.as_ptr().cast::<u8>();
                     let len0 = vec0.len();
-                    let vec1 = path;
-                    let ptr1 = vec1.as_ptr().cast::<u8>();
-                    let len1 = vec1.len();
-                    let ptr2 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    let ptr1 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:http/http-get")]
                     extern "C" {
                         #[link_name = "get"]
-                        fn wit_import(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8);
+                        fn wit_import(_: *mut u8, _: usize, _: *mut u8);
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8) {
+                    fn wit_import(_: *mut u8, _: usize, _: *mut u8) {
                         unreachable!()
                     }
-                    wit_import(ptr0.cast_mut(), len0, ptr1.cast_mut(), len1, ptr2);
-                    let l3 = i32::from(*ptr2.add(0).cast::<u8>());
-                    match l3 {
+                    wit_import(ptr0.cast_mut(), len0, ptr1);
+                    let l2 = i32::from(*ptr1.add(0).cast::<u8>());
+                    match l2 {
                         0 => {
                             let e = {
-                                let l4 = *ptr2.add(4).cast::<*mut u8>();
-                                let l5 = *ptr2.add(8).cast::<usize>();
-                                let len6 = l5;
-                                let bytes6 = _rt::Vec::from_raw_parts(l4.cast(), len6, len6);
+                                let l3 = *ptr1.add(4).cast::<*mut u8>();
+                                let l4 = *ptr1.add(8).cast::<usize>();
+                                let len5 = l4;
+                                let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
 
-                                _rt::string_lift(bytes6)
+                                _rt::string_lift(bytes5)
                             };
                             Ok(e)
                         }
                         1 => {
                             let e = {
-                                let l7 = *ptr2.add(4).cast::<*mut u8>();
-                                let l8 = *ptr2.add(8).cast::<usize>();
-                                let len9 = l8;
-                                let bytes9 = _rt::Vec::from_raw_parts(l7.cast(), len9, len9);
+                                let l6 = *ptr1.add(4).cast::<*mut u8>();
+                                let l7 = *ptr1.add(8).cast::<usize>();
+                                let len8 = l7;
+                                let bytes8 = _rt::Vec::from_raw_parts(l6.cast(), len8, len8);
 
-                                _rt::string_lift(bytes9)
+                                _rt::string_lift(bytes8)
                             };
                             Err(e)
                         }
@@ -217,51 +214,48 @@ pub mod testing {
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            pub fn get_successful(authority: &str, path: &str) -> Result<_rt::String, _rt::String> {
+            pub fn get_successful(url: &str) -> Result<_rt::String, _rt::String> {
                 unsafe {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 12]);
                     let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 12]);
-                    let vec0 = authority;
+                    let vec0 = url;
                     let ptr0 = vec0.as_ptr().cast::<u8>();
                     let len0 = vec0.len();
-                    let vec1 = path;
-                    let ptr1 = vec1.as_ptr().cast::<u8>();
-                    let len1 = vec1.len();
-                    let ptr2 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    let ptr1 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:http/http-get")]
                     extern "C" {
                         #[link_name = "get-successful"]
-                        fn wit_import(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8);
+                        fn wit_import(_: *mut u8, _: usize, _: *mut u8);
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8) {
+                    fn wit_import(_: *mut u8, _: usize, _: *mut u8) {
                         unreachable!()
                     }
-                    wit_import(ptr0.cast_mut(), len0, ptr1.cast_mut(), len1, ptr2);
-                    let l3 = i32::from(*ptr2.add(0).cast::<u8>());
-                    match l3 {
+                    wit_import(ptr0.cast_mut(), len0, ptr1);
+                    let l2 = i32::from(*ptr1.add(0).cast::<u8>());
+                    match l2 {
                         0 => {
                             let e = {
-                                let l4 = *ptr2.add(4).cast::<*mut u8>();
-                                let l5 = *ptr2.add(8).cast::<usize>();
-                                let len6 = l5;
-                                let bytes6 = _rt::Vec::from_raw_parts(l4.cast(), len6, len6);
+                                let l3 = *ptr1.add(4).cast::<*mut u8>();
+                                let l4 = *ptr1.add(8).cast::<usize>();
+                                let len5 = l4;
+                                let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
 
-                                _rt::string_lift(bytes6)
+                                _rt::string_lift(bytes5)
                             };
                             Ok(e)
                         }
                         1 => {
                             let e = {
-                                let l7 = *ptr2.add(4).cast::<*mut u8>();
-                                let l8 = *ptr2.add(8).cast::<usize>();
-                                let len9 = l8;
-                                let bytes9 = _rt::Vec::from_raw_parts(l7.cast(), len9, len9);
+                                let l6 = *ptr1.add(4).cast::<*mut u8>();
+                                let l7 = *ptr1.add(8).cast::<usize>();
+                                let len8 = l7;
+                                let bytes8 = _rt::Vec::from_raw_parts(l6.cast(), len8, len8);
 
-                                _rt::string_lift(bytes9)
+                                _rt::string_lift(bytes8)
                             };
                             Err(e)
                         }
@@ -282,11 +276,7 @@ pub mod testing {
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn get_successful_future(
-                join_set_id: &str,
-                authority: &str,
-                path: &str,
-            ) -> _rt::String {
+            pub fn get_successful_future(join_set_id: &str, url: &str) -> _rt::String {
                 unsafe {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
@@ -294,54 +284,27 @@ pub mod testing {
                     let vec0 = join_set_id;
                     let ptr0 = vec0.as_ptr().cast::<u8>();
                     let len0 = vec0.len();
-                    let vec1 = authority;
+                    let vec1 = url;
                     let ptr1 = vec1.as_ptr().cast::<u8>();
                     let len1 = vec1.len();
-                    let vec2 = path;
-                    let ptr2 = vec2.as_ptr().cast::<u8>();
-                    let len2 = vec2.len();
-                    let ptr3 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    let ptr2 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:http-obelisk-ext/http-get")]
                     extern "C" {
                         #[link_name = "get-successful-future"]
-                        fn wit_import(
-                            _: *mut u8,
-                            _: usize,
-                            _: *mut u8,
-                            _: usize,
-                            _: *mut u8,
-                            _: usize,
-                            _: *mut u8,
-                        );
+                        fn wit_import(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8);
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(
-                        _: *mut u8,
-                        _: usize,
-                        _: *mut u8,
-                        _: usize,
-                        _: *mut u8,
-                        _: usize,
-                        _: *mut u8,
-                    ) {
+                    fn wit_import(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8) {
                         unreachable!()
                     }
-                    wit_import(
-                        ptr0.cast_mut(),
-                        len0,
-                        ptr1.cast_mut(),
-                        len1,
-                        ptr2.cast_mut(),
-                        len2,
-                        ptr3,
-                    );
-                    let l4 = *ptr3.add(0).cast::<*mut u8>();
-                    let l5 = *ptr3.add(4).cast::<usize>();
-                    let len6 = l5;
-                    let bytes6 = _rt::Vec::from_raw_parts(l4.cast(), len6, len6);
-                    _rt::string_lift(bytes6)
+                    wit_import(ptr0.cast_mut(), len0, ptr1.cast_mut(), len1, ptr2);
+                    let l3 = *ptr2.add(0).cast::<*mut u8>();
+                    let l4 = *ptr2.add(4).cast::<usize>();
+                    let len5 = l4;
+                    let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
+                    _rt::string_lift(bytes5)
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
@@ -514,41 +477,34 @@ pub mod exports {
                 use super::super::super::super::_rt;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_get_cabi<T: Guest>(
-                    arg0: *mut u8,
-                    arg1: usize,
-                    arg2: *mut u8,
-                    arg3: usize,
-                ) -> *mut u8 {
+                pub unsafe fn _export_get_cabi<T: Guest>(arg0: *mut u8, arg1: usize) -> *mut u8 {
                     #[cfg(target_arch = "wasm32")]
                     _rt::run_ctors_once();
                     let len0 = arg1;
                     let bytes0 = _rt::Vec::from_raw_parts(arg0.cast(), len0, len0);
-                    let len1 = arg3;
-                    let bytes1 = _rt::Vec::from_raw_parts(arg2.cast(), len1, len1);
-                    let result2 = T::get(_rt::string_lift(bytes0), _rt::string_lift(bytes1));
-                    let ptr3 = _RET_AREA.0.as_mut_ptr().cast::<u8>();
-                    match result2 {
+                    let result1 = T::get(_rt::string_lift(bytes0));
+                    let ptr2 = _RET_AREA.0.as_mut_ptr().cast::<u8>();
+                    match result1 {
                         Ok(e) => {
-                            *ptr3.add(0).cast::<u8>() = (0i32) as u8;
+                            *ptr2.add(0).cast::<u8>() = (0i32) as u8;
+                            let vec3 = (e.into_bytes()).into_boxed_slice();
+                            let ptr3 = vec3.as_ptr().cast::<u8>();
+                            let len3 = vec3.len();
+                            ::core::mem::forget(vec3);
+                            *ptr2.add(8).cast::<usize>() = len3;
+                            *ptr2.add(4).cast::<*mut u8>() = ptr3.cast_mut();
+                        }
+                        Err(e) => {
+                            *ptr2.add(0).cast::<u8>() = (1i32) as u8;
                             let vec4 = (e.into_bytes()).into_boxed_slice();
                             let ptr4 = vec4.as_ptr().cast::<u8>();
                             let len4 = vec4.len();
                             ::core::mem::forget(vec4);
-                            *ptr3.add(8).cast::<usize>() = len4;
-                            *ptr3.add(4).cast::<*mut u8>() = ptr4.cast_mut();
-                        }
-                        Err(e) => {
-                            *ptr3.add(0).cast::<u8>() = (1i32) as u8;
-                            let vec5 = (e.into_bytes()).into_boxed_slice();
-                            let ptr5 = vec5.as_ptr().cast::<u8>();
-                            let len5 = vec5.len();
-                            ::core::mem::forget(vec5);
-                            *ptr3.add(8).cast::<usize>() = len5;
-                            *ptr3.add(4).cast::<*mut u8>() = ptr5.cast_mut();
+                            *ptr2.add(8).cast::<usize>() = len4;
+                            *ptr2.add(4).cast::<*mut u8>() = ptr4.cast_mut();
                         }
                     };
-                    ptr3
+                    ptr2
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
@@ -572,39 +528,34 @@ pub mod exports {
                 pub unsafe fn _export_get_successful_cabi<T: Guest>(
                     arg0: *mut u8,
                     arg1: usize,
-                    arg2: *mut u8,
-                    arg3: usize,
                 ) -> *mut u8 {
                     #[cfg(target_arch = "wasm32")]
                     _rt::run_ctors_once();
                     let len0 = arg1;
                     let bytes0 = _rt::Vec::from_raw_parts(arg0.cast(), len0, len0);
-                    let len1 = arg3;
-                    let bytes1 = _rt::Vec::from_raw_parts(arg2.cast(), len1, len1);
-                    let result2 =
-                        T::get_successful(_rt::string_lift(bytes0), _rt::string_lift(bytes1));
-                    let ptr3 = _RET_AREA.0.as_mut_ptr().cast::<u8>();
-                    match result2 {
+                    let result1 = T::get_successful(_rt::string_lift(bytes0));
+                    let ptr2 = _RET_AREA.0.as_mut_ptr().cast::<u8>();
+                    match result1 {
                         Ok(e) => {
-                            *ptr3.add(0).cast::<u8>() = (0i32) as u8;
+                            *ptr2.add(0).cast::<u8>() = (0i32) as u8;
+                            let vec3 = (e.into_bytes()).into_boxed_slice();
+                            let ptr3 = vec3.as_ptr().cast::<u8>();
+                            let len3 = vec3.len();
+                            ::core::mem::forget(vec3);
+                            *ptr2.add(8).cast::<usize>() = len3;
+                            *ptr2.add(4).cast::<*mut u8>() = ptr3.cast_mut();
+                        }
+                        Err(e) => {
+                            *ptr2.add(0).cast::<u8>() = (1i32) as u8;
                             let vec4 = (e.into_bytes()).into_boxed_slice();
                             let ptr4 = vec4.as_ptr().cast::<u8>();
                             let len4 = vec4.len();
                             ::core::mem::forget(vec4);
-                            *ptr3.add(8).cast::<usize>() = len4;
-                            *ptr3.add(4).cast::<*mut u8>() = ptr4.cast_mut();
-                        }
-                        Err(e) => {
-                            *ptr3.add(0).cast::<u8>() = (1i32) as u8;
-                            let vec5 = (e.into_bytes()).into_boxed_slice();
-                            let ptr5 = vec5.as_ptr().cast::<u8>();
-                            let len5 = vec5.len();
-                            ::core::mem::forget(vec5);
-                            *ptr3.add(8).cast::<usize>() = len5;
-                            *ptr3.add(4).cast::<*mut u8>() = ptr5.cast_mut();
+                            *ptr2.add(8).cast::<usize>() = len4;
+                            *ptr2.add(4).cast::<*mut u8>() = ptr4.cast_mut();
                         }
                     };
-                    ptr3
+                    ptr2
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
@@ -725,33 +676,28 @@ pub mod exports {
                 pub unsafe fn _export_get_successful_concurrently_stress_cabi<T: Guest>(
                     arg0: *mut u8,
                     arg1: usize,
-                    arg2: *mut u8,
-                    arg3: usize,
-                    arg4: i32,
+                    arg2: i32,
                 ) -> *mut u8 {
                     #[cfg(target_arch = "wasm32")]
                     _rt::run_ctors_once();
                     let len0 = arg1;
                     let bytes0 = _rt::Vec::from_raw_parts(arg0.cast(), len0, len0);
-                    let len1 = arg3;
-                    let bytes1 = _rt::Vec::from_raw_parts(arg2.cast(), len1, len1);
-                    let result2 = T::get_successful_concurrently_stress(
+                    let result1 = T::get_successful_concurrently_stress(
                         _rt::string_lift(bytes0),
-                        _rt::string_lift(bytes1),
-                        arg4 as u32,
+                        arg2 as u32,
                     );
-                    let ptr3 = _RET_AREA.0.as_mut_ptr().cast::<u8>();
-                    match result2 {
+                    let ptr2 = _RET_AREA.0.as_mut_ptr().cast::<u8>();
+                    match result1 {
                         Ok(e) => {
-                            *ptr3.add(0).cast::<u8>() = (0i32) as u8;
-                            let vec5 = e;
-                            let len5 = vec5.len();
-                            let layout5 =
-                                _rt::alloc::Layout::from_size_align_unchecked(vec5.len() * 8, 4);
-                            let result5 = if layout5.size() != 0 {
-                                let ptr = _rt::alloc::alloc(layout5).cast::<u8>();
+                            *ptr2.add(0).cast::<u8>() = (0i32) as u8;
+                            let vec4 = e;
+                            let len4 = vec4.len();
+                            let layout4 =
+                                _rt::alloc::Layout::from_size_align_unchecked(vec4.len() * 8, 4);
+                            let result4 = if layout4.size() != 0 {
+                                let ptr = _rt::alloc::alloc(layout4).cast::<u8>();
                                 if ptr.is_null() {
-                                    _rt::alloc::handle_alloc_error(layout5);
+                                    _rt::alloc::handle_alloc_error(layout4);
                                 }
                                 ptr
                             } else {
@@ -759,31 +705,31 @@ pub mod exports {
                                     ::core::ptr::null_mut()
                                 }
                             };
-                            for (i, e) in vec5.into_iter().enumerate() {
-                                let base = result5.add(i * 8);
+                            for (i, e) in vec4.into_iter().enumerate() {
+                                let base = result4.add(i * 8);
                                 {
-                                    let vec4 = (e.into_bytes()).into_boxed_slice();
-                                    let ptr4 = vec4.as_ptr().cast::<u8>();
-                                    let len4 = vec4.len();
-                                    ::core::mem::forget(vec4);
-                                    *base.add(4).cast::<usize>() = len4;
-                                    *base.add(0).cast::<*mut u8>() = ptr4.cast_mut();
+                                    let vec3 = (e.into_bytes()).into_boxed_slice();
+                                    let ptr3 = vec3.as_ptr().cast::<u8>();
+                                    let len3 = vec3.len();
+                                    ::core::mem::forget(vec3);
+                                    *base.add(4).cast::<usize>() = len3;
+                                    *base.add(0).cast::<*mut u8>() = ptr3.cast_mut();
                                 }
                             }
-                            *ptr3.add(8).cast::<usize>() = len5;
-                            *ptr3.add(4).cast::<*mut u8>() = result5;
+                            *ptr2.add(8).cast::<usize>() = len4;
+                            *ptr2.add(4).cast::<*mut u8>() = result4;
                         }
                         Err(e) => {
-                            *ptr3.add(0).cast::<u8>() = (1i32) as u8;
-                            let vec6 = (e.into_bytes()).into_boxed_slice();
-                            let ptr6 = vec6.as_ptr().cast::<u8>();
-                            let len6 = vec6.len();
-                            ::core::mem::forget(vec6);
-                            *ptr3.add(8).cast::<usize>() = len6;
-                            *ptr3.add(4).cast::<*mut u8>() = ptr6.cast_mut();
+                            *ptr2.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec5 = (e.into_bytes()).into_boxed_slice();
+                            let ptr5 = vec5.as_ptr().cast::<u8>();
+                            let len5 = vec5.len();
+                            ::core::mem::forget(vec5);
+                            *ptr2.add(8).cast::<usize>() = len5;
+                            *ptr2.add(4).cast::<*mut u8>() = ptr5.cast_mut();
                         }
                     };
-                    ptr3
+                    ptr2
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
@@ -815,20 +761,13 @@ pub mod exports {
                     }
                 }
                 pub trait Guest {
-                    fn get(
-                        authority: _rt::String,
-                        path: _rt::String,
-                    ) -> Result<_rt::String, _rt::String>;
-                    fn get_successful(
-                        authority: _rt::String,
-                        path: _rt::String,
-                    ) -> Result<_rt::String, _rt::String>;
+                    fn get(url: _rt::String) -> Result<_rt::String, _rt::String>;
+                    fn get_successful(url: _rt::String) -> Result<_rt::String, _rt::String>;
                     fn get_successful_concurrently(
-                        authorities: _rt::Vec<_rt::String>,
+                        urls: _rt::Vec<_rt::String>,
                     ) -> Result<_rt::Vec<_rt::String>, _rt::String>;
                     fn get_successful_concurrently_stress(
-                        authority: _rt::String,
-                        path: _rt::String,
+                        url: _rt::String,
                         concurrency: u32,
                     ) -> Result<_rt::Vec<_rt::String>, _rt::String>;
                 }
@@ -838,16 +777,16 @@ pub mod exports {
   ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
 
     #[export_name = "testing:http-workflow/workflow#get"]
-    unsafe extern "C" fn export_get(arg0: *mut u8,arg1: usize,arg2: *mut u8,arg3: usize,) -> *mut u8 {
-      $($path_to_types)*::_export_get_cabi::<$ty>(arg0, arg1, arg2, arg3)
+    unsafe extern "C" fn export_get(arg0: *mut u8,arg1: usize,) -> *mut u8 {
+      $($path_to_types)*::_export_get_cabi::<$ty>(arg0, arg1)
     }
     #[export_name = "cabi_post_testing:http-workflow/workflow#get"]
     unsafe extern "C" fn _post_return_get(arg0: *mut u8,) {
       $($path_to_types)*::__post_return_get::<$ty>(arg0)
     }
     #[export_name = "testing:http-workflow/workflow#get-successful"]
-    unsafe extern "C" fn export_get_successful(arg0: *mut u8,arg1: usize,arg2: *mut u8,arg3: usize,) -> *mut u8 {
-      $($path_to_types)*::_export_get_successful_cabi::<$ty>(arg0, arg1, arg2, arg3)
+    unsafe extern "C" fn export_get_successful(arg0: *mut u8,arg1: usize,) -> *mut u8 {
+      $($path_to_types)*::_export_get_successful_cabi::<$ty>(arg0, arg1)
     }
     #[export_name = "cabi_post_testing:http-workflow/workflow#get-successful"]
     unsafe extern "C" fn _post_return_get_successful(arg0: *mut u8,) {
@@ -862,8 +801,8 @@ pub mod exports {
       $($path_to_types)*::__post_return_get_successful_concurrently::<$ty>(arg0)
     }
     #[export_name = "testing:http-workflow/workflow#get-successful-concurrently-stress"]
-    unsafe extern "C" fn export_get_successful_concurrently_stress(arg0: *mut u8,arg1: usize,arg2: *mut u8,arg3: usize,arg4: i32,) -> *mut u8 {
-      $($path_to_types)*::_export_get_successful_concurrently_stress_cabi::<$ty>(arg0, arg1, arg2, arg3, arg4)
+    unsafe extern "C" fn export_get_successful_concurrently_stress(arg0: *mut u8,arg1: usize,arg2: i32,) -> *mut u8 {
+      $($path_to_types)*::_export_get_successful_concurrently_stress_cabi::<$ty>(arg0, arg1, arg2)
     }
     #[export_name = "cabi_post_testing:http-workflow/workflow#get-successful-concurrently-stress"]
     unsafe extern "C" fn _post_return_get_successful_concurrently_stress(arg0: *mut u8,) {
@@ -1042,28 +981,27 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.25.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 950] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xbc\x06\x01A\x02\x01\
-A\x0b\x01B\x04\x01j\x01s\x01s\x01@\x02\x09authoritys\x04paths\0\0\x04\0\x03get\x01\
-\x01\x04\0\x0eget-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\
-\x05\x01@\x03\x0bjoin-set-ids\x09authoritys\x04paths\0s\x04\0\x15get-successful-\
-future\x01\0\x01j\x01s\x01s\x01@\x01\x0bjoin-set-ids\0\x01\x04\0\x19get-successf\
-ul-await-next\x01\x02\x03\x01!testing:http-obelisk-ext/http-get\x05\x01\x01B\x05\
-\x01r\x02\x07secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\0\x01@\0\0\x01\x04\
-\0\x03now\x01\x02\x04\0\x0aresolution\x01\x02\x03\x01\x1cwasi:clocks/wall-clock@\
-0.2.0\x05\x02\x02\x03\0\x02\x08datetime\x01B\x0c\x02\x03\x02\x01\x03\x04\0\x08da\
-tetime\x03\0\0\x01w\x04\0\x08duration\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x01\
-\0\x02in\x01\x03\0\x04\0\x0cscheduled-at\x03\0\x04\x01@\x01\x06millisy\x01\0\x04\
-\0\x05sleep\x01\x06\x01@\0\0s\x04\0\x0cnew-join-set\x01\x07\x01@\x03\x04ffqns\x0b\
-params-jsons\x0cscheduled-at\x05\0s\x04\0\x08schedule\x01\x08\x03\x01\x20obelisk\
-:workflow/host-activities\x05\x04\x01B\x0a\x01j\x01s\x01s\x01@\x02\x09authoritys\
-\x04paths\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-successful\x01\x01\x01ps\x01j\x01\
-\x02\x01s\x01@\x01\x0bauthorities\x02\0\x03\x04\0\x1bget-successful-concurrently\
-\x01\x04\x01@\x03\x09authoritys\x04paths\x0bconcurrencyy\0\x03\x04\0\"get-succes\
-sful-concurrently-stress\x01\x05\x04\x01\x1etesting:http-workflow/workflow\x05\x05\
-\x04\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09p\
-roducers\x01\x0cprocessed-by\x02\x0dwit-component\x070.208.1\x10wit-bindgen-rust\
-\x060.25.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 895] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x85\x06\x01A\x02\x01\
+A\x0b\x01B\x04\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0e\
+get-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x05\x01@\x02\x0b\
+join-set-ids\x03urls\0s\x04\0\x15get-successful-future\x01\0\x01j\x01s\x01s\x01@\
+\x01\x0bjoin-set-ids\0\x01\x04\0\x19get-successful-await-next\x01\x02\x03\x01!te\
+sting:http-obelisk-ext/http-get\x05\x01\x01B\x05\x01r\x02\x07secondsw\x0bnanosec\
+ondsy\x04\0\x08datetime\x03\0\0\x01@\0\0\x01\x04\0\x03now\x01\x02\x04\0\x0aresol\
+ution\x01\x02\x03\x01\x1cwasi:clocks/wall-clock@0.2.0\x05\x02\x02\x03\0\x02\x08d\
+atetime\x01B\x0c\x02\x03\x02\x01\x03\x04\0\x08datetime\x03\0\0\x01w\x04\0\x08dur\
+ation\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x01\0\x02in\x01\x03\0\x04\0\x0csch\
+eduled-at\x03\0\x04\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\x06\x01@\0\0s\x04\
+\0\x0cnew-join-set\x01\x07\x01@\x03\x04ffqns\x0bparams-jsons\x0cscheduled-at\x05\
+\0s\x04\0\x08schedule\x01\x08\x03\x01\x20obelisk:workflow/host-activities\x05\x04\
+\x01B\x0a\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-\
+successful\x01\x01\x01ps\x01j\x01\x02\x01s\x01@\x01\x04urls\x02\0\x03\x04\0\x1bg\
+et-successful-concurrently\x01\x04\x01@\x02\x03urls\x0bconcurrencyy\0\x03\x04\0\"\
+get-successful-concurrently-stress\x01\x05\x04\x01\x1etesting:http-workflow/work\
+flow\x05\x05\x04\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\
+\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.208.1\x10wit-\
+bindgen-rust\x060.25.0";
 
 #[inline(never)]
 #[doc(hidden)]

@@ -7,9 +7,9 @@ bindings::export!(Component with_types_in bindings);
 struct Component;
 
 impl crate::bindings::exports::testing::http::http_get::Guest for Component {
-    fn get(authority: String, path_with_query: String) -> Result<String, String> {
+    fn get(url: String) -> Result<String, String> {
         let resp = waki::Client::new()
-            .get(&format!("http://{authority}{path_with_query}"))
+            .get(&url)
             .connect_timeout(Duration::from_secs(5))
             .send()
             .map_err(|err| format!("{err:?}"))?;
@@ -17,8 +17,7 @@ impl crate::bindings::exports::testing::http::http_get::Guest for Component {
         Ok(String::from_utf8_lossy(&body).into_owned())
     }
 
-    fn get_successful(authority: String, path_with_query: String) -> Result<String, String> {
-        let url = format!("http://{authority}{path_with_query}");
+    fn get_successful(url: String) -> Result<String, String> {
         let resp = waki::Client::new()
             .get(&url)
             .connect_timeout(Duration::from_secs(5))

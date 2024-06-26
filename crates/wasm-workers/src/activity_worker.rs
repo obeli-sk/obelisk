@@ -624,10 +624,10 @@ pub(crate) mod tests {
                 .local_addr()
                 .expect("Failed to get server address.");
 
-            let params = Params::from_json_array(json!([
-                format!("127.0.0.1:{port}", port = server_address.port()),
-                "/"
-            ]))
+            let params = Params::from_json_array(json!([format!(
+                "http://127.0.0.1:{port}/",
+                port = server_address.port()
+            )]))
             .unwrap();
             let execution_id = ExecutionId::generate();
             let created_at = sim_clock.now();

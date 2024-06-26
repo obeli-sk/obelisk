@@ -28,11 +28,7 @@ expression: imports
         "String"
       ],
       [
-        "authority",
-        "String"
-      ],
-      [
-        "path",
+        "url",
         "String"
       ]
     ],
@@ -41,11 +37,7 @@ expression: imports
   "testing:http/http-get.get": [
     [
       [
-        "authority",
-        "String"
-      ],
-      [
-        "path",
+        "url",
         "String"
       ]
     ],
@@ -59,11 +51,7 @@ expression: imports
   "testing:http/http-get.get-successful": [
     [
       [
-        "authority",
-        "String"
-      ],
-      [
-        "path",
+        "url",
         "String"
       ]
     ],

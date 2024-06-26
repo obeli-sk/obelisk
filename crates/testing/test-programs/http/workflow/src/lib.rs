@@ -1,5 +1,3 @@
-#![cfg(feature = "wasm")]
-
 mod bindings;
 
 bindings::export!(Component with_types_in bindings);
@@ -7,23 +5,22 @@ bindings::export!(Component with_types_in bindings);
 struct Component;
 
 impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Component {
-    fn get(authority: String, path: String) -> Result<String, String> {
-        crate::bindings::testing::http::http_get::get(&authority, &path)
+    fn get(url: String) -> Result<String, String> {
+        crate::bindings::testing::http::http_get::get(&url)
     }
 
-    fn get_successful(authority: String, path: String) -> Result<String, String> {
-        crate::bindings::testing::http::http_get::get_successful(&authority, &path)
+    fn get_successful(url: String) -> Result<String, String> {
+        crate::bindings::testing::http::http_get::get_successful(&url)
     }
 
-    fn get_successful_concurrently(authorities: Vec<String>) -> Result<Vec<String>, String> {
+    fn get_successful_concurrently(urls: Vec<String>) -> Result<Vec<String>, String> {
         let join_set_id = bindings::obelisk::workflow::host_activities::new_join_set();
-        let length = authorities.len();
-        for authority in authorities {
+        let length = urls.len();
+        for url in urls {
             let _execution_id =
                 crate::bindings::testing::http_obelisk_ext::http_get::get_successful_future(
                     &join_set_id,
-                    &authority,
-                    "/",
+                    &url,
                 );
         }
         let mut list = Vec::with_capacity(length);
@@ -39,8 +36,7 @@ impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Compo
     }
 
     fn get_successful_concurrently_stress(
-        authority: String,
-        path: String,
+        url: String,
         concurrency: u32,
     ) -> Result<Vec<String>, String> {
         let join_set_id = bindings::obelisk::workflow::host_activities::new_join_set();
@@ -48,8 +44,7 @@ impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Compo
             let _execution_id =
                 crate::bindings::testing::http_obelisk_ext::http_get::get_successful_future(
                     &join_set_id,
-                    &authority,
-                    &path,
+                    &url,
                 );
         }
         let mut list = Vec::with_capacity(concurrency as usize);

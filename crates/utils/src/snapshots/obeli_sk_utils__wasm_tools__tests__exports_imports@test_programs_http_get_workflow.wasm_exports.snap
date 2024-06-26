@@ -6,11 +6,7 @@ expression: exports
   "testing:http-workflow/workflow.get": [
     [
       [
-        "authority",
-        "String"
-      ],
-      [
-        "path",
+        "url",
         "String"
       ]
     ],
@@ -24,11 +20,7 @@ expression: exports
   "testing:http-workflow/workflow.get-successful": [
     [
       [
-        "authority",
-        "String"
-      ],
-      [
-        "path",
+        "url",
         "String"
       ]
     ],
@@ -42,7 +34,7 @@ expression: exports
   "testing:http-workflow/workflow.get-successful-concurrently": [
     [
       [
-        "authorities",
+        "urls",
         {
           "List": "String"
         }
@@ -60,11 +52,7 @@ expression: exports
   "testing:http-workflow/workflow.get-successful-concurrently-stress": [
     [
       [
-        "authority",
-        "String"
-      ],
-      [
-        "path",
+        "url",
         "String"
       ],
       [

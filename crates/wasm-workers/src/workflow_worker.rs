@@ -792,8 +792,8 @@ mod tests {
             .mount(&server)
             .await;
         debug!("started mock server on {}", server.address());
-        let authority = format!("127.0.0.1:{}", server.address().port());
-        let params = Params::from_json_array(json!([authority, "/"])).unwrap();
+        let url = format!("http://127.0.0.1:{}/", server.address().port());
+        let params = Params::from_json_array(json!([url])).unwrap();
         // Create an execution.
         let execution_id = ExecutionId::generate();
         db_connection
@@ -894,8 +894,8 @@ mod tests {
             .mount(&server)
             .await;
         debug!("started mock server on {}", server.address());
-        let authority = format!("127.0.0.1:{}", server.address().port());
-        let params = Params::from_json_array(json!([authority, "/", concurrency])).unwrap();
+        let url = format!("http://127.0.0.1:{}/", server.address().port());
+        let params = Params::from_json_array(json!([url, concurrency])).unwrap();
         // Create an execution.
         let execution_id = ExecutionId::generate();
 
