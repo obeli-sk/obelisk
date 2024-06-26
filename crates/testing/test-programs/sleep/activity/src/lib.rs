@@ -1,5 +1,3 @@
-#![cfg(feature = "wasm")]
-
 use std::time::Duration;
 
 mod bindings;

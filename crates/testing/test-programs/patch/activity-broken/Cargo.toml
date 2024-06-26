@@ -11,9 +11,6 @@ wit-bindgen-rt.workspace = true
 [lib]
 crate-type = ["cdylib"]
 
-[features]
-wasm = []
-
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]

@@ -16,10 +16,12 @@ wit-bindgen-rt.workspace = true
 [lib]
 crate-type = ["cdylib"]
 
-[features]
-wasm = []
-
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]
 "testing:http" = { path = "../wit" }
+
+[lints]
+rust.unused_imports = "allow"
+clippy.wrong_self_convention = "allow"
+clippy.unnecessary_cast = "allow"
