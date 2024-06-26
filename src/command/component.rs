@@ -110,7 +110,7 @@ pub(crate) fn inspect<P: AsRef<Path>>(
     let detected = ComponentDetector::new(wasm_path, &engine).context("parsing error")?;
     println!("Component type:\n\t{}", detected.component_type);
     println!("Exports:");
-    inspect_fns(&detected.exports, verbosity);
+    inspect_fns(&detected.exports, FunctionMetadataVerbosity::WithTypes);
     println!("Imports:");
     inspect_fns(&detected.imports, verbosity);
     Ok(())
