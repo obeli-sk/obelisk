@@ -173,8 +173,10 @@ async fn update_components<DB: DbConnection + 'static>(
             "Starting new executor of component `{file_name}` {component_id}",
             file_name = component.file_name
         );
+        let stopwatch = std::time::Instant::now();
         match instantiate_component(component, db_pool.clone(), engines) {
             Ok(exec) => {
+                println!("Instantiated in {:?}", stopwatch.elapsed());
                 component_to_exec_join_handle.insert(component_id, exec);
             }
             Err(err) => {
