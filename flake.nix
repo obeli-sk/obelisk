@@ -47,17 +47,11 @@
               name = "obelisk";
               copyToRoot = pkgs.buildEnv {
                 name = "image-root";
-                paths =
-                  let
-                    list1 = [ obelisk ];
-                    list2 =
-                      if binSh then [
-                        pkgs.dockerTools.usrBinEnv
-                        pkgs.dockerTools.binSh
-                        pkgs.dockerTools.caCertificates
-                      ] else [ ];
-                  in
-                  list1 ++ list2;
+                paths = [ obelisk ] ++ (if binSh then [
+                  pkgs.dockerTools.usrBinEnv
+                  pkgs.dockerTools.binSh
+                  pkgs.dockerTools.caCertificates
+                ] else [ ]);
                 pathsToLink = [ "/bin" ];
               };
               runAsRoot = ''
@@ -70,6 +64,22 @@
               };
             };
           pkgs = makePkgs null;
+          wkg =
+            pkgs.rustPlatform.buildRustPackage {
+              pname = "wkg";
+              version = "0.3.0";
+              src = pkgs.fetchFromGitHub {
+                owner = "tomasol";
+                repo = "wasm-pkg-tools";
+                rev = "d868295d1fe5eebfae489fbe9f21a4c5f9a2d102";
+                hash = "sha256-0c/mqheosghX84rV764X5r1wZtLXaAE7IRqeAIcOBvM=";
+              };
+              cargoHash = "sha256-IxdZ742h8BSKWhxt7W2HzvWITfanmwX6NXpPfvGjeo8=";
+              nativeBuildInputs = [ pkgs.pkg-config ];
+              PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
+              doCheck = false;
+            };
+
           pkgsMusl = makePkgs "x86_64-unknown-linux-musl";
         in
         {
@@ -90,10 +100,13 @@
                 rustToolchain
                 tokio-console
                 wasm-tools
+
+                flyctl
               ];
           };
 
           packages = rec {
+            inherit wkg;
             obelisk = makeObelisk pkgs;
             obeliskMusl = makeObelisk pkgsMusl;
             docker = makeDocker pkgs obeliskMusl false;
