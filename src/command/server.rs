@@ -147,15 +147,15 @@ async fn update_components<DB: DbConnection + 'static>(
         .context("cannot list enabled components")?;
 
     // Shut down disabled components
-    let mut deactivating = component_to_exec_join_handle
+    let mut disabling = component_to_exec_join_handle
         .keys()
         .cloned()
         .collect::<hashbrown::HashSet<_>>();
     // Retain components that are no longer enabled
     for component_id in enabled_components.iter().map(|c| &c.component_id) {
-        deactivating.remove(component_id);
+        disabling.remove(component_id);
     }
-    for component_id in deactivating {
+    for component_id in disabling {
         println!("Shutting down executor of component {component_id}");
         component_to_exec_join_handle
             .remove(&component_id)

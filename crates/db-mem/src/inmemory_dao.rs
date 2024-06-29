@@ -267,11 +267,12 @@ impl DbConnection for InMemoryDbConnection {
         }
     }
 
-    async fn component_disable(&self, _id: ComponentId) -> Result<(), DbError> {
-        todo!()
-    }
-
-    async fn component_enable(&self, _id: ComponentId) -> Result<(), DbError> {
+    async fn component_toggle(
+        &self,
+        _id: ComponentId,
+        _toggle: ComponentToggle,
+        _updated_at: DateTime<Utc>,
+    ) -> Result<(), DbError> {
         todo!()
     }
 }

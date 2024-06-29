@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS t_delay (
 const CREATE_TABLE_T_COMPONENT: &str = r"
 CREATE TABLE IF NOT EXISTS t_component (
     created_at TEXT NOT NULL,
+    last_updated_at TEXT NOT NULL,
     component_id TEXT NOT NULL,
     toggle INTEGER NOT NULL,
     component_type TEXT NOT NULL,
@@ -1915,12 +1916,13 @@ impl DbConnection for SqlitePool {
 
                     let mut stmt = tx.prepare(
                         "INSERT INTO t_component \
-                            (created_at, component_id, toggle, component_type, config, name, exports, imports) \
+                            (created_at, last_updated_at, component_id, toggle, component_type, config, name, exports, imports) \
                             VALUES \
-                            (:created_at, :component_id, :toggle, :component_type, :config, :name, :exports, :imports)",
+                            (:created_at, :last_updated_at, :component_id, :toggle, :component_type, :config, :name, :exports, :imports)",
                     )?;
                     stmt.execute(named_params! {
                         ":created_at": created_at,
+                        ":last_updated_at": created_at,
                         ":component_id": component.component.component_id.to_string(),
                         ":toggle": bool::from(toggle),
                         ":component_type": component.component.component_type.to_string(),
@@ -1948,7 +1950,7 @@ impl DbConnection for SqlitePool {
             .conn_with_err_and_span::<_, _, SqliteError>(
                 move |conn| {
                     conn.prepare(
-                        "SELECT component_id, component_type, config, name FROM t_component WHERE toggle = :toggle",
+                        "SELECT component_id, component_type, config, name FROM t_component WHERE toggle = :toggle ORDER BY last_updated_at",
                     )?
                     .query_map(named_params! {":toggle": bool::from(toggle)}, |row| {
                         let component_id =
@@ -2020,40 +2022,34 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn component_disable(&self, id: ComponentId) -> Result<(), DbError> {
-        trace!("component_disable");
+    async fn component_toggle(
+        &self,
+        component_id: ComponentId,
+        toggle: ComponentToggle,
+        updated_at: DateTime<Utc>,
+    ) -> Result<(), DbError> {
+        trace!("component_toggle");
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
                     tx.prepare(
-                        "UPDATE t_component SET toggle = false WHERE component_id = :component_id and toggle = true",
+                        "UPDATE t_component SET toggle = :toggle, last_updated_at = :last_updated_at WHERE component_id = :component_id and toggle = true",
                     )?
-                    .execute(named_params! {":component_id": id.to_string(),})?;
+                    .execute(named_params! {
+                        ":component_id": component_id.to_string(),
+                        ":toggle": bool::from(toggle),
+                        ":last_updated_at": updated_at,
+                    })?;
+                if toggle == ComponentToggle::Disabled {
                     tx.prepare(
                         "DELETE FROM t_component_export WHERE component_id = :component_id",
                     )?
-                    .execute(named_params! {":component_id": id.to_string(),})?;
-                    Ok(())
-                },
-                Span::current(),
-            )
-            .await
-            .map_err(DbError::from)
-    }
-
-    #[instrument(skip(self))]
-    async fn component_enable(&self, component_id: ComponentId) -> Result<(), DbError> {
-        trace!("component_enable");
-        self.pool
-            .transaction_write_with_span::<_, _, SqliteError>(
-                move |tx| {
-                    tx.prepare(
-                        "UPDATE t_component SET toggle = true WHERE component_id = :component_id AND toggle = false",
-                    )?
                     .execute(named_params! {":component_id": component_id.to_string(),})?;
+                } else {
                     let (component, toggle) = Self::component_get_with_metadata(tx, component_id)?;
                     assert_eq!(toggle, ComponentToggle::Enabled);
                     Self::component_set_exports(tx, &component)?;
+                }
                     Ok(())
                 },
                 Span::current(),

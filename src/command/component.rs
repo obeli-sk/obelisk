@@ -205,7 +205,9 @@ pub(crate) async fn disable<P: AsRef<Path>>(
         .await
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
     let db_connection = db_pool.connection();
-    db_connection.component_disable(component_id).await?;
+    db_connection
+        .component_toggle(component_id, ComponentToggle::Disabled, now())
+        .await?;
     Ok(())
 }
 
@@ -218,6 +220,8 @@ pub(crate) async fn enable<P: AsRef<Path>>(
         .await
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
     let db_connection = db_pool.connection();
-    db_connection.component_enable(component_id).await?;
+    db_connection
+        .component_toggle(component_id, ComponentToggle::Enabled, now())
+        .await?;
     Ok(())
 }

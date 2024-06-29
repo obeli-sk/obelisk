@@ -46,7 +46,7 @@ pub(crate) enum Component {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Load WASM file into the blob store and populate database.
+    /// Load WASM file into the blob store and populate the database.
     Add {
         /// Disable the component
         #[arg(short, long)]

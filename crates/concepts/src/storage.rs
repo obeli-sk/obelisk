@@ -666,6 +666,7 @@ pub trait DbConnection: Send + Sync {
         toggle: ComponentToggle,
     ) -> Result<(), ComponentAddError>;
 
+    /// List the components, sorted by last update date from oldest to newest.
     async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError>;
 
     /// Get component and its metadata and state.
@@ -680,9 +681,13 @@ pub trait DbConnection: Send + Sync {
         ffqn: FunctionFqn,
     ) -> Result<(ComponentId, FunctionMetadata), DbError>;
 
-    async fn component_disable(&self, component_id: ComponentId) -> Result<(), DbError>;
-
-    async fn component_enable(&self, component_id: ComponentId) -> Result<(), DbError>;
+    /// Enable or disable a component
+    async fn component_toggle(
+        &self,
+        component_id: ComponentId,
+        toggle: ComponentToggle,
+        updated_at: DateTime<Utc>,
+    ) -> Result<(), DbError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
