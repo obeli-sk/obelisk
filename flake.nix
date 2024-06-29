@@ -71,8 +71,8 @@
               src = pkgs.fetchFromGitHub {
                 owner = "tomasol";
                 repo = "wasm-pkg-tools";
-                rev = "d868295d1fe5eebfae489fbe9f21a4c5f9a2d102";
-                hash = "sha256-0c/mqheosghX84rV764X5r1wZtLXaAE7IRqeAIcOBvM=";
+                rev = "355769f3b08e430d2b7c3c1a9a0b43d19fdb56cd";
+                hash = "sha256-a/5foBFjRBU0pd/wth2ytchleDfLB/gEBQzfaFszWEk=";
               };
               cargoHash = "sha256-IxdZ742h8BSKWhxt7W2HzvWITfanmwX6NXpPfvGjeo8=";
               nativeBuildInputs = [ pkgs.pkg-config ];
