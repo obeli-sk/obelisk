@@ -73,7 +73,9 @@ pub(crate) mod tests {
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        let component_id = crate::component_detector::file_hash(wasm_path).unwrap();
+        let component_id = crate::component_detector::file_hash(wasm_path)
+            .await
+            .unwrap();
         let engine = ComponentDetector::get_engine();
         let detected = ComponentDetector::new(wasm_path, &engine).unwrap();
         let config = serde_json::Value::String("fake, not deserialized in tests".to_string());

@@ -35,6 +35,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
         .to_string_lossy()
         .into_owned();
     let component_id = wasm_workers::component_detector::file_hash(&wasm_path)
+        .await
         .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
     let config_id = ConfigId::generate();
     let exec_config = ExecConfig {
@@ -99,12 +100,12 @@ pub(crate) async fn add<P: AsRef<Path>>(
     }
 }
 
-pub(crate) fn inspect<P: AsRef<Path>>(
+pub(crate) async fn inspect<P: AsRef<Path>>(
     wasm_path: P,
     verbosity: FunctionMetadataVerbosity,
 ) -> anyhow::Result<()> {
     let wasm_path = wasm_path.as_ref();
-    let component_id = wasm_workers::component_detector::file_hash(wasm_path)?;
+    let component_id = wasm_workers::component_detector::file_hash(wasm_path).await?;
     println!("Id:\n\t{component_id}");
     let engine = ComponentDetector::get_engine();
     let detected = ComponentDetector::new(wasm_path, &engine).context("parsing error")?;

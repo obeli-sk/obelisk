@@ -30,6 +30,7 @@ async fn main() {
                     FunctionMetadataVerbosity::FfqnOnly
                 },
             )
+            .await
             .unwrap();
         }
         Subcommand::Component(args::Component::Add {

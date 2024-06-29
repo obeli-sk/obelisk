@@ -18,14 +18,12 @@ val-json.workspace = true
 wasm-workers.workspace = true
 
 anyhow.workspace = true
-base16ct.workspace = true
 clap.workspace = true
 console-subscriber = { workspace = true, optional = true }
 const_format.workspace = true
 hashbrown.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-sha2.workspace = true
 shadow-rs.workspace = true
 tokio = { workspace = true, features = [
     "fs",
@@ -164,6 +162,9 @@ tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 ulid = { version = "1.1.0", features = ["serde"] }
 waki = "0.3.0"
+wasm-pkg-common = { git = "https://github.com/bytecodealliance/wasm-pkg-tools.git", rev = "c302df40fc24dc506501386ed87f0738e4a2be5f", features = [
+    "tokio",
+] } # Should not be needed when 0.4.1 is superseded with another release.
 wiremock = "0.6"
 
 # wasmtime
@@ -186,7 +187,6 @@ wasmtime = { version = "22.0.0", default-features = false, features = [
 wasmtime-wasi = "22.0.0"
 wasmtime-wasi-http = "22.0.0"
 wast = "209.0.1"
-wit-component = "0.209.0"
 wit-parser = "0.209.0"
 
 # cargo-component

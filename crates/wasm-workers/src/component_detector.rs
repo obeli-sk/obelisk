@@ -53,13 +53,10 @@ impl ComponentDetector {
     }
 }
 
-pub fn file_hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error> {
-    use sha2::{Digest, Sha256};
-    let mut file = std::fs::File::open(&path)?;
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher)?;
-    let hash = hasher.finalize();
-    let hash_base16 = base16ct::lower::encode_string(&hash);
+pub async fn file_hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error> {
+    let hash_base16 = match wasm_pkg_common::digest::ContentDigest::sha256_from_file(path).await? {
+        wasm_pkg_common::digest::ContentDigest::Sha256 { hex } => hex,
+    };
     Ok(ComponentId::new(concepts::HashType::Sha256, hash_base16))
 }
 

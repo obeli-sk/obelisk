@@ -1259,6 +1259,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dirs"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
+dependencies = [
+ "dirs-sys 0.4.1",
+]
+
+[[package]]
 name = "dirs-sys"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2600,7 +2609,6 @@ name = "obeli-sk"
 version = "0.1.7"
 dependencies = [
  "anyhow",
- "base16ct",
  "clap",
  "console-subscriber",
  "const_format",
@@ -2614,7 +2622,6 @@ dependencies = [
  "obeli-sk-wasm-workers",
  "serde",
  "serde_json",
- "sha2",
  "shadow-rs",
  "tracing",
  "tracing-chrome",
@@ -2761,7 +2768,6 @@ dependencies = [
  "assert_matches",
  "async-channel 2.3.1",
  "async-trait",
- "base16ct",
  "cfg-if",
  "chrono",
  "db-mem",
@@ -2783,7 +2789,6 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
- "sha2",
  "test-programs-fibo-activity-builder",
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-activity-builder",
@@ -2794,6 +2799,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "ulid",
+ "wasm-pkg-common",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
@@ -3549,7 +3555,7 @@ version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ccc8076840c4da029af4f87e4e8daeb0fca6b87bbb02e10cb60b791450e11e4"
 dependencies = [
- "dirs",
+ "dirs 4.0.0",
 ]
 
 [[package]]
@@ -4522,6 +4528,26 @@ dependencies = [
  "spdx",
  "wasm-encoder 0.209.1",
  "wasmparser",
+]
+
+[[package]]
+name = "wasm-pkg-common"
+version = "0.4.1"
+source = "git+https://github.com/bytecodealliance/wasm-pkg-tools.git?rev=c302df40fc24dc506501386ed87f0738e4a2be5f#c302df40fc24dc506501386ed87f0738e4a2be5f"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "dirs 5.0.1",
+ "futures-util",
+ "http 1.1.0",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "toml 0.8.14",
+ "tracing",
 ]
 
 [[package]]
