@@ -170,8 +170,8 @@ async fn update_components<DB: DbConnection + 'static>(
         }
         let component_id = component.component_id.clone();
         println!(
-            "Starting new executor of component `{file_name}` {component_id}",
-            file_name = component.file_name
+            "Starting new executor of component `{name}` {component_id}",
+            name = component.name
         );
         let stopwatch = std::time::Instant::now();
         match instantiate_component(component, db_pool.clone(), engines) {

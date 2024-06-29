@@ -29,7 +29,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
     let wasm_path = wasm_path
         .canonicalize()
         .with_context(|| format!("cannot canonicalize file `{wasm_path:?}`"))?;
-    let file_name = wasm_path
+    let name = wasm_path
         .file_name()
         .with_context(|| format!("cannot file name of `{wasm_path:?}`"))?
         .to_string_lossy()
@@ -73,7 +73,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
             component_id: component_id.clone(),
             component_type: detected.component_type,
             config,
-            file_name,
+            name,
         },
         exports: detected.exports,
         imports: detected.imports,
@@ -145,10 +145,10 @@ pub(crate) async fn list<P: AsRef<Path>>(
         .context("database error")?;
     for component in components {
         println!(
-            "{component_type}\t{file_name}\tid: {hash}",
+            "{component_type}\t{name}\tid: {hash}",
             component_type = component.component_type,
             hash = component.component_id,
-            file_name = component.file_name,
+            name = component.name,
         );
         let (component, _) = db_connection
             .component_get_metadata(component.component_id)
@@ -181,10 +181,10 @@ pub(crate) async fn get<P: AsRef<Path>>(
         .context("database error")?;
 
     println!(
-        "{component_type}\t{file_name}\tid: {hash}\tActive: {active}",
+        "{component_type}\t{name}\tid: {hash}\tActive: {active}",
         component_type = component.component.component_type,
         hash = component.component.component_id,
-        file_name = component.component.file_name,
+        name = component.component.name,
     );
     println!("Exports:");
     inspect_fns(&component.exports, FunctionMetadataVerbosity::WithTypes);

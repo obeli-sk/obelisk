@@ -698,7 +698,7 @@ pub struct Component {
     pub component_id: ComponentId,
     pub component_type: ComponentType, // Defines the schema for `config`
     pub config: serde_json::Value,     // Out of persistence scope
-    pub file_name: String,             // Additional identifier without path
+    pub name: String,                  // Additional identifier without path
 }
 
 #[derive(Debug, Clone)]

@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS t_component (
     active INTEGER NOT NULL,
     component_type TEXT NOT NULL,
     config JSONB NOT NULL,
-    file_name TEXT NOT NULL,
+    name TEXT NOT NULL,
     exports JSONB NOT NULL,
     imports JSONB NOT NULL,
     PRIMARY KEY (component_id)
@@ -1271,7 +1271,7 @@ impl SqlitePool {
         component_id: ComponentId,
     ) -> Result<(ComponentWithMetadata, bool), SqliteError> {
         conn.prepare(
-                "SELECT active, component_type, config, file_name, exports, imports FROM t_component WHERE component_id = :component_id",
+                "SELECT active, component_type, config, name, exports, imports FROM t_component WHERE component_id = :component_id",
             )?
             .query_row(named_params! {
                 ":component_id": component_id.to_string(),
@@ -1283,12 +1283,12 @@ impl SqlitePool {
                 let config = row.get::<_, serde_json::Value>("config")?;
                 let exports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("exports")?.0;
                 let imports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("imports")?.0;
-                let file_name = row.get("file_name")?;
+                let name = row.get("name")?;
                 let component = Component {
                     component_id,
                     component_type,
                     config,
-                    file_name,
+                    name,
                 };
                 Ok((ComponentWithMetadata { component, exports, imports }, active))
             })
@@ -1913,9 +1913,9 @@ impl DbConnection for SqlitePool {
 
                     let mut stmt = tx.prepare(
                         "INSERT INTO t_component \
-                            (created_at, component_id, active, component_type, config, file_name, exports, imports) \
+                            (created_at, component_id, active, component_type, config, name, exports, imports) \
                             VALUES \
-                            (:created_at, :component_id, :active, :component_type, :config, :file_name, :exports, :imports)",
+                            (:created_at, :component_id, :active, :component_type, :config, :name, :exports, :imports)",
                     )?;
                     stmt.execute(named_params! {
                         ":created_at": created_at,
@@ -1923,7 +1923,7 @@ impl DbConnection for SqlitePool {
                         ":active": active,
                         ":component_type": component.component.component_type.to_string(),
                         ":config": component.component.config,
-                        ":file_name": component.component.file_name,
+                        ":name": component.component.name,
                         ":exports": exports,
                         ":imports": imports
                         })?;
@@ -1946,7 +1946,7 @@ impl DbConnection for SqlitePool {
             .conn_with_err_and_span::<_, _, SqliteError>(
                 move |conn| {
                     conn.prepare(
-                        "SELECT component_id, component_type, config, file_name FROM t_component WHERE active = :active",
+                        "SELECT component_id, component_type, config, name FROM t_component WHERE active = :active",
                     )?
                     .query_map(named_params! {":active": active}, |row| {
                         let component_id =
@@ -1955,12 +1955,12 @@ impl DbConnection for SqlitePool {
                             .get::<_, FromStrWrapper<ComponentType>>("component_type")?
                             .0;
                         let config = row.get::<_, serde_json::Value>("config")?;
-                        let file_name = row.get("file_name")?;
+                        let name = row.get("name")?;
                         Ok(Component {
                             component_id,
                             component_type,
                             config,
-                            file_name,
+                            name,
                         })
                     })?
                     .collect::<Result<Vec<_>, _>>()
