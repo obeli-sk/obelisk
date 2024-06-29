@@ -732,6 +732,17 @@ pub struct Component {
 }
 
 #[derive(Debug, Clone)]
+pub enum ComponentLocation {
+    File(String),
+    Ocr {
+        registry: Option<String>,
+        repository: String,
+        tag: Option<String>,
+        digest: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub struct ComponentWithMetadata {
     pub component: Component,
     pub exports: Vec<FunctionMetadata>,
