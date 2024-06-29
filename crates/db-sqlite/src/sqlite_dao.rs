@@ -5,11 +5,12 @@ use concepts::{
     prefixed_ulid::{DelayId, ExecutorId, JoinSetId, PrefixedUlid, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError,
-        ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool,
-        ExecutionEvent, ExecutionEventInner, ExecutionLog, ExpiredTimer, HistoryEvent,
-        JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        LockPendingResponse, LockResponse, LockedExecution, PendingState, SpecificError, Version,
-        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
+        ComponentToggle, ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError,
+        DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog, ExpiredTimer,
+        HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution,
+        PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
+        DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
     ComponentId, ComponentType, ExecutionId, FunctionFqn, FunctionMetadata, ParameterTypes,
     ReturnType, StrVariant,
@@ -117,7 +118,7 @@ const CREATE_TABLE_T_COMPONENT: &str = r"
 CREATE TABLE IF NOT EXISTS t_component (
     created_at TEXT NOT NULL,
     component_id TEXT NOT NULL,
-    active INTEGER NOT NULL,
+    toggle INTEGER NOT NULL,
     component_type TEXT NOT NULL,
     config JSONB NOT NULL,
     name TEXT NOT NULL,
@@ -1245,7 +1246,7 @@ impl SqlitePool {
         }
     }
 
-    fn get_active_component_id_by_export(
+    fn get_enabled_component_id_by_export(
         tx: &Transaction,
         ffqn: &FunctionFqn,
     ) -> Result<Option<ComponentId>, SqliteError> {
@@ -1269,14 +1270,14 @@ impl SqlitePool {
     fn component_get_with_metadata(
         conn: &Connection,
         component_id: ComponentId,
-    ) -> Result<(ComponentWithMetadata, bool), SqliteError> {
+    ) -> Result<(ComponentWithMetadata, ComponentToggle), SqliteError> {
         conn.prepare(
-                "SELECT active, component_type, config, name, exports, imports FROM t_component WHERE component_id = :component_id",
+                "SELECT toggle, component_type, config, name, exports, imports FROM t_component WHERE component_id = :component_id",
             )?
             .query_row(named_params! {
                 ":component_id": component_id.to_string(),
             }, |row| {
-                let active = row.get("active")?;
+                let enabled: bool = row.get("toggle")?;
                 let component_type = row
                     .get::<_, FromStrWrapper<ComponentType>>("component_type")?
                     .0;
@@ -1290,7 +1291,8 @@ impl SqlitePool {
                     config,
                     name,
                 };
-                Ok((ComponentWithMetadata { component, exports, imports }, active))
+                let toggle = ComponentToggle::from(enabled);
+                Ok((ComponentWithMetadata { component, exports, imports }, toggle))
             })
             .map_err(SqliteError::from)
     }
@@ -1885,7 +1887,7 @@ impl DbConnection for SqlitePool {
         &self,
         created_at: DateTime<Utc>,
         component: ComponentWithMetadata,
-        active: bool,
+        toggle: ComponentToggle,
     ) -> Result<(), ComponentAddError> {
         trace!("component_add");
         let exports = serde_json::to_string(&component.exports).map_err(|serde| {
@@ -1899,10 +1901,10 @@ impl DbConnection for SqlitePool {
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
-                    if active {
+                    if toggle == ComponentToggle::Enabled {
                         let mut conflicts = hashbrown::HashSet::new();
                         for (export_ffqn, _, _) in &component.exports {
-                            if let Some(conflict) = Self::get_active_component_id_by_export(tx, export_ffqn)? {
+                            if let Some(conflict) = Self::get_enabled_component_id_by_export(tx, export_ffqn)? {
                                 conflicts.insert(conflict);
                             }
                         }
@@ -1913,21 +1915,21 @@ impl DbConnection for SqlitePool {
 
                     let mut stmt = tx.prepare(
                         "INSERT INTO t_component \
-                            (created_at, component_id, active, component_type, config, name, exports, imports) \
+                            (created_at, component_id, toggle, component_type, config, name, exports, imports) \
                             VALUES \
-                            (:created_at, :component_id, :active, :component_type, :config, :name, :exports, :imports)",
+                            (:created_at, :component_id, :toggle, :component_type, :config, :name, :exports, :imports)",
                     )?;
                     stmt.execute(named_params! {
                         ":created_at": created_at,
                         ":component_id": component.component.component_id.to_string(),
-                        ":active": active,
+                        ":toggle": bool::from(toggle),
                         ":component_type": component.component.component_type.to_string(),
                         ":config": component.component.config,
                         ":name": component.component.name,
                         ":exports": exports,
                         ":imports": imports
                         })?;
-                    if active {
+                    if toggle == ComponentToggle::Enabled {
                         Self::component_set_exports(tx, &component)?;
                     }
                     Ok(Result::Ok(()))
@@ -1940,15 +1942,15 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn component_list(&self, active: bool) -> Result<Vec<Component>, DbError> {
+    async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError> {
         trace!("list_components");
         self.pool
             .conn_with_err_and_span::<_, _, SqliteError>(
                 move |conn| {
                     conn.prepare(
-                        "SELECT component_id, component_type, config, name FROM t_component WHERE active = :active",
+                        "SELECT component_id, component_type, config, name FROM t_component WHERE toggle = :toggle",
                     )?
-                    .query_map(named_params! {":active": active}, |row| {
+                    .query_map(named_params! {":toggle": bool::from(toggle)}, |row| {
                         let component_id =
                             row.get::<_, FromStrWrapper<ComponentId>>("component_id")?.0;
                         let component_type = row
@@ -1976,7 +1978,7 @@ impl DbConnection for SqlitePool {
     async fn component_get_metadata(
         &self,
         component_id: ComponentId,
-    ) -> Result<(ComponentWithMetadata, bool), DbError> {
+    ) -> Result<(ComponentWithMetadata, ComponentToggle), DbError> {
         trace!("get_component_metadata");
         self.pool
             .conn_with_err_and_span::<_, _, SqliteError>(
@@ -1988,7 +1990,7 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn component_active_get_exported_function(
+    async fn component_enabled_get_exported_function(
         &self,
         ffqn: FunctionFqn,
     ) -> Result<(ComponentId, FunctionMetadata), DbError> {
@@ -2018,13 +2020,13 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn component_deactivate(&self, id: ComponentId) -> Result<(), DbError> {
-        trace!("component_deactivate");
+    async fn component_disable(&self, id: ComponentId) -> Result<(), DbError> {
+        trace!("component_disable");
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
                     tx.prepare(
-                        "UPDATE t_component SET active = false WHERE component_id = :component_id and active = true",
+                        "UPDATE t_component SET toggle = false WHERE component_id = :component_id and toggle = true",
                     )?
                     .execute(named_params! {":component_id": id.to_string(),})?;
                     tx.prepare(
@@ -2040,17 +2042,17 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(skip(self))]
-    async fn component_activate(&self, component_id: ComponentId) -> Result<(), DbError> {
-        trace!("component_activate");
+    async fn component_enable(&self, component_id: ComponentId) -> Result<(), DbError> {
+        trace!("component_enable");
         self.pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
                     tx.prepare(
-                        "UPDATE t_component SET active = true WHERE component_id = :component_id AND active = false",
+                        "UPDATE t_component SET toggle = true WHERE component_id = :component_id AND toggle = false",
                     )?
                     .execute(named_params! {":component_id": component_id.to_string(),})?;
-                    let (component, active) = Self::component_get_with_metadata(tx, component_id)?;
-                    assert!(active);
+                    let (component, toggle) = Self::component_get_with_metadata(tx, component_id)?;
+                    assert_eq!(toggle, ComponentToggle::Enabled);
                     Self::component_set_exports(tx, &component)?;
                     Ok(())
                 },

@@ -10,8 +10,8 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError,
-    ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool,
-    ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEventOuter,
+    ComponentToggle, ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError,
+    DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEventOuter,
     LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
@@ -222,9 +222,13 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         _created_at: DateTime<Utc>,
         component: ComponentWithMetadata,
-        active: bool,
+        toggle: ComponentToggle,
     ) -> Result<(), ComponentAddError> {
-        assert!(active);
+        assert_eq!(
+            toggle,
+            ComponentToggle::Enabled,
+            "disabled component are not implemented"
+        );
         let mut guard = self.0.lock().await;
         for (ffqn, params, return_value) in component.exports {
             assert!(guard
@@ -241,18 +245,18 @@ impl DbConnection for InMemoryDbConnection {
         Ok(())
     }
 
-    async fn component_list(&self, _active: bool) -> Result<Vec<Component>, DbError> {
+    async fn component_list(&self, _toggle: ComponentToggle) -> Result<Vec<Component>, DbError> {
         todo!()
     }
 
     async fn component_get_metadata(
         &self,
         _component_id: ComponentId,
-    ) -> Result<(ComponentWithMetadata, bool), DbError> {
+    ) -> Result<(ComponentWithMetadata, ComponentToggle), DbError> {
         todo!()
     }
 
-    async fn component_active_get_exported_function(
+    async fn component_enabled_get_exported_function(
         &self,
         ffqn: FunctionFqn,
     ) -> Result<(ComponentId, FunctionMetadata), DbError> {
@@ -263,11 +267,11 @@ impl DbConnection for InMemoryDbConnection {
         }
     }
 
-    async fn component_deactivate(&self, _id: ComponentId) -> Result<(), DbError> {
+    async fn component_disable(&self, _id: ComponentId) -> Result<(), DbError> {
         todo!()
     }
 
-    async fn component_activate(&self, _id: ComponentId) -> Result<(), DbError> {
+    async fn component_enable(&self, _id: ComponentId) -> Result<(), DbError> {
         todo!()
     }
 }

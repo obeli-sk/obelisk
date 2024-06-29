@@ -29,7 +29,7 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
     // Check that ffqn exists
     let (component_id, param_types, return_type) = {
         let (component_id, (ffqn2, param_types, return_type)) = db_connection
-            .component_active_get_exported_function(ffqn)
+            .component_enabled_get_exported_function(ffqn)
             .await?;
         ffqn = ffqn2;
         (component_id, param_types, return_type)

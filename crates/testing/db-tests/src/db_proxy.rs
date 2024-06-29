@@ -6,9 +6,9 @@ use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError,
-        ComponentWithMetadata, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
-        ExecutionLog, ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        LockPendingResponse, LockResponse, Version,
+        ComponentToggle, ComponentWithMetadata, CreateRequest, DbConnection, DbError, DbPool,
+        ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent,
+        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Version,
     },
     ComponentId, ExecutionId, FunctionFqn, FunctionMetadata,
 };
@@ -186,34 +186,34 @@ impl DbConnection for DbConnectionProxy {
         &self,
         created_at: DateTime<Utc>,
         component: ComponentWithMetadata,
-        active: bool,
+        toggle: ComponentToggle,
     ) -> Result<(), ComponentAddError> {
-        self.0.component_add(created_at, component, active).await
+        self.0.component_add(created_at, component, toggle).await
     }
 
-    async fn component_list(&self, active: bool) -> Result<Vec<Component>, DbError> {
-        self.0.component_list(active).await
+    async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError> {
+        self.0.component_list(toggle).await
     }
 
     async fn component_get_metadata(
         &self,
         component_id: ComponentId,
-    ) -> Result<(ComponentWithMetadata, bool), DbError> {
+    ) -> Result<(ComponentWithMetadata, ComponentToggle), DbError> {
         self.0.component_get_metadata(component_id).await
     }
 
-    async fn component_active_get_exported_function(
+    async fn component_enabled_get_exported_function(
         &self,
         ffqn: FunctionFqn,
     ) -> Result<(ComponentId, FunctionMetadata), DbError> {
-        self.0.component_active_get_exported_function(ffqn).await
+        self.0.component_enabled_get_exported_function(ffqn).await
     }
 
-    async fn component_deactivate(&self, id: ComponentId) -> Result<(), DbError> {
-        self.0.component_deactivate(id).await
+    async fn component_disable(&self, id: ComponentId) -> Result<(), DbError> {
+        self.0.component_disable(id).await
     }
 
-    async fn component_activate(&self, id: ComponentId) -> Result<(), DbError> {
-        self.0.component_activate(id).await
+    async fn component_enable(&self, id: ComponentId) -> Result<(), DbError> {
+        self.0.component_enable(id).await
     }
 }

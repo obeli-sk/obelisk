@@ -33,7 +33,7 @@ pub(crate) mod tests {
     use crate::component_detector::ComponentDetector;
     use chrono::{DateTime, Utc};
     use concepts::{
-        storage::{Component, ComponentWithMetadata, DbConnection},
+        storage::{Component, ComponentToggle, ComponentWithMetadata, DbConnection},
         ComponentId, ComponentType, FunctionFqn, ParameterTypes,
     };
     use std::path::Path;
@@ -56,7 +56,7 @@ pub(crate) mod tests {
                     exports: vec![(ffqn, ParameterTypes::default(), None)],
                     imports: vec![],
                 },
-                true,
+                ComponentToggle::Enabled,
             )
             .await
             .unwrap();
@@ -88,7 +88,7 @@ pub(crate) mod tests {
             imports: detected.imports,
         };
         db_connection
-            .component_add(created_at, component, true)
+            .component_add(created_at, component, ComponentToggle::Enabled)
             .await
             .unwrap();
     }

@@ -655,34 +655,59 @@ pub trait DbConnection: Send + Sync {
         }
     }
 
-    /// Append a component. If the component is set to `active` and there are
-    /// components with overlapping exports, the operation will not append the
-    /// component and the inner result will contain the list of components that
-    /// must be deactivated first.
+    /// Add a component. If the component is enabled and there are
+    /// components with overlapping exports, the operation will fail
+    /// and the error will contain the list of components that
+    /// must be disabled first.
     async fn component_add(
         &self,
         created_at: DateTime<Utc>,
         component: ComponentWithMetadata,
-        active: bool,
+        toggle: ComponentToggle,
     ) -> Result<(), ComponentAddError>;
 
-    async fn component_list(&self, active: bool) -> Result<Vec<Component>, DbError>;
+    async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError>;
 
-    /// Get component and its activation state.
+    /// Get component and its metadata and state.
     async fn component_get_metadata(
         &self,
         component_id: ComponentId,
-    ) -> Result<(ComponentWithMetadata, bool), DbError>;
+    ) -> Result<(ComponentWithMetadata, ComponentToggle), DbError>;
 
-    /// Find exported function in the active component list.
-    async fn component_active_get_exported_function(
+    /// Find exported function in the enabled component list.
+    async fn component_enabled_get_exported_function(
         &self,
         ffqn: FunctionFqn,
     ) -> Result<(ComponentId, FunctionMetadata), DbError>;
 
-    async fn component_deactivate(&self, component_id: ComponentId) -> Result<(), DbError>;
+    async fn component_disable(&self, component_id: ComponentId) -> Result<(), DbError>;
 
-    async fn component_activate(&self, component_id: ComponentId) -> Result<(), DbError>;
+    async fn component_enable(&self, component_id: ComponentId) -> Result<(), DbError>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+pub enum ComponentToggle {
+    Enabled,
+    Disabled,
+}
+
+impl From<bool> for ComponentToggle {
+    fn from(value: bool) -> Self {
+        if value {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
+impl From<ComponentToggle> for bool {
+    fn from(value: ComponentToggle) -> Self {
+        match value {
+            ComponentToggle::Disabled => false,
+            ComponentToggle::Enabled => true,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -5,6 +5,7 @@ mod init;
 use args::{Args, Executor, Subcommand};
 use clap::Parser;
 use command::execution::ExecutionVerbosity;
+use concepts::storage::ComponentToggle;
 use concepts::Params;
 use executor::executor::ExecConfig;
 use std::path::PathBuf;
@@ -15,9 +16,7 @@ use wasm_workers::workflow_worker::WorkflowConfig;
 #[allow(clippy::too_many_lines)]
 async fn main() {
     let _guard = init::init();
-    let db_file =
-        // TODO: XDG specs or ~/.obelisk/obelisk.sqlite
-        PathBuf::from("obelisk.sqlite");
+    let db_file = PathBuf::from("obelisk.sqlite");
     match Args::parse().command {
         Subcommand::Executor(Executor::Serve { clean }) => {
             command::server::run(db_file, clean).await.unwrap();
@@ -34,20 +33,20 @@ async fn main() {
             .unwrap();
         }
         Subcommand::Component(args::Component::Add {
-            inactive,
+            disabled,
             wasm_path,
         }) => {
-            command::component::add(!inactive, wasm_path, db_file)
+            command::component::add(ComponentToggle::from(!disabled), wasm_path, db_file)
                 .await
                 .unwrap();
         }
         Subcommand::Component(args::Component::List {
-            inactive,
+            disabled,
             verbosity,
         }) => {
             command::component::list(
                 db_file,
-                !inactive,
+                ComponentToggle::from(!disabled),
                 match verbosity {
                     0 => None,
                     1 => Some(FunctionMetadataVerbosity::FfqnOnly),
@@ -73,13 +72,13 @@ async fn main() {
             .await
             .unwrap();
         }
-        Subcommand::Component(args::Component::Deactivate { component_id }) => {
-            command::component::deactivate(db_file, component_id)
+        Subcommand::Component(args::Component::Disable { component_id }) => {
+            command::component::disable(db_file, component_id)
                 .await
                 .unwrap();
         }
-        Subcommand::Component(args::Component::Activate { component_id }) => {
-            command::component::activate(db_file, component_id)
+        Subcommand::Component(args::Component::Enable { component_id }) => {
+            command::component::enable(db_file, component_id)
                 .await
                 .unwrap();
         }

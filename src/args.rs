@@ -48,18 +48,18 @@ pub(crate) enum Component {
     },
     /// Load WASM file into the blob store and populate database.
     Add {
-        /// Set the component to inactive state.
+        /// Disable the component
         #[arg(short, long)]
-        inactive: bool,
+        disabled: bool,
         #[arg(required(true))]
         wasm_path: PathBuf,
         // TODO: interactive configuration based on component type
     },
     /// List components.
     List {
-        // Switch from showing active to inactive components.
+        // Show disabled components
         #[arg(short, long)]
-        inactive: bool,
+        disabled: bool,
         /// Enable full verbosity with `-vv`
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
@@ -73,12 +73,12 @@ pub(crate) enum Component {
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
     },
-    Deactivate {
+    Disable {
         /// Component id consisting of a prefix and a hash
         #[arg()]
         component_id: ComponentId,
     },
-    Activate {
+    Enable {
         /// Component id consisting of a prefix and a hash
         #[arg()]
         component_id: ComponentId,

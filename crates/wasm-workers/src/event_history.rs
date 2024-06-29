@@ -489,7 +489,7 @@ impl<C: ClockFn> EventHistory<C> {
             ffqn: FunctionFqn,
         ) -> Result<(ComponentId, FunctionMetadata), FunctionError> {
             db_connection
-                .component_active_get_exported_function(ffqn.clone())
+                .component_enabled_get_exported_function(ffqn.clone())
                 .await
                 .map_err(|db_error| match db_error {
                     DbError::Specific(SpecificError::NotFound) => {

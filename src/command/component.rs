@@ -1,7 +1,7 @@
 use crate::{FunctionMetadataVerbosity, WasmActivityConfig, WasmWorkflowConfig};
 use anyhow::Context;
 use concepts::prefixed_ulid::ConfigId;
-use concepts::storage::{Component, ComponentWithMetadata, DbConnection};
+use concepts::storage::{Component, ComponentToggle, ComponentWithMetadata, DbConnection};
 use concepts::storage::{ComponentAddError, DbPool};
 use concepts::{ComponentId, ComponentType, FunctionMetadata};
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -17,7 +17,7 @@ use wasm_workers::{
 };
 
 pub(crate) async fn add<P: AsRef<Path>>(
-    active: bool,
+    toggle: ComponentToggle,
     wasm_path: P,
     db_file: P,
 ) -> anyhow::Result<()> {
@@ -81,7 +81,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
     // TODO: Add "Already exists" error
     match db_pool
         .connection()
-        .component_add(now(), component, active)
+        .component_add(now(), component, toggle)
         .await
     {
         Ok(()) => {
@@ -131,7 +131,7 @@ fn inspect_fns(functions: &[FunctionMetadata], verbosity: FunctionMetadataVerbos
 
 pub(crate) async fn list<P: AsRef<Path>>(
     db_file: P,
-    active: bool,
+    toggle: ComponentToggle,
     verbosity: Option<FunctionMetadataVerbosity>,
 ) -> anyhow::Result<()> {
     let db_file = db_file.as_ref();
@@ -140,7 +140,7 @@ pub(crate) async fn list<P: AsRef<Path>>(
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
     let db_connection = db_pool.connection();
     let components = db_connection
-        .component_list(active)
+        .component_list(toggle)
         .await
         .context("database error")?;
     for component in components {
@@ -175,13 +175,13 @@ pub(crate) async fn get<P: AsRef<Path>>(
         .await
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
     let db_connection = db_pool.connection();
-    let (component, active) = db_connection
+    let (component, toggle) = db_connection
         .component_get_metadata(component_id)
         .await
         .context("database error")?;
 
     println!(
-        "{component_type}\t{name}\tid: {hash}\tActive: {active}",
+        "{component_type}\t{name}\tid: {hash}\tToggle: {toggle}",
         component_type = component.component.component_type,
         hash = component.component.component_id,
         name = component.component.name,
@@ -195,7 +195,7 @@ pub(crate) async fn get<P: AsRef<Path>>(
     Ok(())
 }
 
-pub(crate) async fn deactivate<P: AsRef<Path>>(
+pub(crate) async fn disable<P: AsRef<Path>>(
     db_file: P,
     component_id: ComponentId,
 ) -> anyhow::Result<()> {
@@ -204,11 +204,11 @@ pub(crate) async fn deactivate<P: AsRef<Path>>(
         .await
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
     let db_connection = db_pool.connection();
-    db_connection.component_deactivate(component_id).await?;
+    db_connection.component_disable(component_id).await?;
     Ok(())
 }
 
-pub(crate) async fn activate<P: AsRef<Path>>(
+pub(crate) async fn enable<P: AsRef<Path>>(
     db_file: P,
     component_id: ComponentId,
 ) -> anyhow::Result<()> {
@@ -217,6 +217,6 @@ pub(crate) async fn activate<P: AsRef<Path>>(
         .await
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
     let db_connection = db_pool.connection();
-    db_connection.component_activate(component_id).await?;
+    db_connection.component_enable(component_id).await?;
     Ok(())
 }

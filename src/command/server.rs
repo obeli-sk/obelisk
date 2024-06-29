@@ -1,6 +1,7 @@
 use crate::{WasmActivityConfig, WasmWorkflowConfig};
 use anyhow::Context;
 use concepts::storage::Component;
+use concepts::storage::ComponentToggle;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::ComponentId;
@@ -49,7 +50,7 @@ pub(crate) async fn run<P: AsRef<Path>>(db_file: P, clean: bool) -> anyhow::Resu
             },
         );
         let mut component_to_exec_join_handle = hashbrown::HashMap::new();
-        // Attempt to start executors for every active component
+        // Attempt to start executors for every enabled component
         loop {
             let res = update_components(
                 db_pool.clone(),
@@ -139,19 +140,19 @@ async fn update_components<DB: DbConnection + 'static>(
     component_to_exec_join_handle: &mut hashbrown::HashMap<ComponentId, ExecutorTaskHandle>,
     engines: &Engines,
 ) -> Result<(), anyhow::Error> {
-    let active_components = db_pool
+    let enabled_components = db_pool
         .connection()
-        .component_list(true)
+        .component_list(ComponentToggle::Enabled)
         .await
-        .context("cannot list active components")?;
+        .context("cannot list enabled components")?;
 
-    // Shut down deactivated components
+    // Shut down disabled components
     let mut deactivating = component_to_exec_join_handle
         .keys()
         .cloned()
         .collect::<hashbrown::HashSet<_>>();
-    // Retain components that are no longer active
-    for component_id in active_components.iter().map(|c| &c.component_id) {
+    // Retain components that are no longer enabled
+    for component_id in enabled_components.iter().map(|c| &c.component_id) {
         deactivating.remove(component_id);
     }
     for component_id in deactivating {
@@ -164,7 +165,7 @@ async fn update_components<DB: DbConnection + 'static>(
     }
 
     // Spawn new component executors
-    for component in active_components {
+    for component in enabled_components {
         if component_to_exec_join_handle.contains_key(&component.component_id) {
             continue;
         }
