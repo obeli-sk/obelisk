@@ -1,5 +1,6 @@
 use ::serde::{Deserialize, Serialize};
 use assert_matches::assert_matches;
+use async_trait::async_trait;
 pub use prefixed_ulid::ExecutionId;
 use serde_json::Value;
 use std::{
@@ -866,6 +867,14 @@ impl Debug for ParameterTypes {
         }
         write!(f, ")")
     }
+}
+
+#[async_trait]
+pub trait FunctionRegistry: Send + Sync {
+    async fn get_by_exported_function(
+        &self,
+        ffqn: &FunctionFqn,
+    ) -> Option<(FunctionMetadata, ComponentId)>;
 }
 
 #[cfg(test)]

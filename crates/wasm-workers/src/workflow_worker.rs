@@ -3,8 +3,8 @@ use crate::WasmFileError;
 use async_trait::async_trait;
 use concepts::prefixed_ulid::ConfigId;
 use concepts::storage::{DbConnection, DbPool};
-use concepts::SupportedFunctionResult;
 use concepts::{FunctionFqn, FunctionMetadata, StrVariant};
+use concepts::{FunctionRegistry, SupportedFunctionResult};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::error::Error;
@@ -53,6 +53,7 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     exim: ExIm,
     db_pool: P,
     clock_fn: C,
+    fn_registry: Arc<dyn FunctionRegistry>,
 }
 
 pub(crate) const HOST_ACTIVITY_IFC_STRING: &str = "obelisk:workflow/host-activities";
@@ -65,6 +66,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         engine: Arc<Engine>,
         db_pool: P,
         clock_fn: C,
+        fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Result<Self, WasmFileError> {
         let wasm_path = wasm_path.as_ref();
         let mut linker = wasmtime::component::Linker::new(&engine);
@@ -136,6 +138,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
             exim: wasm_component.exim,
             db_pool,
             clock_fn,
+            fn_registry,
         })
     }
 }
@@ -168,7 +171,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         let (instance, mut store) = {
             let seed = ctx.execution_id.random_part();
             let ctx = WorkflowCtx::new(
-                //TODO: merge WorkerContext into
                 ctx.execution_id,
                 ctx.event_history,
                 ctx.responses,
@@ -182,6 +184,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 self.config.child_max_retries,
                 self.config.non_blocking_event_batching,
                 timeout_error_container.clone(),
+                self.fn_registry.clone(),
             );
             let mut store = Store::new(&self.engine, ctx);
             let instance = match self
@@ -334,7 +337,7 @@ mod tests {
     use crate::{
         activity_worker::tests::{spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT},
         engines::{EngineConfig, Engines},
-        tests::component_add_real,
+        tests::{fn_registry_dummy, fn_registry_parsing_wasm},
     };
     use assert_matches::assert_matches;
     use concepts::{prefixed_ulid::ConfigId, ComponentId, ExecutionId, Params};
@@ -370,6 +373,7 @@ mod tests {
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: NonBlockingEventBatching,
+        fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         let workflow_engine = Engines::get_workflow_engine(EngineConfig::on_demand()).unwrap();
         let worker = Arc::new(
@@ -385,6 +389,7 @@ mod tests {
                 workflow_engine,
                 db_pool.clone(),
                 clock_fn.clone(),
+                fn_registry,
             )
             .unwrap(),
         );
@@ -403,6 +408,7 @@ mod tests {
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: NonBlockingEventBatching,
+        fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         spawn_workflow(
             db_pool,
@@ -410,6 +416,7 @@ mod tests {
             clock_fn,
             join_next_blocking_strategy,
             non_blocking_event_batching,
+            fn_registry,
         )
     }
 
@@ -465,28 +472,23 @@ mod tests {
     ) {
         const INPUT_ITERATIONS: u32 = 1;
         let _guard = test_utils::set_up();
+        let fn_registry = fn_registry_parsing_wasm(&[
+            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+        ])
+        .await;
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
             sim_clock.get_clock_fn(),
             join_next_blocking_strategy,
             batching,
+            fn_registry,
         );
         // Create an execution.
         let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        component_add_real(
-            &db_connection,
-            created_at,
-            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-        )
-        .await;
-        component_add_real(
-            &db_connection,
-            created_at,
-            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-        )
-        .await;
+
         let params = Params::from_json_array(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
         db_connection
             .create(CreateRequest {
@@ -548,22 +550,22 @@ mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let _guard = test_utils::set_up();
+        let fn_registry = fn_registry_parsing_wasm(&[
+            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+        ])
+        .await;
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
             sim_clock.get_clock_fn(),
             join_next_blocking_strategy,
             batching,
+            fn_registry,
         );
         // Create an execution.
         let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        component_add_real(
-            &db_connection,
-            created_at,
-            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-        )
-        .await;
+
         let params = Params::from_json_array(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
         db_connection
             .create(CreateRequest {
@@ -610,6 +612,7 @@ mod tests {
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: NonBlockingEventBatching,
+        fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Arc<WorkflowWorker<C, DB, P>> {
         Arc::new(
             WorkflowWorker::new_with_config(
@@ -624,6 +627,7 @@ mod tests {
                 Engines::get_workflow_engine(EngineConfig::on_demand()).unwrap(),
                 db_pool,
                 clock_fn,
+                fn_registry,
             )
             .unwrap(),
         )
@@ -634,14 +638,15 @@ mod tests {
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: NonBlockingEventBatching,
+        fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         let worker = get_workflow_worker(
             db_pool.clone(),
             clock_fn.clone(),
             join_next_blocking_strategy,
             non_blocking_event_batching,
+            fn_registry,
         );
-
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -664,11 +669,14 @@ mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
 
+        let empty_fn_registry = fn_registry_dummy(&[]);
+
         let workflow_exec_task = spawn_workflow_sleep(
             db_pool.clone(),
             sim_clock.get_clock_fn(),
             join_next_blocking_strategy,
             batching,
+            empty_fn_registry.clone(),
         );
         let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
             db_pool.connection(),
@@ -721,6 +729,7 @@ mod tests {
             sim_clock.get_clock_fn(),
             join_next_blocking_strategy,
             batching,
+            empty_fn_registry,
         );
         let res = db_connection
             .wait_for_finished_result(execution_id, None)
@@ -760,17 +769,10 @@ mod tests {
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        component_add_real(
-            &db_connection,
-            created_at,
+        let fn_registry = fn_registry_parsing_wasm(&[
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-        )
-        .await;
-        component_add_real(
-            &db_connection,
-            created_at,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-        )
+        ])
         .await;
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
@@ -783,6 +785,7 @@ mod tests {
             sim_clock.get_clock_fn(),
             join_next_blocking_strategy,
             batching,
+            fn_registry,
         );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -863,18 +866,12 @@ mod tests {
         let created_at = sim_clock.now();
         let (_guard, db_pool) = db.set_up().await;
         let db_connection = db_pool.connection();
-        component_add_real(
-            &db_connection,
-            created_at,
+        let fn_registry = fn_registry_parsing_wasm(&[
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-        )
-        .await;
-        component_add_real(
-            &db_connection,
-            created_at,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-        )
+        ])
         .await;
+
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -886,6 +883,7 @@ mod tests {
             sim_clock.get_clock_fn(),
             join_next_strategy,
             batching,
+            fn_registry,
         );
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -948,23 +946,23 @@ mod tests {
     ) {
         use concepts::prefixed_ulid::ExecutorId;
 
-        use crate::tests::component_add_dummy;
-
         const SLEEP_MILLIS: u32 = 100;
         const RESCHEDULE_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::RESCHEDULE);
         let _guard = test_utils::set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = db.set_up().await;
+        let fn_registry = fn_registry_dummy(&[RESCHEDULE_FFQN]);
         let worker = get_workflow_worker(
             db_pool.clone(),
             sim_clock.get_clock_fn(),
             join_next_strategy,
             batching,
+            fn_registry,
         );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
-        component_add_dummy(&db_connection, sim_clock.now(), RESCHEDULE_FFQN).await;
+
         let params = Params::from_json_array(json!([SLEEP_MILLIS])).unwrap();
         db_connection
             .create(CreateRequest {

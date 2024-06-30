@@ -6,7 +6,6 @@ use crate::workflow_worker::NonBlockingEventBatching;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::HistoryEventScheduledAt;
-use concepts::storage::SpecificError;
 use concepts::storage::{
     AppendRequest, CreateRequest, DbConnection, DbError, ExecutionEventInner, JoinSetResponse,
     JoinSetResponseEvent, Version,
@@ -14,6 +13,7 @@ use concepts::storage::{
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::ComponentId;
 use concepts::FunctionMetadata;
+use concepts::FunctionRegistry;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionResult};
 use executor::worker::WorkerResult;
@@ -102,6 +102,7 @@ impl<C: ClockFn> EventHistory<C> {
         event_call: EventCall,
         db_connection: &DB,
         version: &mut Version,
+        fn_registry: &dyn FunctionRegistry,
     ) -> Result<SupportedFunctionResult, FunctionError> {
         trace!("replay_or_interrupt: {event_call:?}");
         if let Some(accept_resp) = self.find_matching_atomic(&event_call)? {
@@ -124,6 +125,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .append_to_db(
                         event_call,
                         db_connection,
+                        fn_registry,
                         called_at,
                         lock_expires_at,
                         self.execution_id,
@@ -144,6 +146,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .append_to_db(
                         event_call,
                         db_connection,
+                        fn_registry,
                         called_at,
                         lock_expires_at,
                         self.execution_id,
@@ -477,6 +480,7 @@ impl<C: ClockFn> EventHistory<C> {
         &mut self,
         event_call: EventCall,
         db_connection: &DB,
+        fn_registry: &dyn FunctionRegistry,
         created_at: DateTime<Utc>,
         lock_expires_at: DateTime<Utc>,
         execution_id: ExecutionId,
@@ -484,19 +488,14 @@ impl<C: ClockFn> EventHistory<C> {
         child_retry_exp_backoff: Duration,
         child_max_retries: u32,
     ) -> Result<Vec<HistoryEvent>, FunctionError> {
-        async fn component_active_get_exported_function<DB: DbConnection>(
-            db_connection: &DB,
-            ffqn: FunctionFqn,
-        ) -> Result<(ComponentId, FunctionMetadata), FunctionError> {
-            db_connection
-                .component_enabled_get_exported_function(ffqn.clone())
+        async fn component_active_get_exported_function(
+            fn_registry: &dyn FunctionRegistry,
+            ffqn: &FunctionFqn,
+        ) -> Result<(FunctionMetadata, ComponentId), FunctionError> {
+            fn_registry
+                .get_by_exported_function(ffqn)
                 .await
-                .map_err(|db_error| match db_error {
-                    DbError::Specific(SpecificError::NotFound) => {
-                        FunctionError::FunctionMetadataNotFound { ffqn }
-                    }
-                    _ => FunctionError::DbError(db_error),
-                }) // TODO: consider caching
+                .ok_or_else(|| FunctionError::FunctionMetadataNotFound { ffqn: ffqn.clone() })
         }
 
         trace!(%version, "append_to_db");
@@ -528,8 +527,8 @@ impl<C: ClockFn> EventHistory<C> {
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
-                let (component_id, (ffqn, _param_types, return_type)) =
-                    component_active_get_exported_function(db_connection, ffqn).await?; // TODO: consider caching
+                let ((ffqn, _param_types, return_type), component_id) =
+                    component_active_get_exported_function(fn_registry, &ffqn).await?; // TODO: consider caching
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: child_execution_id,
@@ -580,8 +579,8 @@ impl<C: ClockFn> EventHistory<C> {
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%new_execution_id, "ScheduleRequest: appending");
-                let (component_id, (ffqn, _param_types, return_type)) =
-                    component_active_get_exported_function(db_connection, ffqn).await?;
+                let ((ffqn, _param_types, return_type), component_id) =
+                    component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: new_execution_id,
@@ -662,8 +661,8 @@ impl<C: ClockFn> EventHistory<C> {
                 history_events.push(event.clone());
                 let join_next = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Appending JoinSet,ChildExecutionRequest,JoinNext");
-                let (component_id, (ffqn, _param_types, return_type)) =
-                    component_active_get_exported_function(db_connection, ffqn).await?;
+                let ((ffqn, _param_types, return_type), component_id) =
+                    component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child = CreateRequest {
                     created_at,
                     execution_id: child_execution_id,
@@ -910,7 +909,7 @@ impl EventCall {
 #[cfg(test)]
 mod tests {
     use crate::event_history::{EventCall, EventHistory};
-    use crate::tests::component_add_dummy;
+    use crate::tests::fn_registry_dummy;
     use crate::workflow_ctx::FunctionError;
     use crate::workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching};
     use assert_matches::assert_matches;
@@ -918,7 +917,9 @@ mod tests {
     use concepts::prefixed_ulid::JoinSetId;
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
-    use concepts::{ComponentId, ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
+    use concepts::{
+        ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params, SupportedFunctionResult,
+    };
     use db_tests::Database;
     use executor::worker::{WorkerError, WorkerResult};
     use rstest::rstest;
@@ -977,7 +978,7 @@ mod tests {
         // Create an execution.
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        component_add_dummy(&db_connection, created_at, MOCK_FFQN).await;
+        let fn_registry = fn_registry_dummy(&[MOCK_FFQN]);
         let execution_id = ExecutionId::generate();
         db_connection
             .create(CreateRequest {
@@ -1008,43 +1009,49 @@ mod tests {
         let join_set_id = JoinSetId::generate();
         let child_execution_id = ExecutionId::generate();
 
-        let blocking_join_first = |mut event_history: EventHistory<_>, mut version: Version| {
-            let db_pool = db_pool.clone();
-            async move {
-                event_history
-                    .replay_or_interrupt(
-                        EventCall::CreateJoinSet { join_set_id },
-                        &db_pool.connection(),
-                        &mut version,
-                    )
-                    .await
-                    .unwrap();
+        let blocking_join_first =
+            |mut event_history: EventHistory<_>,
+             mut version: Version,
+             fn_registry: Arc<dyn FunctionRegistry>| {
+                let db_pool = db_pool.clone();
+                async move {
+                    event_history
+                        .replay_or_interrupt(
+                            EventCall::CreateJoinSet { join_set_id },
+                            &db_pool.connection(),
+                            &mut version,
+                            fn_registry.as_ref(),
+                        )
+                        .await
+                        .unwrap();
 
-                event_history
-                    .replay_or_interrupt(
-                        EventCall::StartAsync {
-                            ffqn: MOCK_FFQN,
-                            join_set_id,
-                            child_execution_id,
-                            params: Params::default(),
-                        },
-                        &db_pool.connection(),
-                        &mut version,
-                    )
-                    .await
-                    .unwrap();
-                event_history
-                    .replay_or_interrupt(
-                        EventCall::BlockingChildJoinNext { join_set_id },
-                        &db_pool.connection(),
-                        &mut version,
-                    )
-                    .await
-            }
-        };
+                    event_history
+                        .replay_or_interrupt(
+                            EventCall::StartAsync {
+                                ffqn: MOCK_FFQN,
+                                join_set_id,
+                                child_execution_id,
+                                params: Params::default(),
+                            },
+                            &db_pool.connection(),
+                            &mut version,
+                            fn_registry.as_ref(),
+                        )
+                        .await
+                        .unwrap();
+                    event_history
+                        .replay_or_interrupt(
+                            EventCall::BlockingChildJoinNext { join_set_id },
+                            &db_pool.connection(),
+                            &mut version,
+                            fn_registry.as_ref(),
+                        )
+                        .await
+                }
+            };
 
         assert_matches!(
-            blocking_join_first(event_history, version)
+            blocking_join_first(event_history, version, fn_registry.clone())
                 .await
                 .unwrap_err(),
             FunctionError::ChildExecutionRequest,
@@ -1075,7 +1082,7 @@ mod tests {
             batching,
         )
         .await;
-        blocking_join_first(event_history, version)
+        blocking_join_first(event_history, version, fn_registry.clone())
             .await
             .expect("should finish successfuly");
 
@@ -1104,12 +1111,14 @@ mod tests {
             db_pool: &impl DbPool<DB>,
             join_set_id: JoinSetId,
             child_execution_id: ExecutionId,
+            fn_registry: &dyn FunctionRegistry,
         ) {
             event_history
                 .replay_or_interrupt(
                     EventCall::CreateJoinSet { join_set_id },
                     &db_pool.connection(),
                     version,
+                    fn_registry,
                 )
                 .await
                 .unwrap();
@@ -1123,6 +1132,7 @@ mod tests {
                     },
                     &db_pool.connection(),
                     version,
+                    fn_registry,
                 )
                 .await
                 .unwrap();
@@ -1133,7 +1143,7 @@ mod tests {
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        component_add_dummy(&db_connection, created_at, MOCK_FFQN).await;
+        let fn_registry = fn_registry_dummy(&[MOCK_FFQN]);
         // Create an execution.
         let execution_id = ExecutionId::generate();
         db_connection
@@ -1171,6 +1181,7 @@ mod tests {
             &db_pool,
             join_set_id,
             child_execution_id,
+            fn_registry.as_ref(),
         )
         .await;
 
@@ -1208,6 +1219,7 @@ mod tests {
             &db_pool,
             join_set_id,
             child_execution_id,
+            fn_registry.as_ref(),
         )
         .await;
         // issue BlockingChildJoinNext
@@ -1216,6 +1228,7 @@ mod tests {
                 EventCall::BlockingChildJoinNext { join_set_id },
                 &db_pool.connection(),
                 &mut version,
+                fn_registry.as_ref(),
             )
             .await
             .unwrap();
@@ -1249,6 +1262,7 @@ mod tests {
             event_history: &mut EventHistory<C>,
             version: &mut Version,
             db_pool: &impl DbPool<DB>,
+            fn_registry: &dyn FunctionRegistry,
             join_set_id: JoinSetId,
             child_execution_id_a: ExecutionId,
             child_execution_id_b: ExecutionId,
@@ -1258,6 +1272,7 @@ mod tests {
                     EventCall::CreateJoinSet { join_set_id },
                     &db_pool.connection(),
                     version,
+                    fn_registry,
                 )
                 .await
                 .unwrap();
@@ -1271,6 +1286,7 @@ mod tests {
                     },
                     &db_pool.connection(),
                     version,
+                    fn_registry,
                 )
                 .await
                 .unwrap();
@@ -1284,6 +1300,7 @@ mod tests {
                     },
                     &db_pool.connection(),
                     version,
+                    fn_registry,
                 )
                 .await
                 .unwrap();
@@ -1292,6 +1309,7 @@ mod tests {
                     EventCall::BlockingChildJoinNext { join_set_id },
                     &db_pool.connection(),
                     version,
+                    fn_registry,
                 )
                 .await
         }
@@ -1303,7 +1321,7 @@ mod tests {
         // Create an execution.
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        component_add_dummy(&db_connection, created_at, MOCK_FFQN).await;
+        let fn_registry = fn_registry_dummy(&[MOCK_FFQN]);
         let execution_id = ExecutionId::generate();
         db_connection
             .create(CreateRequest {
@@ -1340,6 +1358,7 @@ mod tests {
                 &mut event_history,
                 &mut version,
                 &db_pool,
+                fn_registry.as_ref(),
                 join_set_id,
                 child_execution_id_a,
                 child_execution_id_b
@@ -1394,6 +1413,7 @@ mod tests {
             &mut event_history,
             &mut version,
             &db_pool,
+            fn_registry.as_ref(),
             join_set_id,
             child_execution_id_a,
             child_execution_id_b,
@@ -1408,6 +1428,7 @@ mod tests {
                 EventCall::BlockingChildJoinNext { join_set_id },
                 &db_pool.connection(),
                 &mut version,
+                fn_registry.as_ref(),
             )
             .await
             .unwrap();

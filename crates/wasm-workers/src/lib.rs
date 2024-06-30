@@ -31,67 +31,54 @@ pub enum WasmFileError {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::component_detector::ComponentDetector;
-    use chrono::{DateTime, Utc};
-    use concepts::{
-        storage::{Component, ComponentToggle, ComponentWithMetadata, DbConnection},
-        ComponentId, ComponentType, FunctionFqn, ParameterTypes,
-    };
-    use std::path::Path;
+    use async_trait::async_trait;
+    use concepts::{ComponentId, FunctionFqn, FunctionMetadata, FunctionRegistry, ParameterTypes};
+    use std::{path::Path, sync::Arc};
 
-    pub(crate) async fn component_add_dummy<DB: DbConnection>(
-        db_connection: &DB,
-        created_at: DateTime<Utc>,
-        ffqn: FunctionFqn,
-    ) {
-        db_connection
-            .component_add(
-                created_at,
-                ComponentWithMetadata {
-                    component: Component {
-                        component_id: ComponentId::empty(),
-                        component_type: ComponentType::WasmActivity,
-                        config: serde_json::Value::String(String::new()),
-                        name: String::new(),
-                    },
-                    exports: vec![(ffqn, ParameterTypes::default(), None)],
-                    imports: vec![],
-                },
-                ComponentToggle::Enabled,
-            )
-            .await
-            .unwrap();
+    pub(crate) struct TestingFnRegistry(
+        hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ComponentId)>,
+    );
+
+    #[async_trait]
+    impl FunctionRegistry for TestingFnRegistry {
+        async fn get_by_exported_function(
+            &self,
+            ffqn: &FunctionFqn,
+        ) -> Option<(FunctionMetadata, ComponentId)> {
+            self.0.get(ffqn).cloned()
+        }
     }
 
-    pub(crate) async fn component_add_real<DB: DbConnection>(
-        db_connection: &DB,
-        created_at: DateTime<Utc>,
-        wasm_path: impl AsRef<Path>,
-    ) {
-        let wasm_path = wasm_path.as_ref();
-        let file_name = wasm_path
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-        let component_id = crate::component_detector::file_hash(wasm_path)
-            .await
-            .unwrap();
-        let engine = ComponentDetector::get_engine();
-        let detected = ComponentDetector::new(wasm_path, &engine).unwrap();
-        let config = serde_json::Value::String("fake, not deserialized in tests".to_string());
-        let component = ComponentWithMetadata {
-            component: Component {
-                component_id,
-                component_type: detected.component_type,
-                config,
-                name: file_name,
-            },
-            exports: detected.exports,
-            imports: detected.imports,
-        };
-        db_connection
-            .component_add(created_at, component, ComponentToggle::Enabled)
-            .await
-            .unwrap();
+    pub(crate) fn fn_registry_dummy(ffqns: &[FunctionFqn]) -> Arc<dyn FunctionRegistry> {
+        let component_id = ComponentId::empty();
+        let mut map = hashbrown::HashMap::new();
+        for ffqn in ffqns {
+            map.insert(
+                ffqn.clone(),
+                (
+                    (ffqn.clone(), ParameterTypes::default(), None),
+                    component_id.clone(),
+                ),
+            );
+        }
+        Arc::new(TestingFnRegistry(map))
+    }
+
+    pub(crate) async fn fn_registry_parsing_wasm(
+        wasm_paths: &[impl AsRef<Path>],
+    ) -> Arc<dyn FunctionRegistry> {
+        let mut map = hashbrown::HashMap::new();
+        for wasm_path in wasm_paths {
+            let wasm_path = wasm_path.as_ref();
+            let component_id = crate::component_detector::file_hash(wasm_path)
+                .await
+                .unwrap();
+            let engine = ComponentDetector::get_engine();
+            let detected = ComponentDetector::new(wasm_path, &engine).unwrap();
+            for (ffqn, params, res) in detected.exports {
+                map.insert(ffqn.clone(), ((ffqn, params, res), component_id.clone()));
+            }
+        }
+        Arc::new(TestingFnRegistry(map))
     }
 }

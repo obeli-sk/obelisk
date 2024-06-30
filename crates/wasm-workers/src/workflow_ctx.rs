@@ -6,7 +6,8 @@ use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::{
-    ExecutionId, FinishedExecutionError, IfcFqnName, StrVariant, SupportedFunctionResult,
+    ExecutionId, FinishedExecutionError, FunctionRegistry, IfcFqnName, StrVariant,
+    SupportedFunctionResult,
 };
 use concepts::{FunctionFqn, Params};
 use executor::worker::{FatalError, WorkerError, WorkerResult};
@@ -86,6 +87,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     pub(crate) clock_fn: C,
     db_pool: P,
     pub(crate) version: Version,
+    fn_registry: Arc<dyn FunctionRegistry>,
     phantom_data: PhantomData<DB>,
 }
 
@@ -105,6 +107,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         max_retries: u32,
         non_blocking_event_batching: NonBlockingEventBatching,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
+        fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Self {
         Self {
             execution_id,
@@ -124,6 +127,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             clock_fn,
             db_pool,
             version,
+            fn_registry,
             phantom_data: PhantomData,
         }
     }
@@ -143,7 +147,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         let event_call = self.imported_fn_to_event_call(ffqn, params)?;
         let res = self
             .event_history
-            .replay_or_interrupt(event_call, &self.db_pool.connection(), &mut self.version)
+            .replay_or_interrupt(
+                event_call,
+                &self.db_pool.connection(),
+                &mut self.version,
+                self.fn_registry.as_ref(),
+            )
             .await?;
         if results.len() != res.len() {
             error!("Unexpected results length");
@@ -171,6 +180,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 },
                 &self.db_pool.connection(),
                 &mut self.version,
+                self.fn_registry.as_ref(),
             )
             .await?;
         Ok(())
@@ -213,6 +223,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 },
                 &self.db_pool.connection(),
                 &mut self.version,
+                self.fn_registry.as_ref(),
             )
             .await?;
         Ok(
@@ -337,6 +348,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
                 EventCall::CreateJoinSet { join_set_id },
                 &self.db_pool.connection(),
                 &mut self.version,
+                self.fn_registry.as_ref(),
             )
             .await?;
         Ok(
@@ -368,7 +380,7 @@ const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::{
-        tests::component_add_dummy,
+        tests::fn_registry_dummy,
         workflow_ctx::WorkflowCtx,
         workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching},
     };
