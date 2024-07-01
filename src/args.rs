@@ -46,15 +46,6 @@ pub(crate) enum Component {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Load WASM file into the blob store and populate the database.
-    Add {
-        /// Disable the component
-        #[arg(short, long)]
-        disabled: bool,
-        #[arg(required(true))]
-        wasm_path: PathBuf,
-        // TODO: interactive configuration based on component type
-    },
     /// List components.
     List {
         // Show disabled components
@@ -73,16 +64,6 @@ pub(crate) enum Component {
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
     },
-    Disable {
-        /// Component id consisting of a prefix and a hash
-        #[arg()]
-        component_id: ComponentId,
-    },
-    Enable {
-        /// Component id consisting of a prefix and a hash
-        #[arg()]
-        component_id: ComponentId,
-    },
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -93,7 +74,7 @@ pub(crate) enum Execution {
         ffqn: FunctionFqn,
         /// Parameters encoded as an JSON array
         #[arg(value_name = "PARAMETERS")]
-        params: Vec<String>,
+        params: String,
         // TODO: interactive
         // TODO: when: String,
         // TODO: poll?

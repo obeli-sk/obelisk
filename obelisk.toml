@@ -1,0 +1,19 @@
+# api-address = "127.0.0.1:8181"
+sqlite-file = "./obelisk.sqlite"
+watch-config-changes = true
+
+[[activity]]
+name = "fibo-activity"
+file = ".."
+content-digest = "sha256:.." # optional
+
+[[workflow]]
+name = "fibo-workflow"
+oci = "dockeraccount/test:latest"
+enabled = false
+content-digest = "sha256:.."      # optional
+
+[[workflow]]
+name = "fibo-workflow2"
+oci = { registry = "ghcr.io", repository = "ghuser/project", tag = "latest", digest = "some-manifest-digest" }
+content-digest = "sha256:.."                                                                                   # optional
