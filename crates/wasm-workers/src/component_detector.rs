@@ -53,11 +53,19 @@ impl ComponentDetector {
     }
 }
 
+#[cfg(not(madsim))]
 pub async fn file_hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error> {
     let hash_base16 = match wasm_pkg_common::digest::ContentDigest::sha256_from_file(path).await? {
         wasm_pkg_common::digest::ContentDigest::Sha256 { hex } => hex,
     };
     Ok(ComponentId::new(concepts::HashType::Sha256, hash_base16))
+}
+#[cfg(madsim)]
+pub async fn file_hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error> {
+    Ok(ComponentId::new(
+        concepts::HashType::Sha256,
+        ulid::Ulid::new().to_string(),
+    ))
 }
 
 #[cfg(test)]

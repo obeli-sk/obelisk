@@ -386,6 +386,7 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
+    use concepts::FunctionRegistry;
     use concepts::{prefixed_ulid::ConfigId, ComponentId, FunctionMetadata, ParameterTypes};
     use concepts::{
         storage::{
@@ -423,9 +424,13 @@ pub(crate) mod tests {
     struct WorkflowWorkerMock<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
         ffqn: FunctionFqn,
         steps: Vec<WorkflowStep>,
+        #[derivative(Debug = "ignore")]
         clock_fn: C,
         #[derivative(Debug = "ignore")]
         db_pool: P,
+        #[derivative(Debug = "ignore")]
+        fn_registry: Arc<dyn FunctionRegistry>,
+        #[derivative(Debug = "ignore")]
         phantom_data: PhantomData<DB>,
     }
 
@@ -452,6 +457,7 @@ pub(crate) mod tests {
                 Arc::new(std::sync::Mutex::new(WorkerResult::Err(
                     WorkerError::IntermittentTimeout,
                 ))),
+                self.fn_registry.clone(),
             );
             for step in &self.steps {
                 let res = match step {
@@ -539,22 +545,22 @@ pub(crate) mod tests {
         );
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        for child_ffqn in steps
+        let ffqns = steps
             .iter()
             .filter_map(|step| match step {
                 WorkflowStep::Call { ffqn } => Some(ffqn.clone()),
                 _ => None,
             })
-            .collect::<HashSet<_>>()
-        {
-            component_add_dummy(&db_connection, created_at, child_ffqn).await;
-        }
+            .collect::<Vec<_>>();
+        let fn_registry = fn_registry_dummy(ffqns.as_slice());
+
         let workflow_exec_task = {
             let worker = Arc::new(WorkflowWorkerMock {
                 ffqn: FFQN_MOCK,
                 steps,
                 clock_fn: sim_clock.get_clock_fn(),
                 db_pool: db_pool.clone(),
+                fn_registry: fn_registry.clone(),
                 phantom_data: PhantomData,
             });
             let exec_config = ExecConfig {
@@ -635,6 +641,7 @@ pub(crate) mod tests {
                             steps: vec![],
                             clock_fn: sim_clock.get_clock_fn(),
                             db_pool: db_pool.clone(),
+                            fn_registry: fn_registry.clone(),
                             phantom_data: PhantomData,
                         });
                         let exec_config = ExecConfig {
