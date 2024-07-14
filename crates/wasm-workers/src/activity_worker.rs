@@ -156,7 +156,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             }
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
-        let mut call_function = std::pin::pin!(async move {
+        let call_function = async move {
             let func = {
                 let mut exports = instance.exports(&mut store);
                 let mut exports_instance = exports.root();
@@ -226,14 +226,14 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 info!("Not able to retry");
             }
             WorkerResult::Ok(result, ctx.version)
-        });
+        };
         let started_at = (self.clock_fn)();
         let deadline_delta = ctx.execution_deadline - started_at;
         let deadline_duration = deadline_delta.to_std().unwrap();
         let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
 
         tokio::select! { // future's liveness: Dropping the loser immediately.
-            res = &mut call_function => {
+            res = call_function => {
                 if let WorkerResult::Err(err) = &res {
                     info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an error");
                 } else {
