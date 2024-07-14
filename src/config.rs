@@ -3,17 +3,17 @@ use directories::ProjectDirs;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
 use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
-use tokio::sync::mpsc::{self};
+use tokio::{sync::mpsc, task::AbortHandle};
 use tracing::{debug, error, info, trace, warn};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {
+pub(crate) struct ObeliskConfig {
     #[serde(default = "default_sqlite_file")]
     pub(crate) sqlite_file: String,
     #[serde(default)]
-    pub(crate) watch_config_changes: bool,
+    pub(crate) watch_component_changes: bool,
     #[serde(default)]
     pub(crate) activity: Vec<Activity>,
     #[serde(default)]
@@ -66,6 +66,11 @@ pub(crate) struct ConfigHolder {
     paths: Vec<PathBuf>,
 }
 
+pub(crate) struct ConfigWatcher {
+    pub(crate) rx: mpsc::Receiver<ObeliskConfig>,
+    pub(crate) abort_handle: AbortHandle,
+}
+
 impl ConfigHolder {
     pub(crate) fn new() -> Self {
         let mut paths = Vec::new();
@@ -76,9 +81,9 @@ impl ConfigHolder {
         }
         if let Some(proj_dirs) = ProjectDirs::from("com", "obelisk", "obelisk") {
             let user_config_dir = proj_dirs.config_dir();
-            // Lin: /home/alice/.config/obelisk
-            // Win: C:\Users\Alice\AppData\Roaming\obelisk\obelisk\config
-            // Mac: /Users/Alice/Library/Application Support/com.obelisk.obelisk-App
+            // Lin: /home/alice/.config/obelisk/
+            // Win: C:\Users\Alice\AppData\Roaming\obelisk\obelisk\config\
+            // Mac: /Users/Alice/Library/Application Support/com.obelisk.obelisk-App/
             let user_config = user_config_dir.join("obelisk.toml");
             debug!("User config: {user_config:?}");
             paths.push(user_config);
@@ -87,11 +92,23 @@ impl ConfigHolder {
         Self { paths }
     }
 
-    pub(crate) async fn load_config(&self) -> Result<Config, anyhow::Error> {
+    pub(crate) async fn load_config(&self) -> Result<ObeliskConfig, anyhow::Error> {
         Self::load_configs(&self.paths).await
     }
 
-    pub(crate) async fn load_configs(paths: &[PathBuf]) -> Result<Config, anyhow::Error> {
+    pub(crate) async fn load_config_watch_changes(
+        &self,
+    ) -> Result<(ObeliskConfig, Option<ConfigWatcher>), anyhow::Error> {
+        let config = Self::load_configs(&self.paths).await?;
+        let watcher = if config.watch_component_changes {
+            Some(self.watch_component_changes()?)
+        } else {
+            None
+        };
+        Ok((config, watcher))
+    }
+
+    async fn load_configs(paths: &[PathBuf]) -> Result<ObeliskConfig, anyhow::Error> {
         let mut builder = ConfigBuilder::<AsyncState>::default();
         for path in paths {
             builder = builder.add_source(
@@ -107,11 +124,8 @@ impl ConfigHolder {
         Ok(settings.try_deserialize()?)
     }
 
-    /// Create new task with file watcher. Closing the receiver will shut down the task.
-    pub(crate) async fn watch(
-        self,
-    ) -> Result<mpsc::Receiver<Result<Config, anyhow::Error>>, anyhow::Error> {
-        let (external_tx, external_rx) = mpsc::channel(1);
+    fn watch_component_changes(&self) -> Result<ConfigWatcher, anyhow::Error> {
+        let (external_tx, rx) = mpsc::channel(1);
         let (internal_tx, mut internal_rx) = mpsc::channel(1);
         let mut debouncer = new_debouncer(
             Duration::from_secs(1),
@@ -131,20 +145,28 @@ impl ConfigHolder {
                 warn!("Not listening on configuration changes of {path:?} - {err:?}");
             }
         }
-        tokio::spawn(async move {
+        let paths = self.paths.clone();
+        let abort_handle = tokio::spawn(async move {
             while let Some(()) = internal_rx.recv().await {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 // even after debouncing there are two events received - Kind::Any, Kind::AnyContinuous
                 while let Ok(()) = internal_rx.try_recv() {}
                 info!("Updating the configuration");
-                let config_res = Self::load_configs(&self.paths).await;
-                if let Err(_) = external_tx.send(config_res).await {
+                let config = match Self::load_configs(&paths).await {
+                    Ok(config) => config,
+                    Err(err) => {
+                        warn!("Cannot read config change - {err:?}");
+                        continue;
+                    }
+                };
+                if let Err(_) = external_tx.send(config).await {
                     info!("Shutting down the watcher task");
                     break;
                 }
             }
             drop(debouncer);
-        });
-        Ok(external_rx)
+        })
+        .abort_handle();
+        Ok(ConfigWatcher { rx, abort_handle })
     }
 }

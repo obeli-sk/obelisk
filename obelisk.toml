@@ -1,6 +1,6 @@
 # api-address = "127.0.0.1:8181"
 sqlite-file = "./obelisk.sqlite"
-watch-config-changes = true
+watch-component-changes = true
 
 [[activity]]
 name = "fibo-activity"

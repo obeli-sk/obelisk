@@ -1,4 +1,4 @@
-use crate::config::{Config, ConfigHolder};
+use crate::config::{ConfigHolder, ObeliskConfig};
 use crate::{WasmActivityConfig, WasmWorkflowConfig};
 use anyhow::Context;
 use concepts::storage::Component;
@@ -24,11 +24,8 @@ use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::workflow_worker::WorkflowWorker;
 
-pub(crate) async fn run(
-    config: Config,
-    config_holder: ConfigHolder,
-    clean: bool,
-) -> anyhow::Result<()> {
+pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Result<()> {
+    let (config, config_watcher) = config_holder.load_config_watch_changes().await?;
     let db_file = &config.sqlite_file;
     if clean {
         tokio::fs::remove_file(db_file)
@@ -46,85 +43,97 @@ pub(crate) async fn run(
     let db_pool = SqlitePool::new(db_file)
         .await
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
-    tokio::task::spawn(async move {
-        let timers_watcher = TimersWatcherTask::spawn_new(
-            db_pool.connection(),
-            TimersWatcherConfig {
-                tick_sleep: Duration::from_millis(100),
-                clock_fn: now,
-            },
-        );
-        let mut component_to_exec_join_handle: hashbrown::HashMap<ComponentId, ExecutorTaskHandle> =
-            hashbrown::HashMap::new();
-        // Attempt to start executors for every enabled component
-        let watcher_rx = if config.watch_config_changes {
-            match config_holder.watch().await {
-                Ok(watcher_rx) => Some(watcher_rx),
-                Err(err) => {
-                    warn!("Error while setting up config file watcher - {err:?}");
-                    None
+
+    let timers_watcher = TimersWatcherTask::spawn_new(
+        db_pool.connection(),
+        TimersWatcherConfig {
+            tick_sleep: Duration::from_millis(100),
+            clock_fn: now,
+        },
+    );
+    match config_watcher {
+        None => {
+            println!("Loading components: {config:#?}");
+            let mut component_to_exec_join_handle: hashbrown::HashMap<
+                ComponentId,
+                ExecutorTaskHandle,
+            > = hashbrown::HashMap::new();
+
+            if tokio::signal::ctrl_c().await.is_err() {
+                warn!("Cannot listen to ctrl-c event");
+                loop {
+                    tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
                 }
             }
-        } else {
-            None
-        };
-        let mut _maybe_uninitialized_dummy_tx;
-        let mut watcher_rx = match watcher_rx {
-            Some(watcher_rx) => watcher_rx,
-            None => {
-                let (tx, rx) = mpsc::channel(1);
-                _maybe_uninitialized_dummy_tx = tx;
-                rx
+            timers_watcher.close().await;
+
+            for exec_join_handle in component_to_exec_join_handle.values() {
+                exec_join_handle.close().await;
             }
-        };
-        let mut config = Some(config);
-        loop {
-            if let Some(config) = config.take() {
-                println!("Updating components: {config:#?}");
-                // if let Err(err) = update_components(
-                //     db_pool.clone(),
-                //     &mut component_to_exec_join_handle,
-                //     &engines,
-                //     config,
-                // )
-                // .await
-                // {
-                //     eprintln!("Error while updating components - {err:?}");
-                //     break;
-                // }
-            }
-            tokio::select! { // future's liveness: Assuming that dropping `ctrl_x` is OK and the signal will be received in the next loop.
-                signal_res = tokio::signal::ctrl_c() => {
-                    if signal_res.is_err() {
-                        eprintln!("Cannot listen to ctrl-c event");
-                    }
-                    break
-                },
-                config_res = watcher_rx.recv() => {
-                    match config_res {
-                        Some(Ok(conf)) => {
-                            config = Some(conf);
+            db_pool.close().await.context("cannot close database")?;
+            Ok::<_, anyhow::Error>(())
+        }
+        Some(mut config_watcher) => {
+            tokio::task::spawn(async move {
+                let mut component_to_exec_join_handle: hashbrown::HashMap<
+                    ComponentId,
+                    ExecutorTaskHandle,
+                > = hashbrown::HashMap::new();
+                // Attempt to start executors for every enabled component
+                // let mut config = Some(config);
+                let mut ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
+                let mut config = config;
+                loop {
+                    // if let Some(config) = config.take() {
+                    println!("Updating components: {config:#?}");
+                    // if let Err(err) = update_components(
+                    //     db_pool.clone(),
+                    //     &mut component_to_exec_join_handle,
+                    //     &engines,
+                    //     config,
+                    // )
+                    // .await
+                    // {
+                    //     eprintln!("Error while updating components - {err:?}");
+                    //     break;
+                    // }
+                    // }
+                    tokio::select! { // future's liveness: Assuming that dropping `ctrl_c` is OK and the signal will be received in the next loop.
+                        signal_res = &mut ctrl_c => {
+                            if signal_res.is_err() {
+                                warn!("Cannot listen to ctrl-c event");
+                                loop {
+                                    tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
+                                }
+                            }
+                            break
                         },
-                        Some(Err(err)) => {
-                            println!("{err:?}");
-                        },
-                        None => {
-                            warn!("Not watching config changes anymore");
+                        config_res = config_watcher.rx.recv() => {
+                            match config_res {
+                                Some(conf) => {
+                                    config = conf;
+                                },
+                                None => {
+                                    warn!("Not watching config changes anymore");
+                                    break
+                                }
+                            }
                         }
                     }
                 }
-            }
+                println!("Gracefully shutting down");
+                timers_watcher.close().await;
+                for exec_join_handle in component_to_exec_join_handle.values() {
+                    exec_join_handle.close().await;
+                }
+                db_pool.close().await.context("cannot close database")?;
+                config_watcher.abort_handle.abort();
+                Ok::<_, anyhow::Error>(())
+            })
+            .await
+            .unwrap()
         }
-        println!("Gracefully shutting down");
-        timers_watcher.close().await;
-        for exec_join_handle in component_to_exec_join_handle.values() {
-            exec_join_handle.close().await;
-        }
-        db_pool.close().await.context("cannot close database")?;
-        Ok::<_, anyhow::Error>(())
-    })
-    .await
-    .unwrap()
+    }
 }
 
 fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {

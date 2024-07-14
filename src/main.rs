@@ -18,13 +18,9 @@ use wasm_workers::workflow_worker::WorkflowConfig;
 async fn main() {
     let _guard = init::init();
     let config_holder = config::ConfigHolder::new();
-    let config = config_holder.load_config().await.unwrap();
-
     match Args::parse().command {
         Subcommand::Executor(Executor::Serve { clean }) => {
-            command::server::run(config, config_holder, clean)
-                .await
-                .unwrap();
+            command::server::run(config_holder, clean).await.unwrap();
         }
         other => todo!("{other:?}"),
         // Subcommand::Component(args::Component::Inspect { wasm_path, verbose }) => {
