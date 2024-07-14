@@ -689,31 +689,31 @@ pub enum ComponentAddError {
     DbError(DbError),
 }
 
-#[derive(Debug, Clone)]
-pub struct Component {
-    pub component_id: ComponentId,
-    pub component_type: ComponentType, // Defines the schema for `config`
-    pub config: serde_json::Value,     // Out of persistence scope
-    pub name: String,                  // Additional identifier without path
-}
+// #[derive(Debug, Clone)]
+// pub struct Component {
+//     pub component_id: ComponentId,
+//     pub component_type: ComponentType, // Defines the schema for `config`
+//     pub config: serde_json::Value,     // Out of persistence scope
+//     pub name: String,                  // Additional identifier without path
+// }
 
-#[derive(Debug, Clone)]
-pub enum ComponentLocation {
-    File(String),
-    Ocr {
-        registry: Option<String>,
-        repository: String,
-        tag: Option<String>,
-        digest: Option<String>,
-    },
-}
+// #[derive(Debug, Clone)]
+// pub enum ComponentLocation {
+//     File(String),
+//     Ocr {
+//         registry: Option<String>,
+//         repository: String,
+//         tag: Option<String>,
+//         digest: Option<String>,
+//     },
+// }
 
-#[derive(Debug, Clone)]
-pub struct ComponentWithMetadata {
-    pub component: Component,
-    pub exports: Vec<FunctionMetadata>,
-    pub imports: Vec<FunctionMetadata>,
-}
+// #[derive(Debug, Clone)]
+// pub struct ComponentWithMetadata {
+//     pub component: Component,
+//     pub exports: Vec<FunctionMetadata>,
+//     pub imports: Vec<FunctionMetadata>,
+// }
 
 pub async fn wait_for_pending_state_fn<T: Debug>(
     db_connection: &dyn DbConnection,

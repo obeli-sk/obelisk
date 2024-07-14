@@ -18,6 +18,8 @@ val-json.workspace = true
 wasm-workers.workspace = true
 
 anyhow.workspace = true
+assert_matches.workspace = true
+async-trait.workspace = true
 cfg-if.workspace = true
 clap.workspace = true
 config.workspace = true
@@ -29,6 +31,7 @@ notify-debouncer-mini.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 shadow-rs.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = [
     "fs",
     "macros",

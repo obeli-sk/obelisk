@@ -1,28 +1,120 @@
+use crate::config::ComponentLocation;
 use crate::config::{ConfigHolder, ObeliskConfig};
-use crate::{WasmActivityConfig, WasmWorkflowConfig};
 use anyhow::Context;
-use concepts::storage::Component;
+use assert_matches::assert_matches;
+use async_trait::async_trait;
+use concepts::prefixed_ulid::ConfigId;
 use concepts::storage::ComponentToggle;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
-use concepts::ComponentId;
-use concepts::ComponentType;
+use concepts::{ComponentId, FunctionRegistry};
+use concepts::{ComponentType, FunctionFqn, FunctionMetadata};
 use db_sqlite::sqlite_dao::SqlitePool;
-use executor::executor::ExecTask;
 use executor::executor::ExecutorTaskHandle;
+use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
+use executor::worker::Worker;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use utils::time::now;
-use wasm_workers::activity_worker::ActivityWorker;
+use wasm_workers::activity_worker::{ActivityConfig, ActivityWorker, RecycleInstancesSetting};
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
-use wasm_workers::workflow_worker::WorkflowWorker;
+use wasm_workers::workflow_worker::{
+    JoinNextBlockingStrategy, NonBlockingEventBatching, WorkflowConfig, WorkflowWorker,
+};
+
+#[derive(Debug, thiserror::Error)]
+enum RegistrationError {
+    #[error(
+        "name conflict - component with name `{name}` already exists for type {component_type}"
+    )]
+    ConflictingName {
+        name: String,
+        component_type: ComponentType,
+    },
+    #[error("function conflict - {ffqn}  already exists")]
+    ConflictingFfqn { ffqn: FunctionFqn },
+    #[error("component id conflict - {component_id} already exists")]
+    ConflictingComponentId { component_id: ComponentId },
+}
+
+#[derive(Debug, Default)]
+struct SharedFunctionRegistryInner {
+    ffqn_map: hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ComponentId)>,
+    component_map: hashbrown::HashMap<ComponentId, FunctionFqn>,
+    activity_names: hashbrown::HashSet<String>,
+    workflow_names: hashbrown::HashSet<String>,
+}
+
+#[derive(Debug, Default)]
+struct SharedFunctionRegistry(std::sync::Mutex<SharedFunctionRegistryInner>);
+
+impl SharedFunctionRegistry {
+    fn register(
+        &self,
+        component_id: &ComponentId,
+        functions: Vec<FunctionMetadata>,
+        component_type: ComponentType,
+        name: String,
+    ) -> Result<(), RegistrationError> {
+        let mut guard = self.0.lock().unwrap();
+        // check for conflicts - name
+        if match component_type {
+            ComponentType::WasmActivity => &guard.activity_names,
+            ComponentType::WasmWorkflow => &guard.workflow_names,
+        }
+        .contains(&name)
+        {
+            return Err(RegistrationError::ConflictingName {
+                name,
+                component_type,
+            });
+        }
+        // check for conflicts - ffqn
+        for (ffqn, _, _) in &functions {
+            if guard.ffqn_map.contains_key(ffqn) {
+                return Err(RegistrationError::ConflictingFfqn { ffqn: ffqn.clone() });
+            }
+        }
+        // check for conflicts - component id
+        if guard.component_map.contains_key(component_id) {
+            return Err(RegistrationError::ConflictingComponentId {
+                component_id: component_id.clone(),
+            });
+        }
+        // populate the maps
+        match component_type {
+            ComponentType::WasmActivity => &mut guard.activity_names,
+            ComponentType::WasmWorkflow => &mut guard.workflow_names,
+        }
+        .insert(name);
+        for (ffqn, params, ret) in functions {
+            let metadata = (ffqn.clone(), params, ret);
+            guard
+                .ffqn_map
+                .insert(ffqn.clone(), (metadata, component_id.clone()));
+            guard.component_map.insert(component_id.clone(), ffqn);
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl FunctionRegistry for SharedFunctionRegistry {
+    async fn get_by_exported_function(
+        &self,
+        ffqn: &FunctionFqn,
+    ) -> Option<(FunctionMetadata, ComponentId)> {
+        self.0.lock().unwrap().ffqn_map.get(ffqn).cloned()
+    }
+}
 
 pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Result<()> {
     let (config, config_watcher) = config_holder.load_config_watch_changes().await?;
@@ -51,14 +143,76 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
             clock_fn: now,
         },
     );
+    let fn_registry = Arc::new(SharedFunctionRegistry::default());
     match config_watcher {
         None => {
-            println!("Loading components: {config:#?}");
+            debug!("Loading components: {config:?}");
             let mut component_to_exec_join_handle: hashbrown::HashMap<
                 ComponentId,
                 ExecutorTaskHandle,
             > = hashbrown::HashMap::new();
 
+            for activity in config.activity {
+                let component_id = activity.verify_content_digest().await?;
+                let config_id = ConfigId::generate();
+                info!(
+                    "Instantiating activity {name} with configuration {config_id} and component {component_id}",
+                    name = activity.name
+                );
+                let exec_config = ExecConfig {
+                    batch_size: 10,
+                    lock_expiry: Duration::from_secs(1),
+                    tick_sleep: Duration::from_millis(200),
+                    config_id,
+                };
+                let activity_config = ActivityConfig {
+                    config_id,
+                    recycled_instances: RecycleInstancesSetting::Enable,
+                };
+                let exec_task_handle = instantiate_activity(
+                    &component_id,
+                    activity.name,
+                    assert_matches!(activity.location, ComponentLocation::File(wasm_path) => wasm_path),
+                    exec_config,
+                    activity_config,
+                    db_pool.clone(),
+                    &engines,
+                    fn_registry.clone(),
+                )?;
+                component_to_exec_join_handle.insert(component_id, exec_task_handle);
+            }
+            for workflow in config.workflow {
+                let component_id = workflow.verify_content_digest().await?;
+                let config_id = ConfigId::generate();
+                info!(
+                    "Instantiating workflow {name} with configuration {config_id} and component {component_id}",
+                    name = workflow.name
+                );
+                let exec_config = ExecConfig {
+                    batch_size: 10,
+                    lock_expiry: Duration::from_secs(1),
+                    tick_sleep: Duration::from_millis(200),
+                    config_id,
+                };
+                let workflow_config = WorkflowConfig {
+                    config_id,
+                    join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
+                    child_retry_exp_backoff: Duration::from_millis(10),
+                    child_max_retries: 5,
+                    non_blocking_event_batching: NonBlockingEventBatching::Enabled,
+                };
+                let exec_task_handle = instantiate_workflow(
+                    &component_id,
+                    workflow.name,
+                    assert_matches!(workflow.location, ComponentLocation::File(wasm_path) => wasm_path),
+                    exec_config,
+                    workflow_config,
+                    db_pool.clone(),
+                    &engines,
+                    fn_registry.clone(),
+                )?;
+                component_to_exec_join_handle.insert(component_id, exec_task_handle);
+            }
             if tokio::signal::ctrl_c().await.is_err() {
                 warn!("Cannot listen to ctrl-c event");
                 loop {
@@ -241,52 +395,72 @@ fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
 //     Ok(())
 // }
 
-// fn instantiate_component<DB: DbConnection + 'static>(
-//     component: Component,
-//     db_pool: impl DbPool<DB> + 'static,
-//     engines: &Engines,
-// ) -> Result<ExecutorTaskHandle, anyhow::Error> {
-//     match component.component_type {
-//         ComponentType::WasmActivity => {
-//             let wasm_activity_config: WasmActivityConfig = serde_json::from_value(component.config)
-//                 .context("could not deserialize `WasmActivityConfig`, try cleaning the database")?;
-//             let worker = Arc::new(
-//                 ActivityWorker::new_with_config(
-//                     wasm_activity_config.wasm_path,
-//                     wasm_activity_config.activity_config,
-//                     engines.activity_engine.clone(),
-//                     now,
-//                 )
-//                 .context("cannot start activity worker")?,
-//             );
-//             Ok(ExecTask::spawn_new(
-//                 worker,
-//                 wasm_activity_config.exec_config,
-//                 now,
-//                 db_pool,
-//                 None,
-//             ))
-//         }
-//         ComponentType::WasmWorkflow => {
-//             let wasm_workflow_config: WasmWorkflowConfig = serde_json::from_value(component.config)
-//                 .context("could not deserialize `WasmWorkflowConfig`, try cleaning the database")?;
-//             let worker = Arc::new(
-//                 WorkflowWorker::new_with_config(
-//                     wasm_workflow_config.wasm_path,
-//                     wasm_workflow_config.workflow_config,
-//                     engines.workflow_engine.clone(),
-//                     db_pool.clone(),
-//                     now,
-//                 )
-//                 .context("cannot start workflow worker")?,
-//             );
-//             Ok(ExecTask::spawn_new(
-//                 worker,
-//                 wasm_workflow_config.exec_config,
-//                 now,
-//                 db_pool,
-//                 None,
-//             ))
-//         }
-//     }
-// }
+fn instantiate_activity<DB: DbConnection + 'static>(
+    component_id: &ComponentId,
+    name: String,
+    wasm_path: impl AsRef<Path>,
+    exec_config: ExecConfig,
+    activity_config: ActivityConfig,
+    db_pool: impl DbPool<DB> + 'static,
+    engines: &Engines,
+    fn_registry: Arc<SharedFunctionRegistry>,
+) -> Result<ExecutorTaskHandle, anyhow::Error> {
+    let worker = Arc::new(ActivityWorker::new_with_config(
+        wasm_path,
+        activity_config,
+        engines.activity_engine.clone(),
+        now,
+    )?);
+    register_and_spawn(
+        worker,
+        component_id,
+        ComponentType::WasmActivity,
+        name,
+        exec_config,
+        db_pool,
+        fn_registry,
+    )
+}
+
+fn instantiate_workflow<DB: DbConnection + 'static>(
+    component_id: &ComponentId,
+    name: String,
+    wasm_path: impl AsRef<Path>,
+    exec_config: ExecConfig,
+    workflow_config: WorkflowConfig,
+    db_pool: impl DbPool<DB> + 'static,
+    engines: &Engines,
+    fn_registry: Arc<SharedFunctionRegistry>,
+) -> Result<ExecutorTaskHandle, anyhow::Error> {
+    let worker = Arc::new(WorkflowWorker::new_with_config(
+        wasm_path,
+        workflow_config,
+        engines.workflow_engine.clone(),
+        db_pool.clone(),
+        now,
+        fn_registry.clone(),
+    )?);
+    register_and_spawn(
+        worker,
+        component_id,
+        ComponentType::WasmWorkflow,
+        name,
+        exec_config,
+        db_pool,
+        fn_registry,
+    )
+}
+
+fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
+    worker: Arc<W>,
+    component_id: &ComponentId,
+    component_type: ComponentType,
+    name: String,
+    exec_config: ExecConfig,
+    db_pool: impl DbPool<DB> + 'static,
+    fn_registry: Arc<SharedFunctionRegistry>,
+) -> Result<ExecutorTaskHandle, anyhow::Error> {
+    let exported_functions = worker.exported_functions().collect();
+    fn_registry.register(component_id, exported_functions, component_type, name)?;
+    Ok(ExecTask::spawn_new(worker, exec_config, now, db_pool, None))
+}

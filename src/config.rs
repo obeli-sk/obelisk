@@ -1,3 +1,5 @@
+use anyhow::{bail, Context as _};
+use concepts::{ComponentId, ComponentType};
 use config::{builder::AsyncState, Case, ConfigBuilder, Environment, File, FileFormat};
 use directories::ProjectDirs;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
@@ -29,9 +31,45 @@ fn default_sqlite_file() -> String {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Activity {
     pub(crate) name: String,
-    pub(crate) file: String,
-    #[serde(rename = "content-digest")]
+    pub(crate) enabled: Option<bool>,
+    pub(crate) location: ComponentLocation,
+    // #[serde(rename = "content-digest")]
     pub(crate) content_digest: Option<String>,
+}
+
+impl Activity {
+    pub(crate) async fn verify_content_digest(&self) -> Result<ComponentId, anyhow::Error> {
+        verify_content_digest(
+            &self.location,
+            self.content_digest.as_deref(),
+            &self.name,
+            ComponentType::WasmActivity,
+        )
+        .await
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ComponentLocation {
+    File(PathBuf),
+    Oci(Oci),
+}
+
+impl ComponentLocation {
+    async fn calculate_content_digest(&self) -> Result<ComponentId, anyhow::Error> {
+        match self {
+            Self::File(wasm_path) => {
+                let wasm_path = wasm_path
+                    .canonicalize()
+                    .with_context(|| format!("cannot canonicalize file `{wasm_path:?}`"))?;
+                wasm_workers::component_detector::file_hash(&wasm_path)
+                    .await
+                    .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))
+            }
+            Self::Oci(_) => unimplemented!("calculate_content_digest for OCI not implemented yet"),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,10 +77,36 @@ pub(crate) struct Activity {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Workflow {
     pub(crate) name: String,
-    pub(crate) oci: Oci,
     pub(crate) enabled: Option<bool>,
-    #[serde(rename = "content-digest")]
+    pub(crate) location: ComponentLocation,
     pub(crate) content_digest: Option<String>,
+}
+
+async fn verify_content_digest(
+    location: &ComponentLocation,
+    specified_content_digest: Option<&str>,
+    name: &str,
+    r#type: ComponentType,
+) -> Result<ComponentId, anyhow::Error> {
+    let actual = location.calculate_content_digest().await?;
+    if let Some(specified) = specified_content_digest {
+        if *specified != actual.to_string() {
+            bail!("Wrong content digest for {type} {name}, specified {specified} , actually got {actual}")
+        }
+    }
+    Ok(actual)
+}
+
+impl Workflow {
+    pub(crate) async fn verify_content_digest(&self) -> Result<ComponentId, anyhow::Error> {
+        verify_content_digest(
+            &self.location,
+            self.content_digest.as_deref(),
+            &self.name,
+            ComponentType::WasmWorkflow,
+        )
+        .await
+    }
 }
 
 #[derive(Debug, Deserialize)]

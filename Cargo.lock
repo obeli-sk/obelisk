@@ -2719,6 +2719,8 @@ name = "obeli-sk"
 version = "0.1.7"
 dependencies = [
  "anyhow",
+ "assert_matches",
+ "async-trait",
  "cfg-if",
  "clap",
  "config",
@@ -2737,6 +2739,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shadow-rs",
+ "thiserror",
  "toml 0.8.14",
  "tracing",
  "tracing-chrome",

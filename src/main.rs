@@ -122,16 +122,16 @@ enum FunctionMetadataVerbosity {
     WithTypes,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct WasmWorkflowConfig {
-    wasm_path: String,
-    exec_config: ExecConfig,
-    workflow_config: WorkflowConfig,
-}
+// #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// struct WasmWorkflowConfig {
+//     wasm_path: String,
+//     exec_config: ExecConfig,
+//     workflow_config: WorkflowConfig,
+// }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct WasmActivityConfig {
-    wasm_path: String,
-    exec_config: ExecConfig,
-    activity_config: ActivityConfig,
-}
+// #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// struct WasmActivityConfig {
+//     wasm_path: String,
+//     exec_config: ExecConfig,
+//     activity_config: ActivityConfig,
+// }

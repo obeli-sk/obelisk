@@ -1,19 +1,20 @@
 # api-address = "127.0.0.1:8181"
 sqlite-file = "./obelisk.sqlite"
-watch-component-changes = true
+watch-component-changes = false
 
 [[activity]]
 name = "fibo-activity"
-file = ".."
-content-digest = "sha256:.." # optional
+location.file = "target/debug/build/test-programs-fibo-activity-builder-06b4a054bad094c9/out/wasm32-wasi/release/test_programs_fibo_activity.wasm"
+content-digest = "sha256:23c07d064d2b16da634cf51599f0289984c28380fe97527aa593b2f1a09672c3"
 
 [[workflow]]
 name = "fibo-workflow"
-oci = "dockeraccount/test:latest"
-enabled = false
-content-digest = "sha256:.."      # optional
+# oci = "dockeraccount/test:latest"
+location.file = "target/debug/build/test-programs-fibo-workflow-builder-18540edf573e57ff/out/wasm32-unknown-unknown/release/test_programs_fibo_workflow.wasm"
+enabled = true
+content-digest = "sha256:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f1178676e69d"
 
-[[workflow]]
-name = "fibo-workflow2"
-oci = { registry = "ghcr.io", repository = "ghuser/project", tag = "latest", digest = "some-manifest-digest" }
-content-digest = "sha256:.."                                                                                   # optional
+# [[workflow]]
+# name = "fibo-workflow2"
+# oci = { registry = "ghcr.io", repository = "ghuser/project", tag = "latest", digest = "some-manifest-digest" }
+# content-digest = "sha256:.."                                                                                   # optional
