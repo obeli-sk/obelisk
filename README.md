@@ -77,8 +77,6 @@ cargo run --release
 
 ```sh
 obelisk executor serve &
-obelisk component add component.wasm # created by cargo component
-obelisk component list
 obelisk execution schedule <function> <params>
 ```
 
@@ -92,8 +90,10 @@ obelisk execution schedule <function> <params>
 * Basic CLI for wasm component configuration and scheduling
 * Github release, docker image, publish to crates.io, support `cargo-binstall`
 
-## Milestone 2: Allow remote interaction via CLI and web UI
-* Push/pull components to/from an OCI registry
+## Milestone 2: Allow remote interaction via CLI and web UI - started
+* Move component and general configuration into a TOML file
+* Publish the image to docker hub (minimal and an ubuntu based image)
+* Pull components -from an OCI registry
 * HTTP API for execution and component management
 * Interactive CLI for execution and component management
 * Params typecheck on creation, introspection of types of all functions in the system
@@ -103,7 +103,7 @@ obelisk execution schedule <function> <params>
 ## Milestone 3
 * URL paths with HTTP handlers registered by workflows, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs)
 * External Activity RPC
-* OpenAPI generator for activities
+* OpenAPI activity generator
 * Cancellation with recursion
 * Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
 
@@ -111,6 +111,7 @@ obelisk execution schedule <function> <params>
 * Multi process executors
 * Labels restricting workflows/activities to executors
 * ErrId that is passed back to parent, error detail
+* Periodic scheduling
 
 ## Running Tests
 ```sh
