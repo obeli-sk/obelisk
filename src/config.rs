@@ -7,6 +7,7 @@ use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
 use tokio::{sync::mpsc, task::AbortHandle};
 use tracing::{debug, error, info, trace, warn};
+use wasm_workers::workflow_worker::JoinNextBlockingStrategy;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,11 +26,19 @@ fn default_sqlite_file() -> String {
     "obelisk.sqlite".to_string()
 }
 
+fn default_max_retries() -> u32 {
+    5
+}
+
+fn default_retry_exp_backoff() -> DurationConfig {
+    DurationConfig::Millis(100)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentCommon {
     pub(crate) name: String,
-    #[serde(default = "get_true")]
+    #[serde(default = "default_true")]
     pub(crate) enabled: bool,
     pub(crate) location: ComponentLocation,
     pub(crate) content_digest: Option<String>,
@@ -37,6 +46,10 @@ pub(crate) struct ComponentCommon {
     pub(crate) config_id: ConfigId,
     #[serde(default)]
     pub(crate) exec: ExecConfig,
+    #[serde(default = "default_max_retries")]
+    pub(crate) max_retries: u32,
+    #[serde(default = "default_retry_exp_backoff")]
+    pub(crate) retry_exp_backoff: DurationConfig,
 }
 
 impl ComponentCommon {
@@ -109,7 +122,7 @@ impl Default for ExecConfig {
 pub(crate) struct Activity {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
-    #[serde(default = "get_true")]
+    #[serde(default = "default_true")]
     pub(crate) recycle_instances: bool,
 }
 
@@ -144,11 +157,31 @@ impl ComponentLocation {
     }
 }
 
+fn default_strategy() -> JoinNextBlockingStrategy {
+    JoinNextBlockingStrategy::Await
+}
+
+fn default_child_retry_exp_backoff() -> DurationConfig {
+    DurationConfig::Millis(100)
+}
+
+fn default_child_max_retries() -> u32 {
+    5
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Workflow {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
+    #[serde(default = "default_strategy")]
+    pub(crate) join_next_blocking_strategy: JoinNextBlockingStrategy,
+    #[serde(default = "default_child_retry_exp_backoff")]
+    pub(crate) child_retry_exp_backoff: DurationConfig,
+    #[serde(default = "default_child_max_retries")]
+    pub(crate) child_max_retries: u32,
+    #[serde(default = "default_true")]
+    pub(crate) non_blocking_event_batching: bool,
 }
 
 impl Workflow {
@@ -285,6 +318,6 @@ impl ConfigHolder {
 }
 
 // https://github.com/serde-rs/serde/issues/368
-fn get_true() -> bool {
+fn default_true() -> bool {
     true
 }

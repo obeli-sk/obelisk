@@ -20,15 +20,15 @@ type StoreCtx = utils::wasi_http::Ctx;
 #[derive(Clone, Debug, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub enum RecycleInstancesSetting {
     #[default]
-    Enable,
-    Disable,
+    Enabled,
+    Disabled,
 }
 impl From<bool> for RecycleInstancesSetting {
     fn from(value: bool) -> Self {
         if value {
-            Self::Enable
+            Self::Enabled
         } else {
-            Self::Disable
+            Self::Disabled
         }
     }
 }
@@ -39,8 +39,8 @@ type MaybeRecycledInstances =
 impl RecycleInstancesSetting {
     pub(crate) fn instantiate(&self) -> MaybeRecycledInstances {
         match self {
-            Self::Enable => Some(Arc::default()),
-            Self::Disable => None,
+            Self::Enabled => Some(Arc::default()),
+            Self::Disabled => None,
         }
     }
 }
@@ -287,7 +287,7 @@ pub(crate) mod tests {
                 wasm_path,
                 ActivityConfig {
                     config_id: ConfigId::generate(),
-                    recycled_instances: RecycleInstancesSetting::Disable,
+                    recycled_instances: RecycleInstancesSetting::Disabled,
                 },
                 engine,
                 clock_fn.clone(),
@@ -550,7 +550,7 @@ pub(crate) mod tests {
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                     ActivityConfig {
                         config_id: ConfigId::generate(),
-                        recycled_instances: RecycleInstancesSetting::Disable,
+                        recycled_instances: RecycleInstancesSetting::Disabled,
                     },
                     engine,
                     now,
@@ -594,7 +594,7 @@ pub(crate) mod tests {
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                     ActivityConfig {
                         config_id: ConfigId::generate(),
-                        recycled_instances: RecycleInstancesSetting::Disable,
+                        recycled_instances: RecycleInstancesSetting::Disabled,
                     },
                     engine,
                     sim_clock.get_clock_fn(),
@@ -705,7 +705,7 @@ pub(crate) mod tests {
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                     ActivityConfig {
                         config_id: ConfigId::generate(),
-                        recycled_instances: RecycleInstancesSetting::Disable,
+                        recycled_instances: RecycleInstancesSetting::Disabled,
                     },
                     engine,
                     sim_clock.get_clock_fn(),

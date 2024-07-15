@@ -15,15 +15,15 @@ location.file = "target/debug/build/test-programs-fibo-workflow-builder-18540edf
 enabled = true
 content_digest = "sha256:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f1178676e69d"
 config_id = "Conf_01J2TV69CGKVAJAHZ4ZWEZWRHJ"
-# max_retries = 5
-# retry_exp_backoff.millis = 100
+max_retries = 5
+retry_exp_backoff.millis = 100
 exec.batch_size = 10
 exec.lock_expiry.secs = 1
 exec.tick_sleep.millis = 200
-# join_next_blocking_strategy = "await"
-# child_retry_exp_backoff.millis = 10
-# child_max_retries = 5
-# non_blocking_event_batching_enabled = true
+join_next_blocking_strategy = "await"
+child_retry_exp_backoff.millis = 10
+child_max_retries = 5
+non_blocking_event_batching = false
 
 # [[workflow]]
 # name = "fibo_workflow2"

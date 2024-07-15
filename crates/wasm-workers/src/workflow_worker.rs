@@ -30,9 +30,19 @@ pub enum JoinNextBlockingStrategy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum NonBlockingEventBatching {
-    Disabled,
     #[default]
     Enabled,
+    Disabled,
+}
+
+impl From<bool> for NonBlockingEventBatching {
+    fn from(value: bool) -> Self {
+        if value {
+            NonBlockingEventBatching::Enabled
+        } else {
+            NonBlockingEventBatching::Disabled
+        }
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

@@ -185,10 +185,10 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
                 let exec_config = workflow.common.exec.into_exec_exec_config(config_id);
                 let workflow_config = WorkflowConfig {
                     config_id,
-                    join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
-                    child_retry_exp_backoff: Duration::from_millis(10),
-                    child_max_retries: 5,
-                    non_blocking_event_batching: NonBlockingEventBatching::Enabled,
+                    join_next_blocking_strategy: workflow.join_next_blocking_strategy,
+                    child_retry_exp_backoff: workflow.child_retry_exp_backoff.into(),
+                    child_max_retries: workflow.child_max_retries,
+                    non_blocking_event_batching: workflow.non_blocking_event_batching.into(),
                 };
                 let exec_task_handle = instantiate_workflow(
                     &component_id,
