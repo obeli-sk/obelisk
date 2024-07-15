@@ -1,10 +1,8 @@
 use crate::config::ComponentLocation;
-use crate::config::{ConfigHolder, ObeliskConfig};
+use crate::config::ConfigHolder;
 use anyhow::Context;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
-use concepts::prefixed_ulid::ConfigId;
-use concepts::storage::ComponentToggle;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::{ComponentId, FunctionRegistry};
@@ -20,7 +18,6 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use utils::time::now;
 use wasm_workers::activity_worker::{ActivityConfig, ActivityWorker, RecycleInstancesSetting};
@@ -152,27 +149,23 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
                 ExecutorTaskHandle,
             > = hashbrown::HashMap::new();
 
-            for activity in config.activity.into_iter().filter(|it| it.enabled) {
+            for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
                 let component_id = activity.verify_content_digest().await?;
-                let config_id = ConfigId::generate();
+                let config_id = activity.common.config_id;
                 info!(
                     "Instantiating activity {name} with configuration {config_id} and component {component_id}",
-                    name = activity.name
+                    name = activity.common.name
                 );
-                let exec_config = ExecConfig {
-                    batch_size: 10,
-                    lock_expiry: Duration::from_secs(1),
-                    tick_sleep: Duration::from_millis(200),
-                    config_id,
-                };
+                debug!("Full configuration: {activity:?}");
+                let exec_config = activity.common.exec.into_exec_exec_config(config_id);
                 let activity_config = ActivityConfig {
                     config_id,
-                    recycled_instances: RecycleInstancesSetting::Enable,
+                    recycled_instances: RecycleInstancesSetting::from(activity.recycle_instances),
                 };
                 let exec_task_handle = instantiate_activity(
                     &component_id,
-                    activity.name,
-                    assert_matches!(activity.location, ComponentLocation::File(wasm_path) => wasm_path),
+                    activity.common.name,
+                    assert_matches!(activity.common.location, ComponentLocation::File(wasm_path) => wasm_path),
                     exec_config,
                     activity_config,
                     db_pool.clone(),
@@ -181,19 +174,15 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
                 )?;
                 component_to_exec_join_handle.insert(component_id, exec_task_handle);
             }
-            for workflow in config.workflow.into_iter().filter(|it| it.enabled) {
+            for workflow in config.workflow.into_iter().filter(|it| it.common.enabled) {
                 let component_id = workflow.verify_content_digest().await?;
-                let config_id = ConfigId::generate();
+                let config_id = workflow.common.config_id;
                 info!(
                     "Instantiating workflow {name} with configuration {config_id} and component {component_id}",
-                    name = workflow.name
+                    name = workflow.common.name
                 );
-                let exec_config = ExecConfig {
-                    batch_size: 10,
-                    lock_expiry: Duration::from_secs(1),
-                    tick_sleep: Duration::from_millis(200),
-                    config_id,
-                };
+                debug!("Full configuration: {workflow:?}");
+                let exec_config = workflow.common.exec.into_exec_exec_config(config_id);
                 let workflow_config = WorkflowConfig {
                     config_id,
                     join_next_blocking_strategy: JoinNextBlockingStrategy::Await,
@@ -203,8 +192,8 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
                 };
                 let exec_task_handle = instantiate_workflow(
                     &component_id,
-                    workflow.name,
-                    assert_matches!(workflow.location, ComponentLocation::File(wasm_path) => wasm_path),
+                    workflow.common.name,
+                    assert_matches!(workflow.common.location, ComponentLocation::File(wasm_path) => wasm_path),
                     exec_config,
                     workflow_config,
                     db_pool.clone(),

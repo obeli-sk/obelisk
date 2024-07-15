@@ -5,7 +5,8 @@ watch_component_changes = false
 name = "fibo_activity"
 location.file = "target/debug/build/test-programs-fibo-activity-builder-06b4a054bad094c9/out/wasm32-wasi/release/test_programs_fibo_activity.wasm"
 content_digest = "sha256:23c07d064d2b16da634cf51599f0289984c28380fe97527aa593b2f1a09672c3"
-# recycle_instances = true
+recycle_instances = true
+config_id = "Conf_01J2V5R8K5402QQT5KMMXBQM7J"
 
 [[workflow]]
 name = "fibo_workflow"
@@ -13,6 +14,16 @@ name = "fibo_workflow"
 location.file = "target/debug/build/test-programs-fibo-workflow-builder-18540edf573e57ff/out/wasm32-unknown-unknown/release/test_programs_fibo_workflow.wasm"
 enabled = true
 content_digest = "sha256:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f1178676e69d"
+config_id = "Conf_01J2TV69CGKVAJAHZ4ZWEZWRHJ"
+# max_retries = 5
+# retry_exp_backoff.millis = 100
+exec.batch_size = 10
+exec.lock_expiry.secs = 1
+exec.tick_sleep.millis = 200
+# join_next_blocking_strategy = "await"
+# child_retry_exp_backoff.millis = 10
+# child_max_retries = 5
+# non_blocking_event_batching_enabled = true
 
 # [[workflow]]
 # name = "fibo_workflow2"
@@ -20,16 +31,6 @@ content_digest = "sha256:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f11
 # enabled = true
 # content_digest = "sha256:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f1178676e69d"
 
-# config_id = "Conf_01J2TV69CGKVAJAHZ4ZWEZWRHJ"
-# max_retries = 5
-# retry_exp_backoff.millis = 100
-# exec.batch_size = 10
-# exec.lock_expiry.secs = 1
-# exec.tick_sleep.millis = 200
-# join_next_blocking_strategy = "await"
-# child_retry_exp_backoff.millis = 10
-# child_max_retries = 5
-# non_blocking_event_batching_enabled = true
 
 # [[workflow]]
 # name = "fibo_workflow2"

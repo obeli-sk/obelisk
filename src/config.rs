@@ -1,5 +1,5 @@
 use anyhow::{bail, Context as _};
-use concepts::{ComponentId, ComponentType};
+use concepts::{prefixed_ulid::ConfigId, ComponentId, ComponentType};
 use config::{builder::AsyncState, ConfigBuilder, Environment, File, FileFormat};
 use directories::ProjectDirs;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
@@ -27,28 +27,102 @@ fn default_sqlite_file() -> String {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Activity {
+pub(crate) struct ComponentCommon {
     pub(crate) name: String,
     #[serde(default = "get_true")]
     pub(crate) enabled: bool,
     pub(crate) location: ComponentLocation,
-    // #[serde(rename = "content-digest")]
     pub(crate) content_digest: Option<String>,
+    #[serde(default = "ConfigId::generate")]
+    pub(crate) config_id: ConfigId,
+    #[serde(default)]
+    pub(crate) exec: ExecConfig,
 }
 
-impl Activity {
-    pub(crate) async fn verify_content_digest(&self) -> Result<ComponentId, anyhow::Error> {
-        verify_content_digest(
-            &self.location,
-            self.content_digest.as_deref(),
-            &self.name,
-            ComponentType::WasmActivity,
-        )
-        .await
+impl ComponentCommon {
+    async fn verify_content_digest(
+        &self,
+        r#type: ComponentType,
+    ) -> Result<ComponentId, anyhow::Error> {
+        let actual = self.location.calculate_content_digest().await?;
+        if let Some(specified) = &self.content_digest {
+            if *specified != actual.to_string() {
+                bail!("Wrong content digest for {type} {name}, specified {specified} , actually got {actual}",
+                    name = self.name)
+            }
+        }
+        Ok(actual)
     }
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DurationConfig {
+    Secs(u64),
+    Millis(u64),
+}
+
+impl From<DurationConfig> for Duration {
+    fn from(value: DurationConfig) -> Self {
+        match value {
+            DurationConfig::Millis(millis) => Duration::from_millis(millis),
+            DurationConfig::Secs(secs) => Duration::from_secs(secs),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExecConfig {
+    batch_size: u32,
+    lock_expiry: DurationConfig,
+    tick_sleep: DurationConfig,
+}
+
+impl ExecConfig {
+    pub(crate) fn into_exec_exec_config(
+        self,
+        config_id: ConfigId,
+    ) -> executor::executor::ExecConfig {
+        executor::executor::ExecConfig {
+            lock_expiry: self.lock_expiry.into(),
+            tick_sleep: self.tick_sleep.into(),
+            batch_size: self.batch_size,
+            config_id,
+        }
+    }
+}
+
+impl Default for ExecConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 5,
+            lock_expiry: DurationConfig::Secs(1),
+            tick_sleep: DurationConfig::Millis(200),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Activity {
+    #[serde(flatten)]
+    pub(crate) common: ComponentCommon,
+    #[serde(default = "get_true")]
+    pub(crate) recycle_instances: bool,
+}
+
+impl Activity {
+    pub(crate) async fn verify_content_digest(&self) -> Result<ComponentId, anyhow::Error> {
+        self.common
+            .verify_content_digest(ComponentType::WasmActivity)
+            .await
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum ComponentLocation {
     File(PathBuf),
     Oci(Oci),
@@ -73,37 +147,15 @@ impl ComponentLocation {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Workflow {
-    pub(crate) name: String,
-    #[serde(default = "get_true")]
-    pub(crate) enabled: bool,
-    pub(crate) location: ComponentLocation,
-    pub(crate) content_digest: Option<String>,
-}
-
-async fn verify_content_digest(
-    location: &ComponentLocation,
-    specified_content_digest: Option<&str>,
-    name: &str,
-    r#type: ComponentType,
-) -> Result<ComponentId, anyhow::Error> {
-    let actual = location.calculate_content_digest().await?;
-    if let Some(specified) = specified_content_digest {
-        if *specified != actual.to_string() {
-            bail!("Wrong content digest for {type} {name}, specified {specified} , actually got {actual}")
-        }
-    }
-    Ok(actual)
+    #[serde(flatten)]
+    pub(crate) common: ComponentCommon,
 }
 
 impl Workflow {
     pub(crate) async fn verify_content_digest(&self) -> Result<ComponentId, anyhow::Error> {
-        verify_content_digest(
-            &self.location,
-            self.content_digest.as_deref(),
-            &self.name,
-            ComponentType::WasmWorkflow,
-        )
-        .await
+        self.common
+            .verify_content_digest(ComponentType::WasmWorkflow)
+            .await
     }
 }
 
