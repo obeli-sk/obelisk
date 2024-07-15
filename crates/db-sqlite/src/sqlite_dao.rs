@@ -317,7 +317,6 @@ impl SqlitePool {
                 conn.execute(CREATE_TABLE_T_STATE, [])?;
                 trace!("Executing `CREATE_TABLE_T_DELAY`");
                 conn.execute(CREATE_TABLE_T_DELAY, [])?;
-                info!("Done setting up sqlite");
                 Ok::<_, SqliteError>(())
             },
             Span::current(),
@@ -329,6 +328,7 @@ impl SqlitePool {
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, SqliteError> {
         // Work around a race condition when creating a new database file returns "Database Busy" on one of the threads.
         // https://github.com/ryanfowler/async-sqlite/issues/10
+        let path = path.as_ref();
         let client = ClientBuilder::new()
             .path(&path)
             .journal_mode(JournalMode::Wal)
@@ -342,6 +342,7 @@ impl SqlitePool {
             .open()
             .await?;
         Self::init(&pool).await?;
+        info!(?path, "Done setting up sqlite",);
         Ok(Self {
             pool,
             response_subscribers: Arc::default(),

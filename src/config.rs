@@ -1,6 +1,6 @@
 use anyhow::{bail, Context as _};
 use concepts::{ComponentId, ComponentType};
-use config::{builder::AsyncState, Case, ConfigBuilder, Environment, File, FileFormat};
+use config::{builder::AsyncState, ConfigBuilder, Environment, File, FileFormat};
 use directories::ProjectDirs;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
 use serde::Deserialize;
@@ -9,7 +9,6 @@ use tokio::{sync::mpsc, task::AbortHandle};
 use tracing::{debug, error, info, trace, warn};
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ObeliskConfig {
     #[serde(default = "default_sqlite_file")]
@@ -27,7 +26,6 @@ fn default_sqlite_file() -> String {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Activity {
     pub(crate) name: String,
@@ -51,7 +49,6 @@ impl Activity {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 pub(crate) enum ComponentLocation {
     File(PathBuf),
     Oci(Oci),
@@ -74,7 +71,6 @@ impl ComponentLocation {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Workflow {
     pub(crate) name: String,
@@ -119,7 +115,6 @@ pub(crate) enum Oci {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OciTable {
     pub(crate) registry: Option<String>,
@@ -184,7 +179,7 @@ impl ConfigHolder {
             );
         }
         let settings = builder
-            .add_source(Environment::with_prefix("obelisk").convert_case(Case::Kebab))
+            .add_source(Environment::with_prefix("obelisk"))
             .build()
             .await?;
         Ok(settings.try_deserialize()?)
