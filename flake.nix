@@ -100,13 +100,11 @@
                 rustToolchain
                 tokio-console
                 wasm-tools
-
-                flyctl
+                wkg
               ];
           };
 
           packages = rec {
-            inherit wkg;
             obelisk = makeObelisk pkgs;
             obeliskMusl = makeObelisk pkgsMusl;
             docker = makeDocker pkgs obeliskMusl false;
