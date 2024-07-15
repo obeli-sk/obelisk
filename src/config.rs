@@ -31,7 +31,8 @@ fn default_sqlite_file() -> String {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Activity {
     pub(crate) name: String,
-    pub(crate) enabled: Option<bool>,
+    #[serde(default = "get_true")]
+    pub(crate) enabled: bool,
     pub(crate) location: ComponentLocation,
     // #[serde(rename = "content-digest")]
     pub(crate) content_digest: Option<String>,
@@ -77,7 +78,8 @@ impl ComponentLocation {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Workflow {
     pub(crate) name: String,
-    pub(crate) enabled: Option<bool>,
+    #[serde(default = "get_true")]
+    pub(crate) enabled: bool,
     pub(crate) location: ComponentLocation,
     pub(crate) content_digest: Option<String>,
 }
@@ -233,4 +235,9 @@ impl ConfigHolder {
         .abort_handle();
         Ok(ConfigWatcher { rx, abort_handle })
     }
+}
+
+// https://github.com/serde-rs/serde/issues/368
+fn get_true() -> bool {
+    true
 }

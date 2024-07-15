@@ -152,7 +152,7 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
                 ExecutorTaskHandle,
             > = hashbrown::HashMap::new();
 
-            for activity in config.activity {
+            for activity in config.activity.into_iter().filter(|it| it.enabled) {
                 let component_id = activity.verify_content_digest().await?;
                 let config_id = ConfigId::generate();
                 info!(
@@ -181,7 +181,7 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
                 )?;
                 component_to_exec_join_handle.insert(component_id, exec_task_handle);
             }
-            for workflow in config.workflow {
+            for workflow in config.workflow.into_iter().filter(|it| it.enabled) {
                 let component_id = workflow.verify_content_digest().await?;
                 let config_id = ConfigId::generate();
                 info!(
