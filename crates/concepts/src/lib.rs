@@ -764,8 +764,8 @@ pub enum HashType {
 )]
 #[display(fmt = "{hash_type}:{hash_base16}")]
 pub struct ComponentId {
-    hash_type: HashType,
-    hash_base16: StrVariant,
+    pub hash_type: HashType,
+    pub hash_base16: StrVariant,
 }
 
 impl ComponentId {
