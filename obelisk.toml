@@ -3,17 +3,17 @@ watch_component_changes = false
 
 [[activity]]
 name = "fibo_activity"
-location.file = "target/debug/build/test-programs-fibo-activity-builder-06b4a054bad094c9/out/wasm32-wasi/release/test_programs_fibo_activity.wasm"
-content_digest = "sha256:23c07d064d2b16da634cf51599f0289984c28380fe97527aa593b2f1a09672c3"
+location.oci = "docker.io/tomasolvecky/fibo_activity"
 recycle_instances = true
+# TODO: Assign on new config creation, reuse if nothing was modified
 config_id = "Conf_01J2V5R8K5402QQT5KMMXBQM7J"
 
 [[workflow]]
 name = "fibo_workflow"
-# oci = "dockeraccount/test:latest"
-location.file = "target/debug/build/test-programs-fibo-workflow-builder-18540edf573e57ff/out/wasm32-unknown-unknown/release/test_programs_fibo_workflow.wasm"
+location.oci = "docker.io/tomasolvecky/fibo_workflow:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f1178676e69d@sha256:63a3dd36c33ba240080b5db17a28a4853e00f1e393a1bd6bb7a014679ec3fd32"
 enabled = true
 content_digest = "sha256:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f1178676e69d"
+# TODO: Assign on new config creation, reuse if nothing was modified
 config_id = "Conf_01J2TV69CGKVAJAHZ4ZWEZWRHJ"
 max_retries = 5
 retry_exp_backoff.millis = 100
@@ -24,15 +24,3 @@ join_next_blocking_strategy = "await"
 child_retry_exp_backoff.millis = 10
 child_max_retries = 5
 non_blocking_event_batching = false
-
-# [[workflow]]
-# name = "fibo_workflow2"
-# location.file = "target/debug/build/test-programs-fibo-workflow-builder-18540edf573e57ff/out/wasm32-unknown-unknown/release/test_programs_fibo_workflow.wasm"
-# enabled = true
-# content_digest = "sha256:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f1178676e69d"
-
-
-# [[workflow]]
-# name = "fibo_workflow2"
-# oci = { registry = "ghcr.io", repository = "ghuser/project", tag = "latest", digest = "some_manifest_digest" }
-# content_digest = "sha256:.."                                                                                   # optional

@@ -1,7 +1,5 @@
-use crate::config::ComponentLocation;
 use crate::config::ConfigHolder;
 use anyhow::Context;
-use assert_matches::assert_matches;
 use async_trait::async_trait;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
@@ -23,9 +21,7 @@ use utils::time::now;
 use wasm_workers::activity_worker::{ActivityConfig, ActivityWorker, RecycleInstancesSetting};
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
-use wasm_workers::workflow_worker::{
-    JoinNextBlockingStrategy, NonBlockingEventBatching, WorkflowConfig, WorkflowWorker,
-};
+use wasm_workers::workflow_worker::{WorkflowConfig, WorkflowWorker};
 
 #[derive(Debug, thiserror::Error)]
 enum RegistrationError {
@@ -150,10 +146,10 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
             > = hashbrown::HashMap::new();
 
             for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
-                let component_id = activity.verify_content_digest().await?;
+                let (component_id, wasm_path) = activity.verify_content_digest().await?;
                 let config_id = activity.common.config_id;
                 info!(
-                    "Instantiating activity {name} with configuration {config_id} and component {component_id}",
+                    "Instantiating activity {name} with configuration {config_id} and component {component_id} from {wasm_path:?}",
                     name = activity.common.name
                 );
                 debug!("Full configuration: {activity:?}");
@@ -165,7 +161,7 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
                 let exec_task_handle = instantiate_activity(
                     &component_id,
                     activity.common.name,
-                    assert_matches!(activity.common.location, ComponentLocation::File(wasm_path) => wasm_path),
+                    wasm_path,
                     exec_config,
                     activity_config,
                     db_pool.clone(),
@@ -175,10 +171,10 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
                 component_to_exec_join_handle.insert(component_id, exec_task_handle);
             }
             for workflow in config.workflow.into_iter().filter(|it| it.common.enabled) {
-                let component_id = workflow.verify_content_digest().await?;
+                let (component_id, wasm_path) = workflow.verify_content_digest().await?;
                 let config_id = workflow.common.config_id;
                 info!(
-                    "Instantiating workflow {name} with configuration {config_id} and component {component_id}",
+                    "Instantiating workflow {name} with configuration {config_id} and component {component_id} from {wasm_path:?}",
                     name = workflow.common.name
                 );
                 debug!("Full configuration: {workflow:?}");
@@ -193,7 +189,7 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
                 let exec_task_handle = instantiate_workflow(
                     &component_id,
                     workflow.common.name,
-                    assert_matches!(workflow.common.location, ComponentLocation::File(wasm_path) => wasm_path),
+                    wasm_path,
                     exec_config,
                     workflow_config,
                     db_pool.clone(),
@@ -228,7 +224,7 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
                 let mut config = config;
                 loop {
                     // if let Some(config) = config.take() {
-                    println!("Updating components: {config:#?}");
+                    info!("Updating components: {config:#?}");
                     // if let Err(err) = update_components(
                     //     db_pool.clone(),
                     //     &mut component_to_exec_join_handle,
@@ -264,7 +260,7 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
                         }
                     }
                 }
-                println!("Gracefully shutting down");
+                info!("Gracefully shutting down");
                 timers_watcher.close().await;
                 for exec_join_handle in component_to_exec_join_handle.values() {
                     exec_join_handle.close().await;

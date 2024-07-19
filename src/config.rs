@@ -4,6 +4,7 @@ use config::{builder::AsyncState, ConfigBuilder, Environment, File, FileFormat};
 use directories::ProjectDirs;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
 use serde::Deserialize;
+use serde_with::serde_as;
 use std::{path::PathBuf, time::Duration};
 use tokio::{sync::mpsc, task::AbortHandle};
 use tracing::{debug, error, info, trace, warn};
@@ -47,24 +48,24 @@ pub(crate) struct ComponentCommon {
     #[serde(default)]
     pub(crate) exec: ExecConfig,
     #[serde(default = "default_max_retries")]
-    pub(crate) max_retries: u32,
+    pub(crate) max_retries: u32, // TODO: persist and use when creating an execution
     #[serde(default = "default_retry_exp_backoff")]
-    pub(crate) retry_exp_backoff: DurationConfig,
+    pub(crate) retry_exp_backoff: DurationConfig, // TODO: persist and use when creating an execution
 }
 
 impl ComponentCommon {
     async fn verify_content_digest(
         &self,
         r#type: ComponentType,
-    ) -> Result<ComponentId, anyhow::Error> {
-        let actual = self.location.calculate_content_digest().await?;
+    ) -> Result<(ComponentId, PathBuf), anyhow::Error> {
+        let (actual, wasm_path) = self.location.calculate_content_digest().await?;
         if let Some(specified) = &self.content_digest {
             if *specified != actual.to_string() {
                 bail!("Wrong content digest for {type} {name}, specified {specified} , actually got {actual}",
                     name = self.name)
             }
         }
-        Ok(actual)
+        Ok((actual, wasm_path))
     }
 }
 
@@ -127,33 +128,154 @@ pub(crate) struct Activity {
 }
 
 impl Activity {
-    pub(crate) async fn verify_content_digest(&self) -> Result<ComponentId, anyhow::Error> {
+    pub(crate) async fn verify_content_digest(
+        &self,
+    ) -> Result<(ComponentId, PathBuf), anyhow::Error> {
         self.common
             .verify_content_digest(ComponentType::WasmActivity)
             .await
     }
 }
 
+#[serde_as]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ComponentLocation {
     File(PathBuf),
-    Oci(Oci),
+    Oci(#[serde_as(as = "serde_with::DisplayFromStr")] oci_distribution::Reference),
 }
 
 impl ComponentLocation {
-    async fn calculate_content_digest(&self) -> Result<ComponentId, anyhow::Error> {
+    async fn calculate_content_digest(&self) -> Result<(ComponentId, PathBuf), anyhow::Error> {
         match self {
             Self::File(wasm_path) => {
                 let wasm_path = wasm_path
                     .canonicalize()
                     .with_context(|| format!("cannot canonicalize file `{wasm_path:?}`"))?;
-                wasm_workers::component_detector::file_hash(&wasm_path)
+                let component_id = wasm_workers::component_detector::file_hash(&wasm_path)
                     .await
-                    .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))
+                    .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
+
+                Ok((component_id, wasm_path))
             }
-            Self::Oci(_) => unimplemented!("calculate_content_digest for OCI not implemented yet"),
+            Self::Oci(image) => oci::obtan_wasm_from_oci(&image).await,
         }
+    }
+}
+
+mod oci {
+    use std::path::PathBuf;
+
+    use anyhow::{bail, ensure, Context};
+    use concepts::ComponentId;
+    use tracing::{debug, info};
+
+    pub(crate) async fn obtan_wasm_from_oci(
+        image: &oci_distribution::Reference,
+    ) -> Result<(ComponentId, PathBuf), anyhow::Error> {
+        let client = {
+            let client =
+                oci_distribution::Client::new(oci_distribution::client::ClientConfig::default());
+            oci_wasm::WasmClient::new(client)
+        };
+        info!("Fetching metadata for {image}");
+        let auth = get_oci_auth(&image)?;
+        let (_oci_config, wasm_config, metadata_digest) =
+            client.pull_manifest_and_config(&image, &auth).await?;
+        wasm_config
+            .component
+            .context("image must contain a wasi component")?;
+        ensure!(
+            wasm_config.layer_digests.len() == 1,
+            "expected single layer in {image}, got {layers}",
+            layers = wasm_config.layer_digests.len()
+        );
+        let content_digest = wasm_config.layer_digests.first().expect("ensured already");
+
+        // TODO: avoid the metadata fetch if we know the metadata digest
+        debug!(
+            "TODO: Saving metadata digest {metadata_digest} to content digest {content_digest:?}"
+        );
+
+        use directories::ProjectDirs;
+        let project_dirs = ProjectDirs::from("com", "obelisk", "obelisk")
+            .context("cannot obtain project directories")?;
+        let cache_dir = project_dirs.cache_dir().join("wasm");
+        tokio::fs::create_dir_all(&cache_dir)
+            .await
+            .with_context(|| format!("cannot create cache directory {cache_dir:?}"))?;
+        let wasm_path = cache_dir.join(PathBuf::from(format!(
+            "{content_digest}.wasm",
+            content_digest = content_digest
+                .strip_prefix("sha256:")
+                .unwrap_or(content_digest)
+        )));
+        // Do not download if the file exists and matches the expected sha256 digest.
+        match wasm_workers::component_detector::file_hash(&wasm_path).await {
+            Ok(actual) if actual.to_string() == *content_digest => {
+                debug!("Found in cache {wasm_path:?}");
+            }
+            _ => {
+                info!("Pulling image to {wasm_path:?}");
+                let data = client
+                    // FIXME: do not download all layers at once to memory
+                    .pull(&image, &auth)
+                    .await
+                    .with_context(|| format!("Unable to pull image {image}"))?;
+
+                let data = {
+                    assert_eq!(1, data.layers.len(), "ensured already");
+                    data.layers
+                        .into_iter()
+                        .next()
+                        .expect("ensured already")
+                        .data
+                };
+                tokio::fs::write(&wasm_path, data)
+                    .await
+                    .with_context(|| format!("unable to write file {wasm_path:?}"))?;
+            }
+        }
+        // Verify that the sha256 matches the actual download.
+        let actual_hash = wasm_workers::component_detector::file_hash(&wasm_path)
+            .await
+            .with_context(|| {
+                format!("failed to compute sha256 of the downloaded wasm file {wasm_path:?}")
+            })?;
+        ensure!(
+        *content_digest == actual_hash.to_string() ,
+        "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {content_digest}, got {actual_hash}"
+    );
+
+        Ok((actual_hash, wasm_path))
+    }
+
+    // TODO: move to `wasm_pkg_common`
+    fn get_oci_auth(
+        reference: &oci_distribution::Reference,
+    ) -> Result<oci_distribution::secrets::RegistryAuth, anyhow::Error> {
+        /// Translate the registry into a key for the auth lookup.
+        fn get_docker_config_auth_key(reference: &oci_distribution::Reference) -> &str {
+            match reference.resolve_registry() {
+                "index.docker.io" => "https://index.docker.io/v1/", // Default registry uses this key.
+                other => other, // All other registries are keyed by their domain name without the `https://` prefix or any path suffix.
+            }
+        }
+        let server_url = get_docker_config_auth_key(reference);
+        match docker_credential::get_credential(server_url) {
+            Ok(docker_credential::DockerCredential::UsernamePassword(username, password)) => {
+                return Ok(oci_distribution::secrets::RegistryAuth::Basic(
+                    username, password,
+                ));
+            }
+            Ok(docker_credential::DockerCredential::IdentityToken(_)) => {
+                bail!("identity tokens not supported")
+            }
+            Err(err) => {
+                debug!("Failed to look up OCI credentials with key `{server_url}`: {err}");
+            }
+        }
+        Ok(oci_distribution::secrets::RegistryAuth::Anonymous)
     }
 }
 
@@ -185,27 +307,13 @@ pub(crate) struct Workflow {
 }
 
 impl Workflow {
-    pub(crate) async fn verify_content_digest(&self) -> Result<ComponentId, anyhow::Error> {
+    pub(crate) async fn verify_content_digest(
+        &self,
+    ) -> Result<(ComponentId, PathBuf), anyhow::Error> {
         self.common
             .verify_content_digest(ComponentType::WasmWorkflow)
             .await
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub(crate) enum Oci {
-    String(String),
-    Table(OciTable),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct OciTable {
-    pub(crate) registry: Option<String>,
-    pub(crate) repository: String,
-    pub(crate) tag: Option<String>,
-    pub(crate) digest: Option<String>,
 }
 
 pub(crate) struct ConfigHolder {

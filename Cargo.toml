@@ -26,10 +26,14 @@ config.workspace = true
 console-subscriber = { workspace = true, optional = true }
 const_format.workspace = true
 directories.workspace = true
+docker_credential.workspace = true
 hashbrown.workspace = true
 notify-debouncer-mini.workspace = true
+oci-distribution = { workspace = true }
+oci-wasm = { workspace = true }
 serde_json.workspace = true
 serde.workspace = true
+serde_with.workspace = true
 shadow-rs.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = [
@@ -143,6 +147,7 @@ const_format = "0.2.32"
 criterion = "0.5"
 derivative = "2.2.0"
 derive_more = "0.99.17"
+docker_credential = "1.2.1"
 futures-util = "0.3.30"
 getrandom = "=0.2.11" # For madsim patch
 hashbrown = { version = "0.14.3", features = ["serde"] }
@@ -155,6 +160,12 @@ itertools = "0.12.1"
 lazy_static = "1.4"
 madsim = "0.2.30"
 notify-debouncer-mini = "0.4.1"
+oci-distribution = { version = "0.11.0", default-features = false, features = [
+    "rustls-tls",
+] }
+oci-wasm = { version = "0.0.4", default-features = false, features = [
+    "rustls-tls",
+] }
 rand = "0.8.5"
 rstest = "0.18.2"
 rusqlite = { version = "0.31.0" }

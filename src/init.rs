@@ -1,3 +1,5 @@
+use tracing::level_filters::LevelFilter;
+
 fn is_env_true(key: &str) -> bool {
     std::env::var(key)
         .ok()
@@ -41,12 +43,14 @@ pub(crate) fn init() -> Guard {
         .with(tokio_console_layer())
         .with(
             tracing_subscriber::fmt::layer()
-                .with_thread_ids(true)
-                .with_file(true)
-                .with_line_number(true)
-                .json(),
+                .without_time()
+                .with_target(false),
         )
-        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .with(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
         .with(if is_env_true("CHROME_TRACE") {
             let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
                 .trace_style(tracing_chrome::TraceStyle::Async)

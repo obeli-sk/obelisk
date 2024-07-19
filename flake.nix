@@ -39,7 +39,6 @@
                 };
               };
               nativeBuildInputs = [ pkgs.pkg-config ];
-              PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
               doCheck = false;
             };
           makeDocker = pkgs: obelisk: binSh:
@@ -111,6 +110,7 @@
             dockerBinSh = makeDocker pkgs obeliskMusl true;
             default = obelisk;
           };
+
         }
       );
 }
