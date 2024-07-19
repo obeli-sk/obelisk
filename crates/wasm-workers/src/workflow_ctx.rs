@@ -36,7 +36,7 @@ pub(crate) enum FunctionError {
     DbError(#[from] DbError),
     #[error("child finished with an execution error: {0}")]
     ChildExecutionError(FinishedExecutionError), // FIXME Add parameter/result parsing errors
-    #[error("scheduling failed, metadata for {ffqn} not found")]
+    #[error("sumbitting failed, metadata for {ffqn} not found")]
     FunctionMetadataNotFound { ffqn: FunctionFqn },
     #[error("uncategorized error - {0}")]
     UncategorizedError(&'static str),
@@ -59,7 +59,7 @@ impl FunctionError {
             Self::FunctionMetadataNotFound { ffqn } => {
                 WorkerResult::Err(WorkerError::IntermittentError {
                     reason: StrVariant::Arc(Arc::from(format!(
-                        "attempted to schedule an execution with no active component, function metadata not found for {ffqn}"))),
+                        "attempted to submit an execution with no active component, function metadata not found for {ffqn}"))),
                     err: None,
                     version,
                 })

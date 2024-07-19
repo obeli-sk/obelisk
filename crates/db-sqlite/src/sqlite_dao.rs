@@ -4,15 +4,18 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{DelayId, ExecutorId, JoinSetId, PrefixedUlid, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
-        DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
-        ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+        AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError,
+        ComponentToggle, ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError,
+        DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog, ExpiredTimer,
+        HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution,
         PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
         DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
-    ExecutionId, FunctionFqn, StrVariant,
+    ComponentId, ComponentType, ExecutionId, FunctionFqn, FunctionMetadata, FunctionRegistry,
+    ParameterTypes, ReturnType, StrVariant,
 };
+use itertools::Itertools as _;
 use rusqlite::{
     types::{FromSql, FromSqlError},
     Connection, OptionalExtension, Transaction,
@@ -108,6 +111,31 @@ CREATE TABLE IF NOT EXISTS t_delay (
     delay_id TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     PRIMARY KEY (execution_id, join_set_id, delay_id)
+)
+";
+
+const CREATE_TABLE_T_COMPONENT: &str = r"
+CREATE TABLE IF NOT EXISTS t_component (
+    created_at TEXT NOT NULL,
+    last_updated_at TEXT NOT NULL,
+    component_id TEXT NOT NULL,
+    toggle INTEGER NOT NULL,
+    component_type TEXT NOT NULL,
+    config JSONB,
+    name TEXT NOT NULL,
+    exports JSONB NOT NULL,
+    imports JSONB NOT NULL,
+    PRIMARY KEY (component_id)
+)
+"; // FIXME add NOT NULL to config
+
+const CREATE_TABLE_T_COMPONENT_EXPORT: &str = r"
+CREATE TABLE IF NOT EXISTS t_component_export (
+    component_id TEXT NOT NULL,
+    ffqn TEXT NOT NULL,
+    parameter_types JSONB NOT NULL,
+    return_type JSONB,
+    PRIMARY KEY (ffqn)
 )
 ";
 
@@ -317,6 +345,10 @@ impl SqlitePool {
                 conn.execute(CREATE_TABLE_T_STATE, [])?;
                 trace!("Executing `CREATE_TABLE_T_DELAY`");
                 conn.execute(CREATE_TABLE_T_DELAY, [])?;
+                trace!("Executing `CREATE_TABLE_T_COMPONENT`");
+                conn.execute(CREATE_TABLE_T_COMPONENT, [])?;
+                trace!("Executing `CREATE_TABLE_T_COMPONENT_EXPORT`");
+                conn.execute(CREATE_TABLE_T_COMPONENT_EXPORT, [])?;
                 Ok::<_, SqliteError>(())
             },
             Span::current(),
@@ -1215,6 +1247,91 @@ impl SqlitePool {
             _ => {}
         }
     }
+
+    fn get_enabled_component_id_by_export(
+        tx: &Transaction,
+        ffqn: &FunctionFqn,
+    ) -> Result<Option<ComponentId>, SqliteError> {
+        tx.prepare(
+            "SELECT c.component_id FROM t_component c INNER JOIN t_component_export e WHERE \
+                c.component_id = e.component_id AND e.ffqn = :ffqn",
+        )?
+        .query_row(
+            named_params! {
+                ":ffqn": ffqn.to_string(),
+            },
+            |row| {
+                row.get::<_, FromStrWrapper<ComponentId>>("component_id")
+                    .map(|it| it.0)
+            },
+        )
+        .optional()
+        .map_err(|err| SqliteError::Sqlite(err.into()))
+    }
+
+    fn component_get_with_metadata(
+        conn: &Connection,
+        component_id: ComponentId,
+    ) -> Result<(ComponentWithMetadata, ComponentToggle), SqliteError> {
+        conn.prepare(
+                "SELECT toggle, component_type, config, name, exports, imports FROM t_component WHERE component_id = :component_id",
+            )?
+            .query_row(named_params! {
+                ":component_id": component_id.to_string(),
+            }, |row| {
+                let enabled: bool = row.get("toggle")?;
+                let component_type = row
+                    .get::<_, FromStrWrapper<ComponentType>>("component_type")?
+                    .0;
+                let config = row.get::<_, serde_json::Value>("config")?;
+                let exports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("exports")?.0;
+                let imports = row.get::<_, JsonWrapper<Vec<FunctionMetadata>>>("imports")?.0;
+                let name = row.get("name")?;
+                let component = Component {
+                    component_id,
+                    component_type,
+                    config,
+                    name,
+                };
+                let toggle = ComponentToggle::from(enabled);
+                Ok((ComponentWithMetadata { component, exports, imports }, toggle))
+            })
+            .map_err(SqliteError::from)
+    }
+
+    fn component_set_exports(
+        tx: &Transaction,
+        component: &ComponentWithMetadata,
+    ) -> Result<(), SqliteError> {
+        for (ffqn, parameter_types, return_type) in &component.exports {
+            let parameter_types = serde_json::to_string(&parameter_types).map_err(|err| {
+                error!("Cannot serialize {:?} - {err:?}", parameter_types);
+                rusqlite::Error::ToSqlConversionFailure(err.into())
+            })?;
+            let return_type = return_type
+                .as_ref()
+                .map(|return_type| {
+                    serde_json::to_string(return_type).map_err(|err| {
+                        error!("Cannot serialize {return_type:?} - {err:?}");
+                        rusqlite::Error::ToSqlConversionFailure(err.into())
+                    })
+                })
+                .transpose()?;
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO t_component_export \
+            (component_id, ffqn, parameter_types, return_type)
+            VALUES \
+            (:component_id, :ffqn, :parameter_types, :return_type)",
+            )?;
+            stmt.execute(named_params! {
+                ":component_id": component.component.component_id.to_string(),
+                ":ffqn": ffqn.to_string(),
+                ":parameter_types": parameter_types,
+                ":return_type": return_type
+            })?;
+        }
+        Ok(())
+    }
 }
 
 enum IndexAction {
@@ -1765,6 +1882,201 @@ impl DbConnection for SqlitePool {
             _ = receiver.recv() => {} // Got results eventually
             () = tokio::time::sleep(max_wait) => {} // Timeout
         }
+    }
+
+    #[instrument(skip_all, fields(component_id = %component.component.component_id))]
+    async fn component_add(
+        &self,
+        created_at: DateTime<Utc>,
+        component: ComponentWithMetadata,
+        toggle: ComponentToggle,
+    ) -> Result<(), ComponentAddError> {
+        trace!("component_add");
+        let exports = serde_json::to_string(&component.exports).map_err(|serde| {
+            error!("Cannot serialize exports - {serde:?}");
+            ComponentAddError::DbError(DbError::from(SqliteError::Parsing(serde.into())))
+        })?;
+        let imports = serde_json::to_string(&component.imports).map_err(|serde| {
+            error!("Cannot serialize imports - {serde:?}");
+            ComponentAddError::DbError(DbError::from(SqliteError::Parsing(serde.into())))
+        })?;
+        self.pool
+            .transaction_write_with_span::<_, _, SqliteError>(
+                move |tx| {
+                    if toggle == ComponentToggle::Enabled {
+                        let mut conflicts = hashbrown::HashSet::new();
+                        for (export_ffqn, _, _) in &component.exports {
+                            if let Some(conflict) = Self::get_enabled_component_id_by_export(tx, export_ffqn)? {
+                                conflicts.insert(conflict);
+                            }
+                        }
+                        if !conflicts.is_empty() {
+                            return Ok(Result::Err(conflicts.into_iter().collect_vec()));
+                        }
+                    }
+
+                    let mut stmt = tx.prepare(
+                        "INSERT INTO t_component \
+                            (created_at, last_updated_at, component_id, toggle, component_type, config, name, exports, imports) \
+                            VALUES \
+                            (:created_at, :last_updated_at, :component_id, :toggle, :component_type, :config, :name, :exports, :imports)",
+                    )?;
+                    stmt.execute(named_params! {
+                        ":created_at": created_at,
+                        ":last_updated_at": created_at,
+                        ":component_id": component.component.component_id.to_string(),
+                        ":toggle": bool::from(toggle),
+                        ":component_type": component.component.component_type.to_string(),
+                        ":config": component.component.config,
+                        ":name": component.component.name,
+                        ":exports": exports,
+                        ":imports": imports
+                        })?;
+                    if toggle == ComponentToggle::Enabled {
+                        Self::component_set_exports(tx, &component)?;
+                    }
+                    Ok(Result::Ok(()))
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(|err| ComponentAddError::DbError(DbError::from(err)))?
+            .map_err(ComponentAddError::Conflict)
+    }
+
+    #[instrument(skip(self))]
+    async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError> {
+        trace!("list_components");
+        self.pool
+            .conn_with_err_and_span::<_, _, SqliteError>(
+                move |conn| {
+                    conn.prepare(
+                        "SELECT component_id, component_type, config, name FROM t_component WHERE toggle = :toggle ORDER BY last_updated_at",
+                    )?
+                    .query_map(named_params! {":toggle": bool::from(toggle)}, |row| {
+                        let component_id =
+                            row.get::<_, FromStrWrapper<ComponentId>>("component_id")?.0;
+                        let component_type = row
+                            .get::<_, FromStrWrapper<ComponentType>>("component_type")?
+                            .0;
+                        let config = row.get::<_, serde_json::Value>("config")?;
+                        let name = row.get("name")?;
+                        Ok(Component {
+                            component_id,
+                            component_type,
+                            config,
+                            name,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(SqliteError::from)
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
+    }
+
+    #[instrument(skip(self))]
+    async fn component_get_metadata(
+        &self,
+        component_id: ComponentId,
+    ) -> Result<(ComponentWithMetadata, ComponentToggle), DbError> {
+        trace!("get_component_metadata");
+        self.pool
+            .conn_with_err_and_span::<_, _, SqliteError>(
+                move |conn| Self::component_get_with_metadata(conn, component_id),
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
+    }
+
+    #[instrument(skip(self))]
+    async fn component_enabled_get_exported_function(
+        &self,
+        ffqn: &FunctionFqn,
+    ) -> Result<(ComponentId, FunctionMetadata), DbError> {
+        trace!("get_exported_function");
+        let ffqn = ffqn.clone();
+        self.pool.conn_with_err_and_span::<_, _, SqliteError>(
+            move |conn| {
+                conn.prepare("SELECT component_id, parameter_types, return_type from t_component_export WHERE ffqn = :ffqn")?
+                    .query_row(named_params! {
+                        ":ffqn": ffqn.to_string()
+                    }, |row| {
+                        let component_id = row.get::<_, FromStrWrapper<ComponentId>>("component_id")?.0;
+                        let parameter_types = row.get::<_, JsonWrapper<ParameterTypes>>("parameter_types")?.0;
+                        let return_type = row.get::<_, JsonWrapper<ReturnType>>("return_type")?.0;
+                        Ok((component_id,
+                            (
+                            ffqn,
+                            parameter_types,
+                            return_type,
+                        )))
+                    })
+                    .map_err(SqliteError::from)
+            },
+            Span::current(),
+        )
+        .await
+        .map_err(DbError::from)
+    }
+
+    #[instrument(skip(self))]
+    async fn component_toggle(
+        &self,
+        component_id: ComponentId,
+        toggle: ComponentToggle,
+        updated_at: DateTime<Utc>,
+    ) -> Result<(), DbError> {
+        trace!("component_toggle");
+        self.pool
+            .transaction_write_with_span::<_, _, SqliteError>(
+                move |tx| {
+                    tx.prepare(
+                        "UPDATE t_component SET toggle = :toggle, last_updated_at = :last_updated_at WHERE component_id = :component_id and toggle = true",
+                    )?
+                    .execute(named_params! {
+                        ":component_id": component_id.to_string(),
+                        ":toggle": bool::from(toggle),
+                        ":last_updated_at": updated_at,
+                    })?;
+                if toggle == ComponentToggle::Disabled {
+                    tx.prepare(
+                        "DELETE FROM t_component_export WHERE component_id = :component_id",
+                    )?
+                    .execute(named_params! {":component_id": component_id.to_string(),})?;
+                } else {
+                    let (component, toggle) = Self::component_get_with_metadata(tx, component_id)?;
+                    assert_eq!(toggle, ComponentToggle::Enabled);
+                    Self::component_set_exports(tx, &component)?;
+                }
+                    Ok(())
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
+    }
+}
+
+#[async_trait]
+impl FunctionRegistry for SqlitePool {
+    #[instrument(skip(self))]
+    async fn get_by_exported_function(
+        &self,
+        ffqn: &FunctionFqn,
+    ) -> Option<(FunctionMetadata, ComponentId)> {
+        self.component_enabled_get_exported_function(ffqn)
+            .await
+            .map(|(component_id, res)| (res, component_id))
+            .inspect_err(|err| {
+                if !matches!(err, DbError::Specific(SpecificError::NotFound)) {
+                    error!("Masking error as ffqn not found - ${err:?}");
+                }
+            })
+            .ok()
     }
 }
 
