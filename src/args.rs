@@ -1,5 +1,5 @@
 use clap::Parser;
-use concepts::{ComponentId, ExecutionId, FunctionFqn};
+use concepts::{ComponentConfigHash, ExecutionId, FunctionFqn};
 use std::path::PathBuf;
 
 mod shadow {
@@ -59,7 +59,7 @@ pub(crate) enum Component {
     Get {
         /// Component id consisting of a prefix and a hash
         #[arg()]
-        component_id: ComponentId,
+        config_id: ComponentConfigHash,
         /// Enable full verbosity with `-vv`
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,

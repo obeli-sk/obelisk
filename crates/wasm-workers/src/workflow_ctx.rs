@@ -386,8 +386,6 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::FunctionRegistry;
-    use concepts::{prefixed_ulid::ConfigId, ComponentId, FunctionMetadata, ParameterTypes};
     use concepts::{
         storage::{
             wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
@@ -395,7 +393,9 @@ pub(crate) mod tests {
         },
         FinishedExecutionResult,
     };
+    use concepts::{ComponentConfigHash, FunctionRegistry};
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
+    use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
     use derivative::Derivative;
     use executor::{
@@ -567,7 +567,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                config_id: ConfigId::generate(),
+                config_id: ComponentConfigHash::dummy(),
             };
             ExecTask::spawn_new(
                 worker,
@@ -589,7 +589,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await
@@ -648,7 +648,7 @@ pub(crate) mod tests {
                             batch_size: 1,
                             lock_expiry: Duration::from_secs(1),
                             tick_sleep: TICK_SLEEP,
-                            config_id: ConfigId::generate(),
+                            config_id: ComponentConfigHash::dummy(),
                         };
                         let exec_task = ExecTask::new(
                             worker,

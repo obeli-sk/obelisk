@@ -11,7 +11,7 @@ use concepts::storage::{
     JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
-use concepts::ComponentId;
+use concepts::ComponentConfigHash;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::{ExecutionId, StrVariant};
@@ -491,7 +491,7 @@ impl<C: ClockFn> EventHistory<C> {
         async fn component_active_get_exported_function(
             fn_registry: &dyn FunctionRegistry,
             ffqn: &FunctionFqn,
-        ) -> Result<(FunctionMetadata, ComponentId), FunctionError> {
+        ) -> Result<(FunctionMetadata, ComponentConfigHash), FunctionError> {
             fn_registry
                 .get_by_exported_function(ffqn)
                 .await
@@ -527,7 +527,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
-                let ((ffqn, _param_types, return_type), component_id) =
+                let ((ffqn, _param_types, return_type), config_id) =
                     component_active_get_exported_function(fn_registry, &ffqn).await?; // TODO: consider caching
                 let child_req = CreateRequest {
                     created_at,
@@ -538,7 +538,7 @@ impl<C: ClockFn> EventHistory<C> {
                     scheduled_at: created_at,
                     retry_exp_backoff: child_retry_exp_backoff,
                     max_retries: child_max_retries,
-                    component_id,
+                    config_id,
                     return_type,
                 };
                 *version =
@@ -579,7 +579,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%new_execution_id, "ScheduleRequest: appending");
-                let ((ffqn, _param_types, return_type), component_id) =
+                let ((ffqn, _param_types, return_type), config_id) =
                     component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child_req = CreateRequest {
                     created_at,
@@ -590,7 +590,7 @@ impl<C: ClockFn> EventHistory<C> {
                     scheduled_at: at,
                     retry_exp_backoff: child_retry_exp_backoff,
                     max_retries: child_max_retries,
-                    component_id,
+                    config_id,
                     return_type,
                 };
                 *version =
@@ -661,7 +661,7 @@ impl<C: ClockFn> EventHistory<C> {
                 history_events.push(event.clone());
                 let join_next = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Appending JoinSet,ChildExecutionRequest,JoinNext");
-                let ((ffqn, _param_types, return_type), component_id) =
+                let ((ffqn, _param_types, return_type), config_id) =
                     component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child = CreateRequest {
                     created_at,
@@ -672,7 +672,7 @@ impl<C: ClockFn> EventHistory<C> {
                     scheduled_at: created_at,
                     retry_exp_backoff: child_retry_exp_backoff,
                     max_retries: child_max_retries,
-                    component_id,
+                    config_id,
                     return_type,
                 };
                 *version = db_connection
@@ -917,9 +917,7 @@ mod tests {
     use concepts::prefixed_ulid::JoinSetId;
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
-    use concepts::{
-        ComponentId, ExecutionId, FunctionFqn, FunctionRegistry, Params, SupportedFunctionResult,
-    };
+    use concepts::{ComponentConfigHash, ExecutionId, FunctionFqn, FunctionRegistry, Params, SupportedFunctionResult};
     use db_tests::Database;
     use executor::worker::{WorkerError, WorkerResult};
     use rstest::rstest;
@@ -990,7 +988,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await
@@ -1156,7 +1154,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await
@@ -1333,7 +1331,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await

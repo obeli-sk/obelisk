@@ -1,12 +1,14 @@
-use crate::config::ConfigHolder;
+use crate::config::store::ConfigStore;
+use crate::config::toml::ConfigHolder;
+use crate::config::toml::VerifiedActivityConfig;
+use crate::config::toml::VerifiedWorkflowConfig;
 use anyhow::Context;
 use concepts::storage::Component;
 use concepts::storage::ComponentToggle;
 use concepts::storage::ComponentWithMetadata;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
-use concepts::ComponentType;
-use concepts::{ComponentId, FunctionRegistry};
+use concepts::FunctionRegistry;
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::ExecutorTaskHandle;
 use executor::executor::{ExecConfig, ExecTask};
@@ -14,16 +16,15 @@ use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use executor::worker::Worker;
 use std::fmt::Debug;
 use std::fmt::Display;
-use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 use utils::time::now;
-use wasm_workers::activity_worker::{ActivityConfig, ActivityWorker, RecycleInstancesSetting};
+use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
-use wasm_workers::workflow_worker::{WorkflowConfig, WorkflowWorker};
+use wasm_workers::workflow_worker::WorkflowWorker;
 
 pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Result<()> {
     let (config, config_watcher) = config_holder.load_config_watch_changes().await?;
@@ -55,63 +56,24 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
     match config_watcher {
         None => {
             debug!("Loading components: {config:?}");
-            let mut component_to_exec_join_handle: hashbrown::HashMap<
-                ComponentId,
-                ExecutorTaskHandle,
-            > = hashbrown::HashMap::new();
+            let mut exec_join_handles = Vec::new();
 
             for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
-                let (component_id, wasm_path) = activity.verify_content_digest().await?;
-                let config_id = activity.common.config_id;
-                info!(
-                    "Instantiating activity {name} with configuration {config_id} and component {component_id} from {wasm_path:?}",
-                    name = activity.common.name
-                );
-                debug!("Full configuration: {activity:?}");
-                let exec_config = activity.common.exec.into_exec_exec_config(config_id);
-                let activity_config = ActivityConfig {
-                    config_id,
-                    recycled_instances: RecycleInstancesSetting::from(activity.recycle_instances),
-                };
-                let exec_task_handle = instantiate_activity(
-                    &component_id,
-                    activity.common.name,
-                    wasm_path,
-                    exec_config,
-                    activity_config,
-                    db_pool.clone(),
-                    &engines,
-                )
-                .await?;
-                component_to_exec_join_handle.insert(component_id, exec_task_handle);
+                let activity = activity.verify_content_digest().await?;
+
+                if activity.enabled.into() {
+                    let exec_task_handle =
+                        instantiate_activity(activity, db_pool.clone(), &engines).await?;
+                    exec_join_handles.push(exec_task_handle);
+                }
             }
             for workflow in config.workflow.into_iter().filter(|it| it.common.enabled) {
-                let (component_id, wasm_path) = workflow.verify_content_digest().await?;
-                let config_id = workflow.common.config_id;
-                info!(
-                    "Instantiating workflow {name} with configuration {config_id} and component {component_id} from {wasm_path:?}",
-                    name = workflow.common.name
-                );
-                debug!("Full configuration: {workflow:?}");
-                let exec_config = workflow.common.exec.into_exec_exec_config(config_id);
-                let workflow_config = WorkflowConfig {
-                    config_id,
-                    join_next_blocking_strategy: workflow.join_next_blocking_strategy,
-                    child_retry_exp_backoff: workflow.child_retry_exp_backoff.into(),
-                    child_max_retries: workflow.child_max_retries,
-                    non_blocking_event_batching: workflow.non_blocking_event_batching.into(),
-                };
-                let exec_task_handle = instantiate_workflow(
-                    &component_id,
-                    workflow.common.name,
-                    wasm_path,
-                    exec_config,
-                    workflow_config,
-                    db_pool.clone(),
-                    &engines,
-                )
-                .await?;
-                component_to_exec_join_handle.insert(component_id, exec_task_handle);
+                let workflow = workflow.verify_content_digest().await?;
+                if workflow.enabled.into() {
+                    let exec_task_handle =
+                        instantiate_workflow(workflow, db_pool.clone(), &engines).await?;
+                    exec_join_handles.push(exec_task_handle);
+                }
             }
             if tokio::signal::ctrl_c().await.is_err() {
                 warn!("Cannot listen to ctrl-c event");
@@ -121,13 +83,14 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
             }
             timers_watcher.close().await;
 
-            for exec_join_handle in component_to_exec_join_handle.values() {
+            for exec_join_handle in exec_join_handles {
                 exec_join_handle.close().await;
             }
             db_pool.close().await.context("cannot close database")?;
             Ok::<_, anyhow::Error>(())
         }
         Some(mut config_watcher) => {
+            /*
             tokio::task::spawn(async move {
                 let mut component_to_exec_join_handle: hashbrown::HashMap<
                     ComponentId,
@@ -186,6 +149,8 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
             })
             .await
             .unwrap()
+            */
+            todo!()
         }
     }
 }
@@ -296,44 +261,48 @@ fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
 // }
 
 async fn instantiate_activity<DB: DbConnection + 'static>(
-    component_id: &ComponentId,
-    name: String,
-    wasm_path: impl AsRef<Path>,
-    exec_config: ExecConfig,
-    activity_config: ActivityConfig,
+    activity: VerifiedActivityConfig,
     db_pool: impl DbPool<DB> + 'static,
     engines: &Engines,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
+    info!(
+        "Instantiating activity {name} with id {config_id} from {wasm_path:?}",
+        name = activity.config_store.name(),
+        config_id = activity.exec_config.config_id,
+        wasm_path = activity.wasm_path,
+    );
+    debug!("Full configuration: {activity:?}");
     let worker = Arc::new(ActivityWorker::new_with_config(
-        wasm_path,
-        activity_config,
+        activity.wasm_path,
+        activity.activity_config,
         engines.activity_engine.clone(),
         now,
     )?);
     register_and_spawn(
         worker,
-        component_id,
-        ComponentType::WasmActivity,
-        name,
-        exec_config,
+        &activity.config_store,
+        activity.exec_config,
         db_pool,
     )
     .await
 }
 
 async fn instantiate_workflow<DB: DbConnection + 'static>(
-    component_id: &ComponentId,
-    name: String,
-    wasm_path: impl AsRef<Path>,
-    exec_config: ExecConfig,
-    workflow_config: WorkflowConfig,
+    workflow: VerifiedWorkflowConfig,
     db_pool: impl DbPool<DB> + FunctionRegistry + 'static,
     engines: &Engines,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
+    info!(
+        "Instantiating workflow {name} with id {config_id} from {wasm_path:?}",
+        name = workflow.config_store.name(),
+        config_id = workflow.exec_config.config_id,
+        wasm_path = workflow.wasm_path,
+    );
+    debug!("Full configuration: {workflow:?}");
     let fn_registry = Arc::from(db_pool.clone());
     let worker = Arc::new(WorkflowWorker::new_with_config(
-        wasm_path,
-        workflow_config,
+        workflow.wasm_path,
+        workflow.workflow_config,
         engines.workflow_engine.clone(),
         db_pool.clone(),
         now,
@@ -341,10 +310,8 @@ async fn instantiate_workflow<DB: DbConnection + 'static>(
     )?);
     register_and_spawn(
         worker,
-        component_id,
-        ComponentType::WasmWorkflow,
-        name,
-        exec_config,
+        &workflow.config_store,
+        workflow.exec_config,
         db_pool,
     )
     .await
@@ -352,18 +319,16 @@ async fn instantiate_workflow<DB: DbConnection + 'static>(
 
 async fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
     worker: Arc<W>,
-    component_id: &ComponentId,
-    component_type: ComponentType,
-    name: String,
+    config: &ConfigStore,
     exec_config: ExecConfig,
     db_pool: impl DbPool<DB> + 'static,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
     let component = ComponentWithMetadata {
         component: Component {
-            component_id: component_id.clone(),
-            component_type,
-            config: serde_json::Value::Null, //FIXME: Serialize workflow/activity configuration + common things like retries that should then be used for submission.
-            name,                            //FIXME: Change to location
+            config_id: exec_config.config_id.clone(),
+            config: serde_json::to_value(&config)
+                .expect("ConfigStore must be serializable to JSON"),
+            enabled: ComponentToggle::Enabled,
         },
         exports: worker.exported_functions().collect(),
         imports: worker.imported_functions().collect(),
@@ -373,6 +338,5 @@ async fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
         .connection()
         .component_add(now(), component, ComponentToggle::Enabled)
         .await?;
-    //fn_registry.register(component_id, exported_functions, component_type, name)?;
     Ok(ExecTask::spawn_new(worker, exec_config, now, db_pool, None))
 }

@@ -1,13 +1,13 @@
 use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::{ConfigId, JoinSetId};
+use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{DbPool, ExecutionLog, JoinSetResponseEvent, LockedExecution};
-use concepts::FinishedExecutionResult;
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, StrVariant};
 use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
     FinishedExecutionError,
 };
+use concepts::{ComponentConfigHash, FinishedExecutionResult};
 use derivative::Derivative;
 use std::marker::PhantomData;
 use std::{
@@ -26,7 +26,7 @@ pub struct ExecConfig {
     pub lock_expiry: Duration,
     pub tick_sleep: Duration,
     pub batch_size: u32,
-    pub config_id: ConfigId,
+    pub config_id: ComponentConfigHash,
 }
 
 pub struct ExecTask<W: Worker, C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
@@ -555,9 +555,7 @@ mod tests {
     use concepts::storage::{
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
-    use concepts::{
-        ComponentId, FunctionMetadata, ParameterTypes, Params, SupportedFunctionResult,
-    };
+    use concepts::{FunctionMetadata, ParameterTypes, Params, SupportedFunctionResult};
     use db_tests::Database;
     use indexmap::IndexMap;
     use simple_worker::FFQN_SOME;
@@ -637,7 +635,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
-            config_id: ConfigId::generate(),
+            config_id: ComponentConfigHash::dummy(),
         };
 
         let execution_log = create_and_tick(
@@ -679,7 +677,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::generate(),
+            config_id: ComponentConfigHash::dummy(),
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
@@ -760,7 +758,7 @@ mod tests {
                 scheduled_at: config.created_at,
                 retry_exp_backoff: config.retry_exp_backoff,
                 max_retries: config.max_retries,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await
@@ -803,7 +801,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::generate(),
+            config_id: ComponentConfigHash::dummy(),
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -911,7 +909,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::generate(),
+            config_id: ComponentConfigHash::dummy(),
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -985,7 +983,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await
@@ -995,7 +993,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                config_id: ConfigId::generate(),
+                config_id: ComponentConfigHash::dummy(),
             },
             sim_clock.get_clock_fn(),
             db_pool.clone(),
@@ -1017,7 +1015,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             };
             let join_set = ExecutionEventInner::HistoryEvent {
@@ -1067,7 +1065,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                config_id: ConfigId::generate(),
+                config_id: ComponentConfigHash::dummy(),
             },
             sim_clock.get_clock_fn(),
             db_pool.clone(),
@@ -1154,7 +1152,7 @@ mod tests {
             batch_size: 1,
             lock_expiry,
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::generate(),
+            config_id: ComponentConfigHash::dummy(),
         };
 
         let timers_watcher = expired_timers_watcher::TimersWatcherTask {
@@ -1179,7 +1177,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: timeout_duration,
                 max_retries: 1,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await

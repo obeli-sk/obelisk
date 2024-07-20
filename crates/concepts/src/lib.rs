@@ -723,14 +723,14 @@ pub mod prefixed_ulid {
     pub mod prefix {
         pub struct E;
         pub struct Exr;
-        pub struct Conf;
+        // pub struct Conf;
         pub struct JoinSet;
         pub struct Run;
         pub struct Delay;
     }
 
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
-    pub type ConfigId = PrefixedUlid<prefix::Conf>;
+    // pub type ConfigId = PrefixedUlid<prefix::Conf>;
     pub type JoinSetId = PrefixedUlid<prefix::JoinSet>;
     pub type ExecutionId = PrefixedUlid<prefix::E>;
     pub type RunId = PrefixedUlid<prefix::Run>;
@@ -746,7 +746,62 @@ pub mod prefixed_ulid {
     }
 }
 
-#[derive(Debug, Clone, Copy, strum::Display, strum::EnumString, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, derive_more::Display,
+)]
+#[display(fmt = "{component_type}:{config_hash}")]
+pub struct ComponentConfigHash {
+    pub component_type: ComponentType,
+    pub config_hash: ContentDigest,
+}
+
+impl ComponentConfigHash {
+    pub const fn dummy() -> Self {
+        Self {
+            component_type: ComponentType::WasmActivity,
+            config_hash: ContentDigest::empty(),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+
+pub enum ComponentConfigHashParseErrror {
+    #[error("cannot parse ComponentConfigHash - delimiter ':' not found")]
+    DelimiterNotFound,
+    #[error("cannot parse prefix of ComponentConfigHash - {0}")]
+    ComponentTypeParseError(#[from] strum::ParseError),
+    #[error("cannot parse suffix of ComponentConfigHash - {0}")]
+    ContentDigestParseErrror(#[from] ContentDigestParseErrror),
+}
+
+impl FromStr for ComponentConfigHash {
+    type Err = ComponentConfigHashParseErrror;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let (component_type, config_hash) =
+            input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
+        let component_type = component_type.parse()?;
+        let config_hash = config_hash.parse()?;
+        Ok(Self {
+            component_type,
+            config_hash,
+        })
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    strum::Display,
+    strum::EnumString,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum HashType {
     Sha256,
@@ -763,12 +818,12 @@ pub enum HashType {
     serde_with::DeserializeFromStr,
 )]
 #[display(fmt = "{hash_type}:{hash_base16}")]
-pub struct ComponentId {
+pub struct ContentDigest {
     pub hash_type: HashType,
     pub hash_base16: StrVariant,
 }
 
-impl ComponentId {
+impl ContentDigest {
     #[must_use]
     pub const fn empty() -> Self {
         Self {
@@ -790,34 +845,33 @@ impl ComponentId {
 
 #[derive(Debug, thiserror::Error)]
 
-pub enum ComponentIdParseErrror {
-    #[error("cannot parse ComponentId - delimiter ':' not found")]
+pub enum ContentDigestParseErrror {
+    #[error("cannot parse ContentDigest - delimiter ':' not found")]
     DelimiterNotFound,
-    #[error("cannot parse ComponentId - invalid prefix `{hash_type}`")]
+    #[error("cannot parse ContentDigest - invalid prefix `{hash_type}`")]
     TypeParseError { hash_type: String },
-    #[error("cannot parse ComponentId - invalid suffix length")]
-    SuffixLength,
-    #[error("cannot parse ComponentId - {0}")]
-    Other(String),
+    #[error("cannot parse ContentDigest - invalid suffix length, expected 64 hex digits, got {0}")]
+    SuffixLength(usize),
+    #[error(
+        "cannot parse ContentDigest - suffix must be hex-encoded, got invalid character `{0}`"
+    )]
+    SuffixInvalid(char),
 }
 
-impl FromStr for ComponentId {
-    type Err = ComponentIdParseErrror;
+impl FromStr for ContentDigest {
+    type Err = ContentDigestParseErrror;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let (hash_type, hash_base16) = input
-            .split_once(':')
-            .ok_or(ComponentIdParseErrror::DelimiterNotFound)?;
-        let hash_type = HashType::from_str(hash_type).map_err(|_err| {
-            ComponentIdParseErrror::TypeParseError {
+        let (hash_type, hash_base16) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
+        let hash_type =
+            HashType::from_str(hash_type).map_err(|_err| Self::Err::TypeParseError {
                 hash_type: hash_type.to_string(),
-            }
-        })?;
+            })?;
         if hash_base16.len() != 64 {
-            return Err(ComponentIdParseErrror::SuffixLength);
+            return Err(Self::Err::SuffixLength(hash_base16.len()));
         }
-        if let Err(err) = base16ct::lower::decode_vec(hash_base16) {
-            return Err(ComponentIdParseErrror::Other(err.to_string()));
+        if let Some(invalid) = hash_base16.chars().find(|c| !c.is_ascii_hexdigit()) {
+            return Err(Self::Err::SuffixInvalid(invalid));
         }
         Ok(Self {
             hash_type,
@@ -826,7 +880,18 @@ impl FromStr for ComponentId {
     }
 }
 
-#[derive(Debug, Clone, Copy, strum::Display, PartialEq, Eq, strum::EnumString, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    strum::Display,
+    PartialEq,
+    Eq,
+    strum::EnumString,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentType {
     WasmActivity,
@@ -874,7 +939,7 @@ pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ComponentId)>;
+    ) -> Option<(FunctionMetadata, ComponentConfigHash)>;
 }
 
 #[cfg(test)]

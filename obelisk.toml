@@ -3,20 +3,17 @@ watch_component_changes = false
 
 [[activity]]
 name = "fibo_activity"
-location.oci = "docker.io/tomasolvecky/fibo_activity:latest@sha256:46d069c98eea5227ceaabc8a3f8227a45e23e64c08d6bb2d2634f8947261f41f"
+# location.oci = "docker.io/tomasolvecky/fibo_activity:latest@sha256:46d069c98eea5227ceaabc8a3f8227a45e23e64c08d6bb2d2634f8947261f41f"
+location.oci = "docker.io/tomasolvecky/fibo_activity:latest"
 recycle_instances = true
-# TODO: Assign on new config creation, reuse if nothing was modified
-config_id = "Conf_01J2V5R8K5402QQT5KMMXBQM7J"
 
 [[workflow]]
 name = "fibo_workflow"
 location.oci = "docker.io/tomasolvecky/fibo_workflow:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f1178676e69d@sha256:63a3dd36c33ba240080b5db17a28a4853e00f1e393a1bd6bb7a014679ec3fd32"
 enabled = true
 content_digest = "sha256:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f1178676e69d"
-# TODO: Assign on new config creation, reuse if nothing was modified
-config_id = "Conf_01J2TV69CGKVAJAHZ4ZWEZWRHJ"
-max_retries = 5
-retry_exp_backoff.millis = 100
+default_max_retries = 5
+default_retry_exp_backoff.millis = 100
 exec.batch_size = 10
 exec.lock_expiry.secs = 1
 exec.tick_sleep.millis = 200

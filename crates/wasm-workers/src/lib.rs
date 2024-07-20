@@ -32,11 +32,14 @@ pub enum WasmFileError {
 pub(crate) mod tests {
     use crate::component_detector::ComponentDetector;
     use async_trait::async_trait;
-    use concepts::{ComponentId, FunctionFqn, FunctionMetadata, FunctionRegistry, ParameterTypes};
+    use concepts::{
+        ComponentConfigHash, ComponentType, ContentDigest, FunctionFqn, FunctionMetadata,
+        FunctionRegistry, ParameterTypes,
+    };
     use std::{path::Path, sync::Arc};
 
     pub(crate) struct TestingFnRegistry(
-        hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ComponentId)>,
+        hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ComponentConfigHash)>,
     );
 
     #[async_trait]
@@ -44,13 +47,13 @@ pub(crate) mod tests {
         async fn get_by_exported_function(
             &self,
             ffqn: &FunctionFqn,
-        ) -> Option<(FunctionMetadata, ComponentId)> {
+        ) -> Option<(FunctionMetadata, ComponentConfigHash)> {
             self.0.get(ffqn).cloned()
         }
     }
 
     pub(crate) fn fn_registry_dummy(ffqns: &[FunctionFqn]) -> Arc<dyn FunctionRegistry> {
-        let component_id = ComponentId::empty();
+        let component_id = ComponentConfigHash::dummy();
         let mut map = hashbrown::HashMap::new();
         for ffqn in ffqns {
             map.insert(
@@ -70,13 +73,21 @@ pub(crate) mod tests {
         let mut map = hashbrown::HashMap::new();
         for wasm_path in wasm_paths {
             let wasm_path = wasm_path.as_ref();
-            let component_id = crate::component_detector::file_hash(wasm_path)
-                .await
-                .unwrap();
+            let component_type = if wasm_path.to_str().unwrap().ends_with("activity.wasm") {
+                ComponentType::WasmActivity
+            } else if wasm_path.to_str().unwrap().ends_with("workflow.wasm") {
+                ComponentType::WasmWorkflow
+            } else {
+                panic!("cannot determine type automatically from file {wasm_path:?}")
+            };
             let engine = ComponentDetector::get_engine();
             let detected = ComponentDetector::new(wasm_path, &engine).unwrap();
+            let config_id = ComponentConfigHash {
+                component_type,
+                config_hash: ContentDigest::empty(), // this mismatch is intentional, any hash would do
+            };
             for (ffqn, params, res) in detected.exports {
-                map.insert(ffqn.clone(), ((ffqn, params, res), component_id.clone()));
+                map.insert(ffqn.clone(), ((ffqn, params, res), config_id.clone()));
             }
         }
         Arc::new(TestingFnRegistry(map))

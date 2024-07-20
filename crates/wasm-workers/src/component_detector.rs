@@ -4,7 +4,8 @@
 //! Mixing is not allowed.
 
 use crate::WasmFileError;
-use concepts::{ComponentId, ComponentType, FunctionMetadata};
+use concepts::ContentDigest;
+use concepts::{ComponentType, FunctionMetadata};
 use std::path::Path;
 use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
@@ -54,15 +55,15 @@ impl ComponentDetector {
 }
 
 #[cfg(not(madsim))]
-pub async fn file_hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error> {
+pub async fn file_hash<P: AsRef<Path>>(path: P) -> Result<ContentDigest, std::io::Error> {
     let hash_base16 = match wasm_pkg_common::digest::ContentDigest::sha256_from_file(path).await? {
         wasm_pkg_common::digest::ContentDigest::Sha256 { hex } => hex,
     };
-    Ok(ComponentId::new(concepts::HashType::Sha256, hash_base16))
+    Ok(ContentDigest::new(concepts::HashType::Sha256, hash_base16))
 }
 #[cfg(madsim)]
-pub async fn file_hash<P: AsRef<Path>>(path: P) -> Result<ComponentId, std::io::Error> {
-    Ok(ComponentId::new(
+pub async fn file_hash<P: AsRef<Path>>(path: P) -> Result<ContentDigest, std::io::Error> {
+    Ok(ContentDigest::new(
         concepts::HashType::Sha256,
         ulid::Ulid::new().to_string(),
     ))

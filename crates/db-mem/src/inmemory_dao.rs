@@ -9,13 +9,13 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError,
-    ComponentToggle, ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError,
-    DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEventOuter,
+    AppendBatchResponse, AppendRequest, AppendResponse, ComponentAddError, ComponentToggle,
+    ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool,
+    ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEventOuter,
     LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
-use concepts::{ComponentId, ExecutionId, FunctionFqn, FunctionMetadata, StrVariant};
+use concepts::{ComponentConfigHash, ExecutionId, FunctionFqn, FunctionMetadata, StrVariant};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
 use std::collections::BTreeMap;
@@ -227,32 +227,32 @@ impl DbConnection for InMemoryDbConnection {
         unimplemented!()
     }
 
-    async fn component_list(&self, _toggle: ComponentToggle) -> Result<Vec<Component>, DbError> {
-        unimplemented!()
-    }
+    // async fn component_list(&self, _toggle: ComponentToggle) -> Result<Vec<Component>, DbError> {
+    //     unimplemented!()
+    // }
 
-    async fn component_get_metadata(
-        &self,
-        _component_id: ComponentId,
-    ) -> Result<(ComponentWithMetadata, ComponentToggle), DbError> {
-        unimplemented!()
-    }
+    // async fn component_get_metadata(
+    //     &self,
+    //     _config_id: ComponentConfigHash,
+    // ) -> Result<(ComponentWithMetadata, ComponentToggle), DbError> {
+    //     unimplemented!()
+    // }
 
     async fn component_enabled_get_exported_function(
         &self,
         _ffqn: &FunctionFqn,
-    ) -> Result<(ComponentId, FunctionMetadata), DbError> {
+    ) -> Result<(ComponentConfigHash, FunctionMetadata), DbError> {
         unimplemented!()
     }
 
-    async fn component_toggle(
-        &self,
-        _component_id: ComponentId,
-        _toggle: ComponentToggle,
-        _updated_at: DateTime<Utc>,
-    ) -> Result<(), DbError> {
-        unimplemented!()
-    }
+    // async fn component_toggle(
+    //     &self,
+    //     _config_id: ComponentConfigHash,
+    //     _toggle: ComponentToggle,
+    //     _updated_at: DateTime<Utc>,
+    // ) -> Result<(), DbError> {
+    //     unimplemented!()
+    // }
 }
 
 mod index {
@@ -490,7 +490,7 @@ impl DbHolder {
             scheduled_at: req.scheduled_at,
             retry_exp_backoff: req.retry_exp_backoff,
             max_retries: req.max_retries,
-            component_id: req.component_id,
+            config_id: req.config_id,
             return_type: req.return_type,
         });
         let version = journal.version();

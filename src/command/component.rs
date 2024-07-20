@@ -37,7 +37,7 @@ pub(crate) async fn add<P: AsRef<Path>>(
     let component_id = wasm_workers::component_detector::file_hash(&wasm_path)
         .await
         .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
-    let config_id = ConfigId::generate();
+    let config_id = todo!();
     let exec_config = ExecConfig {
         batch_size: 10,
         lock_expiry: Duration::from_secs(1),

@@ -1,9 +1,8 @@
 use crate::workflow_ctx::{FunctionError, WorkflowCtx};
 use crate::WasmFileError;
 use async_trait::async_trait;
-use concepts::prefixed_ulid::ConfigId;
 use concepts::storage::{DbConnection, DbPool};
-use concepts::{FunctionFqn, FunctionMetadata, StrVariant};
+use concepts::{ComponentConfigHash, FunctionFqn, FunctionMetadata, StrVariant};
 use concepts::{FunctionRegistry, SupportedFunctionResult};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
@@ -47,7 +46,7 @@ impl From<bool> for NonBlockingEventBatching {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WorkflowConfig {
-    pub config_id: ConfigId,
+    pub config_id: ComponentConfigHash,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub child_retry_exp_backoff: Duration,
     pub child_max_retries: u32,
@@ -350,11 +349,11 @@ mod tests {
         tests::{fn_registry_dummy, fn_registry_parsing_wasm},
     };
     use assert_matches::assert_matches;
-    use concepts::{prefixed_ulid::ConfigId, ComponentId, ExecutionId, Params};
     use concepts::{
         storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState},
         FinishedExecutionError,
     };
+    use concepts::{ExecutionId, Params};
     use db_tests::Database;
     use executor::{
         executor::{ExecConfig, ExecTask, ExecutorTaskHandle},
@@ -390,7 +389,7 @@ mod tests {
             WorkflowWorker::new_with_config(
                 wasm_path,
                 WorkflowConfig {
-                    config_id: ConfigId::generate(),
+                    config_id: ComponentConfigHash::dummy(),
                     join_next_blocking_strategy,
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
@@ -408,7 +407,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
-            config_id: ConfigId::generate(),
+            config_id: ComponentConfigHash::dummy(),
         };
         ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, None)
     }
@@ -510,7 +509,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await
@@ -587,7 +586,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await
@@ -607,7 +606,7 @@ mod tests {
             FinishedExecutionError::PermanentFailure( reason) => reason.to_string()
         );
         assert_eq!(
-            "attempted to schedule an execution with no active component, \
+            "attempted to submit an execution with no active component, \
                 function metadata not found for testing:fibo/fibo.fibo",
             finished_result
         );
@@ -628,7 +627,7 @@ mod tests {
             WorkflowWorker::new_with_config(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 WorkflowConfig {
-                    config_id: ConfigId::generate(),
+                    config_id: ComponentConfigHash::dummy(),
                     join_next_blocking_strategy,
                     child_retry_exp_backoff: Duration::ZERO,
                     child_max_retries: 0,
@@ -661,7 +660,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
-            config_id: ConfigId::generate(),
+            config_id: ComponentConfigHash::dummy(),
         };
         ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, None)
     }
@@ -708,7 +707,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await
@@ -819,7 +818,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await
@@ -917,7 +916,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::from_millis(0),
                 max_retries: concurrency - 1, // response can conflict with next ChildExecutionRequest
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await
@@ -984,7 +983,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                component_id: ComponentId::empty(),
+                config_id: ComponentConfigHash::dummy(),
                 return_type: None,
             })
             .await
@@ -996,7 +995,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                config_id: ConfigId::generate(),
+                config_id: ComponentConfigHash::dummy(),
             },
             sim_clock.get_clock_fn(),
             db_pool.clone(),

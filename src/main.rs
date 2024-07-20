@@ -2,9 +2,11 @@ mod args;
 mod command;
 mod config;
 mod init;
+mod oci;
 
 use args::{Args, Executor, Subcommand};
 use clap::Parser;
+use config::toml::ConfigHolder;
 
 fn main() -> Result<(), anyhow::Error> {
     let _guard = init::init();
@@ -17,7 +19,7 @@ fn main() -> Result<(), anyhow::Error> {
 
 #[allow(clippy::too_many_lines)]
 async fn main_async() -> Result<(), anyhow::Error> {
-    let config_holder = config::ConfigHolder::new();
+    let config_holder = ConfigHolder::new();
     match Args::parse().command {
         Subcommand::Executor(Executor::Serve { clean }) => {
             command::server::run(config_holder, clean).await
