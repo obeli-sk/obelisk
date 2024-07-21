@@ -1,5 +1,4 @@
 sqlite_file = "./obelisk.sqlite"
-watch_component_changes = false
 
 [[activity]]
 name = "fibo_activity"

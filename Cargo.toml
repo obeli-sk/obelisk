@@ -28,7 +28,6 @@ const_format.workspace = true
 directories.workspace = true
 docker_credential.workspace = true
 hashbrown.workspace = true
-notify-debouncer-mini.workspace = true
 oci-distribution = { workspace = true }
 oci-wasm = { workspace = true }
 serde_json.workspace = true
@@ -159,7 +158,6 @@ insta = { version = "1.38.0", features = ["json"] }
 itertools = "0.12.1"
 lazy_static = "1.4"
 madsim = "0.2.30"
-notify-debouncer-mini = "0.4.1"
 oci-distribution = { version = "0.11.0", default-features = false, features = [
     "rustls-tls",
 ] }

@@ -28,7 +28,7 @@ use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::workflow_worker::WorkflowWorker;
 
 pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Result<()> {
-    let (config, config_watcher) = config_holder.load_config_watch_changes().await?;
+    let config = config_holder.load_config().await?;
     let db_file = &config.sqlite_file;
     if clean {
         tokio::fs::remove_file(db_file)
@@ -55,106 +55,40 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
         },
     );
     disable_all_components(db_pool.connection()).await?;
-    match config_watcher {
-        None => {
-            debug!("Loading components: {config:?}");
-            let mut exec_join_handles = Vec::new();
 
-            for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
-                let activity = activity.verify_content_digest().await?;
+    debug!("Loading components: {config:?}");
+    let mut exec_join_handles = Vec::new();
 
-                if activity.enabled.into() {
-                    let exec_task_handle =
-                        instantiate_activity(activity, db_pool.clone(), &engines).await?;
-                    exec_join_handles.push(exec_task_handle);
-                }
-            }
-            for workflow in config.workflow.into_iter().filter(|it| it.common.enabled) {
-                let workflow = workflow.verify_content_digest().await?;
-                if workflow.enabled.into() {
-                    let exec_task_handle =
-                        instantiate_workflow(workflow, db_pool.clone(), &engines).await?;
-                    exec_join_handles.push(exec_task_handle);
-                }
-            }
-            if tokio::signal::ctrl_c().await.is_err() {
-                warn!("Cannot listen to ctrl-c event");
-                loop {
-                    tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
-                }
-            }
-            timers_watcher.close().await;
+    for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
+        let activity = activity.verify_content_digest().await?;
 
-            for exec_join_handle in exec_join_handles {
-                exec_join_handle.close().await;
-            }
-            db_pool.close().await.context("cannot close database")?;
-            Ok::<_, anyhow::Error>(())
-        }
-        Some(mut config_watcher) => {
-            /*
-            tokio::task::spawn(async move {
-                let mut component_to_exec_join_handle: hashbrown::HashMap<
-                    ComponentId,
-                    ExecutorTaskHandle,
-                > = hashbrown::HashMap::new();
-                // Attempt to start executors for every enabled component
-                // let mut config = Some(config);
-                let mut ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
-                let mut config = config;
-                loop {
-                    // if let Some(config) = config.take() {
-                    info!("Updating components: {config:#?}");
-                    // if let Err(err) = update_components(
-                    //     db_pool.clone(),
-                    //     &mut component_to_exec_join_handle,
-                    //     &engines,
-                    //     config,
-                    // )
-                    // .await
-                    // {
-                    //     eprintln!("Error while updating components - {err:?}");
-                    //     break;
-                    // }
-                    // }
-                    tokio::select! { // future's liveness: Assuming that dropping `ctrl_c` is OK and the signal will be received in the next loop.
-                        signal_res = &mut ctrl_c => {
-                            if signal_res.is_err() {
-                                warn!("Cannot listen to ctrl-c event");
-                                loop {
-                                    tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
-                                }
-                            }
-                            break
-                        },
-                        config_res = config_watcher.rx.recv() => {
-                            match config_res {
-                                Some(conf) => {
-                                    config = conf;
-                                },
-                                None => {
-                                    warn!("Not watching config changes anymore");
-                                    break
-                                }
-                            }
-                        }
-                    }
-                }
-                info!("Gracefully shutting down");
-                timers_watcher.close().await;
-                for exec_join_handle in component_to_exec_join_handle.values() {
-                    exec_join_handle.close().await;
-                }
-                db_pool.close().await.context("cannot close database")?;
-                config_watcher.abort_handle.abort();
-                Ok::<_, anyhow::Error>(())
-            })
-            .await
-            .unwrap()
-            */
-            todo!()
+        if activity.enabled.into() {
+            let exec_task_handle =
+                instantiate_activity(activity, db_pool.clone(), &engines).await?;
+            exec_join_handles.push(exec_task_handle);
         }
     }
+    for workflow in config.workflow.into_iter().filter(|it| it.common.enabled) {
+        let workflow = workflow.verify_content_digest().await?;
+        if workflow.enabled.into() {
+            let exec_task_handle =
+                instantiate_workflow(workflow, db_pool.clone(), &engines).await?;
+            exec_join_handles.push(exec_task_handle);
+        }
+    }
+    if tokio::signal::ctrl_c().await.is_err() {
+        warn!("Cannot listen to ctrl-c event");
+        loop {
+            tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
+        }
+    }
+    timers_watcher.close().await;
+
+    for exec_join_handle in exec_join_handles {
+        exec_join_handle.close().await;
+    }
+    db_pool.close().await.context("cannot close database")?;
+    Ok::<_, anyhow::Error>(())
 }
 
 fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
@@ -207,60 +141,6 @@ fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
     );
     opts
 }
-
-// async fn update_components<DB: DbConnection + 'static>(
-//     db_pool: impl DbPool<DB> + 'static,
-//     component_to_exec_join_handle: &mut hashbrown::HashMap<ComponentId, ExecutorTaskHandle>,
-//     engines: &Engines,
-//     config: Config,
-// ) -> Result<(), anyhow::Error> {
-//     let enabled_components = db_pool
-//         .connection()
-//         .component_list(ComponentToggle::Enabled)
-//         .await
-//         .context("cannot list enabled components")?;
-
-//     // Shut down disabled components
-//     let mut disabling = component_to_exec_join_handle
-//         .keys()
-//         .cloned()
-//         .collect::<hashbrown::HashSet<_>>();
-//     // Retain components that are no longer enabled
-//     for component_id in enabled_components.iter().map(|c| &c.component_id) {
-//         disabling.remove(component_id);
-//     }
-//     for component_id in disabling {
-//         println!("Shutting down executor of component {component_id}");
-//         component_to_exec_join_handle
-//             .remove(&component_id)
-//             .expect("comonent id was taken from `component_to_exec_join_handle` so it must exist")
-//             .close()
-//             .await;
-//     }
-
-//     // Spawn new component executors
-//     for component in enabled_components {
-//         if component_to_exec_join_handle.contains_key(&component.component_id) {
-//             continue;
-//         }
-//         let component_id = component.component_id.clone();
-//         println!(
-//             "Starting new executor of component `{name}` {component_id}",
-//             name = component.name
-//         );
-//         let stopwatch = std::time::Instant::now();
-//         match instantiate_component(component, db_pool.clone(), engines) {
-//             Ok(exec) => {
-//                 println!("Instantiated in {:?}", stopwatch.elapsed());
-//                 component_to_exec_join_handle.insert(component_id, exec);
-//             }
-//             Err(err) => {
-//                 eprintln!("Error activating component {component_id} - {err}");
-//             }
-//         }
-//     }
-//     Ok(())
-// }
 
 async fn instantiate_activity<DB: DbConnection + 'static>(
     activity: VerifiedActivityConfig,
