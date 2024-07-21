@@ -141,7 +141,7 @@ config = { version = "0.14.0", default-features = false, features = [
     "async",
     "convert-case",
 ] }
-console-subscriber = "0.2.0"
+console-subscriber = "0.3.0"
 const_format = "0.2.32"
 criterion = "0.5"
 derivative = "2.2.0"
@@ -155,7 +155,7 @@ hyper = "1.1.0"
 hyper-util = "0.1"
 indexmap = "2.1"
 insta = { version = "1.38.0", features = ["json"] }
-itertools = "0.12.1"
+itertools = "0.13"
 lazy_static = "1.4"
 madsim = "0.2.30"
 oci-distribution = { version = "0.11.0", default-features = false, features = [
@@ -165,13 +165,13 @@ oci-wasm = { version = "0.0.4", default-features = false, features = [
     "rustls-tls",
 ] }
 rand = "0.8.5"
-rstest = "0.18.2"
+rstest = "0.21"
 rusqlite = { version = "0.31.0" }
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
 serde_with = "3.7.0"
 sha2 = "0.10.8"
-shadow-rs = "0.28.0"
+shadow-rs = "0.29.0"
 strum = { version = "0.26.0", features = ["derive"] }
 tempfile = "3.10.1"
 thiserror = "1.0"
