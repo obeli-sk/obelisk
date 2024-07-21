@@ -1,20 +1,16 @@
 use anyhow::{bail, ensure, Context};
 use concepts::ContentDigest;
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 use tracing::{debug, info, warn};
 
 pub(crate) async fn obtan_wasm_from_oci(
     image: &oci_distribution::Reference,
+    wasm_cache_dir: impl AsRef<Path>,
 ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
-    use directories::ProjectDirs;
-
-    let project_dirs = ProjectDirs::from("com", "obelisk", "obelisk")
-        .context("cannot obtain project directories")?; // TODO: extract above
-    let wasm_cache_dir = project_dirs.cache_dir().join("wasm"); // TODO: extract above
-    tokio::fs::create_dir_all(&wasm_cache_dir)
-        .await
-        .with_context(|| format!("cannot create cache directory {wasm_cache_dir:?}"))?; // TODO: extract above
-
+    let wasm_cache_dir = wasm_cache_dir.as_ref();
     let client = {
         let client =
             oci_distribution::Client::new(oci_distribution::client::ClientConfig::default());

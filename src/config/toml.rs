@@ -8,7 +8,10 @@ use concepts::{storage::ComponentToggle, ComponentType, ContentDigest};
 use config::{builder::AsyncState, ConfigBuilder, Environment, File, FileFormat};
 use directories::ProjectDirs;
 use serde::Deserialize;
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use tracing::debug;
 use wasm_workers::{
     activity_worker::ActivityConfig,
@@ -63,6 +66,7 @@ impl ComponentCommon {
     async fn verify_content_digest(
         self,
         r#type: ComponentType,
+        wasm_cache_dir: impl AsRef<Path>,
     ) -> Result<(ConfigStoreCommon, PathBuf, ComponentToggle), anyhow::Error> {
         let (actual_content_digest, wasm_path) = {
             match &self.location {
@@ -75,7 +79,9 @@ impl ComponentCommon {
                         .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
                     (content_digest, wasm_path)
                 }
-                ComponentLocation::Oci(image) => oci::obtan_wasm_from_oci(image).await?,
+                ComponentLocation::Oci(image) => {
+                    oci::obtan_wasm_from_oci(image, wasm_cache_dir).await?
+                }
             }
         };
         if let Some(specified) = &self.content_digest {
@@ -164,10 +170,11 @@ pub(crate) struct VerifiedActivityConfig {
 impl Activity {
     pub(crate) async fn verify_content_digest(
         self,
+        wasm_cache_dir: impl AsRef<Path>,
     ) -> Result<VerifiedActivityConfig, anyhow::Error> {
         let (common, wasm_path, enabled) = self
             .common
-            .verify_content_digest(ComponentType::WasmActivity)
+            .verify_content_digest(ComponentType::WasmActivity, wasm_cache_dir)
             .await?;
         let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmActivityV1 {
@@ -229,10 +236,11 @@ pub(crate) struct VerifiedWorkflowConfig {
 impl Workflow {
     pub(crate) async fn verify_content_digest(
         self,
+        wasm_cache_dir: impl AsRef<Path>,
     ) -> Result<VerifiedWorkflowConfig, anyhow::Error> {
         let (common, wasm_path, enabled) = self
             .common
-            .verify_content_digest(ComponentType::WasmActivity)
+            .verify_content_digest(ComponentType::WasmActivity, wasm_cache_dir)
             .await?;
         let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmWorkflowV1 {
@@ -263,18 +271,19 @@ impl Workflow {
 
 pub(crate) struct ConfigHolder {
     paths: Vec<PathBuf>,
+    pub(crate) project_dirs: Option<ProjectDirs>,
 }
 
 impl ConfigHolder {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(project_dirs: Option<ProjectDirs>) -> Self {
         let mut paths = Vec::new();
         cfg_if::cfg_if! {
             if #[cfg(target_os = "linux")] {
                 paths.push(PathBuf::from("/etc/obelisk/obelisk.toml"));
             }
         }
-        if let Some(proj_dirs) = ProjectDirs::from("com", "obelisk", "obelisk") {
-            let user_config_dir = proj_dirs.config_dir();
+        if let Some(project_dirs) = &project_dirs {
+            let user_config_dir = project_dirs.config_dir();
             // Lin: /home/alice/.config/obelisk/
             // Win: C:\Users\Alice\AppData\Roaming\obelisk\obelisk\config\
             // Mac: /Users/Alice/Library/Application Support/com.obelisk.obelisk-App/
@@ -283,7 +292,10 @@ impl ConfigHolder {
             paths.push(user_config);
         }
         paths.push(PathBuf::from("obelisk.toml"));
-        Self { paths }
+        Self {
+            paths,
+            project_dirs,
+        }
     }
 
     pub(crate) async fn load_config(&self) -> Result<ObeliskConfig, anyhow::Error> {

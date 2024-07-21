@@ -9,6 +9,7 @@ use clap::Parser;
 use command::execution::ExecutionVerbosity;
 use concepts::{storage::ComponentToggle, Params};
 use config::toml::ConfigHolder;
+use directories::ProjectDirs;
 
 fn main() -> Result<(), anyhow::Error> {
     let _guard = init::init();
@@ -21,12 +22,12 @@ fn main() -> Result<(), anyhow::Error> {
 
 #[allow(clippy::too_many_lines)]
 async fn main_async() -> Result<(), anyhow::Error> {
-    let config_holder = ConfigHolder::new();
+    let config_holder = ConfigHolder::new(ProjectDirs::from("com", "obelisk", "obelisk"));
     let config = config_holder.load_config().await?;
     let db_file = &config.sqlite_file;
     match Args::parse().command {
         Subcommand::Executor(Executor::Serve { clean }) => {
-            command::server::run(config, clean).await
+            command::server::run(config, clean, config_holder).await
         }
         Subcommand::Component(args::Component::Inspect { wasm_path, verbose }) => {
             command::component::inspect(

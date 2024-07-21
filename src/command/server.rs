@@ -1,4 +1,5 @@
 use crate::config::store::ConfigStore;
+use crate::config::toml::ConfigHolder;
 use crate::config::toml::ObeliskConfig;
 use crate::config::toml::VerifiedActivityConfig;
 use crate::config::toml::VerifiedWorkflowConfig;
@@ -17,6 +18,7 @@ use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use executor::worker::Worker;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,7 +29,20 @@ use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::workflow_worker::WorkflowWorker;
 
-pub(crate) async fn run(config: ObeliskConfig, clean: bool) -> anyhow::Result<()> {
+pub(crate) async fn run(
+    config: ObeliskConfig,
+    clean: bool,
+    config_holder: ConfigHolder,
+) -> anyhow::Result<()> {
+    let wasm_cache_dir = if let Some(project_dirs) = &config_holder.project_dirs {
+        project_dirs.cache_dir().join("wasm")
+    } else {
+        PathBuf::from("obelisk-cache").join("wasm")
+    };
+    tokio::fs::create_dir_all(&wasm_cache_dir)
+        .await
+        .with_context(|| format!("cannot create cache directory {wasm_cache_dir:?}"))?;
+
     let db_file = &config.sqlite_file;
     if clean {
         tokio::fs::remove_file(db_file)
@@ -59,7 +74,7 @@ pub(crate) async fn run(config: ObeliskConfig, clean: bool) -> anyhow::Result<()
     let mut exec_join_handles = Vec::new();
 
     for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
-        let activity = activity.verify_content_digest().await?;
+        let activity = activity.verify_content_digest(&wasm_cache_dir).await?;
 
         if activity.enabled.into() {
             let exec_task_handle =
@@ -68,7 +83,7 @@ pub(crate) async fn run(config: ObeliskConfig, clean: bool) -> anyhow::Result<()
         }
     }
     for workflow in config.workflow.into_iter().filter(|it| it.common.enabled) {
-        let workflow = workflow.verify_content_digest().await?;
+        let workflow = workflow.verify_content_digest(&wasm_cache_dir).await?;
         if workflow.enabled.into() {
             let exec_task_handle =
                 instantiate_workflow(workflow, db_pool.clone(), &engines).await?;
