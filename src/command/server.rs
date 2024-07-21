@@ -39,16 +39,28 @@ pub(crate) async fn run(
     } else {
         PathBuf::from("obelisk-cache").join("wasm")
     };
+    let db_file = &config.sqlite_file;
+    if clean {
+        let ignore_not_found = |err: std::io::Error| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(err)
+            }
+        };
+        tokio::fs::remove_file(db_file)
+            .await
+            .or_else(ignore_not_found)
+            .with_context(|| format!("cannot delete database file `{db_file:?}`"))?;
+        tokio::fs::remove_dir_all(&wasm_cache_dir)
+            .await
+            .or_else(ignore_not_found)
+            .with_context(|| format!("cannot delete cache directory {wasm_cache_dir:?}"))?;
+    }
     tokio::fs::create_dir_all(&wasm_cache_dir)
         .await
         .with_context(|| format!("cannot create cache directory {wasm_cache_dir:?}"))?;
 
-    let db_file = &config.sqlite_file;
-    if clean {
-        tokio::fs::remove_file(db_file)
-            .await
-            .with_context(|| format!("cannot delete database file `{db_file:?}`"))?;
-    }
     let engines = Engines::auto_detect(&get_opts_from_env())?;
     let _epoch_ticker = EpochTicker::spawn_new(
         vec![

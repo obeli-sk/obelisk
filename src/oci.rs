@@ -35,7 +35,9 @@ pub(crate) async fn obtan_wasm_from_oci(
         info!("Fetching metadata for {image}");
         let (_oci_config, wasm_config, metadata_digest) =
             client.pull_manifest_and_config(image, &auth).await?;
-        info!("Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}");
+        if image.digest().is_none() {
+            info!("Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}");
+        }
         wasm_config
             .component
             .context("image must contain a wasi component")?;

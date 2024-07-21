@@ -32,6 +32,7 @@ pub(crate) enum Subcommand {
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Executor {
     Serve {
+        /// Clean sqlite database and wasm cache
         #[arg(short, long)]
         clean: bool,
     },
