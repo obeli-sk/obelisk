@@ -13,7 +13,7 @@ fn to_snake_case(input: &str) -> String {
 }
 
 pub fn build_activity() {
-    build_internal("wasm32-wasi");
+    build_internal("wasm32-wasip1");
 }
 
 pub fn build_workflow() {
