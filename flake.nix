@@ -67,12 +67,12 @@
               pname = "wkg";
               version = "0.3.0";
               src = pkgs.fetchFromGitHub {
-                owner = "tomasol";
+                owner = "bytecodealliance";
                 repo = "wasm-pkg-tools";
-                rev = "355769f3b08e430d2b7c3c1a9a0b43d19fdb56cd";
-                hash = "sha256-a/5foBFjRBU0pd/wth2ytchleDfLB/gEBQzfaFszWEk=";
+                rev = "ff5e16297453930435fdf4126d50c6ec99c0a909";
+                hash = "sha256-cBxXV9eGMU/sB6eNWs0GwVQEtEYrGxm+29OAW75vtgA=";
               };
-              cargoHash = "sha256-IxdZ742h8BSKWhxt7W2HzvWITfanmwX6NXpPfvGjeo8=";
+              cargoHash = "sha256-biCexpnRlYdO6VXfseYmAjave430JN1JJB9n12B2RXo=";
               nativeBuildInputs = [ pkgs.pkg-config ];
               PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
               doCheck = false;
