@@ -75,7 +75,7 @@ impl ComponentCommon {
                         .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
                     (content_digest, wasm_path)
                 }
-                ComponentLocation::Oci(image) => oci::obtan_wasm_from_oci(&image).await?,
+                ComponentLocation::Oci(image) => oci::obtan_wasm_from_oci(image).await?,
             }
         };
         if let Some(specified) = &self.content_digest {

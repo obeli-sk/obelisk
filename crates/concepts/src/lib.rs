@@ -756,6 +756,7 @@ pub struct ComponentConfigHash {
 }
 
 impl ComponentConfigHash {
+    #[must_use]
     pub const fn dummy() -> Self {
         Self {
             component_type: ComponentType::WasmActivity,

@@ -62,7 +62,7 @@ pub async fn file_hash<P: AsRef<Path>>(path: P) -> Result<ContentDigest, std::io
     Ok(ContentDigest::new(concepts::HashType::Sha256, hash_base16))
 }
 #[cfg(madsim)]
-pub async fn file_hash<P: AsRef<Path>>(path: P) -> Result<ContentDigest, std::io::Error> {
+pub async fn file_hash<P: AsRef<Path>>(_path: P) -> Result<ContentDigest, std::io::Error> {
     Ok(ContentDigest::new(
         concepts::HashType::Sha256,
         ulid::Ulid::new().to_string(),

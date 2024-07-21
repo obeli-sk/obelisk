@@ -20,7 +20,7 @@ pub(crate) async fn obtan_wasm_from_oci(
             oci_distribution::Client::new(oci_distribution::client::ClientConfig::default());
         oci_wasm::WasmClient::new(client)
     };
-    let auth = get_oci_auth(&image)?;
+    let auth = get_oci_auth(image)?;
     let oci_cache_mapping_file = wasm_cache_dir.join("metadata_to_content_digests.json");
     let mut oci_cache_mapping: hashbrown::HashMap<String, ContentDigest> = {
         tokio::fs::read_to_string(&oci_cache_mapping_file)
@@ -38,7 +38,7 @@ pub(crate) async fn obtan_wasm_from_oci(
     } else {
         info!("Fetching metadata for {image}");
         let (_oci_config, wasm_config, metadata_digest) =
-            client.pull_manifest_and_config(&image, &auth).await?;
+            client.pull_manifest_and_config(image, &auth).await?;
         info!("Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}");
         wasm_config
             .component
@@ -74,7 +74,7 @@ pub(crate) async fn obtan_wasm_from_oci(
             info!("Pulling image to {wasm_path:?}");
             let data = client
                 // FIXME: do not download all layers at once to memory, based on a size limit
-                .pull(&image, &auth)
+                .pull(image, &auth)
                 .await
                 .with_context(|| format!("Unable to pull image {image}"))?;
             let data = data

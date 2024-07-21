@@ -18,8 +18,8 @@ impl ExecConfig {
         config_id: ComponentConfigHash,
     ) -> executor::executor::ExecConfig {
         executor::executor::ExecConfig {
-            lock_expiry: self.lock_expiry.into(),
-            tick_sleep: self.tick_sleep.into(),
+            lock_expiry: self.lock_expiry,
+            tick_sleep: self.tick_sleep,
             batch_size: self.batch_size,
             config_id,
         }
@@ -61,8 +61,9 @@ impl ConfigStore {
 
     pub(crate) fn name(&self) -> &str {
         match self {
-            Self::WasmActivityV1 { common, .. } => &common.name,
-            Self::WasmWorkflowV1 { common, .. } => &common.name,
+            Self::WasmActivityV1 { common, .. } | Self::WasmWorkflowV1 { common, .. } => {
+                &common.name
+            }
         }
     }
 

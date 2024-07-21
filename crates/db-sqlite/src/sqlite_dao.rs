@@ -360,7 +360,7 @@ impl SqlitePool {
         // https://github.com/ryanfowler/async-sqlite/issues/10
         let path = path.as_ref();
         let client = ClientBuilder::new()
-            .path(&path)
+            .path(path)
             .journal_mode(JournalMode::Wal)
             .open()
             .await?;

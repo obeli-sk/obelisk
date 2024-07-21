@@ -233,7 +233,7 @@ async fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
         let component = ComponentWithMetadata {
             component: Component {
                 config_id,
-                config: serde_json::to_value(&config)
+                config: serde_json::to_value(config)
                     .expect("ConfigStore must be serializable to JSON"),
                 enabled: ComponentToggle::Enabled,
             },

@@ -403,7 +403,6 @@ pub(crate) mod tests {
         expired_timers_watcher,
         worker::{Worker, WorkerContext, WorkerError, WorkerResult},
     };
-    use std::collections::HashSet;
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::{error, info};

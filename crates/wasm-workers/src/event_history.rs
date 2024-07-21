@@ -917,7 +917,10 @@ mod tests {
     use concepts::prefixed_ulid::JoinSetId;
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
-    use concepts::{ComponentConfigHash, ExecutionId, FunctionFqn, FunctionRegistry, Params, SupportedFunctionResult};
+    use concepts::{
+        ComponentConfigHash, ExecutionId, FunctionFqn, FunctionRegistry, Params,
+        SupportedFunctionResult,
+    };
     use db_tests::Database;
     use executor::worker::{WorkerError, WorkerResult};
     use rstest::rstest;
