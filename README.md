@@ -92,16 +92,16 @@ obelisk execution schedule <function> <params>
 
 ## Milestone 2: Allow remote interaction via CLI and web UI - started
 * Move component and general configuration into a TOML file
-* Publish the image to docker hub (minimal and an ubuntu based image)
 * Pull components -from an OCI registry
-* HTTP API for execution and component management
-* Interactive CLI for execution and component management
+* Publish the obelisk image to the Docker Hub (minimal and an ubuntu based image)
+* HTTP API for execution management
+* Interactive CLI for execution management
 * Params typecheck on creation, introspection of types of all functions in the system
-* External process activities
 * HTML based UI for showing executions, event history and relations
 
 ## Milestone 3
 * URL paths with HTTP handlers registered by workflows, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs)
+* External process activities
 * External Activity RPC
 * OpenAPI activity generator
 * Cancellation with recursion
