@@ -18,7 +18,7 @@ use std::{
     time::Duration,
 };
 use tokio::task::{AbortHandle, JoinHandle};
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Span};
 use utils::time::ClockFn;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -60,13 +60,13 @@ impl ExecutionProgress {
 }
 
 pub struct ExecutorTaskHandle {
-    executor_id: ExecutorId,
+    span: Span,
     is_closing: Arc<AtomicBool>,
     abort_handle: AbortHandle,
 }
 
 impl ExecutorTaskHandle {
-    #[instrument(skip_all, fields(executor_id = %self.executor_id))]
+    #[instrument(skip_all, parent = &self.span)]
     pub async fn close(&self) {
         trace!("Gracefully closing");
         self.is_closing.store(true, Ordering::Relaxed);
@@ -78,7 +78,7 @@ impl ExecutorTaskHandle {
 }
 
 impl Drop for ExecutorTaskHandle {
-    #[instrument(skip_all, fields(executor_id = %self.executor_id))]
+    #[instrument(skip_all, parent = &self.span)]
     fn drop(&mut self) {
         if self.abort_handle.is_finished() {
             return;
@@ -134,37 +134,43 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let ffqns = extract_ffqns(worker.as_ref());
-
-        let abort_handle = tokio::spawn(
-            async move {
-                info!("Spawned executor");
-                let task = Self {
-                    worker,
-                    config,
-                    task_limiter,
-                    executor_id,
-                    db_pool,
-                    phantom_data: PhantomData,
-                    ffqns: ffqns.clone(),
-                    clock_fn: clock_fn.clone(),
-                };
-                loop {
-                    let _ = task.tick(clock_fn()).await;
-                    let executed_at = clock_fn();
-                    task.db_pool
-                        .connection()
-                        .subscribe_to_pending(executed_at, ffqns.clone(), task.config.tick_sleep)
-                        .await;
-                    if is_closing_inner.load(Ordering::Relaxed) {
-                        return;
+        let abort_handle = {
+            let span = span.clone();
+            tokio::spawn(
+                async move {
+                    info!("Spawned executor");
+                    let task = Self {
+                        worker,
+                        config,
+                        task_limiter,
+                        executor_id,
+                        db_pool,
+                        phantom_data: PhantomData,
+                        ffqns: ffqns.clone(),
+                        clock_fn: clock_fn.clone(),
+                    };
+                    loop {
+                        let _ = task.tick(clock_fn()).await;
+                        let executed_at = clock_fn();
+                        task.db_pool
+                            .connection()
+                            .subscribe_to_pending(
+                                executed_at,
+                                ffqns.clone(),
+                                task.config.tick_sleep,
+                            )
+                            .await;
+                        if is_closing_inner.load(Ordering::Relaxed) {
+                            return;
+                        }
                     }
                 }
-            }
-            .instrument(span),
-        )
-        .abort_handle();
+                .instrument(span),
+            )
+            .abort_handle()
+        };
         ExecutorTaskHandle {
-            executor_id,
+            span,
             is_closing,
             abort_handle,
         }
