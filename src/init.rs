@@ -43,6 +43,7 @@ pub(crate) fn init() -> Guard {
         .with(tokio_console_layer())
         .with(
             tracing_subscriber::fmt::layer()
+                .compact()
                 .without_time()
                 .with_target(false),
         )
