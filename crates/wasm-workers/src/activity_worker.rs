@@ -613,7 +613,6 @@ pub(crate) mod tests {
                 sim_clock.get_clock_fn(),
                 db_pool.clone(),
                 ffqns,
-                None,
             );
 
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -724,7 +723,6 @@ pub(crate) mod tests {
                 sim_clock.get_clock_fn(),
                 db_pool.clone(),
                 ffqns,
-                None,
             );
 
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

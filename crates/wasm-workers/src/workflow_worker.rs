@@ -1000,7 +1000,6 @@ mod tests {
             sim_clock.get_clock_fn(),
             db_pool.clone(),
             Arc::new([RESCHEDULE_FFQN]),
-            None,
         );
         assert_eq!(
             1,

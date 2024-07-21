@@ -105,12 +105,11 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         clock_fn: C,
         db_pool: P,
         ffqns: Arc<[FunctionFqn]>,
-        task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> Self {
         Self {
             worker,
             config,
-            task_limiter,
+            task_limiter: None,
             executor_id: ExecutorId::generate(),
             db_pool,
             phantom_data: PhantomData,
@@ -586,16 +585,13 @@ mod tests {
     ) -> ExecutionProgress {
         trace!("Ticking with {worker:?}");
         let ffqns = super::extract_ffqns(worker.as_ref());
-        let executor = ExecTask {
+        let executor = ExecTask::new(
             worker,
             config,
-            db_pool,
-            task_limiter: None,
-            executor_id: ExecutorId::generate(),
-            phantom_data: PhantomData,
-            ffqns,
             clock_fn,
-        };
+            db_pool,
+            ffqns,
+        );
         let mut execution_progress = executor.tick(executed_at).await.unwrap();
         loop {
             execution_progress
@@ -1190,16 +1186,13 @@ mod tests {
             .unwrap();
 
         let ffqns = super::extract_ffqns(worker.as_ref());
-        let executor = ExecTask {
+        let executor = ExecTask::new(
             worker,
-            config: exec_config,
-            db_pool: db_pool.clone(),
-            task_limiter: None,
-            executor_id: ExecutorId::generate(),
-            phantom_data: PhantomData,
+            exec_config,
+            sim_clock.get_clock_fn(),
+            db_pool.clone(),
             ffqns,
-            clock_fn: sim_clock.get_clock_fn(),
-        };
+        );
         let mut first_execution_progress = executor.tick(sim_clock.now()).await.unwrap();
         assert_eq!(1, first_execution_progress.executions.len());
         // Started hanging, wait for lock expiry.
