@@ -233,7 +233,7 @@ impl DbConnection for InMemoryDbConnection {
 
     async fn component_get_metadata(
         &self,
-        _config_id: ComponentConfigHash,
+        _config_id: &ComponentConfigHash,
     ) -> Result<ComponentWithMetadata, DbError> {
         unimplemented!()
     }

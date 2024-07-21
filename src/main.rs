@@ -61,7 +61,7 @@ async fn main_async() -> Result<(), anyhow::Error> {
         }) => {
             command::component::get(
                 db_file,
-                config_id,
+                &config_id,
                 match verbosity {
                     0 => None,
                     1 => Some(FunctionMetadataVerbosity::FfqnOnly),

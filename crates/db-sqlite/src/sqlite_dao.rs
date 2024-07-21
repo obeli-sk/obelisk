@@ -1976,9 +1976,10 @@ impl DbConnection for SqlitePool {
     #[instrument(skip(self))]
     async fn component_get_metadata(
         &self,
-        config_id: ComponentConfigHash,
+        config_id: &ComponentConfigHash,
     ) -> Result<ComponentWithMetadata, DbError> {
         trace!("get_component_metadata");
+        let config_id = config_id.clone();
         self.pool
             .conn_with_err_and_span::<_, _, SqliteError>(
                 move |conn| Self::component_get_with_metadata(conn, config_id),

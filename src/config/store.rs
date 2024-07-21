@@ -59,12 +59,14 @@ impl ConfigStore {
         }
     }
 
-    pub(crate) fn name(&self) -> &str {
+    pub(crate) fn common(&self) -> &ConfigStoreCommon {
         match self {
-            Self::WasmActivityV1 { common, .. } | Self::WasmWorkflowV1 { common, .. } => {
-                &common.name
-            }
+            Self::WasmActivityV1 { common, .. } | Self::WasmWorkflowV1 { common, .. } => common,
         }
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.common().name
     }
 
     pub(crate) fn as_hash(&self) -> ComponentConfigHash {

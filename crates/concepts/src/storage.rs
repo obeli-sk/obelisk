@@ -671,7 +671,7 @@ pub trait DbConnection: Send + Sync {
     /// Get component and its metadata and state.
     async fn component_get_metadata(
         &self,
-        config_id: ComponentConfigHash,
+        config_id: &ComponentConfigHash,
     ) -> Result<ComponentWithMetadata, DbError>;
 
     /// Find exported function in the enabled component list.

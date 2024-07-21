@@ -197,7 +197,7 @@ impl DbConnection for DbConnectionProxy {
 
     async fn component_get_metadata(
         &self,
-        config_id: ComponentConfigHash,
+        config_id: &ComponentConfigHash,
     ) -> Result<ComponentWithMetadata, DbError> {
         self.0.component_get_metadata(config_id).await
     }

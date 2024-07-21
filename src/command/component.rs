@@ -54,7 +54,7 @@ pub(crate) async fn list<P: AsRef<Path>>(
         .context("database error")?;
     for component in components {
         let config_store: ConfigStore = serde_json::from_value(component.config)
-            .expect("deserialization of config store failed");
+            .context("deserialization of config store failed")?;
         println!(
             "{component_type}\t{name}\tid: {hash}",
             component_type = component.config_id.component_type,
@@ -62,7 +62,7 @@ pub(crate) async fn list<P: AsRef<Path>>(
             hash = component.config_id,
         );
         let component = db_connection
-            .component_get_metadata(component.config_id)
+            .component_get_metadata(&component.config_id)
             .await
             .context("database error")?;
         println!("Exports:");
@@ -78,7 +78,7 @@ pub(crate) async fn list<P: AsRef<Path>>(
 
 pub(crate) async fn get<P: AsRef<Path>>(
     db_file: P,
-    config_id: ComponentConfigHash,
+    config_id: &ComponentConfigHash,
     verbosity: Option<FunctionMetadataVerbosity>,
 ) -> anyhow::Result<()> {
     let db_file = db_file.as_ref();

@@ -10,7 +10,6 @@ use concepts::{
     storage::{ExecutionEventInner, ExpiredTimer, JoinSetResponse},
     FinishedExecutionError,
 };
-use tracing::Span;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -19,6 +18,7 @@ use std::{
     time::Duration,
 };
 use tokio::task::AbortHandle;
+use tracing::Span;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::ClockFn;
 use val_json::type_wrapper::TypeWrapper;

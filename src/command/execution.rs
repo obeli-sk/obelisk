@@ -1,3 +1,4 @@
+use crate::config::store::ConfigStore;
 use anyhow::bail;
 use anyhow::Context;
 use concepts::storage::DbConnection;
@@ -10,7 +11,6 @@ use concepts::SupportedFunctionResult;
 use concepts::{storage::CreateRequest, ExecutionId, FunctionFqn, Params};
 use db_sqlite::sqlite_dao::SqlitePool;
 use std::path::Path;
-use std::time::Duration;
 use utils::time::now;
 use val_json::wast_val::WastVal;
 use val_json::wast_val::WastValWithType;
@@ -43,7 +43,11 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
         );
     }
     // TODO: Typecheck parameters
-
+    let component = db_connection.component_get_metadata(&config_id).await?;
+    let config_store: ConfigStore = serde_json::from_value(component.component.config)
+        .context("deserialization of config store failed")?;
+    let retry_exp_backoff = config_store.common().default_retry_exp_backoff;
+    let max_retries = config_store.common().default_max_retries;
     let execution_id = ExecutionId::generate();
     let created_at = now();
     db_connection
@@ -54,8 +58,8 @@ pub(crate) async fn schedule<P: AsRef<Path>>(
             params,
             parent: None,
             scheduled_at: created_at,
-            retry_exp_backoff: Duration::from_millis(100), // TODO pass from args
-            max_retries: 5,                                // TODO pass from args
+            retry_exp_backoff,
+            max_retries,
             config_id,
             return_type,
         })
