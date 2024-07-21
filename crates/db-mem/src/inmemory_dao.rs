@@ -245,14 +245,14 @@ impl DbConnection for InMemoryDbConnection {
         unimplemented!()
     }
 
-    // async fn component_toggle(
-    //     &self,
-    //     _config_id: ComponentConfigHash,
-    //     _toggle: ComponentToggle,
-    //     _updated_at: DateTime<Utc>,
-    // ) -> Result<(), DbError> {
-    //     unimplemented!()
-    // }
+    async fn component_toggle(
+        &self,
+        _config_id: &ComponentConfigHash,
+        _toggle: ComponentToggle,
+        _updated_at: DateTime<Utc>,
+    ) -> Result<(), DbError> {
+        unimplemented!()
+    }
 }
 
 mod index {

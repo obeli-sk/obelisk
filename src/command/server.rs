@@ -7,6 +7,7 @@ use concepts::storage::Component;
 use concepts::storage::ComponentToggle;
 use concepts::storage::ComponentWithMetadata;
 use concepts::storage::DbConnection;
+use concepts::storage::DbError;
 use concepts::storage::DbPool;
 use concepts::FunctionRegistry;
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -323,20 +324,36 @@ async fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
     exec_config: ExecConfig,
     db_pool: impl DbPool<DB> + 'static,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
-    let component = ComponentWithMetadata {
-        component: Component {
-            config_id: exec_config.config_id.clone(),
-            config: serde_json::to_value(&config)
-                .expect("ConfigStore must be serializable to JSON"),
-            enabled: ComponentToggle::Enabled,
-        },
-        exports: worker.exported_functions().collect(),
-        imports: worker.imported_functions().collect(),
-    };
+    let config_id = exec_config.config_id.clone();
+
     // FIXME: Disable old components first
-    db_pool
-        .connection()
-        .component_add(now(), component, ComponentToggle::Enabled)
-        .await?;
+    let connection = db_pool.connection();
+    // If the component exists, just enable it
+    let found = match connection
+        .component_toggle(&config_id, ComponentToggle::Enabled, now())
+        .await
+    {
+        Ok(()) => {
+            debug!("Enabled component {config_id}");
+            true
+        }
+        Err(DbError::Specific(concepts::storage::SpecificError::NotFound)) => false,
+        Err(other) => Err(other)?,
+    };
+    if !found {
+        let component = ComponentWithMetadata {
+            component: Component {
+                config_id,
+                config: serde_json::to_value(&config)
+                    .expect("ConfigStore must be serializable to JSON"),
+                enabled: ComponentToggle::Enabled,
+            },
+            exports: worker.exported_functions().collect(),
+            imports: worker.imported_functions().collect(),
+        };
+        connection
+            .component_add(now(), component, ComponentToggle::Enabled)
+            .await?;
+    }
     Ok(ExecTask::spawn_new(worker, exec_config, now, db_pool, None))
 }

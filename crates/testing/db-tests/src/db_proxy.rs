@@ -209,14 +209,12 @@ impl DbConnection for DbConnectionProxy {
         self.0.component_enabled_get_exported_function(ffqn).await
     }
 
-    // async fn component_toggle(
-    //     &self,
-    //     component_id: ComponentId,
-    //     toggle: ComponentToggle,
-    //     updated_at: DateTime<Utc>,
-    // ) -> Result<(), DbError> {
-    //     self.0
-    //         .component_toggle(component_id, toggle, updated_at)
-    //         .await
-    // }
+    async fn component_toggle(
+        &self,
+        config_id: &ComponentConfigHash,
+        toggle: ComponentToggle,
+        updated_at: DateTime<Utc>,
+    ) -> Result<(), DbError> {
+        self.0.component_toggle(config_id, toggle, updated_at).await
+    }
 }

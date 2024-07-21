@@ -73,7 +73,7 @@ pub(crate) async fn obtan_wasm_from_oci(
             }
             info!("Pulling image to {wasm_path:?}");
             let data = client
-                // FIXME: do not download all layers at once to memory
+                // FIXME: do not download all layers at once to memory, based on a size limit
                 .pull(&image, &auth)
                 .await
                 .with_context(|| format!("Unable to pull image {image}"))?;

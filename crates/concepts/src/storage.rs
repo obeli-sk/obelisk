@@ -681,12 +681,12 @@ pub trait DbConnection: Send + Sync {
     ) -> Result<(ComponentConfigHash, FunctionMetadata), DbError>;
 
     // /// Enable or disable a component
-    // async fn component_toggle(
-    //     &self,
-    //     config_id: ComponentConfigHash,
-    //     toggle: ComponentToggle,
-    //     updated_at: DateTime<Utc>,
-    // ) -> Result<(), DbError>;
+    async fn component_toggle(
+        &self,
+        config_id: &ComponentConfigHash,
+        toggle: ComponentToggle,
+        updated_at: DateTime<Utc>,
+    ) -> Result<(), DbError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]

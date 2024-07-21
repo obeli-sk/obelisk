@@ -3,8 +3,7 @@ watch_component_changes = false
 
 [[activity]]
 name = "fibo_activity"
-# location.oci = "docker.io/tomasolvecky/fibo_activity:latest@sha256:46d069c98eea5227ceaabc8a3f8227a45e23e64c08d6bb2d2634f8947261f41f"
-location.oci = "docker.io/tomasolvecky/fibo_activity:latest"
+location.oci = "docker.io/tomasolvecky/fibo_activity:latest@sha256:46d069c98eea5227ceaabc8a3f8227a45e23e64c08d6bb2d2634f8947261f41f"
 recycle_instances = true
 
 [[workflow]]
