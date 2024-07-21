@@ -10,6 +10,7 @@ use concepts::{
     storage::{ExecutionEventInner, ExpiredTimer, JoinSetResponse},
     FinishedExecutionError,
 };
+use tracing::Span;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -42,13 +43,13 @@ pub(crate) struct TickProgress {
 }
 
 pub struct TaskHandle {
-    executor_id: ExecutorId,
     is_closing: Arc<AtomicBool>,
     abort_handle: AbortHandle,
+    span: Span,
 }
 
 impl TaskHandle {
-    #[instrument(skip_all, fields(executor_id = %self.executor_id))]
+    #[instrument(skip_all, parent = &self.span)]
     pub async fn close(&self) {
         trace!("Gracefully closing");
         self.is_closing.store(true, Ordering::Relaxed);
@@ -60,7 +61,7 @@ impl TaskHandle {
 }
 
 impl Drop for TaskHandle {
-    #[instrument(skip_all, fields(executor_id = %self.executor_id))]
+    #[instrument(skip_all, parent = &self.span)]
     fn drop(&mut self) {
         if self.abort_handle.is_finished() {
             return;
@@ -84,7 +85,7 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
         let tick_sleep = config.tick_sleep;
         let abort_handle = tokio::spawn(
             async move {
-                info!("Spawned expired lock watcher");
+                info!("Spawned");
                 let task = Self { db_connection };
                 let mut old_err = None;
                 loop {
@@ -97,13 +98,13 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
                     tokio::time::sleep(tick_sleep).await;
                 }
             }
-            .instrument(span),
+            .instrument(span.clone()),
         )
         .abort_handle();
         TaskHandle {
-            executor_id,
             is_closing,
             abort_handle,
+            span,
         }
     }
 

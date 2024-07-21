@@ -133,41 +133,34 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let ffqns = extract_ffqns(worker.as_ref());
-        let abort_handle = {
-            let span = span.clone();
-            tokio::spawn(
-                async move {
-                    info!("Spawned executor");
-                    let task = Self {
-                        worker,
-                        config,
-                        task_limiter,
-                        executor_id,
-                        db_pool,
-                        phantom_data: PhantomData,
-                        ffqns: ffqns.clone(),
-                        clock_fn: clock_fn.clone(),
-                    };
-                    loop {
-                        let _ = task.tick(clock_fn()).await;
-                        let executed_at = clock_fn();
-                        task.db_pool
-                            .connection()
-                            .subscribe_to_pending(
-                                executed_at,
-                                ffqns.clone(),
-                                task.config.tick_sleep,
-                            )
-                            .await;
-                        if is_closing_inner.load(Ordering::Relaxed) {
-                            return;
-                        }
+        let abort_handle = tokio::spawn(
+            async move {
+                info!("Spawned");
+                let task = Self {
+                    worker,
+                    config,
+                    task_limiter,
+                    executor_id,
+                    db_pool,
+                    phantom_data: PhantomData,
+                    ffqns: ffqns.clone(),
+                    clock_fn: clock_fn.clone(),
+                };
+                loop {
+                    let _ = task.tick(clock_fn()).await;
+                    let executed_at = clock_fn();
+                    task.db_pool
+                        .connection()
+                        .subscribe_to_pending(executed_at, ffqns.clone(), task.config.tick_sleep)
+                        .await;
+                    if is_closing_inner.load(Ordering::Relaxed) {
+                        return;
                     }
                 }
-                .instrument(span),
-            )
-            .abort_handle()
-        };
+            }
+            .instrument(span.clone()),
+        )
+        .abort_handle();
         ExecutorTaskHandle {
             span,
             is_closing,
@@ -585,13 +578,7 @@ mod tests {
     ) -> ExecutionProgress {
         trace!("Ticking with {worker:?}");
         let ffqns = super::extract_ffqns(worker.as_ref());
-        let executor = ExecTask::new(
-            worker,
-            config,
-            clock_fn,
-            db_pool,
-            ffqns,
-        );
+        let executor = ExecTask::new(worker, config, clock_fn, db_pool, ffqns);
         let mut execution_progress = executor.tick(executed_at).await.unwrap();
         loop {
             execution_progress
