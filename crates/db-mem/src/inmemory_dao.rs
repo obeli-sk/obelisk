@@ -9,7 +9,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError, ComponentToggle, ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError, DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version
+    AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError,
+    ComponentToggle, ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError,
+    DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEventOuter,
+    LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ComponentConfigHash, ExecutionId, FunctionFqn, FunctionMetadata, StrVariant};
@@ -228,12 +231,12 @@ impl DbConnection for InMemoryDbConnection {
         unimplemented!()
     }
 
-    // async fn component_get_metadata(
-    //     &self,
-    //     _config_id: ComponentConfigHash,
-    // ) -> Result<(ComponentWithMetadata, ComponentToggle), DbError> {
-    //     unimplemented!()
-    // }
+    async fn component_get_metadata(
+        &self,
+        _config_id: ComponentConfigHash,
+    ) -> Result<ComponentWithMetadata, DbError> {
+        unimplemented!()
+    }
 
     async fn component_enabled_get_exported_function(
         &self,

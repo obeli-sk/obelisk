@@ -1,5 +1,5 @@
 use crate::config::store::ConfigStore;
-use crate::config::toml::ConfigHolder;
+use crate::config::toml::ObeliskConfig;
 use crate::config::toml::VerifiedActivityConfig;
 use crate::config::toml::VerifiedWorkflowConfig;
 use anyhow::Context;
@@ -27,13 +27,12 @@ use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::workflow_worker::WorkflowWorker;
 
-pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Result<()> {
-    let config = config_holder.load_config().await?;
+pub(crate) async fn run(config: ObeliskConfig, clean: bool) -> anyhow::Result<()> {
     let db_file = &config.sqlite_file;
     if clean {
         tokio::fs::remove_file(db_file)
             .await
-            .with_context(|| format!("cannot delete database file `{db_file}`"))?;
+            .with_context(|| format!("cannot delete database file `{db_file:?}`"))?;
     }
     let engines = Engines::auto_detect(&get_opts_from_env())?;
     let _epoch_ticker = EpochTicker::spawn_new(

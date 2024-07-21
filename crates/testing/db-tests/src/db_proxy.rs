@@ -192,12 +192,12 @@ impl DbConnection for DbConnectionProxy {
         self.0.component_list(toggle).await
     }
 
-    // async fn component_get_metadata(
-    //     &self,
-    //     component_id: ComponentId,
-    // ) -> Result<(ComponentWithMetadata, ComponentToggle), DbError> {
-    //     self.0.component_get_metadata(component_id).await
-    // }
+    async fn component_get_metadata(
+        &self,
+        config_id: ComponentConfigHash,
+    ) -> Result<ComponentWithMetadata, DbError> {
+        self.0.component_get_metadata(config_id).await
+    }
 
     async fn component_enabled_get_exported_function(
         &self,

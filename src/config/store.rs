@@ -6,7 +6,7 @@ use sha2::Sha256;
 use std::time::Duration;
 use wasm_workers::workflow_worker::JoinNextBlockingStrategy;
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ExecConfig {
     pub(crate) batch_size: u32,
     pub(crate) lock_expiry: Duration,
@@ -26,7 +26,7 @@ impl ExecConfig {
     }
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ConfigStoreCommon {
     pub(crate) name: String,
     pub(crate) location: ComponentLocation,
@@ -36,7 +36,7 @@ pub(crate) struct ConfigStoreCommon {
     pub(crate) default_retry_exp_backoff: Duration,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) enum ConfigStore {
     WasmActivityV1 {
         common: ConfigStoreCommon,

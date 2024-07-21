@@ -413,7 +413,7 @@ impl SqlitePool {
             scheduled_at,
             retry_exp_backoff,
             max_retries,
-            config_id: component_id,
+            config_id,
             return_type,
         } = event
         {
@@ -426,7 +426,7 @@ impl SqlitePool {
                 scheduled_at,
                 retry_exp_backoff,
                 max_retries,
-                config_id: component_id,
+                config_id,
                 return_type,
             })
         } else {
@@ -1246,7 +1246,7 @@ impl SqlitePool {
         }
     }
 
-    fn get_enabled_component_id_by_export(
+    fn component_get_enabled_by_exported_ffqn(
         tx: &Transaction,
         ffqn: &FunctionFqn,
     ) -> Result<Option<ComponentConfigHash>, SqliteError> {
@@ -1909,7 +1909,7 @@ impl DbConnection for SqlitePool {
                     if toggle == ComponentToggle::Enabled {
                         let mut conflicts = hashbrown::HashSet::new();
                         for (export_ffqn, _, _) in &component.exports {
-                            if let Some(conflict) = Self::get_enabled_component_id_by_export(tx, export_ffqn)? {
+                            if let Some(conflict) = Self::component_get_enabled_by_exported_ffqn(tx, export_ffqn)? {
                                 conflicts.insert(conflict);
                             }
                         }
@@ -1973,20 +1973,20 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)
     }
 
-    // #[instrument(skip(self))]
-    // async fn component_get_metadata(
-    //     &self,
-    //     component_id: ComponentId,
-    // ) -> Result<(ComponentWithMetadata, ComponentToggle), DbError> {
-    //     trace!("get_component_metadata");
-    //     self.pool
-    //         .conn_with_err_and_span::<_, _, SqliteError>(
-    //             move |conn| Self::component_get_with_metadata(conn, component_id),
-    //             Span::current(),
-    //         )
-    //         .await
-    //         .map_err(DbError::from)
-    // }
+    #[instrument(skip(self))]
+    async fn component_get_metadata(
+        &self,
+        config_id: ComponentConfigHash,
+    ) -> Result<ComponentWithMetadata, DbError> {
+        trace!("get_component_metadata");
+        self.pool
+            .conn_with_err_and_span::<_, _, SqliteError>(
+                move |conn| Self::component_get_with_metadata(conn, config_id),
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
+    }
 
     #[instrument(skip(self))]
     //TODO: consider caching this
@@ -1998,14 +1998,14 @@ impl DbConnection for SqlitePool {
         let ffqn = ffqn.clone();
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
             move |conn| {
-                conn.prepare("SELECT component_id, parameter_types, return_type from t_component_export WHERE ffqn = :ffqn")?
+                conn.prepare("SELECT config_id, parameter_types, return_type from t_component_export WHERE ffqn = :ffqn")?
                     .query_row(named_params! {
                         ":ffqn": ffqn.to_string()
                     }, |row| {
-                        let component_id = row.get::<_, FromStrWrapper<ComponentConfigHash>>("config_id")?.0;
+                        let config_id = row.get::<_, FromStrWrapper<ComponentConfigHash>>("config_id")?.0;
                         let parameter_types = row.get::<_, JsonWrapper<ParameterTypes>>("parameter_types")?.0;
                         let return_type = row.get::<_, JsonWrapper<ReturnType>>("return_type")?.0;
-                        Ok((component_id,
+                        Ok((config_id,
                             (
                             ffqn,
                             parameter_types,
