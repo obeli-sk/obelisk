@@ -5,10 +5,7 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, ComponentAddError, ComponentToggle,
-        ComponentWithMetadata, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
-        ExecutionLog, ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        LockPendingResponse, LockResponse, Version,
+        AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError, ComponentToggle, ComponentWithMetadata, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Version
     },
     ComponentConfigHash, ExecutionId, FunctionFqn, FunctionMetadata,
 };
@@ -191,9 +188,9 @@ impl DbConnection for DbConnectionProxy {
         self.0.component_add(created_at, component, toggle).await
     }
 
-    // async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError> {
-    //     self.0.component_list(toggle).await
-    // }
+    async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError> {
+        self.0.component_list(toggle).await
+    }
 
     // async fn component_get_metadata(
     //     &self,

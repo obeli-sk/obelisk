@@ -665,8 +665,8 @@ pub trait DbConnection: Send + Sync {
         toggle: ComponentToggle,
     ) -> Result<(), ComponentAddError>;
 
-    // /// List the components, sorted by last update date from oldest to newest.
-    // async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError>;
+    /// List the components, sorted by last update date from oldest to newest.
+    async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError>;
 
     // /// Get component and its metadata and state.
     // async fn component_get_metadata(

@@ -54,6 +54,7 @@ pub(crate) async fn run(config_holder: ConfigHolder, clean: bool) -> anyhow::Res
             clock_fn: now,
         },
     );
+    disable_all_components(db_pool.connection()).await?;
     match config_watcher {
         None => {
             debug!("Loading components: {config:?}");
@@ -286,6 +287,15 @@ async fn instantiate_activity<DB: DbConnection + 'static>(
         db_pool,
     )
     .await
+}
+
+async fn disable_all_components(conn: impl DbConnection) -> Result<(), anyhow::Error> {
+    // TODO: should be in a tx together with enabling the current components
+    for component in conn.component_list(ComponentToggle::Enabled).await? {
+        conn.component_toggle(&component.config_id, ComponentToggle::Disabled, now())
+            .await?;
+    }
+    Ok(())
 }
 
 async fn instantiate_workflow<DB: DbConnection + 'static>(

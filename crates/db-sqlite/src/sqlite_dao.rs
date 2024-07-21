@@ -120,13 +120,12 @@ CREATE TABLE IF NOT EXISTS t_component (
     last_updated_at TEXT NOT NULL,
     config_id TEXT NOT NULL,
     toggle INTEGER NOT NULL,
-    component_type TEXT NOT NULL,
     config JSONB NOT NULL,
     exports JSONB NOT NULL,
     imports JSONB NOT NULL,
     PRIMARY KEY (config_id)
 )
-"; // FIXME: `name`, `component_type` are redundant
+";
 
 const CREATE_TABLE_T_COMPONENT_EXPORT: &str = r"
 CREATE TABLE IF NOT EXISTS t_component_export (
@@ -1921,18 +1920,16 @@ impl DbConnection for SqlitePool {
 
                     let mut stmt = tx.prepare(
                         "INSERT INTO t_component \
-                            (created_at, last_updated_at, config_id, toggle, component_type, config, exports, imports) \
+                            (created_at, last_updated_at, config_id, toggle, config, exports, imports) \
                             VALUES \
-                            (:created_at, :last_updated_at, :config_id, :toggle, :component_type, :config, :exports, :imports)",
+                            (:created_at, :last_updated_at, :config_id, :toggle, :config, :exports, :imports)",
                     )?;
                     stmt.execute(named_params! {
                         ":created_at": created_at,
                         ":last_updated_at": created_at,
                         ":config_id": component.component.config_id.to_string(),
                         ":toggle": bool::from(toggle),
-                        ":component_type": component.component.config_id.component_type.to_string(),
                         ":config": component.component.config,
-                        // ":name": component.component.name,
                         ":exports": exports,
                         ":imports": imports
                         })?;
@@ -1948,38 +1945,33 @@ impl DbConnection for SqlitePool {
             .map_err(ComponentAddError::Conflict)
     }
 
-    // #[instrument(skip(self))]
-    // async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError> {
-    //     trace!("list_components");
-    //     self.pool
-    //         .conn_with_err_and_span::<_, _, SqliteError>(
-    //             move |conn| {
-    //                 conn.prepare(
-    //                     "SELECT component_id, component_type, config, name FROM t_component WHERE toggle = :toggle ORDER BY last_updated_at",
-    //                 )?
-    //                 .query_map(named_params! {":toggle": bool::from(toggle)}, |row| {
-    //                     let component_id =
-    //                         row.get::<_, FromStrWrapper<ComponentId>>("component_id")?.0;
-    //                     let component_type = row
-    //                         .get::<_, FromStrWrapper<ComponentType>>("component_type")?
-    //                         .0;
-    //                     let config = row.get::<_, serde_json::Value>("config")?;
-    //                     let name = row.get("name")?;
-    //                     Ok(Component {
-    //                         component_id,
-    //                         component_type,
-    //                         config,
-    //                         name,
-    //                     })
-    //                 })?
-    //                 .collect::<Result<Vec<_>, _>>()
-    //                 .map_err(SqliteError::from)
-    //             },
-    //             Span::current(),
-    //         )
-    //         .await
-    //         .map_err(DbError::from)
-    // }
+    #[instrument(skip(self))]
+    async fn component_list(&self, enabled: ComponentToggle) -> Result<Vec<Component>, DbError> {
+        trace!("list_components");
+        self.pool
+            .conn_with_err_and_span::<_, _, SqliteError>(
+                move |conn| {
+                    conn.prepare(
+                        "SELECT config_id, config FROM t_component WHERE toggle = :toggle ORDER BY last_updated_at",
+                    )?
+                    .query_map(named_params! {":toggle": bool::from(enabled)}, |row| {
+                        let config_id =
+                            row.get::<_, FromStrWrapper<ComponentConfigHash>>("config_id")?.0;
+                        let config = row.get::<_, serde_json::Value>("config")?;
+                        Ok(Component {
+                            config_id,
+                            config,
+                            enabled,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(SqliteError::from)
+                },
+                Span::current(),
+            )
+            .await
+            .map_err(DbError::from)
+    }
 
     // #[instrument(skip(self))]
     // async fn component_get_metadata(
