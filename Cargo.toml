@@ -188,7 +188,7 @@ tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 ulid = { version = "1.1.0", features = ["serde"] }
 waki = "0.3.0"
-wasm-pkg-common = { git = "https://github.com/bytecodealliance/wasm-pkg-tools.git", rev = "c302df40fc24dc506501386ed87f0738e4a2be5f", features = [
+wasm-pkg-common = { git = "https://github.com/bytecodealliance/wasm-pkg-tools.git", rev = "ff5e16297453930435fdf4126d50c6ec99c0a909", features = [
     "tokio",
 ] } # Should not be needed when 0.4.1 is superseded with another release.
 wiremock = "0.6"

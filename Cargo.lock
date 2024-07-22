@@ -4157,7 +4157,7 @@ dependencies = [
 [[package]]
 name = "wasm-pkg-common"
 version = "0.4.1"
-source = "git+https://github.com/bytecodealliance/wasm-pkg-tools.git?rev=c302df40fc24dc506501386ed87f0738e4a2be5f#c302df40fc24dc506501386ed87f0738e4a2be5f"
+source = "git+https://github.com/bytecodealliance/wasm-pkg-tools.git?rev=ff5e16297453930435fdf4126d50c6ec99c0a909#ff5e16297453930435fdf4126d50c6ec99c0a909"
 dependencies = [
  "anyhow",
  "bytes",
