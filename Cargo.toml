@@ -97,7 +97,7 @@ members = [
 [workspace.package]
 version = "0.1.8"
 license = "AGPL-3.0-only"
-repository = "https://github.com/obeli-sk/obeli-sk"
+repository = "https://github.com/obeli-sk/obelisk"
 authors = ["Project Developers"]
 edition = "2021"
 rust-version = "1.77.0"
