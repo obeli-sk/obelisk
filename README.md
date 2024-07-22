@@ -77,6 +77,13 @@ Run the program
 cargo run --release
 ```
 
+### Building the docker image
+```sh
+nix build '.#dockerBinSh' # or '.#docker'
+image=$((docker load < result) | sed -n '$s/^Loaded image: //p')
+docker tag $image ...
+```
+
 ## Usage
 
 ```sh
