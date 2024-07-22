@@ -18,15 +18,34 @@ use wasm_workers::{
     workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig},
 };
 
+const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ObeliskConfig {
     #[serde(default = "default_sqlite_file")]
-    pub(crate) sqlite_file: String,
+    sqlite_file: String,
     #[serde(default)]
     pub(crate) activity: Vec<Activity>,
     #[serde(default)]
     pub(crate) workflow: Vec<Workflow>,
+}
+
+impl ObeliskConfig {
+    pub(crate) async fn get_sqlite_file(
+        &self,
+        project_dirs: Option<&ProjectDirs>,
+    ) -> Result<PathBuf, anyhow::Error> {
+        let sqlite_path = match (self.sqlite_file.strip_prefix(DATA_DIR_PREFIX), project_dirs) {
+            (None, _) => PathBuf::from(&self.sqlite_file),
+            (Some(suffix), Some(project_dirs)) => project_dirs.data_dir().join(suffix),
+            (Some(_), None) => bail!("cannot use {DATA_DIR_PREFIX} on this platform, please specify canonical path to `sqlite_file`"),
+        };
+        if let Some(parent) = sqlite_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        Ok(sqlite_path)
+    }
 }
 
 fn default_sqlite_file() -> String {

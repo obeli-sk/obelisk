@@ -1,4 +1,6 @@
-sqlite_file = "./obelisk.sqlite"
+# ${DATA_DIR} on linux is evaluated as $XDG_DATA_HOME/obelisk or $HOME/.local/share/obelisk
+# More details: https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dir
+sqlite_file = "${DATA_DIR}/obelisk.sqlite"
 
 [[activity]]
 name = "fibo_activity"
@@ -18,4 +20,4 @@ exec.tick_sleep.millis = 200
 join_next_blocking_strategy = "await"
 child_retry_exp_backoff.millis = 10
 child_max_retries = 5
-non_blocking_event_batching = false
+non_blocking_event_batching = true

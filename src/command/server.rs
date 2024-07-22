@@ -31,6 +31,7 @@ use wasm_workers::workflow_worker::WorkflowWorker;
 
 pub(crate) async fn run(
     config: ObeliskConfig,
+    db_file: &PathBuf,
     clean: bool,
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
@@ -39,7 +40,6 @@ pub(crate) async fn run(
     } else {
         PathBuf::from("obelisk-cache").join("wasm")
     };
-    let db_file = &config.sqlite_file;
     if clean {
         let ignore_not_found = |err: std::io::Error| {
             if err.kind() == std::io::ErrorKind::NotFound {

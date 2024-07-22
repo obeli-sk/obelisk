@@ -24,10 +24,12 @@ fn main() -> Result<(), anyhow::Error> {
 async fn main_async() -> Result<(), anyhow::Error> {
     let config_holder = ConfigHolder::new(ProjectDirs::from("com", "obelisk", "obelisk"));
     let config = config_holder.load_config().await?;
-    let db_file = &config.sqlite_file;
+    let db_file = &config
+        .get_sqlite_file(config_holder.project_dirs.as_ref())
+        .await?;
     match Args::parse().command {
         Subcommand::Executor(Executor::Serve { clean }) => {
-            command::server::run(config, clean, config_holder).await
+            command::server::run(config, &db_file, clean, config_holder).await
         }
         Subcommand::Component(args::Component::Inspect { wasm_path, verbose }) => {
             command::component::inspect(

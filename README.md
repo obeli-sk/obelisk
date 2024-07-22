@@ -2,10 +2,14 @@
 Deterministic workflow engine built on top of WASI Component Model
 
 ## Project status / Disclaimer
-This is a pre-release.
+This is a **pre-release**.
+
 This repo contains backend code for local development and testing.
 The software doesn't have backward compatibility guarantees for CLI nor database format.
 Please exercise caution if attempting to use it for production.
+
+### Supported platforms
+* Linux x64
 
 ## Core principles
 * Schema first, using [WIT](https://component-model.bytecodealliance.org/design/wit.html) as the interface specification between workflows and activities.
