@@ -29,7 +29,7 @@ async fn main_async() -> Result<(), anyhow::Error> {
         .await?;
     match Args::parse().command {
         Subcommand::Executor(Executor::Serve { clean }) => {
-            command::server::run(config, &db_file, clean, config_holder).await
+            command::server::run(config, db_file, clean, config_holder).await
         }
         Subcommand::Component(args::Component::Inspect { wasm_path, verbose }) => {
             command::component::inspect(
