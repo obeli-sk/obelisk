@@ -298,7 +298,9 @@ impl ConfigHolder {
         let mut paths = Vec::new();
         cfg_if::cfg_if! {
             if #[cfg(target_os = "linux")] {
-                paths.push(PathBuf::from("/etc/obelisk/obelisk.toml"));
+                let global_config = PathBuf::from("/etc/obelisk/obelisk.toml");
+                debug!("Global config: {global_config:?} exists? {:?}", global_config.try_exists());
+                paths.push(global_config);
             }
         }
         if let Some(project_dirs) = &project_dirs {
@@ -307,10 +309,18 @@ impl ConfigHolder {
             // Win: C:\Users\Alice\AppData\Roaming\obelisk\obelisk\config\
             // Mac: /Users/Alice/Library/Application Support/com.obelisk.obelisk-App/
             let user_config = user_config_dir.join("obelisk.toml");
-            debug!("User config: {user_config:?}");
+            debug!(
+                "User config: {user_config:?} exists? {:?}",
+                user_config.try_exists()
+            );
             paths.push(user_config);
         }
-        paths.push(PathBuf::from("obelisk.toml"));
+        let workdir_config = PathBuf::from("obelisk.toml");
+        debug!(
+            "Workdir config: {workdir_config:?} exists? {:?}",
+            workdir_config.try_exists()
+        );
+        paths.push(workdir_config);
         Self {
             paths,
             project_dirs,

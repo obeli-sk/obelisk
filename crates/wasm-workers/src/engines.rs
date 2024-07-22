@@ -1,5 +1,5 @@
 use std::{error::Error, fmt::Debug, sync::Arc};
-use tracing::warn;
+use tracing::{debug, warn};
 use wasmtime::Engine;
 
 #[derive(thiserror::Error, Debug)]
@@ -157,7 +157,8 @@ impl Engines {
 
     pub fn auto_detect(pooling_opts: &PoolingOptions) -> Result<Self, EngineError> {
         Self::pooling(pooling_opts).or_else(|err| {
-            warn!("Falling back to on-demand allocator - {err:?}");
+            warn!("Falling back to on-demand allocator - {err}");
+            debug!("{err:?}");
             Self::on_demand()
         })
     }
