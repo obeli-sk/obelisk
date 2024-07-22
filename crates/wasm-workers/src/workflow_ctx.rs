@@ -655,7 +655,6 @@ pub(crate) mod tests {
                             sim_clock.get_clock_fn(),
                             db_pool.clone(),
                             Arc::new([child_log.ffqn().clone()]),
-                            None,
                         );
                         exec_task.tick2(sim_clock.now()).await.unwrap()
                     };
