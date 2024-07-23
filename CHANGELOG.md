@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 
 ### Other
 - update Cargo.toml dependencies
-- Lookup exported function indexex upfront
+- Lookup exported function indexes upfront
 - Bump `wasmtime` to 23.0.1
 
 ## [0.1.8](https://github.com/obeli-sk/obelisk/compare/v0.1.7...v0.1.8) - 2024-07-22
