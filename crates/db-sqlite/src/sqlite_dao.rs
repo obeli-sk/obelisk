@@ -1035,7 +1035,6 @@ impl SqlitePool {
         Ok((next_version, pending_at))
     }
 
-    #[allow(clippy::too_many_lines)]
     fn append_response(
         tx: &Transaction,
         execution_id: ExecutionId,

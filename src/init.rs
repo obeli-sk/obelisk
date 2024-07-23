@@ -33,7 +33,6 @@ fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
     None
 }
 
-#[allow(clippy::too_many_lines)]
 pub(crate) fn init() -> Guard {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
