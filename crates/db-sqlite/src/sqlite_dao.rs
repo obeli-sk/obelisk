@@ -356,19 +356,11 @@ impl SqlitePool {
     }
 
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, SqliteError> {
-        // Work around a race condition when creating a new database file returns "Database Busy" on one of the threads.
-        // https://github.com/ryanfowler/async-sqlite/issues/10
         let path = path.as_ref();
-        let client = ClientBuilder::new()
-            .path(path)
-            .journal_mode(JournalMode::Wal)
-            .open()
-            .await?;
-        client.close().await?;
         let pool = PoolBuilder::new()
             .path(path)
             .journal_mode(JournalMode::Wal)
-            .num_conns(1)
+            .num_conns(1) // https://github.com/ryanfowler/async-sqlite/issues/10 , also helps with write performance.
             .open()
             .await?;
         Self::init(&pool).await?;
