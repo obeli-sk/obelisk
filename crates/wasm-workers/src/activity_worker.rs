@@ -157,14 +157,16 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
         let call_function = async move {
             let func = {
-                let mut exports = instance.exports(&mut store);
-                let mut exports_instance = exports.root();
-                let mut exports_instance = exports_instance
-                    .instance(&ctx.ffqn.ifc_fqn)
-                    .expect("interface must be found");
-                exports_instance
-                    .func(&ctx.ffqn.function_name)
-                    .expect("function must be found")
+                // TODO: Do the exported interface lookup beforehand, only use `get_func` here.
+                let ifc_export_index = instance
+                    .get_export(&mut store, None, &ctx.ffqn.ifc_fqn)
+                    .expect("TODO1");
+                let fn_export_index = instance
+                    .get_export(&mut store, Some(&ifc_export_index), &ctx.ffqn.function_name)
+                    .expect("TODO2");
+                instance
+                    .get_func(&mut store, fn_export_index)
+                    .expect("TODO3 function must be found")
             };
             let params = match ctx.params.as_vals(func.params(&store)) {
                 Ok(params) => params,

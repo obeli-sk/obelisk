@@ -191,26 +191,27 @@ waki = "0.3.0"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "22.0.0", default-features = false, features = [
+wasmtime = { version = "23.0.1", default-features = false, features = [
     # remove "parallel-compilation"
-    "component-model",
     "addr2line",
     "async",
     "cache",
+    "component-model",
     "component-model",
     "coredump",
     "cranelift",
     "debug-builtins",
     "demangle",
     "gc",
+    "memory-protection-keys",
     "pooling-allocator",
     "profiling",
     "wat",
 ] }
-wasmtime-wasi = "22.0.0"
-wasmtime-wasi-http = "22.0.0"
-wast = "209.0.1"
-wit-parser = "0.209.0"
+wasmtime-wasi = "23.0.1"
+wasmtime-wasi-http = "23.0.1"
+wast = "212.0.0"
+wit-parser = "0.212.0"
 
 # cargo-component
 wit-bindgen-rt = "0.24.0"

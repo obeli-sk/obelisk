@@ -241,8 +241,6 @@ async fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
     db_pool: impl DbPool<DB> + 'static,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
     let config_id = exec_config.config_id.clone();
-
-    // FIXME: Disable old components first
     let connection = db_pool.connection();
     // If the component exists, just enable it
     let found = match connection

@@ -218,32 +218,31 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             (instance, store)
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
+        let func = {
+            // TODO: Do the exported interface lookup beforehand, only use `get_func` here.
+            let ifc_export_index = instance
+                .get_export(&mut store, None, &ctx.ffqn.ifc_fqn)
+                .expect("TODO1");
+            let fn_export_index = instance
+                .get_export(&mut store, Some(&ifc_export_index), &ctx.ffqn.function_name)
+                .expect("TODO2");
+            instance
+                .get_func(&mut store, fn_export_index)
+                .expect("TODO3 function must be found")
+        };
+        let params = match ctx.params.as_vals(func.params(&store)) {
+            Ok(params) => params,
+            Err(err) => {
+                let workflow_ctx = store.into_data();
+                return WorkerResult::Err(WorkerError::FatalError(
+                    FatalError::ParamsParsingError(err),
+                    workflow_ctx.version.clone(),
+                ));
+            }
+        };
+        let result_types = func.results(&mut store);
+        let mut results = vec![Val::Bool(false); result_types.len()];
         let call_function = async move {
-            let func = {
-                let mut exports = instance.exports(&mut store);
-                let mut exports_instance = exports.root();
-                let mut exports_instance = exports_instance
-                    .instance(&ctx.ffqn.ifc_fqn)
-                    .expect("interface must be found");
-                exports_instance
-                    .func(&ctx.ffqn.function_name)
-                    .expect("function must be found")
-            };
-            let params = match ctx.params.as_vals(func.params(&store)) {
-                Ok(params) => params,
-                Err(err) => {
-                    let workflow_ctx = store.into_data();
-                    return Err(RunError::WorkerError(
-                        WorkerError::FatalError(
-                            FatalError::ParamsParsingError(err),
-                            workflow_ctx.version.clone(),
-                        ),
-                        workflow_ctx,
-                    ));
-                }
-            };
-            let result_types = func.results(&mut store);
-            let mut results = vec![Val::Bool(false); result_types.len()];
             if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
                 return Err(RunError::FunctionCall(err.into(), store.into_data()));
             } // guest panic exits here

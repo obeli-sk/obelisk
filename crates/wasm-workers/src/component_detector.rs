@@ -24,7 +24,7 @@ impl ComponentDetector {
         Engine::new(&wasmtime_config).unwrap()
     }
 
-    // TODO: Allow workflows and activities in the same world.
+    // TODO: deprecate
     pub fn new<P: AsRef<Path>>(wasm_path: P, engine: &Engine) -> Result<Self, WasmFileError> {
         let wasm_path = wasm_path.as_ref();
         let wasm_component = WasmComponent::new(wasm_path, engine)

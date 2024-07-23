@@ -37,6 +37,7 @@ pub(crate) mod tests {
         FunctionRegistry, ParameterTypes,
     };
     use std::{path::Path, sync::Arc};
+    use utils::wasm_tools::WasmComponent;
 
     pub(crate) struct TestingFnRegistry(
         hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ComponentConfigHash)>,
@@ -80,13 +81,15 @@ pub(crate) mod tests {
             } else {
                 panic!("cannot determine type automatically from file {wasm_path:?}")
             };
-            let engine = ComponentDetector::get_engine();
-            let detected = ComponentDetector::new(wasm_path, &engine).unwrap();
             let config_id = ComponentConfigHash {
                 component_type,
                 config_hash: ContentDigest::empty(), // this mismatch is intentional, any hash would do
             };
-            for (ffqn, params, res) in detected.exports {
+            for (ffqn, params, res) in
+                WasmComponent::new(wasm_path, &ComponentDetector::get_engine())
+                    .unwrap()
+                    .exported_functions()
+            {
                 map.insert(ffqn.clone(), ((ffqn, params, res), config_id.clone()));
             }
         }
