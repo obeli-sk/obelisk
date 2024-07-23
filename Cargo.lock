@@ -1081,15 +1081,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dirs"
-version = "5.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
-dependencies = [
- "dirs-sys 0.4.1",
-]
-
-[[package]]
 name = "dirs-sys"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2423,6 +2414,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+ "sha2",
  "test-programs-fibo-activity-builder",
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-activity-builder",
@@ -2433,7 +2425,6 @@ dependencies = [
  "thiserror",
  "tracing",
  "ulid",
- "wasm-pkg-common",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
@@ -3220,7 +3211,7 @@ version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ccc8076840c4da029af4f87e4e8daeb0fca6b87bbb02e10cb60b791450e11e4"
 dependencies = [
- "dirs 4.0.0",
+ "dirs",
 ]
 
 [[package]]
@@ -4152,26 +4143,6 @@ dependencies = [
  "spdx",
  "wasm-encoder 0.209.1",
  "wasmparser",
-]
-
-[[package]]
-name = "wasm-pkg-common"
-version = "0.4.1"
-source = "git+https://github.com/bytecodealliance/wasm-pkg-tools.git?rev=ff5e16297453930435fdf4126d50c6ec99c0a909#ff5e16297453930435fdf4126d50c6ec99c0a909"
-dependencies = [
- "anyhow",
- "bytes",
- "dirs 5.0.1",
- "futures-util",
- "http 1.1.0",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "tokio",
- "toml",
- "tracing",
 ]
 
 [[package]]

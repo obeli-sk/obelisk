@@ -35,7 +35,6 @@
                 lockFile = ./Cargo.lock;
                 outputHashes = {
                   "getrandom-0.2.11" = "sha256-fBPB5ptPPBQqvsxTJd+LwKXBdChrVm75DQewyQUhM2Q=";
-                  "wasm-pkg-common-0.4.1" = "sha256-cBxXV9eGMU/sB6eNWs0GwVQEtEYrGxm+29OAW75vtgA=";
                 };
               };
               nativeBuildInputs = [ pkgs.pkg-config ];

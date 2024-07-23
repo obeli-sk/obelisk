@@ -99,7 +99,6 @@ pub(crate) async fn obtan_wasm_from_oci(
     Ok((actual_hash, wasm_path))
 }
 
-// TODO: move to `wasm_pkg_common`
 fn get_oci_auth(
     reference: &oci_distribution::Reference,
 ) -> Result<oci_distribution::secrets::RegistryAuth, anyhow::Error> {
