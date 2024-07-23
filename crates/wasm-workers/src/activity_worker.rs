@@ -291,7 +291,7 @@ pub(crate) mod tests {
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
-        let engine = Engines::get_activity_engine(EngineConfig::on_demand()).unwrap();
+        let engine = Engines::get_activity_engine(EngineConfig::on_demand_no_cache()).unwrap();
         let worker = Arc::new(
             ActivityWorker::new_with_config(
                 wasm_path,
@@ -384,6 +384,7 @@ pub(crate) mod tests {
 
         let engine = Engines::get_activity_engine(EngineConfig {
             allocation_strategy: wasmtime::InstanceAllocationStrategy::Pooling(pool),
+            cache_config_path: None,
         })
         .unwrap();
 
@@ -466,7 +467,7 @@ pub(crate) mod tests {
                         clock_fn: now,
                     },
                 );
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand()).unwrap();
+            let engine = Engines::get_activity_engine(EngineConfig::on_demand_no_cache()).unwrap();
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
                 Duration::from_millis(EPOCH_MILLIS),
@@ -549,7 +550,7 @@ pub(crate) mod tests {
             const TIMEOUT: Duration = Duration::from_millis(200);
             test_utils::set_up();
 
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand()).unwrap();
+            let engine = Engines::get_activity_engine(EngineConfig::on_demand_no_cache()).unwrap();
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
                 Duration::from_millis(EPOCH_MILLIS),
@@ -598,7 +599,7 @@ pub(crate) mod tests {
             info!("All set up");
             let sim_clock = SimClock::default();
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand()).unwrap();
+            let engine = Engines::get_activity_engine(EngineConfig::on_demand_no_cache()).unwrap();
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -708,7 +709,7 @@ pub(crate) mod tests {
             test_utils::set_up();
             let sim_clock = SimClock::default();
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand()).unwrap();
+            let engine = Engines::get_activity_engine(EngineConfig::on_demand_no_cache()).unwrap();
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,

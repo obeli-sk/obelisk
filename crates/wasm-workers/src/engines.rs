@@ -1,10 +1,14 @@
-use std::{error::Error, fmt::Debug, sync::Arc};
+use std::{error::Error, fmt::Debug, path::Path, sync::Arc};
 use tracing::{debug, warn};
 use wasmtime::Engine;
 
 #[derive(thiserror::Error, Debug)]
-#[error(transparent)]
-pub struct EngineError(Box<dyn Error + Send + Sync>);
+pub enum EngineError {
+    #[error("uncagegorized engine creation error - {0}")]
+    Uncategorized(Box<dyn Error + Send + Sync>),
+    #[error("error configuring the codegen cache")]
+    CodegenCache(Box<dyn Error + Send + Sync>),
+}
 
 // Copied from wasmtime/crates/cli-flags
 #[derive(PartialEq, Clone, Default, Debug)]
@@ -47,11 +51,12 @@ pub struct PoolingOptions {
 }
 
 #[derive(Clone)]
-pub struct EngineConfig {
+pub struct EngineConfig<'a> {
     pub allocation_strategy: wasmtime::InstanceAllocationStrategy,
+    pub cache_config_path: Option<&'a Path>,
 }
 
-impl Debug for EngineConfig {
+impl Debug for EngineConfig<'_> {
     // Workaround for missing debug in InstanceAllocationStrategy
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.allocation_strategy {
@@ -68,10 +73,12 @@ impl Debug for EngineConfig {
     }
 }
 
-impl EngineConfig {
-    pub(crate) fn on_demand() -> Self {
+impl EngineConfig<'_> {
+    #[cfg(test)]
+    pub(crate) fn on_demand_no_cache() -> Self {
         Self {
             allocation_strategy: wasmtime::InstanceAllocationStrategy::OnDemand,
+            cache_config_path: None,
         }
     }
 }
@@ -89,8 +96,13 @@ impl Engines {
         wasmtime_config.async_support(true);
         wasmtime_config.allocation_strategy(config.allocation_strategy);
         wasmtime_config.epoch_interruption(true);
+        if let Some(cache_config_path) = config.cache_config_path {
+            wasmtime_config
+                .cache_config_load(cache_config_path)
+                .map_err(|err| EngineError::CodegenCache(err.into()))?;
+        }
         Ok(Arc::new(
-            Engine::new(&wasmtime_config).map_err(|err| EngineError(err.into()))?,
+            Engine::new(&wasmtime_config).map_err(|err| EngineError::Uncategorized(err.into()))?,
         ))
     }
 
@@ -102,19 +114,31 @@ impl Engines {
         wasmtime_config.async_support(true);
         wasmtime_config.allocation_strategy(config.allocation_strategy);
         wasmtime_config.epoch_interruption(true);
+        if let Some(cache_config_path) = config.cache_config_path {
+            wasmtime_config
+                .cache_config_load(cache_config_path)
+                .map_err(|err| EngineError::CodegenCache(err.into()))?;
+        }
         Ok(Arc::new(
-            Engine::new(&wasmtime_config).map_err(|err| EngineError(err.into()))?,
+            Engine::new(&wasmtime_config).map_err(|err| EngineError::Uncategorized(err.into()))?,
         ))
     }
 
-    pub fn on_demand() -> Result<Self, EngineError> {
+    fn on_demand_with_cache(cache_config_path: Option<&Path>) -> Result<Self, EngineError> {
+        let engine_config = EngineConfig {
+            allocation_strategy: wasmtime::InstanceAllocationStrategy::OnDemand,
+            cache_config_path,
+        };
         Ok(Engines {
-            activity_engine: Self::get_activity_engine(EngineConfig::on_demand())?,
-            workflow_engine: Self::get_workflow_engine(EngineConfig::on_demand())?,
+            activity_engine: Self::get_activity_engine(engine_config.clone())?,
+            workflow_engine: Self::get_workflow_engine(engine_config)?,
         })
     }
 
-    pub fn pooling(opts: &PoolingOptions) -> Result<Self, EngineError> {
+    fn pooling(
+        opts: &PoolingOptions,
+        cache_config_path: Option<&Path>,
+    ) -> Result<Self, EngineError> {
         let mut cfg = wasmtime::PoolingAllocationConfig::default();
         if let Some(size) = opts.pooling_memory_keep_resident {
             cfg.linear_memory_keep_resident(size);
@@ -148,6 +172,7 @@ impl Engines {
         let allocation_strategy = wasmtime::InstanceAllocationStrategy::Pooling(cfg.clone());
         let engine_config = EngineConfig {
             allocation_strategy,
+            cache_config_path,
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
@@ -155,11 +180,14 @@ impl Engines {
         })
     }
 
-    pub fn auto_detect(pooling_opts: &PoolingOptions) -> Result<Self, EngineError> {
-        Self::pooling(pooling_opts).or_else(|err| {
+    pub fn auto_detect_allocator(
+        pooling_opts: &PoolingOptions,
+        cache_config_path: Option<&Path>,
+    ) -> Result<Self, EngineError> {
+        Self::pooling(pooling_opts, cache_config_path).or_else(|err| {
             warn!("Falling back to on-demand allocator - {err}");
             debug!("{err:?}");
-            Self::on_demand()
+            Self::on_demand_with_cache(cache_config_path)
         })
     }
 }

@@ -22,6 +22,9 @@ const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
 const DEFAULT_OCI_CONFIG_WASM_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}wasm", CACHE_DIR_PREFIX);
 const DEFAULT_OCI_CONFIG_WASM_DIRECTORY: &str = "cache/wasm";
+const DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS: &str =
+    const_format::formatcp!("{}codegen", CACHE_DIR_PREFIX);
+const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,6 +33,8 @@ pub(crate) struct ObeliskConfig {
     sqlite_file: String,
     #[serde(default)]
     pub(crate) oci: OciConfig,
+    #[serde(default)]
+    pub(crate) codegen_cache: CodegenCache,
     #[serde(default)]
     pub(crate) activity: Vec<Activity>,
     #[serde(default)]
@@ -89,6 +94,33 @@ impl OciConfig {
             }
         });
         replace_path_prefix_mkdir(wasm_directory, project_dirs, FileOrFolder::Folder).await
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(crate) struct CodegenCache {
+    enabled: bool,
+    directory: Option<String>,
+}
+
+impl CodegenCache {
+    pub(crate) async fn get_directory_if_enabled(
+        &self,
+        project_dirs: Option<&ProjectDirs>,
+    ) -> Result<Option<PathBuf>, anyhow::Error> {
+        if !self.enabled {
+            return Ok(None);
+        }
+        let directory = self.directory.as_deref().unwrap_or_else(|| {
+            if project_dirs.is_some() {
+                DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS
+            } else {
+                DEFAULT_CODEGEN_CACHE_DIRECTORY
+            }
+        });
+        Ok(Some(
+            replace_path_prefix_mkdir(directory, project_dirs, FileOrFolder::Folder).await?,
+        ))
     }
 }
 

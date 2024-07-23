@@ -22,6 +22,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use tempfile::NamedTempFile;
+use tracing::trace;
 use tracing::{debug, info, warn};
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityWorker;
@@ -39,6 +41,11 @@ pub(crate) async fn run(
         .oci
         .get_wasm_directory(config_holder.project_dirs.as_ref())
         .await?;
+    let codegen_cache = config
+        .codegen_cache
+        .get_directory_if_enabled(config_holder.project_dirs.as_ref())
+        .await?;
+    debug!("Using codegen cache? {codegen_cache:?}");
     if clean {
         let ignore_not_found = |err: std::io::Error| {
             if err.kind() == std::io::ErrorKind::NotFound {
@@ -54,13 +61,35 @@ pub(crate) async fn run(
         tokio::fs::remove_dir_all(&wasm_cache_dir)
             .await
             .or_else(ignore_not_found)
-            .with_context(|| format!("cannot delete cache directory {wasm_cache_dir:?}"))?;
+            .with_context(|| format!("cannot delete wasm cache directory {wasm_cache_dir:?}"))?;
+        if let Some(codegen_cache) = &codegen_cache {
+            tokio::fs::remove_dir_all(codegen_cache)
+                .await
+                .or_else(ignore_not_found)
+                .with_context(|| {
+                    format!("cannot delete codegen cache directory {wasm_cache_dir:?}")
+                })?;
+            tokio::fs::create_dir_all(codegen_cache)
+                .await
+                .with_context(|| {
+                    format!("cannot create codegen cache directory {codegen_cache:?}")
+                })?;
+        }
     }
     tokio::fs::create_dir_all(&wasm_cache_dir)
         .await
-        .with_context(|| format!("cannot create cache directory {wasm_cache_dir:?}"))?;
+        .with_context(|| format!("cannot create wasm cache directory {wasm_cache_dir:?}"))?;
 
-    let engines = Engines::auto_detect(&get_opts_from_env())?;
+    // Set up codegen cache
+    let codegen_cache_config_file_holder =
+        write_codegen_config(codegen_cache).context("error configuring codegen cache")?;
+    let engines = Engines::auto_detect_allocator(
+        &get_opts_from_env(),
+        codegen_cache_config_file_holder
+            .as_ref()
+            .map(tempfile::NamedTempFile::path),
+    )?;
+
     let _epoch_ticker = EpochTicker::spawn_new(
         vec![
             engines.activity_engine.weak(),
@@ -114,6 +143,29 @@ pub(crate) async fn run(
     }
     db_pool.close().await.context("cannot close database")?;
     Ok::<_, anyhow::Error>(())
+}
+
+fn write_codegen_config(
+    codegen_cache: Option<PathBuf>,
+) -> Result<Option<NamedTempFile>, anyhow::Error> {
+    Ok(if let Some(codegen_cache) = codegen_cache {
+        use std::io::Write;
+        let mut codegen_cache_config_file = tempfile::NamedTempFile::new()?;
+        writeln!(
+            codegen_cache_config_file,
+            r#"[cache]
+enabled = true
+directory = {codegen_cache:?}
+"#
+        )?;
+        trace!(
+            "Wrote temporary cache config to {:?}",
+            codegen_cache_config_file.path()
+        );
+        Some(codegen_cache_config_file)
+    } else {
+        None
+    })
 }
 
 fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {

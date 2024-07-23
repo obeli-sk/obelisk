@@ -3,10 +3,14 @@
 ## ${CACHE_DIR} ~/.cache/obelisk, details: https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.cache_dir
 
 ## Path to sqlite database. Supports path prefixes.
-sqlite_file = "${DATA_DIR}/obelisk.sqlite"
+# sqlite_file = "${DATA_DIR}/obelisk.sqlite"
 
 ## Path to directory where wasm files downloaded from an OCI registry are stored. Supports path prefixes.
 # oci.wasm_directory = "${CACHE_DIR}/wasm"
+
+## Path to directory where generated code is cached. Supports path prefixes.
+# codegen_cache = { enabled = false, directory = "${CACHE_DIR}/codegen" }
+codegen_cache.enabled = true
 
 [[activity]]
 name = "fibo_activity"

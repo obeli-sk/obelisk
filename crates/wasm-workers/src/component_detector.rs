@@ -104,7 +104,7 @@ mod tests {
         set_up();
         let detected = ComponentDetector::new(
             file,
-            &Engines::get_workflow_engine(EngineConfig::on_demand()).unwrap(),
+            &Engines::get_workflow_engine(EngineConfig::on_demand_no_cache()).unwrap(),
         )
         .unwrap();
         assert_eq!(expected, detected.component_type);

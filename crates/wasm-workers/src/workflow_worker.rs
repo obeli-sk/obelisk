@@ -392,7 +392,8 @@ mod tests {
         non_blocking_event_batching: NonBlockingEventBatching,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
-        let workflow_engine = Engines::get_workflow_engine(EngineConfig::on_demand()).unwrap();
+        let workflow_engine =
+            Engines::get_workflow_engine(EngineConfig::on_demand_no_cache()).unwrap();
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
                 wasm_path,
@@ -641,7 +642,7 @@ mod tests {
                     child_max_retries: 0,
                     non_blocking_event_batching,
                 },
-                Engines::get_workflow_engine(EngineConfig::on_demand()).unwrap(),
+                Engines::get_workflow_engine(EngineConfig::on_demand_no_cache()).unwrap(),
                 db_pool,
                 clock_fn,
                 fn_registry,
