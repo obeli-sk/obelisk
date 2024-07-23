@@ -2,8 +2,7 @@ use super::{
     store::{ConfigStore, ConfigStoreCommon},
     ComponentLocation,
 };
-use crate::oci;
-use anyhow::{bail, Context as _};
+use anyhow::bail;
 use concepts::{storage::ComponentToggle, ComponentType, ContentDigest};
 use config::{builder::AsyncState, ConfigBuilder, Environment, File, FileFormat};
 use directories::ProjectDirs;
@@ -19,6 +18,10 @@ use wasm_workers::{
 };
 
 const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
+const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
+const DEFAULT_OCI_CONFIG_WASM_DIRECTORY_IF_PROJECT_DIRS: &str =
+    const_format::formatcp!("{}wasm", CACHE_DIR_PREFIX);
+const DEFAULT_OCI_CONFIG_WASM_DIRECTORY: &str = "cache/wasm";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,9 +29,37 @@ pub(crate) struct ObeliskConfig {
     #[serde(default = "default_sqlite_file")]
     sqlite_file: String,
     #[serde(default)]
+    pub(crate) oci: OciConfig,
+    #[serde(default)]
     pub(crate) activity: Vec<Activity>,
     #[serde(default)]
     pub(crate) workflow: Vec<Workflow>,
+}
+
+async fn replace_path_prefix_mkdir(
+    path: &str,
+    project_dirs: Option<&ProjectDirs>,
+    file_or_folder: FileOrFolder,
+) -> Result<PathBuf, anyhow::Error> {
+    let path = match (project_dirs, path.strip_prefix(DATA_DIR_PREFIX), path.strip_prefix(CACHE_DIR_PREFIX)) {
+        (Some(project_dirs), Some(suffix), None) => project_dirs.data_dir().join(suffix),
+        (Some(project_dirs), None, Some(suffix)) => project_dirs.cache_dir().join(suffix),
+        (_, None, None) => PathBuf::from(path),
+        (None, _, _) => bail!("cannot use path prefixes ${{..}} on this platform, please specify canonical path in the configuration file"),
+        (Some(_), Some(_), Some(_)) => unreachable!("prefixes are mutually exclusive")
+    };
+    if file_or_folder == FileOrFolder::Folder {
+        tokio::fs::create_dir_all(&path).await?;
+    } else if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    Ok(path)
+}
+
+#[derive(PartialEq, Eq)]
+enum FileOrFolder {
+    File,
+    Folder,
 }
 
 impl ObeliskConfig {
@@ -36,22 +67,29 @@ impl ObeliskConfig {
         &self,
         project_dirs: Option<&ProjectDirs>,
     ) -> Result<PathBuf, anyhow::Error> {
-        let sqlite_path = match (self.sqlite_file.strip_prefix(DATA_DIR_PREFIX), project_dirs) {
-            (None, _) => PathBuf::from(&self.sqlite_file),
-            (Some(suffix), Some(project_dirs)) => project_dirs.data_dir().join(suffix),
-            (Some(_), None) => bail!("cannot use {DATA_DIR_PREFIX} on this platform, please specify canonical path to `sqlite_file`"),
-        };
-        if let Some(parent) = sqlite_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        Ok(sqlite_path)
+        replace_path_prefix_mkdir(&self.sqlite_file, project_dirs, FileOrFolder::File).await
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub(crate) struct OciConfig {
-    #[serde(default = "default_oci_config_wasm_directory")]
-    wasm_directory: String,
+    wasm_directory: Option<String>,
+}
+
+impl OciConfig {
+    pub(crate) async fn get_wasm_directory(
+        &self,
+        project_dirs: Option<&ProjectDirs>,
+    ) -> Result<PathBuf, anyhow::Error> {
+        let wasm_directory = self.wasm_directory.as_deref().unwrap_or_else(|| {
+            if project_dirs.is_some() {
+                DEFAULT_OCI_CONFIG_WASM_DIRECTORY_IF_PROJECT_DIRS
+            } else {
+                DEFAULT_OCI_CONFIG_WASM_DIRECTORY
+            }
+        });
+        replace_path_prefix_mkdir(wasm_directory, project_dirs, FileOrFolder::Folder).await
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -342,8 +380,4 @@ fn default_child_retry_exp_backoff() -> DurationConfig {
 
 fn default_child_max_retries() -> u32 {
     5
-}
-
-fn default_oci_config_wasm_directory() -> String {
-    format!("${{{CACHE_DIR_PREFIX}}}/wasm")
 }

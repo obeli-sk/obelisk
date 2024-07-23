@@ -1,6 +1,12 @@
-# ${DATA_DIR} on linux is evaluated as $XDG_DATA_HOME/obelisk or $HOME/.local/share/obelisk
-# More details: https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dir
+## Supported path prefixes:
+## ${DATA_DIR}  ~/.local/share/obelisk, details: https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dirhttps://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dir
+## ${CACHE_DIR} ~/.cache/obelisk, details: https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.cache_dir
+
+## Path to sqlite database. Supports path prefixes.
 sqlite_file = "${DATA_DIR}/obelisk.sqlite"
+
+## Path to directory where wasm files downloaded from an OCI registry are stored. Supports path prefixes.
+# oci.wasm_directory = "${CACHE_DIR}/wasm"
 
 [[activity]]
 name = "fibo_activity"

@@ -35,11 +35,10 @@ pub(crate) async fn run(
     clean: bool,
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
-    let wasm_cache_dir = if let Some(project_dirs) = &config_holder.project_dirs {
-        project_dirs.cache_dir().join("wasm")
-    } else {
-        PathBuf::from("obelisk-cache").join("wasm")
-    };
+    let wasm_cache_dir = config
+        .oci
+        .get_wasm_directory(config_holder.project_dirs.as_ref())
+        .await?;
     if clean {
         let ignore_not_found = |err: std::io::Error| {
             if err.kind() == std::io::ErrorKind::NotFound {
