@@ -48,16 +48,10 @@ impl ObeliskConfig {
     }
 }
 
-fn default_sqlite_file() -> String {
-    "obelisk.sqlite".to_string()
-}
-
-fn default_max_retries() -> u32 {
-    5
-}
-
-fn default_retry_exp_backoff() -> DurationConfig {
-    DurationConfig::Millis(100)
+#[derive(Debug, Deserialize)]
+pub(crate) struct OciConfig {
+    #[serde(default = "default_oci_config_wasm_directory")]
+    wasm_directory: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,22 +81,7 @@ impl ComponentCommon {
         r#type: ComponentType,
         wasm_cache_dir: impl AsRef<Path>,
     ) -> Result<(ConfigStoreCommon, PathBuf, ComponentToggle), anyhow::Error> {
-        let (actual_content_digest, wasm_path) = {
-            match &self.location {
-                ComponentLocation::File(wasm_path) => {
-                    let wasm_path = wasm_path
-                        .canonicalize()
-                        .with_context(|| format!("cannot canonicalize file `{wasm_path:?}`"))?;
-                    let content_digest = wasm_workers::component_detector::file_hash(&wasm_path)
-                        .await
-                        .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
-                    (content_digest, wasm_path)
-                }
-                ComponentLocation::Oci(image) => {
-                    oci::obtan_wasm_from_oci(image, wasm_cache_dir).await?
-                }
-            }
-        };
+        let (actual_content_digest, wasm_path) = self.location.obtain_wasm(wasm_cache_dir).await?;
         if let Some(specified) = &self.content_digest {
             if *specified != actual_content_digest {
                 bail!("Wrong content digest for {type} {name}, specified {specified} , actually got {actual_content_digest}",
@@ -214,18 +193,6 @@ impl Activity {
             exec_config,
         })
     }
-}
-
-fn default_strategy() -> JoinNextBlockingStrategy {
-    JoinNextBlockingStrategy::Await
-}
-
-fn default_child_retry_exp_backoff() -> DurationConfig {
-    DurationConfig::Millis(100)
-}
-
-fn default_child_max_retries() -> u32 {
-    5
 }
 
 #[derive(Debug, Deserialize)]
@@ -351,4 +318,32 @@ impl ConfigHolder {
 // https://github.com/serde-rs/serde/issues/368
 fn default_true() -> bool {
     true
+}
+
+fn default_sqlite_file() -> String {
+    "obelisk.sqlite".to_string()
+}
+
+fn default_max_retries() -> u32 {
+    5
+}
+
+fn default_retry_exp_backoff() -> DurationConfig {
+    DurationConfig::Millis(100)
+}
+
+fn default_strategy() -> JoinNextBlockingStrategy {
+    JoinNextBlockingStrategy::Await
+}
+
+fn default_child_retry_exp_backoff() -> DurationConfig {
+    DurationConfig::Millis(100)
+}
+
+fn default_child_max_retries() -> u32 {
+    5
+}
+
+fn default_oci_config_wasm_directory() -> String {
+    format!("${{{CACHE_DIR_PREFIX}}}/wasm")
 }

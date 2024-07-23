@@ -6,7 +6,7 @@ use std::{
 };
 use tracing::{debug, info, warn};
 
-pub(crate) async fn obtan_wasm_from_oci(
+pub(crate) async fn obtain_wasm_from_oci(
     image: &oci_distribution::Reference,
     wasm_cache_dir: impl AsRef<Path>,
 ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
@@ -25,7 +25,7 @@ pub(crate) async fn obtan_wasm_from_oci(
             .and_then(|content| serde_json::from_str(&content).ok())
             .unwrap_or_default()
     };
-    // Try to find the content digest using the json mapping
+    // Try to find the content digest using the json mapping if the `image` specifies the metadata digest.
     let content_digest = if let Some(content_digest) = image
         .digest()
         .and_then(|metadata_digest| oci_cache_mapping.get(metadata_digest))
@@ -93,9 +93,7 @@ pub(crate) async fn obtan_wasm_from_oci(
             format!("failed to compute sha256 of the downloaded wasm file {wasm_path:?}")
         })?;
     ensure!(content_digest == actual_hash,
-"sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {content_digest}, got {actual_hash}"
-);
-
+        "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {content_digest}, got {actual_hash}");
     Ok((actual_hash, wasm_path))
 }
 
