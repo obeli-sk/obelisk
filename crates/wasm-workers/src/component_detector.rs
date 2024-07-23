@@ -43,8 +43,8 @@ impl ComponentDetector {
             .collect::<hashbrown::HashSet<_>>();
         let component_type = match types.into_iter().collect::<Vec<_>>().as_slice() {
             [item] => Ok(*item),
-            [] => Err(WasmFileError::NoExportedInterfaces),
-            _ => Err(WasmFileError::MixedWorkflowsAndActivities),
+            [] => Err(WasmFileError::NoExportedInterfaces), // TODO: deprecate
+            _ => Err(WasmFileError::MixedWorkflowsAndActivities), // TODO: deprecate
         }?;
         Ok(Self {
             component_type,

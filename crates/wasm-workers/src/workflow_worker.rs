@@ -11,9 +11,10 @@ use std::ops::Deref;
 use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
+use wasmtime::component::ComponentExportIndex;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -63,6 +64,7 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     db_pool: P,
     clock_fn: C,
     fn_registry: Arc<dyn FunctionRegistry>,
+    exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
 }
 
 pub(crate) const HOST_ACTIVITY_IFC_STRING: &str = "obelisk:workflow/host-activities";
@@ -139,6 +141,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
             reason: StrVariant::Arc(Arc::from("cannot add host activities".to_string())),
             err: err.into(),
         })?;
+        let exported_ffqn_to_index = wasm_component
+            .index_exported_functions()
+            .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
         Ok(Self {
             config,
             engine,
@@ -148,6 +153,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
             db_pool,
             clock_fn,
             fn_registry,
+            exported_ffqn_to_index,
         })
     }
 }
@@ -177,6 +183,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         let timeout_error_container = Arc::new(std::sync::Mutex::new(WorkerResult::Err(
             WorkerError::IntermittentTimeout,
         )));
+        let version_at_start = ctx.version.clone();
         let (instance, mut store) = {
             let seed = ctx.execution_id.random_part();
             let ctx = WorkflowCtx::new(
@@ -218,30 +225,32 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             (instance, store)
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
-        let func = {
-            // TODO: Do the exported interface lookup beforehand, only use `get_func` here.
-            let ifc_export_index = instance
-                .get_export(&mut store, None, &ctx.ffqn.ifc_fqn)
-                .expect("TODO1");
-            let fn_export_index = instance
-                .get_export(&mut store, Some(&ifc_export_index), &ctx.ffqn.function_name)
-                .expect("TODO2");
-            instance
-                .get_func(&mut store, fn_export_index)
-                .expect("TODO3 function must be found")
+        let Some(fn_export_index) = self.exported_ffqn_to_index.get(&ctx.ffqn) else {
+            error!("Cannot find exported index of {ffqn}", ffqn = ctx.ffqn);
+            return WorkerResult::Err(WorkerError::FatalError(
+                FatalError::UncategorizedError("cannot find exported index of function"),
+                version_at_start,
+            ));
+        };
+        let Some(func) = instance.get_func(&mut store, fn_export_index) else {
+            error!("Cannot unwrap value from `get_func`");
+            return WorkerResult::Err(WorkerError::FatalError(
+                FatalError::UncategorizedError("cannot unwrap value from `get_func`"),
+                version_at_start,
+            ));
         };
         let params = match ctx.params.as_vals(func.params(&store)) {
             Ok(params) => params,
             Err(err) => {
-                let workflow_ctx = store.into_data();
                 return WorkerResult::Err(WorkerError::FatalError(
                     FatalError::ParamsParsingError(err),
-                    workflow_ctx.version.clone(),
+                    version_at_start,
                 ));
             }
         };
         let result_types = func.results(&mut store);
         let mut results = vec![Val::Bool(false); result_types.len()];
+
         let call_function = async move {
             if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
                 return Err(RunError::FunctionCall(err.into(), store.into_data()));

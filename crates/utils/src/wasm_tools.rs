@@ -1,10 +1,10 @@
 use concepts::{FnName, FunctionFqn, FunctionMetadata, IfcFqnName, ParameterTypes, ReturnType};
 use indexmap::IndexMap;
 use std::{path::Path, sync::Arc};
-use tracing::debug;
+use tracing::{debug, error};
 use val_json::{type_wrapper::TypeConversionError, type_wrapper::TypeWrapper};
 use wasmtime::{
-    component::{types::ComponentItem, Component},
+    component::{types::ComponentItem, Component, ComponentExportIndex},
     Engine,
 };
 use wit_parser::{decoding::DecodedWasm, Resolve, WorldItem, WorldKey};
@@ -20,13 +20,20 @@ pub struct WasmComponent {
 impl WasmComponent {
     pub fn new<P: AsRef<Path>>(wasm_path: P, engine: &Engine) -> Result<Self, DecodeError> {
         let wasm_path = wasm_path.as_ref();
-        let wasm_file = std::fs::File::open(wasm_path)
-            .map_err(|err| DecodeError::CannotReadComponent(err.into()))?;
-        let component = Component::from_file(engine, wasm_path)
-            .map_err(|err| DecodeError::CannotReadComponent(err.into()))?;
+        let wasm_file = std::fs::File::open(wasm_path).map_err(|err| {
+            error!("Cannot read the file {wasm_path:?} - {err:?}");
+            DecodeError::CannotReadComponent(err.to_string())
+        })?;
+        let component = Component::from_file(engine, wasm_path).map_err(|err| {
+            error!("Cannot read component {wasm_path:?} - {err:?}");
+            DecodeError::CannotReadComponent(err.to_string())
+        })?;
         let decoded = wit_parser::decoding::decode_reader(wasm_file).unwrap();
         let DecodedWasm::Component(resolve, world_id) = decoded else {
-            panic!();
+            error!("Must be a wasi component");
+            return Err(DecodeError::CannotReadComponent(
+                "must be a wasi component".to_string(),
+            ));
         };
         let world = resolve.worlds.get(world_id).expect("world must exist");
         let exported_ffqns_to_param_names = ffqn_to_param_names(&resolve, world.exports.iter());
@@ -47,12 +54,38 @@ impl WasmComponent {
     pub fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> + '_ {
         self.exim.imported_functions()
     }
+
+    pub fn index_exported_functions(
+        &self,
+    ) -> Result<hashbrown::HashMap<FunctionFqn, ComponentExportIndex>, DecodeError> {
+        let mut exported_ffqn_to_index = hashbrown::HashMap::new();
+        for (ffqn, _params, _ret) in self.exported_functions() {
+            let Some((_, ifc_export_index)) = self.component.export_index(None, &ffqn.ifc_fqn)
+            else {
+                error!("Cannot find exported interface `{}`", ffqn.ifc_fqn);
+                return Err(DecodeError::CannotReadComponent(format!(
+                    "cannot find exported interface {ffqn}"
+                )));
+            };
+            let Some((_, fn_export_index)) = self
+                .component
+                .export_index(Some(&ifc_export_index), &ffqn.function_name)
+            else {
+                error!("Cannot find exported function {ffqn}");
+                return Err(DecodeError::CannotReadComponent(format!(
+                    "cannot find exported function {ffqn}"
+                )));
+            };
+            exported_ffqn_to_index.insert(ffqn, fn_export_index);
+        }
+        Ok(exported_ffqn_to_index)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum DecodeError {
     #[error("cannot read wasm component - {0}")]
-    CannotReadComponent(Box<dyn std::error::Error + Send + Sync>),
+    CannotReadComponent(String),
     #[error("multi-value result is not supported in {0}")]
     MultiValueResultNotSupported(FunctionFqn),
     #[error("unsupported type in {ffqn} - {err}")]
@@ -173,7 +206,9 @@ fn exported<'a>(
                 fns,
             });
         } else {
-            panic!("not a ComponentInstance: {item:?}")
+            return Err(DecodeError::CannotReadComponent(format!(
+                "not a ComponentInstance: {item:?}"
+            )));
         }
     }
     Ok(vec)

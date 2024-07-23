@@ -23,9 +23,9 @@ pub enum WasmFileError {
         err: Box<dyn Error + Send + Sync>,
     },
     #[error("no exported interfaces")]
-    NoExportedInterfaces,
+    NoExportedInterfaces, // TODO: deprecate
     #[error("mixed workflows and activities")]
-    MixedWorkflowsAndActivities,
+    MixedWorkflowsAndActivities, // TODO: deprecate
 }
 
 #[cfg(test)]

@@ -1,15 +1,16 @@
 use crate::WasmFileError;
 use async_trait::async_trait;
-use concepts::{ComponentConfigHash, SupportedFunctionResult};
+use concepts::{ComponentConfigHash, FunctionFqn, SupportedFunctionResult};
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
+use wasmtime::component::ComponentExportIndex;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 use wasmtime_wasi_http::WasiHttpImpl;
@@ -60,6 +61,7 @@ pub struct ActivityWorker<C: ClockFn> {
     recycled_instances: MaybeRecycledInstances,
     exim: ExIm,
     clock_fn: C,
+    exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
 }
 
 impl<C: ClockFn> ActivityWorker<C> {
@@ -102,6 +104,9 @@ impl<C: ClockFn> ActivityWorker<C> {
             .map_err(map_err)?;
 
         let recycled_instances = config.recycle_instances.instantiate();
+        let exported_ffqn_to_index = wasm_component
+            .index_exported_functions()
+            .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
         Ok(Self {
             engine,
             linker,
@@ -109,6 +114,7 @@ impl<C: ClockFn> ActivityWorker<C> {
             recycled_instances,
             exim: wasm_component.exim,
             clock_fn,
+            exported_ffqn_to_index,
         })
     }
 }
@@ -155,30 +161,33 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             }
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
+        let Some(fn_export_index) = self.exported_ffqn_to_index.get(&ctx.ffqn) else {
+            error!("Cannot find exported index of {ffqn}", ffqn = ctx.ffqn);
+            return WorkerResult::Err(WorkerError::FatalError(
+                FatalError::UncategorizedError("cannot find exported index of function"),
+                ctx.version,
+            ));
+        };
+        let Some(func) = instance.get_func(&mut store, fn_export_index) else {
+            error!("Cannot unwrap value from `get_func`");
+            return WorkerResult::Err(WorkerError::FatalError(
+                FatalError::UncategorizedError("cannot unwrap value from `get_func`"),
+                ctx.version,
+            ));
+        };
+        let params = match ctx.params.as_vals(func.params(&store)) {
+            Ok(params) => params,
+            Err(err) => {
+                return WorkerResult::Err(WorkerError::FatalError(
+                    FatalError::ParamsParsingError(err),
+                    ctx.version,
+                ));
+            }
+        };
+        let result_types = func.results(&mut store);
+        let mut results = vec![Val::Bool(false); result_types.len()];
+
         let call_function = async move {
-            let func = {
-                // TODO: Do the exported interface lookup beforehand, only use `get_func` here.
-                let ifc_export_index = instance
-                    .get_export(&mut store, None, &ctx.ffqn.ifc_fqn)
-                    .expect("TODO1");
-                let fn_export_index = instance
-                    .get_export(&mut store, Some(&ifc_export_index), &ctx.ffqn.function_name)
-                    .expect("TODO2");
-                instance
-                    .get_func(&mut store, fn_export_index)
-                    .expect("TODO3 function must be found")
-            };
-            let params = match ctx.params.as_vals(func.params(&store)) {
-                Ok(params) => params,
-                Err(err) => {
-                    return WorkerResult::Err(WorkerError::FatalError(
-                        FatalError::ParamsParsingError(err),
-                        ctx.version,
-                    ));
-                }
-            };
-            let result_types = func.results(&mut store);
-            let mut results = vec![Val::Bool(false); result_types.len()];
             if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
                 return WorkerResult::Err(WorkerError::IntermittentError {
                     reason: StrVariant::Arc(Arc::from(format!("wasm function call error - {err}"))),
