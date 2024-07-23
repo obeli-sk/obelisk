@@ -145,7 +145,7 @@ hashbrown = { version = "0.14.3", features = ["serde"] }
 http-body-util = "0.1"
 hyper = "1.1.0"
 hyper-util = "0.1"
-indexmap = "2.1"
+indexmap = { version = "2.1", features = ["serde"] }
 insta = { version = "1.38.0", features = ["json"] }
 itertools = "0.13"
 lazy_static = "1.4"
