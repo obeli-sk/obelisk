@@ -36,15 +36,7 @@ serde.workspace = true
 sha2.workspace = true
 shadow-rs.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = [
-    "fs",
-    "macros",
-    "rt-multi-thread",
-    "rt",
-    "signal",
-    "sync",
-    "time",
-] }
+tokio = { workspace = true }
 toml.workspace = true
 tracing-chrome.workspace = true
 tracing-subscriber.workspace = true
@@ -176,10 +168,13 @@ strum = { version = "0.26.0", features = ["derive"] }
 tempfile = "3.10.1"
 thiserror = "1.0"
 tokio = { version = "0.2.28", package = "madsim-tokio", features = [
-    "sync",
-    "rt",
-    "time",
+    "fs",
     "macros",
+    "rt-multi-thread",
+    "rt",
+    "signal",
+    "sync",
+    "time",
     "tracing",
 ] }
 toml = { version = "0.8.14", features = ["preserve_order"] }
