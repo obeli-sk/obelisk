@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.9](https://github.com/obeli-sk/obelisk/compare/v0.1.8...v0.1.9) - 2024-07-23
+
+### Other
+- update Cargo.toml dependencies
+- Lookup exported function indexex upfront
+- Bump `wasmtime` to 23.0.1
+
 ## [0.1.8](https://github.com/obeli-sk/obelisk/compare/v0.1.7...v0.1.8) - 2024-07-22
 
 ### Added
