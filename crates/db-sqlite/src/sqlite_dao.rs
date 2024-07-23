@@ -1,4 +1,4 @@
-use async_sqlite::{rusqlite::named_params, ClientBuilder, JournalMode, Pool, PoolBuilder};
+use async_sqlite::{rusqlite::named_params, JournalMode, Pool, PoolBuilder};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
