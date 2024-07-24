@@ -19,6 +19,10 @@ use wasm_workers::{
 
 const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
 const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
+const CONFIG_DIR_PREFIX: &str = "${CONFIG_DIR}/";
+const DEFAULT_SQLITE_FILE_IF_PROJECT_DIRS: &str =
+    const_format::formatcp!("{}obelisk.sqlite", DATA_DIR_PREFIX);
+const DEFAULT_SQLITE_FILE: &str = "obelisk.sqlite";
 const DEFAULT_OCI_CONFIG_WASM_DIRECTORY_IF_PROJECT_DIRS: &str =
     const_format::formatcp!("{}wasm", CACHE_DIR_PREFIX);
 const DEFAULT_OCI_CONFIG_WASM_DIRECTORY: &str = "cache/wasm";
@@ -29,8 +33,8 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ObeliskConfig {
-    #[serde(default = "default_sqlite_file")]
-    sqlite_file: String,
+    #[serde(default)]
+    sqlite_file: Option<String>,
     #[serde(default)]
     pub(crate) oci: OciConfig,
     #[serde(default)]
@@ -46,12 +50,19 @@ async fn replace_path_prefix_mkdir(
     project_dirs: Option<&ProjectDirs>,
     file_or_folder: FileOrFolder,
 ) -> Result<PathBuf, anyhow::Error> {
-    let path = match (project_dirs, path.strip_prefix(DATA_DIR_PREFIX), path.strip_prefix(CACHE_DIR_PREFIX)) {
-        (Some(project_dirs), Some(suffix), None) => project_dirs.data_dir().join(suffix),
-        (Some(project_dirs), None, Some(suffix)) => project_dirs.cache_dir().join(suffix),
-        (_, None, None) => PathBuf::from(path),
-        (None, _, _) => bail!("cannot use path prefixes ${{..}} on this platform, please specify canonical path in the configuration file"),
-        (Some(_), Some(_), Some(_)) => unreachable!("prefixes are mutually exclusive")
+    let path = match project_dirs {
+        Some(project_dirs) => {
+            if let Some(suffix) = path.strip_prefix(DATA_DIR_PREFIX) {
+                project_dirs.data_dir().join(suffix)
+            } else if let Some(suffix) = path.strip_prefix(CACHE_DIR_PREFIX) {
+                project_dirs.cache_dir().join(suffix)
+            } else if let Some(suffix) = path.strip_prefix(CONFIG_DIR_PREFIX) {
+                project_dirs.config_dir().join(suffix)
+            } else {
+                PathBuf::from(path)
+            }
+        }
+        None => PathBuf::from(path),
     };
     if file_or_folder == FileOrFolder::Folder {
         tokio::fs::create_dir_all(&path).await?;
@@ -72,7 +83,14 @@ impl ObeliskConfig {
         &self,
         project_dirs: Option<&ProjectDirs>,
     ) -> Result<PathBuf, anyhow::Error> {
-        replace_path_prefix_mkdir(&self.sqlite_file, project_dirs, FileOrFolder::File).await
+        let sqlite_file = self.sqlite_file.as_deref().unwrap_or_else(|| {
+            if project_dirs.is_some() {
+                DEFAULT_SQLITE_FILE_IF_PROJECT_DIRS
+            } else {
+                DEFAULT_SQLITE_FILE
+            }
+        });
+        replace_path_prefix_mkdir(sqlite_file, project_dirs, FileOrFolder::File).await
     }
 }
 
@@ -388,10 +406,6 @@ impl ConfigHolder {
 // https://github.com/serde-rs/serde/issues/368
 fn default_true() -> bool {
     true
-}
-
-fn default_sqlite_file() -> String {
-    "obelisk.sqlite".to_string()
 }
 
 fn default_max_retries() -> u32 {

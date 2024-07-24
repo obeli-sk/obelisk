@@ -1,6 +1,8 @@
 ## Supported path prefixes:
-## ${DATA_DIR}  ~/.local/share/obelisk, details: https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dirhttps://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dir
-## ${CACHE_DIR} ~/.cache/obelisk, details: https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.cache_dir
+## | Prefix       | Default path            | Details
+## | ${DATA_DIR}  |  ~/.local/share/obelisk | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dir
+## | ${CACHE_DIR} |  ~/.cache/obelisk       | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.cache_dir
+## | ${CONFIG_DIR}|  ~/.config/obelisk      | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.config_dir
 
 ## Path to sqlite database. Supports path prefixes.
 # sqlite_file = "${DATA_DIR}/obelisk.sqlite"
