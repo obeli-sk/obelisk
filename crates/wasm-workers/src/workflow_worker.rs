@@ -352,9 +352,11 @@ mod tests {
     // TODO: test timeouts, retries
     use super::*;
     use crate::{
-        activity_worker::tests::{spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT},
+        activity_worker::tests::{
+            spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT, FIBO_ACTIVITY_FFQN,
+        },
         engines::{EngineConfig, Engines},
-        tests::{fn_registry_dummy, fn_registry_parsing_wasm},
+        tests::fn_registry_dummy,
     };
     use assert_matches::assert_matches;
     use concepts::{
@@ -490,11 +492,7 @@ mod tests {
     ) {
         const INPUT_ITERATIONS: u32 = 1;
         let _guard = test_utils::set_up();
-        let fn_registry = fn_registry_parsing_wasm(&[
-            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-        ])
-        .await;
+        let fn_registry = fn_registry_dummy(&[FIBO_ACTIVITY_FFQN]);
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
             sim_clock.get_clock_fn(),
@@ -568,10 +566,7 @@ mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let _guard = test_utils::set_up();
-        let fn_registry = fn_registry_parsing_wasm(&[
-            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-        ])
-        .await;
+        let fn_registry = fn_registry_dummy(&[]);
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
             sim_clock.get_clock_fn(),
@@ -777,26 +772,24 @@ mod tests {
             matchers::{method, path},
             Mock, MockServer, ResponseTemplate,
         };
-
         const BODY: &str = "ok";
         pub const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
-            FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
+        FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        let fn_registry = fn_registry_parsing_wasm(&[
-            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-        ])
-        .await;
+        let fn_registry = fn_registry_dummy(&[
+            crate::activity_worker::tests::wasmtime_nosim::HTTP_GET_SUCCESSFUL_ACTIVITY,
+        ]);
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.get_clock_fn(),
         );
+
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
@@ -871,6 +864,7 @@ mod tests {
         const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY_STRESS);
 
+        test_utils::set_up();
         let concurrency: u32 = std::env::var("CONCURRENCY")
             .map(|c| c.parse::<u32>())
             .ok()
@@ -878,17 +872,13 @@ mod tests {
             .ok()
             .flatten()
             .unwrap_or(5);
-
-        test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
         let created_at = sim_clock.now();
         let (_guard, db_pool) = db.set_up().await;
         let db_connection = db_pool.connection();
-        let fn_registry = fn_registry_parsing_wasm(&[
-            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-        ])
-        .await;
+        let fn_registry = fn_registry_dummy(&[
+            crate::activity_worker::tests::wasmtime_nosim::HTTP_GET_SUCCESSFUL_ACTIVITY,
+        ]);
 
         let activity_exec_task = spawn_activity(
             db_pool.clone(),

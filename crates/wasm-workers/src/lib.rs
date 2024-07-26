@@ -30,14 +30,11 @@ pub enum WasmFileError {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::component_detector::ComponentDetector;
     use async_trait::async_trait;
     use concepts::{
-        ComponentConfigHash, ComponentType, ContentDigest, FunctionFqn, FunctionMetadata,
-        FunctionRegistry, ParameterTypes,
+        ComponentConfigHash, FunctionFqn, FunctionMetadata, FunctionRegistry, ParameterTypes,
     };
-    use std::{path::Path, sync::Arc};
-    use utils::wasm_tools::WasmComponent;
+    use std::sync::Arc;
 
     pub(crate) struct TestingFnRegistry(
         hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ComponentConfigHash)>,
@@ -64,34 +61,6 @@ pub(crate) mod tests {
                     component_id.clone(),
                 ),
             );
-        }
-        Arc::new(TestingFnRegistry(map))
-    }
-
-    pub(crate) async fn fn_registry_parsing_wasm(
-        wasm_paths: &[impl AsRef<Path>],
-    ) -> Arc<dyn FunctionRegistry> {
-        let mut map = hashbrown::HashMap::new();
-        for wasm_path in wasm_paths {
-            let wasm_path = wasm_path.as_ref();
-            let component_type = if wasm_path.to_str().unwrap().ends_with("activity.wasm") {
-                ComponentType::WasmActivity
-            } else if wasm_path.to_str().unwrap().ends_with("workflow.wasm") {
-                ComponentType::WasmWorkflow
-            } else {
-                panic!("cannot determine type automatically from file {wasm_path:?}")
-            };
-            let config_id = ComponentConfigHash {
-                component_type,
-                config_hash: ContentDigest::empty(), // this mismatch is intentional, any hash would do
-            };
-            for (ffqn, params, res) in
-                WasmComponent::new(wasm_path, &ComponentDetector::get_engine())
-                    .unwrap()
-                    .exported_functions()
-            {
-                map.insert(ffqn.clone(), ((ffqn, params, res), config_id.clone()));
-            }
         }
         Arc::new(TestingFnRegistry(map))
     }
