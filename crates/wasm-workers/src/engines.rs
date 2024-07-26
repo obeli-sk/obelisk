@@ -77,8 +77,7 @@ impl Debug for EngineConfig {
 impl EngineConfig {
     fn allocation_strategy(&self) -> &wasmtime::InstanceAllocationStrategy {
         match self {
-            Self::NoCache(strategy) => strategy,
-            Self::Cache(strategy, _) => strategy,
+            Self::NoCache(strategy) | Self::Cache(strategy, _) => strategy,
         }
     }
 
