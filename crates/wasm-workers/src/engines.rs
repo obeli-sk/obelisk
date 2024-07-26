@@ -1,5 +1,6 @@
-use std::{error::Error, fmt::Debug, path::Path, sync::Arc};
-use tracing::{debug, warn};
+use std::{error::Error, fmt::Debug, path::Path, rc::Rc, sync::Arc};
+use tempfile::NamedTempFile;
+use tracing::{debug, info, trace, warn};
 use wasmtime::Engine;
 
 #[derive(thiserror::Error, Debug)]
@@ -51,15 +52,15 @@ pub struct PoolingOptions {
 }
 
 #[derive(Clone)]
-pub struct EngineConfig<'a> {
-    pub allocation_strategy: wasmtime::InstanceAllocationStrategy,
-    pub cache_config_path: Option<&'a Path>,
+pub enum EngineConfig {
+    NoCache(wasmtime::InstanceAllocationStrategy),
+    Cache(wasmtime::InstanceAllocationStrategy, Rc<NamedTempFile>),
 }
 
-impl Debug for EngineConfig<'_> {
+impl Debug for EngineConfig {
     // Workaround for missing debug in InstanceAllocationStrategy
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.allocation_strategy {
+        match self.allocation_strategy() {
             wasmtime::InstanceAllocationStrategy::OnDemand => f
                 .debug_struct("EngineConfig")
                 .field("allocation_strategy", &"OnDemand")
@@ -73,13 +74,24 @@ impl Debug for EngineConfig<'_> {
     }
 }
 
-impl EngineConfig<'_> {
-    #[cfg(test)]
-    pub(crate) fn on_demand_no_cache() -> Self {
-        Self {
-            allocation_strategy: wasmtime::InstanceAllocationStrategy::OnDemand,
-            cache_config_path: None,
+impl EngineConfig {
+    fn allocation_strategy(&self) -> &wasmtime::InstanceAllocationStrategy {
+        match self {
+            Self::NoCache(strategy) => strategy,
+            Self::Cache(strategy, _) => strategy,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn on_demand_testing() -> Self {
+        use std::path::PathBuf;
+        let codegen_cache = PathBuf::from("test-codegen-cache");
+        std::fs::create_dir_all(&codegen_cache).unwrap();
+        let temp_file = Engines::write_codegen_config(Some(&codegen_cache))
+            .unwrap()
+            .unwrap();
+        std::fs::create_dir_all(&codegen_cache).unwrap();
+        Self::Cache(wasmtime::InstanceAllocationStrategy::OnDemand, temp_file)
     }
 }
 
@@ -94,11 +106,11 @@ impl Engines {
         wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
         wasmtime_config.wasm_component_model(true);
         wasmtime_config.async_support(true);
-        wasmtime_config.allocation_strategy(config.allocation_strategy);
+        wasmtime_config.allocation_strategy(config.allocation_strategy().clone());
         wasmtime_config.epoch_interruption(true);
-        if let Some(cache_config_path) = config.cache_config_path {
+        if let EngineConfig::Cache(_, cache_config) = config {
             wasmtime_config
-                .cache_config_load(cache_config_path)
+                .cache_config_load(cache_config.path())
                 .map_err(|err| EngineError::CodegenCache(err.into()))?;
         }
         Ok(Arc::new(
@@ -112,11 +124,11 @@ impl Engines {
         wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Disable);
         wasmtime_config.wasm_component_model(true);
         wasmtime_config.async_support(true);
-        wasmtime_config.allocation_strategy(config.allocation_strategy);
+        wasmtime_config.allocation_strategy(config.allocation_strategy().clone());
         wasmtime_config.epoch_interruption(true);
-        if let Some(cache_config_path) = config.cache_config_path {
+        if let EngineConfig::Cache(_, cache_config) = config {
             wasmtime_config
-                .cache_config_load(cache_config_path)
+                .cache_config_load(cache_config.path())
                 .map_err(|err| EngineError::CodegenCache(err.into()))?;
         }
         Ok(Arc::new(
@@ -124,10 +136,11 @@ impl Engines {
         ))
     }
 
-    fn on_demand_with_cache(cache_config_path: Option<&Path>) -> Result<Self, EngineError> {
-        let engine_config = EngineConfig {
-            allocation_strategy: wasmtime::InstanceAllocationStrategy::OnDemand,
-            cache_config_path,
+    fn on_demand(cache_config: Option<Rc<NamedTempFile>>) -> Result<Self, EngineError> {
+        let strategy = wasmtime::InstanceAllocationStrategy::OnDemand;
+        let engine_config = match cache_config {
+            None => EngineConfig::NoCache(strategy),
+            Some(cache_config) => EngineConfig::Cache(strategy, cache_config),
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
@@ -137,7 +150,7 @@ impl Engines {
 
     fn pooling(
         opts: &PoolingOptions,
-        cache_config_path: Option<&Path>,
+        cache_config: Option<Rc<NamedTempFile>>,
     ) -> Result<Self, EngineError> {
         let mut cfg = wasmtime::PoolingAllocationConfig::default();
         if let Some(size) = opts.pooling_memory_keep_resident {
@@ -170,9 +183,9 @@ impl Engines {
             }
         }
         let allocation_strategy = wasmtime::InstanceAllocationStrategy::Pooling(cfg.clone());
-        let engine_config = EngineConfig {
-            allocation_strategy,
-            cache_config_path,
+        let engine_config = match cache_config {
+            None => EngineConfig::NoCache(allocation_strategy),
+            Some(temp_file) => EngineConfig::Cache(allocation_strategy, temp_file),
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
@@ -182,12 +195,37 @@ impl Engines {
 
     pub fn auto_detect_allocator(
         pooling_opts: &PoolingOptions,
-        cache_config_path: Option<&Path>,
+        cache_config: Option<Rc<NamedTempFile>>,
     ) -> Result<Self, EngineError> {
-        Self::pooling(pooling_opts, cache_config_path).or_else(|err| {
+        Self::pooling(pooling_opts, cache_config.clone()).or_else(|err| {
             warn!("Falling back to on-demand allocator - {err}");
             debug!("{err:?}");
-            Self::on_demand_with_cache(cache_config_path)
+            Self::on_demand(cache_config)
+        })
+    }
+
+    pub fn write_codegen_config(
+        codegen_cache: Option<&Path>,
+    ) -> Result<Option<Rc<NamedTempFile>>, std::io::Error> {
+        Ok(if let Some(codegen_cache) = codegen_cache {
+            use std::io::Write;
+            let mut codegen_cache_config_file = tempfile::NamedTempFile::new()?;
+            info!("Setting codegen cache to {codegen_cache:?}");
+            let codegen_cache = codegen_cache.canonicalize()?;
+            writeln!(
+                codegen_cache_config_file,
+                r#"[cache]
+enabled = true
+directory = {codegen_cache:?}
+"#
+            )?;
+            trace!(
+                "Wrote temporary cache config to {:?}",
+                codegen_cache_config_file.path()
+            );
+            Some(Rc::new(codegen_cache_config_file))
+        } else {
+            None
         })
     }
 }

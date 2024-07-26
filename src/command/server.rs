@@ -22,8 +22,6 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tempfile::NamedTempFile;
-use tracing::trace;
 use tracing::{debug, info, warn};
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityWorker;
@@ -81,14 +79,10 @@ pub(crate) async fn run(
         .with_context(|| format!("cannot create wasm cache directory {wasm_cache_dir:?}"))?;
 
     // Set up codegen cache
-    let codegen_cache_config_file_holder =
-        write_codegen_config(codegen_cache).context("error configuring codegen cache")?;
-    let engines = Engines::auto_detect_allocator(
-        &get_opts_from_env(),
-        codegen_cache_config_file_holder
-            .as_ref()
-            .map(tempfile::NamedTempFile::path),
-    )?;
+    let codegen_cache_config_file_holder = Engines::write_codegen_config(codegen_cache.as_deref())
+        .context("error configuring codegen cache")?;
+    let engines =
+        Engines::auto_detect_allocator(&get_opts_from_env(), codegen_cache_config_file_holder)?;
 
     let _epoch_ticker = EpochTicker::spawn_new(
         vec![
@@ -143,29 +137,6 @@ pub(crate) async fn run(
     }
     db_pool.close().await.context("cannot close database")?;
     Ok::<_, anyhow::Error>(())
-}
-
-fn write_codegen_config(
-    codegen_cache: Option<PathBuf>,
-) -> Result<Option<NamedTempFile>, anyhow::Error> {
-    Ok(if let Some(codegen_cache) = codegen_cache {
-        use std::io::Write;
-        let mut codegen_cache_config_file = tempfile::NamedTempFile::new()?;
-        writeln!(
-            codegen_cache_config_file,
-            r#"[cache]
-enabled = true
-directory = {codegen_cache:?}
-"#
-        )?;
-        trace!(
-            "Wrote temporary cache config to {:?}",
-            codegen_cache_config_file.path()
-        );
-        Some(codegen_cache_config_file)
-    } else {
-        None
-    })
 }
 
 fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
