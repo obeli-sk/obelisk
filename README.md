@@ -133,3 +133,7 @@ cargo nextest run --workspace --target-dir=target/debug/nosim
 ```sh
 MADSIM_ALLOW_SYSTEM_THREAD=1 RUSTFLAGS="--cfg madsim" cargo nextest run --workspace --target-dir=target/debug/madsim
 ```
+
+# Contributing
+This project has a roadmap and features are added and tested in a certain order.
+If you would like to contribute a feature, please discuss the feature in an issue on this GitHub repository.
