@@ -60,13 +60,15 @@ pub enum EngineConfig {
 impl Debug for EngineConfig {
     // Workaround for missing debug in InstanceAllocationStrategy
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.allocation_strategy() {
-            wasmtime::InstanceAllocationStrategy::OnDemand => f
-                .debug_struct("EngineConfig")
-                .field("allocation_strategy", &"OnDemand")
-                .finish(),
+        let (mut f, strategy) = match self {
+            Self::NoCache(strategy) => (f.debug_struct("EngineConfig::NoCache"), strategy),
+            Self::Cache(strategy, _) => (f.debug_struct("EngineConfig::Cache"), strategy),
+        };
+        match strategy {
+            wasmtime::InstanceAllocationStrategy::OnDemand => {
+                f.field("allocation_strategy", &"OnDemand").finish()
+            }
             wasmtime::InstanceAllocationStrategy::Pooling(polling) => f
-                .debug_struct("EngineConfig")
                 .field("allocation_strategy", &"Polling")
                 .field("polling_config", &polling)
                 .finish(),
@@ -75,12 +77,6 @@ impl Debug for EngineConfig {
 }
 
 impl EngineConfig {
-    fn allocation_strategy(&self) -> &wasmtime::InstanceAllocationStrategy {
-        match self {
-            Self::NoCache(strategy) | Self::Cache(strategy, _) => strategy,
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn on_demand_testing() -> Self {
         use std::path::PathBuf;
@@ -100,39 +96,38 @@ pub struct Engines {
 }
 
 impl Engines {
-    pub(crate) fn get_activity_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
-        let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+    fn configure_common(
+        mut wasmtime_config: wasmtime::Config,
+        config: EngineConfig,
+    ) -> Result<Arc<Engine>, EngineError> {
         wasmtime_config.wasm_component_model(true);
         wasmtime_config.async_support(true);
-        wasmtime_config.allocation_strategy(config.allocation_strategy().clone());
-        wasmtime_config.epoch_interruption(true);
-        if let EngineConfig::Cache(_, cache_config) = config {
+        let (strategy, cache_config) = match config {
+            EngineConfig::NoCache(strategy) => (strategy, None),
+            EngineConfig::Cache(strategy, cache_config) => (strategy, Some(cache_config)),
+        };
+        wasmtime_config.allocation_strategy(strategy);
+        if let Some(cache_config) = cache_config {
             wasmtime_config
                 .cache_config_load(cache_config.path())
                 .map_err(|err| EngineError::CodegenCache(err.into()))?;
         }
-        Ok(Arc::new(
-            Engine::new(&wasmtime_config).map_err(|err| EngineError::Uncategorized(err.into()))?,
-        ))
+        Engine::new(&wasmtime_config)
+            .map(Arc::new)
+            .map_err(|err| EngineError::Uncategorized(err.into()))
+    }
+
+    pub(crate) fn get_activity_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+        let mut wasmtime_config = wasmtime::Config::new();
+        wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+        Self::configure_common(wasmtime_config, config)
     }
 
     pub(crate) fn get_workflow_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.wasm_backtrace(true);
         wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Disable);
-        wasmtime_config.wasm_component_model(true);
-        wasmtime_config.async_support(true);
-        wasmtime_config.allocation_strategy(config.allocation_strategy().clone());
         wasmtime_config.epoch_interruption(true);
-        if let EngineConfig::Cache(_, cache_config) = config {
-            wasmtime_config
-                .cache_config_load(cache_config.path())
-                .map_err(|err| EngineError::CodegenCache(err.into()))?;
-        }
-        Ok(Arc::new(
-            Engine::new(&wasmtime_config).map_err(|err| EngineError::Uncategorized(err.into()))?,
-        ))
+        Self::configure_common(wasmtime_config, config)
     }
 
     fn on_demand(cache_config: Option<Rc<NamedTempFile>>) -> Result<Self, EngineError> {
