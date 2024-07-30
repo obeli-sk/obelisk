@@ -384,7 +384,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
                     WorkerError::FatalError(FatalError::ParamsParsingError(err), version) => {
-                        info!("Error parsing parameters - {err}");
+                        info!("Error parsing parameters - {err:?}");
                         let result = Err(FinishedExecutionError::PermanentFailure(
                             StrVariant::Arc(Arc::from(format!(
                                 "error parsing parameters: `{err}`, detail: {err:?}"
@@ -394,7 +394,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
                     WorkerError::FatalError(FatalError::ResultParsingError(err), version) => {
-                        info!("Error parsing result - {err}");
+                        info!("Error parsing result - {err:?}");
                         let result = Err(FinishedExecutionError::PermanentFailure(
                             StrVariant::Arc(Arc::from(format!(
                                 "error parsing result: `{err}`, detail: {err:?}"
@@ -404,7 +404,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
                     WorkerError::FatalError(FatalError::ChildExecutionError(err), version) => {
-                        info!("Child finished with an execution error - {err}");
+                        info!("Child finished with an execution error - {err:?}");
                         let result = Err(FinishedExecutionError::PermanentFailure(
                             // TODO: Add ErrId
                             StrVariant::Arc(Arc::from(format!(
@@ -415,7 +415,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
                     WorkerError::FatalError(FatalError::UncategorizedError(err), version) => {
-                        info!("Uncategorized error - {err}");
+                        info!("Uncategorized error - {err:?}");
                         let result =
                             Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
                                 Arc::from(format!("uncategorized error: `{err}`, detail: {err:?}")),

@@ -494,13 +494,15 @@ mod serde_params {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParamsParsingError {
-    #[error("error converting type {idx}-th parameter: `{err}`")]
+    #[error("error converting type of {idx}-th parameter: `{err}`")]
     ParameterTypeError {
         idx: usize,
         err: TypeConversionError,
     },
     #[error(transparent)]
-    ParamsDeserializationError(#[from] serde_json::Error),
+    ParamsDeserializationError(serde_json::Error),
+    #[error("parameter cardinality mismatch, expected: {expected}, specified: {specified}")]
+    ParameterCardinalityMismatch { expected: usize, specified: usize },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -536,6 +538,12 @@ impl Params {
         &self,
         param_types: Box<[Type]>,
     ) -> Result<Arc<[wasmtime::component::Val]>, ParamsParsingError> {
+        if param_types.len() != self.len() {
+            return Err(ParamsParsingError::ParameterCardinalityMismatch {
+                expected: param_types.len(),
+                specified: self.len(),
+            });
+        }
         match &self.0 {
             ParamsInternal::JsonValues(params) => {
                 let param_types = param_types
@@ -545,12 +553,12 @@ impl Params {
                     .map(|(idx, ty)| TypeWrapper::try_from(ty).map_err(|err| (idx, err)))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(|(idx, err)| ParamsParsingError::ParameterTypeError { idx, err })?;
-                Ok(params::deserialize_values(params, param_types.iter())?
+                Ok(params::deserialize_values(params, param_types.iter())
+                    .map_err(ParamsParsingError::ParamsDeserializationError)?
                     .into_iter()
                     .map(Val::from)
                     .collect())
             }
-
             ParamsInternal::Vals { vals, .. } => Ok(vals.clone()),
             ParamsInternal::Empty => Ok(Arc::from([])),
         }
