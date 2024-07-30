@@ -24,20 +24,30 @@ impl WasmComponent {
             error!("Cannot read the file {wasm_path:?} - {err:?}");
             DecodeError::CannotReadComponent(err.to_string())
         })?;
-        let component = Component::from_file(engine, wasm_path).map_err(|err| {
-            error!("Cannot read component {wasm_path:?} - {err:?}");
-            DecodeError::CannotReadComponent(err.to_string())
-        })?;
-        let decoded = wit_parser::decoding::decode_reader(wasm_file).unwrap();
-        let DecodedWasm::Component(resolve, world_id) = decoded else {
-            error!("Must be a wasi component");
-            return Err(DecodeError::CannotReadComponent(
-                "must be a wasi component".to_string(),
-            ));
+        let component = {
+            let stopwatch = std::time::Instant::now();
+            let component = Component::from_file(engine, wasm_path).map_err(|err| {
+                error!("Cannot read component {wasm_path:?} - {err:?}");
+                DecodeError::CannotReadComponent(err.to_string())
+            })?;
+            debug!("Parsed with wasmtime in {:?}", stopwatch.elapsed());
+            component
         };
-        let world = resolve.worlds.get(world_id).expect("world must exist");
-        let exported_ffqns_to_param_names = ffqn_to_param_names(&resolve, world.exports.iter());
-        let imported_ffqns_to_param_names = ffqn_to_param_names(&resolve, world.imports.iter());
+        let (exported_ffqns_to_param_names, imported_ffqns_to_param_names) = {
+            let stopwatch = std::time::Instant::now();
+            let decoded = wit_parser::decoding::decode_reader(wasm_file).unwrap();
+            let DecodedWasm::Component(resolve, world_id) = decoded else {
+                error!("Must be a wasi component");
+                return Err(DecodeError::CannotReadComponent(
+                    "must be a wasi component".to_string(),
+                ));
+            };
+            let world = resolve.worlds.get(world_id).expect("world must exist");
+            let exported_ffqns_to_param_names = ffqn_to_param_names(&resolve, world.exports.iter());
+            let imported_ffqns_to_param_names = ffqn_to_param_names(&resolve, world.imports.iter());
+            debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
+            (exported_ffqns_to_param_names, imported_ffqns_to_param_names)
+        };
         let exim = decode(
             &component,
             engine,
