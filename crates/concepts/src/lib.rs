@@ -426,7 +426,6 @@ mod serde_params {
     use serde::ser::SerializeSeq;
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
-    use std::marker::PhantomData;
     use val_json::wast_val::WastVal;
 
     impl Serialize for Params {
@@ -456,18 +455,13 @@ mod serde_params {
         }
     }
 
-    struct VecVisitor<T>(PhantomData<T>);
-    impl<T> Default for VecVisitor<T> {
-        fn default() -> Self {
-            Self(PhantomData)
-        }
-    }
+    struct VecVisitor;
 
-    impl<'de, T: Deserialize<'de>> Visitor<'de> for VecVisitor<T> {
-        type Value = Vec<T>;
+    impl<'de> Visitor<'de> for VecVisitor {
+        type Value = Vec<Value>;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a sequence of `WastValWithType` structs")
+            formatter.write_str("a sequence of `Value`")
         }
 
         #[inline]
@@ -488,7 +482,7 @@ mod serde_params {
         where
             D: serde::Deserializer<'de>,
         {
-            let vec: Vec<Value> = deserializer.deserialize_seq(VecVisitor::default())?;
+            let vec: Vec<Value> = deserializer.deserialize_seq(VecVisitor)?;
             if vec.is_empty() {
                 Ok(Self(ParamsInternal::Empty))
             } else {
