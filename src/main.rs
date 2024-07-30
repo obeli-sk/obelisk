@@ -4,10 +4,11 @@ mod config;
 mod init;
 mod oci;
 
+use anyhow::{bail, Context};
 use args::{Args, Executor, Subcommand};
 use clap::Parser;
 use command::execution::ExecutionVerbosity;
-use concepts::{storage::ComponentToggle, Params};
+use concepts::storage::ComponentToggle;
 use config::toml::ConfigHolder;
 use directories::ProjectDirs;
 
@@ -75,11 +76,12 @@ async fn main_async() -> Result<(), anyhow::Error> {
         Subcommand::Execution(args::Execution::Schedule { ffqn, params }) => {
             // TODO interactive search for ffqn showing param types and result, file name
             // enter parameters one by one
-            let params =
-                serde_json::from_str(&params).expect("parameters should be passed as json values");
-            let params = Params::from_json_array(params).expect("cannot parse parameters");
-            // TODO: typecheck the params
-            command::execution::schedule(ffqn, params, db_file).await
+            let params = serde_json::from_str(&params).context("params should be a json array")?;
+            let params = match params {
+                serde_json::Value::Array(vec) => vec,
+                _ => bail!("params should be a JSON array"),
+            };
+            command::execution::submit(ffqn, params).await
         }
         Subcommand::Execution(args::Execution::Get {
             execution_id,

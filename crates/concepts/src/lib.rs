@@ -536,7 +536,7 @@ impl Params {
         }
     }
 
-    pub fn from_json_array(value: Value) -> Result<Self, ParamsFromJsonError> {
+    pub fn from_json_value(value: Value) -> Result<Self, ParamsFromJsonError> {
         match value {
             Value::Array(vec) if vec.is_empty() => Ok(Self::default()),
             Value::Array(_) => Ok(Self(ParamsInternal::Json(value))),

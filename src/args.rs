@@ -74,7 +74,7 @@ pub(crate) enum Execution {
         #[arg(value_name = "FUNCTION")]
         ffqn: FunctionFqn,
         /// Parameters encoded as an JSON array
-        #[arg(value_name = "PARAMETERS")]
+        #[arg(value_name = "PARAMS")]
         params: String,
         // TODO: interactive
         // TODO: when: String,

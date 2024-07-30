@@ -37,7 +37,10 @@
                   "getrandom-0.2.11" = "sha256-fBPB5ptPPBQqvsxTJd+LwKXBdChrVm75DQewyQUhM2Q=";
                 };
               };
-              nativeBuildInputs = [ pkgs.pkg-config ];
+              nativeBuildInputs = with pkgs; [
+                pkg-config
+                protobuf
+              ];
               doCheck = false;
             };
           makeDocker = pkgs: obelisk: binSh:
@@ -95,10 +98,12 @@
                 lldb
                 nixpkgs-fmt
                 pkg-config
+                protobuf
                 rustToolchain
                 tokio-console
                 wasm-tools
               ];
+              PROTOC = "${pkgs.protobuf}/bin/protoc";
           };
           packages = rec {
             inherit wkg;

@@ -334,7 +334,7 @@ pub(crate) mod tests {
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
-        let params = Params::from_json_array(json!([FIBO_10_INPUT])).unwrap();
+        let params = Params::from_json_value(json!([FIBO_10_INPUT])).unwrap();
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -405,7 +405,7 @@ pub(crate) mod tests {
                 let ctx = WorkerContext {
                     execution_id: ExecutionId::generate(),
                     ffqn: FIBO_ACTIVITY_FFQN,
-                    params: Params::from_json_array(json!([fibo_input])).unwrap(),
+                    params: Params::from_json_value(json!([fibo_input])).unwrap(),
                     event_history: Vec::new(),
                     responses: Vec::new(),
                     version: Version::new(0),
@@ -506,7 +506,7 @@ pub(crate) mod tests {
                     created_at,
                     execution_id,
                     ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
-                    params: Params::from_json_array(json!([sleep_millis, sleep_iterations]))
+                    params: Params::from_json_value(json!([sleep_millis, sleep_iterations]))
                         .unwrap(),
                     parent: None,
                     scheduled_at: created_at,
@@ -572,7 +572,7 @@ pub(crate) mod tests {
             let ctx = WorkerContext {
                 execution_id: ExecutionId::generate(),
                 ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
-                params: Params::from_json_array(json!([sleep_millis, sleep_iterations])).unwrap(),
+                params: Params::from_json_value(json!([sleep_millis, sleep_iterations])).unwrap(),
                 event_history: Vec::new(),
                 responses: Vec::new(),
                 version: Version::new(0),
@@ -631,7 +631,7 @@ pub(crate) mod tests {
                 .local_addr()
                 .expect("Failed to get server address.");
 
-            let params = Params::from_json_array(json!([format!(
+            let params = Params::from_json_value(json!([format!(
                 "http://127.0.0.1:{port}/",
                 port = server_address.port()
             )]))
@@ -741,7 +741,7 @@ pub(crate) mod tests {
                 .local_addr()
                 .expect("Failed to get server address.");
 
-            let params = Params::from_json_array(json!([format!(
+            let params = Params::from_json_value(json!([format!(
                 "http://127.0.0.1:{port}/",
                 port = server_address.port()
             )]))

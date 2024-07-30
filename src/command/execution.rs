@@ -1,3 +1,4 @@
+use super::grpc;
 use crate::config::store::ConfigStore;
 use anyhow::bail;
 use anyhow::Context;
@@ -11,66 +12,84 @@ use concepts::SupportedFunctionResult;
 use concepts::{storage::CreateRequest, ExecutionId, FunctionFqn, Params};
 use db_sqlite::sqlite_dao::SqlitePool;
 use std::path::Path;
-use utils::time::now;
+use tonic::codec::CompressionEncoding;
 use val_json::wast_val::WastVal;
 use val_json::wast_val::WastValWithType;
 
-pub(crate) async fn schedule<P: AsRef<Path>>(
-    mut ffqn: FunctionFqn,
-    params: Params,
-    db_file: P,
+pub(crate) async fn submit(
+    ffqn: FunctionFqn,
+    params: Vec<serde_json::Value>,
 ) -> anyhow::Result<()> {
-    let db_file = db_file.as_ref();
-    let db_pool = SqlitePool::new(db_file)
-        .await
-        .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
-    let db_connection = db_pool.connection();
-
-    // Check that ffqn exists
-    let (config_id, param_types, return_type) = {
-        let (config_id, (ffqn2, param_types, return_type)) = db_connection
-            .component_enabled_get_exported_function(&ffqn)
-            .await?;
-        ffqn = ffqn2;
-        (config_id, param_types, return_type)
-    };
-    // Check parameter cardinality
-    if params.len() != param_types.len() {
-        bail!(
-            "incorrect number of parameters. Expected {expected}, got {got}",
-            expected = param_types.len(),
-            got = params.len()
-        );
-    }
-    // TODO: Typecheck parameters
-    let component = db_connection.component_get_metadata(&config_id).await?;
-    let config_store: ConfigStore = serde_json::from_value(component.component.config)
-        .context("deserialization of config store failed")?;
-    let retry_exp_backoff = config_store.common().default_retry_exp_backoff;
-    let max_retries = config_store.common().default_max_retries;
-    let execution_id = ExecutionId::generate();
-    let created_at = now();
-    db_connection
-        .create(CreateRequest {
-            created_at,
-            execution_id,
-            ffqn,
-            params,
-            parent: None,
-            scheduled_at: created_at,
-            retry_exp_backoff,
-            max_retries,
-            config_id,
-            return_type,
-        })
-        .await
-        .unwrap();
-
-    println!("{execution_id}\nWaiting for result...");
-    let execution_log = db_connection
-        .wait_for_pending_state(execution_id, PendingState::Finished, None)
+    let mut client = grpc::scheduler_client::SchedulerClient::connect("http://127.0.0.1:50055")
+        .await?
+        .send_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Gzip);
+    let resp = client
+        .submit(tonic::Request::new(grpc::SubmitRequest {
+            function: Some(grpc::FunctionName {
+                interface_name: ffqn.ifc_fqn.to_string(),
+                function_name: ffqn.function_name.to_string(),
+            }),
+            params: Some(prost_types::Any {
+                type_url: format!("urn:obelisk:json:{ffqn}"),
+                value: serde_json::Value::Array(params).to_string().into_bytes(),
+            }),
+        }))
         .await?;
-    print_result_if_finished(&execution_log);
+
+    println!("{resp:?}");
+
+    // let db_file = db_file.as_ref();
+    // let db_pool = SqlitePool::new(db_file)
+    //     .await
+    //     .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
+    // let db_connection = db_pool.connection();
+
+    // // Check that ffqn exists
+    // let (config_id, param_types, return_type) = {
+    //     let (config_id, (_, param_types, return_type)) = db_connection
+    //         .component_enabled_get_exported_function(&ffqn)
+    //         .await?;
+    //     (config_id, param_types, return_type)
+    // };
+    // // Check parameter cardinality
+    // if params.len() != param_types.len() {
+    //     bail!(
+    //         "incorrect number of parameters. Expected {expected}, got {got}",
+    //         expected = param_types.len(),
+    //         got = params.len()
+    //     );
+    // }
+    // // TODO: Typecheck parameters
+    // let component = db_connection.component_get_metadata(&config_id).await?;
+    // let config_store: ConfigStore = serde_json::from_value(component.component.config)
+    //     .context("deserialization of config store failed")?;
+    // let retry_exp_backoff = config_store.common().default_retry_exp_backoff;
+    // let max_retries = config_store.common().default_max_retries;
+    // let execution_id = ExecutionId::generate();
+    // let created_at = now();
+    // db_connection
+    //     .create(CreateRequest {
+    //         created_at,
+    //         execution_id,
+    //         ffqn,
+    //         params,
+    //         parent: None,
+    //         scheduled_at: created_at,
+    //         retry_exp_backoff,
+    //         max_retries,
+    //         config_id,
+    //         return_type,
+    //     })
+    //     .await
+    //     .unwrap();
+
+    // println!("{execution_id}\nWaiting for result...");
+    // let execution_log = db_connection
+    //     .wait_for_pending_state(execution_id, PendingState::Finished, None)
+    //     .await?;
+    // print_result_if_finished(&execution_log);
     Ok(())
 }
 

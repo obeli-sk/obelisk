@@ -505,7 +505,7 @@ mod tests {
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
 
-        let params = Params::from_json_array(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
+        let params = Params::from_json_value(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -579,7 +579,7 @@ mod tests {
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
 
-        let params = Params::from_json_array(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
+        let params = Params::from_json_value(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
         db_connection
             .create(CreateRequest {
                 created_at,
@@ -700,7 +700,7 @@ mod tests {
         );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
-        let params = Params::from_json_array(json!([SLEEP_MILLIS])).unwrap();
+        let params = Params::from_json_value(json!([SLEEP_MILLIS])).unwrap();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -807,7 +807,7 @@ mod tests {
             .await;
         debug!("started mock server on {}", server.address());
         let url = format!("http://127.0.0.1:{}/", server.address().port());
-        let params = Params::from_json_array(json!([url])).unwrap();
+        let params = Params::from_json_value(json!([url])).unwrap();
         // Create an execution.
         let execution_id = ExecutionId::generate();
         db_connection
@@ -901,7 +901,7 @@ mod tests {
             .await;
         debug!("started mock server on {}", server.address());
         let url = format!("http://127.0.0.1:{}/", server.address().port());
-        let params = Params::from_json_array(json!([url, concurrency])).unwrap();
+        let params = Params::from_json_value(json!([url, concurrency])).unwrap();
         // Create an execution.
         let execution_id = ExecutionId::generate();
 
@@ -971,7 +971,7 @@ mod tests {
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
 
-        let params = Params::from_json_array(json!([SLEEP_MILLIS])).unwrap();
+        let params = Params::from_json_value(json!([SLEEP_MILLIS])).unwrap();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),

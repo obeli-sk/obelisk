@@ -189,15 +189,15 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     async fn call_schedule(
         &mut self,
         ffqn: String,
-        params_json: String,
+        params: String,
         scheduled_at: obelisk::workflow::host_activities::ScheduledAt,
     ) -> wasmtime::Result<String> {
         trace!("schedule");
         let execution_id =
             ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
         let ffqn = FunctionFqn::from_str(&ffqn)?;
-        let params = serde_json::from_str(&params_json)?;
-        let params = Params::from_json_array(params)?;
+        let params = serde_json::from_str(&params)?;
+        let params = Params::from_json_value(params)?;
         let scheduled_at = match scheduled_at {
             obelisk::workflow::host_activities::ScheduledAt::Now => HistoryEventScheduledAt::Now,
             obelisk::workflow::host_activities::ScheduledAt::At(

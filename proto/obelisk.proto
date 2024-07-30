@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
+
+package obelisk;
+
+service Scheduler {
+    rpc Submit(SubmitRequest) returns (SubmitResponse);
+    rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+}
+
+message ExecutionId {
+    string id = 1;
+}
+
+message ExecutorId {
+    string id = 1;
+}
+
+message RunId {
+    string id = 1;
+}
+
+message JoinSetId {
+    string id = 1;
+}
+
+message FunctionName {
+    // `namespace:pkg_name/ifc_name` or `namespace:pkg_name/ifc_name@version`
+    string interface_name = 1;
+    string function_name = 2;
+}
+
+message SubmitRequest {
+    FunctionName function = 1;
+    google.protobuf.Any params = 2;
+}
+
+message SubmitResponse {
+    ExecutionId execution_id = 1;
+}
+
+message GetStatusRequest {
+    ExecutionId execution_id = 1;
+}
+
+message ExecutionStatus {
+    message Locked {
+        ExecutorId executor_id = 1;
+        RunId run_id = 2;
+        google.protobuf.Timestamp lock_expires_at = 3;
+    }
+    message PendingAt {
+        google.protobuf.Timestamp scheduled_at = 1;
+    }
+    message BlockedByJoinSet {
+        JoinSetId join_set_id = 1;
+        google.protobuf.Timestamp lock_expires_at = 2;
+    }
+    message Finished {
+    }
+    oneof status {
+        Locked locked = 1;
+        PendingAt pending_at = 2;
+        BlockedByJoinSet blocked_by_join_set = 3;
+        Finished finished = 4;
+    }
+}
+
+message GetStatusResponse {
+    ExecutionStatus status = 1;
+}

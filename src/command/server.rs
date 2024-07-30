@@ -1,3 +1,4 @@
+use super::grpc;
 use crate::config::store::ConfigStore;
 use crate::config::toml::ConfigHolder;
 use crate::config::toml::ObeliskConfig;
@@ -7,10 +8,14 @@ use anyhow::Context;
 use concepts::storage::Component;
 use concepts::storage::ComponentToggle;
 use concepts::storage::ComponentWithMetadata;
+use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbError;
 use concepts::storage::DbPool;
+use concepts::storage::SpecificError;
+use concepts::ExecutionId;
 use concepts::FunctionRegistry;
+use concepts::Params;
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::ExecutorTaskHandle;
 use executor::executor::{ExecConfig, ExecTask};
@@ -18,16 +23,150 @@ use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use executor::worker::Worker;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, info, warn};
+use tonic::codec::CompressionEncoding;
+use tracing::error;
+use tracing::{debug, info};
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::workflow_worker::WorkflowWorker;
+
+#[derive(Debug)]
+struct GrpcServer<DB: DbConnection, P: DbPool<DB>> {
+    db_pool: P,
+    phantom_data: PhantomData<DB>,
+}
+
+impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
+    fn new(db_pool: P) -> Self {
+        Self {
+            db_pool,
+            phantom_data: PhantomData,
+        }
+    }
+
+    async fn close(self) -> Result<(), DbError> {
+        self.db_pool.close().await
+    }
+}
+
+#[tonic::async_trait]
+impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server::Scheduler
+    for GrpcServer<DB, P>
+{
+    async fn submit(
+        &self,
+        request: tonic::Request<grpc::SubmitRequest>,
+    ) -> Result<tonic::Response<grpc::SubmitResponse>, tonic::Status> {
+        // TODO: type check params
+        let request = request.into_inner();
+        let grpc::FunctionName {
+            interface_name,
+            function_name,
+        } = request.function.ok_or_else(|| {
+            tonic::Status::invalid_argument("parameter `function` must not be empty")
+        })?;
+        let ffqn =
+            concepts::FunctionFqn::new_arc(Arc::from(interface_name), Arc::from(function_name));
+        let params = request.params.ok_or_else(|| {
+            tonic::Status::invalid_argument("parameter `params` must not be empty")
+        })?;
+        let params = String::from_utf8(params.value).map_err(|_err| {
+            tonic::Status::invalid_argument("parameter `params` must be UTF-8 encoded")
+        })?;
+        let params = serde_json::from_str(&params).map_err(|serde_err| {
+            tonic::Status::invalid_argument(format!(
+                "parameter `params` must be encoded as JSON - {serde_err}"
+            ))
+        })?;
+        let params = Params::from_json_value(params).map_err(|json_err| {
+            tonic::Status::invalid_argument(format!("parameter `params` error - {json_err}"))
+        })?;
+
+        let db_connection = self.db_pool.connection();
+        // Check that ffqn exists
+
+        let (config_id, param_types, return_type) = {
+            let (config_id, (_, param_types, return_type)) = db_connection
+                .component_enabled_get_exported_function(&ffqn)
+                .await
+                .map_err(|db_err| {
+                    if matches!(db_err, DbError::Specific(SpecificError::NotFound)) {
+                        tonic::Status::not_found("function not found")
+                    } else {
+                        error!("Cannot submit execution - {db_err:?}");
+                        tonic::Status::internal(format!("database error: {db_err}"))
+                    }
+                })?;
+            (config_id, param_types, return_type)
+        };
+        // Check parameter cardinality
+        if params.len() != param_types.len() {
+            return Err(tonic::Status::invalid_argument(format!(
+                "incorrect number of parameters. Expected {expected}, got {got}",
+                expected = param_types.len(),
+                got = params.len()
+            )));
+        }
+        let component = db_connection
+            .component_get_metadata(&config_id)
+            .await
+            .map_err(|db_err| {
+                error!("Cannot submit execution - {db_err:?}");
+                tonic::Status::internal(format!("database error: {db_err}"))
+            })?;
+        let config_store: ConfigStore = serde_json::from_value(component.component.config)
+            .map_err(|serde_err| {
+                error!("Cannot deserialize configuration {config_id} - {serde_err:?}");
+                tonic::Status::internal(format!("configuration deserialization error: {serde_err}"))
+            })?;
+        let retry_exp_backoff = config_store.common().default_retry_exp_backoff;
+        let max_retries = config_store.common().default_max_retries;
+        let execution_id = ExecutionId::generate();
+        let created_at = now();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id,
+                ffqn,
+                params,
+                parent: None,
+                scheduled_at: created_at,
+                retry_exp_backoff,
+                max_retries,
+                config_id,
+                return_type,
+            })
+            .await
+            .unwrap();
+        let resp = grpc::SubmitResponse {
+            execution_id: Some(grpc::ExecutionId {
+                id: execution_id.to_string(),
+            }),
+        };
+        Ok(tonic::Response::new(resp))
+    }
+
+    async fn get_status(
+        &self,
+        _request: tonic::Request<grpc::GetStatusRequest>,
+    ) -> Result<tonic::Response<grpc::GetStatusResponse>, tonic::Status> {
+        let resp = grpc::GetStatusResponse {
+            status: Some(grpc::ExecutionStatus {
+                status: Some(grpc::execution_status::Status::Finished(
+                    grpc::execution_status::Finished {},
+                )),
+            }),
+        };
+        Ok(tonic::Response::new(resp))
+    }
+}
 
 pub(crate) async fn run(
     config: ObeliskConfig,
@@ -124,19 +263,32 @@ pub(crate) async fn run(
             exec_join_handles.push(exec_task_handle);
         }
     }
-    if tokio::signal::ctrl_c().await.is_err() {
-        warn!("Cannot listen to ctrl-c event");
-        loop {
-            tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
-        }
-    }
+    let addr = "127.0.0.1:50055".parse()?;
+    let grpc_server = Arc::new(GrpcServer::new(db_pool));
+    let grpc_service = grpc::scheduler_server::SchedulerServer::from_arc(grpc_server.clone())
+        .send_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Zstd)
+        .send_compressed(CompressionEncoding::Gzip)
+        .accept_compressed(CompressionEncoding::Gzip);
+    let res = tonic::transport::Server::builder()
+        .add_service(grpc_service)
+        .serve_with_shutdown(addr, async move {
+            if let Err(err) = tokio::signal::ctrl_c().await {
+                error!("Error while listening to ctrl-c - {err:?}");
+            }
+        })
+        .await
+        .context("grpc server error");
     timers_watcher.close().await;
-
     for exec_join_handle in exec_join_handles {
         exec_join_handle.close().await;
     }
-    db_pool.close().await.context("cannot close database")?;
-    Ok::<_, anyhow::Error>(())
+    Arc::into_inner(grpc_server)
+        .expect("must be the last reference")
+        .close()
+        .await
+        .context("cannot close database")?;
+    res
 }
 
 fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
