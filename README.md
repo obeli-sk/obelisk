@@ -12,28 +12,34 @@ Please exercise caution if attempting to use it for production.
 * Linux x64
 
 ## Core principles
-* Schema first, using [WIT](https://component-model.bytecodealliance.org/design/wit.html) as the interface specification between workflows and activities.
+* Schema first, using [WIT](https://component-model.bytecodealliance.org/design/wit.html) as the interface between workflows and activities.
 * Backend developer's delight
-    * Single process for running the executor, wasm workflows and wasm activities, with an escape hatch for external activities (planned).
+    * Single process for running the executor, workflows and activities, with an escape hatch for external activities (planned).
     * Automatic retries on errors, timeouts, workflow executions continuing after a server crash.
     * Observability (planned)
-    * Time traveling debugger (planned), ability to replay and fork existing workflow executions.
+    * Time traveling debugger for workflows (planned), ability to replay and fork existing workflows(planned).
 
-## Features
-* *Activities* that must be idempotent
-    * Able to contact HTTP servers using WASI 0.2 HTTP client.
-    * Max execution duration support, after which the execution is suspended into intermittent timeout
-    * Retries on errors (both wasm traps (panics), or returning an Error result)
-    * Retries on timeouts
-    * Exponential backoff
-    * Execution result is persisted
+## Concepts and features
+* *Activities* that must be idempotent, so that they can be stopped and retried at any moment. This contract must be fulfilled by the activity itself.
+    * WASI activities are executed in a WASM sandbox
+        * Able to contact HTTP servers using the WASI 0.2 HTTP client.
+        * Able to read/write to the filesystem (planned).
+    * Max execution duration support, after which the execution is suspended into intermittent timeout.
+    * Retries on errors - on WASM traps (panics), or when returning an Error result.
+    * Retries on timeouts with exponential backoff.
+    * Execution result is persisted.
     * Performance option to keep the parent workflow execution hot or unload and replay the event history.
 
 * *Deterministic workflows*
+    * Running in a WASM sandbox
     * Isolated from the environment
-    * Workflows can spawn child workflows or activities, either blocking or awaiting the result eventually
+    * Able to spawn child workflows or activities, either blocking or awaiting the result eventually
     * Execution is persisted at every state change, so that it can be replayed after an interrupt or an error.
     * Ability to replay workflows with added log messages and other changes that do not alter the determinism of the execution (planned)
+
+* *HTTP triggers* (planned)
+    * Mounted as a URL path, serving HTTP traffic.
+    * Able to spawn child workflows or activities.
 
 * Work stealing executor
     * Periodically locking a batch of currently pending executions, starts/continues their execution
@@ -59,7 +65,7 @@ cargo install --locked obeli-sk
 
 ### Nix flakes
 ```sh
-nix run github:obeli-sk/obelisk
+nix --extra-experimental-features nix-command --extra-experimental-features flakes run github:obeli-sk/obelisk
 ```
 
 ## Local development
