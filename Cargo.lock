@@ -2459,6 +2459,7 @@ version = "0.1.10"
 dependencies = [
  "anyhow",
  "indexmap 2.2.6",
+ "itertools 0.13.0",
  "serde",
  "serde_json",
  "thiserror",

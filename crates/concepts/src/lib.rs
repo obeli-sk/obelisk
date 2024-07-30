@@ -1,5 +1,4 @@
 use ::serde::{Deserialize, Serialize};
-use assert_matches::assert_matches;
 use async_trait::async_trait;
 pub use prefixed_ulid::ExecutionId;
 use serde_json::Value;
@@ -401,11 +400,11 @@ impl SupportedFunctionResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Params(ParamsInternal); // TODO: Rename to ParameterValues
+pub struct Params(ParamsInternal);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ParamsInternal {
-    Json(Value),
+    JsonValues(Vec<Value>),
     Vals {
         //TODO: is Arc needed here? Or move upwards?
         vals: Arc<[wasmtime::component::Val]>,
@@ -446,16 +445,12 @@ mod serde_params {
                     seq.end()
                 }
                 ParamsInternal::Empty => serializer.serialize_seq(Some(0))?.end(),
-                ParamsInternal::Json(value) => {
-                    if let Value::Array(vec) = value {
-                        let mut seq = serializer.serialize_seq(Some(vec.len()))?;
-                        for item in vec {
-                            seq.serialize_element(item)?;
-                        }
-                        seq.end()
-                    } else {
-                        unreachable!("Array verified in `from_json_value`")
+                ParamsInternal::JsonValues(vec) => {
+                    let mut seq = serializer.serialize_seq(Some(vec.len()))?;
+                    for item in vec {
+                        seq.serialize_element(item)?;
                     }
+                    seq.end()
                 }
             }
         }
@@ -497,14 +492,13 @@ mod serde_params {
             if vec.is_empty() {
                 Ok(Self(ParamsInternal::Empty))
             } else {
-                Ok(Self(ParamsInternal::Json(Value::Array(vec))))
+                Ok(Self(ParamsInternal::JsonValues(vec)))
             }
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-
 pub enum ParamsParsingError {
     #[error("error converting type {idx}-th parameter: `{err}`")]
     ParameterTypeError {
@@ -539,7 +533,7 @@ impl Params {
     pub fn from_json_value(value: Value) -> Result<Self, ParamsFromJsonError> {
         match value {
             Value::Array(vec) if vec.is_empty() => Ok(Self::default()),
-            Value::Array(_) => Ok(Self(ParamsInternal::Json(value))),
+            Value::Array(vec) => Ok(Self(ParamsInternal::JsonValues(vec))),
             _ => Err(ParamsFromJsonError::MustBeArray),
         }
     }
@@ -549,7 +543,7 @@ impl Params {
         param_types: Box<[Type]>,
     ) -> Result<Arc<[wasmtime::component::Val]>, ParamsParsingError> {
         match &self.0 {
-            ParamsInternal::Json(params @ Value::Array(_)) => {
+            ParamsInternal::JsonValues(params) => {
                 let param_types = param_types
                     .into_vec()
                     .into_iter()
@@ -562,7 +556,7 @@ impl Params {
                     .map(Val::from)
                     .collect())
             }
-            ParamsInternal::Json(_) => unreachable!("only Value::Array can be constructed"),
+
             ParamsInternal::Vals { vals, .. } => Ok(vals.clone()),
             ParamsInternal::Empty => Ok(Arc::from([])),
         }
@@ -571,7 +565,7 @@ impl Params {
     #[must_use]
     pub fn len(&self) -> usize {
         match &self.0 {
-            ParamsInternal::Json(value) => assert_matches!(value, Value::Array(vec) => vec.len()),
+            ParamsInternal::JsonValues(vec) => vec.len(),
             ParamsInternal::Vals { vals, .. } => vals.len(),
             ParamsInternal::Empty => 0,
         }

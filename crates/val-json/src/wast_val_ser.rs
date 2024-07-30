@@ -454,6 +454,7 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
 pub mod params {
     use crate::{type_wrapper::TypeWrapper, wast_val::WastVal, wast_val_ser::WastValDeserialize};
     use core::fmt;
+    use itertools::{Itertools as _, Position};
     use serde::{
         de::{Expected, SeqAccess, Visitor},
         Deserializer,
@@ -532,13 +533,26 @@ pub mod params {
     }
 
     pub fn deserialize_values<'a>(
-        params: &Value,
+        params: &[Value],
         param_types: impl IntoIterator<
             Item = &'a TypeWrapper,
             IntoIter = impl ExactSizeIterator<Item = &'a TypeWrapper>,
         >,
     ) -> Result<Vec<WastVal>, serde_json::Error> {
-        deserialize_str(params.to_string(), param_types) //FIXME: serializing to string and then deserializing
+        let params = params
+            .iter()
+            .map(|param| param.to_string())
+            .with_position()
+            .fold("[".to_string(), |mut acc, (pos, item)| {
+                acc.push_str(&item.to_string());
+                if pos != Position::Last && pos != Position::Only {
+                    acc.push(',');
+                } else {
+                    acc.push(']');
+                }
+                acc
+            });
+        deserialize_str(params, param_types) //FIXME: serializing to string and then deserializing
     }
 }
 
