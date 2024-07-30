@@ -21,6 +21,7 @@ use executor::executor::ExecutorTaskHandle;
 use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use executor::worker::Worker;
+use serde::Deserialize;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::marker::PhantomData;
@@ -80,14 +81,13 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         let params = String::from_utf8(params.value).map_err(|_err| {
             tonic::Status::invalid_argument("parameter `params` must be UTF-8 encoded")
         })?;
-        let params = serde_json::from_str(&params).map_err(|serde_err| {
-            tonic::Status::invalid_argument(format!(
-                "parameter `params` must be encoded as JSON - {serde_err}"
-            ))
-        })?;
-        let params = Params::from_json_value(params).map_err(|json_err| {
-            tonic::Status::invalid_argument(format!("parameter `params` error - {json_err}"))
-        })?;
+
+        let params = Params::deserialize(&mut serde_json::Deserializer::from_str(&params))
+            .map_err(|serde_err| {
+                tonic::Status::invalid_argument(format!(
+                    "parameter `params` must be encoded as JSON array - {serde_err}"
+                ))
+            })?;
 
         let db_connection = self.db_pool.connection();
         // Check that ffqn exists
