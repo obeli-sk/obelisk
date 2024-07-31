@@ -32,9 +32,12 @@ async fn main_async() -> Result<(), anyhow::Error> {
         Subcommand::Executor(Executor::Serve { clean }) => {
             command::server::run(config, db_file, clean, config_holder).await
         }
-        Subcommand::Component(args::Component::Inspect { wasm_path, verbose }) => {
+        Subcommand::Component(args::Component::Inspect {
+            path,
+            verbose,
+        }) => {
             command::component::inspect(
-                wasm_path,
+                path,
                 if verbose {
                     FunctionMetadataVerbosity::WithTypes
                 } else {

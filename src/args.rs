@@ -43,7 +43,7 @@ pub(crate) enum Component {
     /// Parse WASM file and output its metadata.
     Inspect {
         #[arg(required(true))]
-        wasm_path: PathBuf,
+        path: PathBuf,
         #[arg(short, long)]
         verbose: bool,
     },

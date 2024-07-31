@@ -12,7 +12,7 @@ pub(crate) mod toml;
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ComponentLocation {
-    File(PathBuf),
+    Path(PathBuf),
     Oci(#[serde_as(as = "serde_with::DisplayFromStr")] oci_distribution::Reference),
 }
 
@@ -22,7 +22,7 @@ impl ComponentLocation {
         wasm_cache_dir: impl AsRef<Path>,
     ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
         match self {
-            ComponentLocation::File(wasm_path) => {
+            ComponentLocation::Path(wasm_path) => {
                 let wasm_path = wasm_path
                     .canonicalize()
                     .with_context(|| format!("cannot canonicalize file `{wasm_path:?}`"))?;
