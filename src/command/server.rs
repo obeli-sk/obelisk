@@ -71,21 +71,21 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             interface_name,
             function_name,
         } = request.function.ok_or_else(|| {
-            tonic::Status::invalid_argument("parameter `function` must not be empty")
+            tonic::Status::invalid_argument("argument `function` must not be empty")
         })?;
         let ffqn =
             concepts::FunctionFqn::new_arc(Arc::from(interface_name), Arc::from(function_name));
         let params = request.params.ok_or_else(|| {
-            tonic::Status::invalid_argument("parameter `params` must not be empty")
+            tonic::Status::invalid_argument("argument `params` must not be empty")
         })?;
         let params = String::from_utf8(params.value).map_err(|_err| {
-            tonic::Status::invalid_argument("parameter `params` must be UTF-8 encoded")
+            tonic::Status::invalid_argument("argument `params` must be UTF-8 encoded")
         })?;
 
         let params = Params::deserialize(&mut serde_json::Deserializer::from_str(&params))
             .map_err(|serde_err| {
                 tonic::Status::invalid_argument(format!(
-                    "parameter `params` must be encoded as JSON array - {serde_err}"
+                    "argument `params` must be encoded as JSON array - {serde_err}"
                 ))
             })?;
 
@@ -107,11 +107,10 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             (config_id, param_types, return_type)
         };
         // Check parameter cardinality
-        if params.len() != param_types.len() {
+        if let Err(err) = params.typecheck(param_types.iter().map(|(_, type_wrapper)| type_wrapper))
+        {
             return Err(tonic::Status::invalid_argument(format!(
-                "incorrect number of parameters. Expected {expected}, got {got}",
-                expected = param_types.len(),
-                got = params.len()
+                "argument `params` invalid - {err}"
             )));
         }
         let component = db_connection

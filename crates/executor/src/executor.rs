@@ -533,7 +533,7 @@ pub mod simple_worker {
         }
 
         fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            Some((self.ffqn.clone(), ParameterTypes::empty(), None)).into_iter()
+            Some((self.ffqn.clone(), ParameterTypes::default(), None)).into_iter()
         }
 
         fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
@@ -1122,7 +1122,7 @@ mod tests {
         }
 
         fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            Some((FFQN_SOME, ParameterTypes::empty(), None)).into_iter()
+            Some((FFQN_SOME, ParameterTypes::default(), None)).into_iter()
         }
 
         fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {

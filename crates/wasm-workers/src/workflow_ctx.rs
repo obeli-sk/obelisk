@@ -477,7 +477,7 @@ pub(crate) mod tests {
         }
 
         fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            Some((self.ffqn.clone(), ParameterTypes::empty(), None)).into_iter()
+            Some((self.ffqn.clone(), ParameterTypes::default(), None)).into_iter()
         }
 
         fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {

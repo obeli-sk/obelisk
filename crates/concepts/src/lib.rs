@@ -534,6 +534,26 @@ impl Params {
         }
     }
 
+    pub fn typecheck<'a>(
+        &self,
+        param_types: impl ExactSizeIterator<Item = &'a TypeWrapper>,
+    ) -> Result<(), ParamsParsingError> {
+        if param_types.len() != self.len() {
+            return Err(ParamsParsingError::ParameterCardinalityMismatch {
+                expected: param_types.len(),
+                specified: self.len(),
+            });
+        }
+        match &self.0 {
+            ParamsInternal::Vals { .. } /* already typechecked */ | ParamsInternal::Empty => {}
+            ParamsInternal::JsonValues(params) => {
+                params::deserialize_values(params, param_types)
+                .map_err(ParamsParsingError::ParamsDeserializationError)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn as_vals(
         &self,
         param_types: Box<[Type]>,
@@ -897,25 +917,10 @@ pub enum ComponentType {
 
 pub type ReturnType = Option<TypeWrapper>;
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default)]
+#[derive(
+    Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default, derive_more::Deref,
+)]
 pub struct ParameterTypes(pub Vec<(String, TypeWrapper)>);
-
-impl ParameterTypes {
-    #[must_use]
-    pub fn empty() -> Self {
-        ParameterTypes(Vec::new())
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-}
 
 impl Debug for ParameterTypes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
