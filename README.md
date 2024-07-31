@@ -100,44 +100,42 @@ obelisk execution schedule <function> <params>
 # Milestones
 
 ## Milestone 1: Release the binary - done
-* Getting the `obelisk` application up and running as a Linux binary
-* Scheduling of workflows and wasm activities, retries on timeouts and failures
-* Persistence using sqlite
-* Launching child workflows/activities concurrently using join sets
-* Basic CLI for wasm component configuration and scheduling
-* Github release, docker image, publish to crates.io, support `cargo-binstall`
+- [x] Getting the `obelisk` application up and running as a Linux binary
+- [x] Scheduling of workflows and wasm activities, retries on timeouts and failures
+- [x] Persistence using sqlite
+- [x] Launching child workflows/activities concurrently using join sets
+- [x] Basic CLI for wasm component configuration and scheduling
+- [x] Github release, docker image, publish to crates.io, support `cargo-binstall`
 
 ## Milestone 2: Allow remote interaction via CLI and web UI - started
-* Move component and general configuration into a TOML file
-* Pull components -from an OCI registry
-* Publish the obelisk image to the Docker Hub (minimal and an ubuntu based image)
-* HTTP API for execution management
-* Interactive CLI for execution management
-* Params typecheck on creation, introspection of types of all functions in the system
-* HTML based UI for showing executions, event history and relations
+- [x] Move component and general configuration into a TOML file
+- [x] Pull components -from an OCI registry
+- [ ] Publish the obelisk image to the Docker Hub (minimal and an ubuntu based image)
+- [ ] gRPC API for execution management
+- [ ] Interactive CLI for execution management
+- [x] Params typecheck on creation, introspection of types of all functions in the system
+- [ ] HTML based UI for showing executions, event history and relations
 
 ## Milestone 3
-* URL paths with HTTP handlers registered by workflows, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs)
-* External process activities
-* External Activity RPC
-* OpenAPI activity generator
-* Cancellation with recursion
-* Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
+- [ ] HTTP handler triggers, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs)
+- [ ] External activities
+- [ ] Cancellation with recursion
 
 ## Milestone 4
-* Multi process executors
-* Labels restricting workflows/activities to executors
-* ErrId that is passed back to parent, error detail
-* Periodic scheduling
+- [ ] OpenAPI activity generator
+- [ ] Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
+- [ ] Multi process executors
+- [ ] Labels restricting workflows/activities to executors
+- [ ] Periodic scheduling
 
 ## Running Tests
 ```sh
-cargo nextest run --workspace --target-dir=target/debug/nosim
+cargo nextest run --workspace -P ci-test-nosim
 ```
 
 ### Deterministic tests using the `madsim` simulator
 ```sh
-MADSIM_ALLOW_SYSTEM_THREAD=1 RUSTFLAGS="--cfg madsim" cargo nextest run --workspace --target-dir=target/debug/madsim
+MADSIM_ALLOW_SYSTEM_THREAD=1 RUSTFLAGS="--cfg madsim" cargo nextest run --workspace --target-dir=target/debug/madsim -P ci-test-madsim
 ```
 
 # Contributing
