@@ -70,6 +70,9 @@ pub(crate) enum Component {
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Execution {
     Schedule {
+        /// Follow the stream of events until the execution finishes
+        #[arg(short, long)]
+        follow: bool,
         /// Function in the fully qualified format
         #[arg(value_name = "FUNCTION")]
         ffqn: FunctionFqn,
@@ -81,6 +84,9 @@ pub(crate) enum Execution {
         // TODO: poll?
     },
     Get {
+        /// Follow the stream of events until the execution finishes
+        #[arg(short, long)]
+        follow: bool,
         execution_id: ExecutionId,
         /// Enable full verbosity with `-vv`
         #[arg(short, long, action = clap::ArgAction::Count)]

@@ -1,4 +1,6 @@
+use super::TonicRespResult;
 use crate::command::grpc;
+use anyhow::anyhow;
 use concepts::{
     prefixed_ulid::{ExecutorId, JoinSetId, RunId},
     ExecutionId,
@@ -56,4 +58,17 @@ impl<T> OptionExt<T> for Option<T> {
             tonic::Status::invalid_argument(format!("argument `{argument}` must exist"))
         })
     }
+}
+
+pub(crate) fn unwrap_friendly_resp<T>(
+    res: TonicRespResult<T>,
+) -> Result<tonic::Response<T>, anyhow::Error> {
+    res.map_err(|err| {
+        let msg = err.message();
+        if msg.is_empty() {
+            anyhow!("{err}")
+        } else {
+            anyhow!("{msg}")
+        }
+    })
 }

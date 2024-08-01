@@ -87,7 +87,11 @@ async fn main_async() -> Result<(), anyhow::Error> {
             )
             .await
         }
-        Subcommand::Execution(args::Execution::Schedule { ffqn, params }) => {
+        Subcommand::Execution(args::Execution::Schedule {
+            ffqn,
+            params,
+            follow,
+        }) => {
             // TODO interactive search for ffqn showing param types and result, file name
             // enter parameters one by one
             let client = get_client.await?;
@@ -96,16 +100,18 @@ async fn main_async() -> Result<(), anyhow::Error> {
                 serde_json::Value::Array(vec) => vec,
                 _ => bail!("params should be a JSON array"),
             };
-            command::execution::submit(client, ffqn, params).await
+            command::execution::submit(client, ffqn, params, follow).await
         }
         Subcommand::Execution(args::Execution::Get {
             execution_id,
             verbosity,
+            follow,
         }) => {
             let client = get_client.await?;
             command::execution::get(
                 client,
                 execution_id,
+                follow,
                 match verbosity {
                     0 => None,
                     1 => Some(ExecutionVerbosity::EventHistory),
