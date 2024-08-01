@@ -52,6 +52,8 @@ pub trait OptionExt<T> {
 
 impl<T> OptionExt<T> for Option<T> {
     fn argument_must_exist(self, argument: &str) -> Result<T, tonic::Status> {
-        self.ok_or_else(|| tonic::Status::invalid_argument(format!("argument `{argument}` must exist")))
+        self.ok_or_else(|| {
+            tonic::Status::invalid_argument(format!("argument `{argument}` must exist"))
+        })
     }
 }

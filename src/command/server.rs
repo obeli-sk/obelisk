@@ -9,6 +9,7 @@ use crate::grpc_util::grpc_mapping::OptionExt;
 use crate::grpc_util::TonicRespResult;
 use crate::grpc_util::TonicResult;
 use anyhow::Context;
+use assert_matches::assert_matches;
 use concepts::storage::Component;
 use concepts::storage::ComponentToggle;
 use concepts::storage::ComponentWithMetadata;
@@ -16,12 +17,12 @@ use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbError;
 use concepts::storage::DbPool;
+use concepts::storage::ExecutionEvent;
+use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
 use concepts::storage::PendingState;
 use concepts::storage::SpecificError;
 use concepts::ExecutionId;
-use concepts::FinishedExecutionResult;
-use concepts::FunctionFqn;
 use concepts::FunctionRegistry;
 use concepts::Params;
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -39,7 +40,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
+use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::codec::CompressionEncoding;
 use tracing::error;
 use tracing::{debug, info};
@@ -211,16 +212,15 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 tonic::Status::internal(format!("database error: {db_err}"))
             }
         })?;
-        if execution_log.finished_result().is_some() {
-            let converted = convert_execution_status(execution_log);
+        let current_pending_state = execution_log.pending_state.clone();
+        let converted = convert_execution_status(execution_log);
+        if is_finished(&converted) {
             let output = tokio_stream::once(Ok(converted));
             Ok(tonic::Response::new(
                 Box::pin(output) as Self::StreamStatusStream
             ))
         } else {
             let (tx, rx) = mpsc::channel(1);
-            let current_pending_state = execution_log.pending_state.clone();
-            let converted = convert_execution_status(execution_log);
             // send current pending status
             tx.send(TonicResult::Ok(converted))
                 .await
@@ -287,26 +287,49 @@ fn convert_execution_status(execution_log: ExecutionLog) -> grpc::ExecutionStatu
                 join_set_id: Some(join_set_id.into()),
                 lock_expires_at: Some(lock_expires_at.into()),
             }),
-            PendingState::Finished => Status::Finished(Finished {
-                result: {
-                    let finished = execution_log.finished_result().expect("must be finished");
-                    serde_json::to_string(finished)
-                        .inspect_err(|ser_err| {
-                            error!(
-                                "Cannot serialize result of {execution_id} - {ser_err:?}",
-                                execution_id = execution_log.execution_id
-                            )
-                        })
-                        .ok()
-                        .map(|res| prost_wkt_types::Any {
-                            type_url: format!(
-                                "urn:obelisk:json:params:{ffqn}",
-                                ffqn = execution_log.ffqn()
-                            ),
-                            value: res.into_bytes(),
-                        })
-                },
-            }),
+            PendingState::Finished => {
+                let finished = execution_log.last_event();
+                let finished_at = finished.created_at;
+                let finished = assert_matches!(finished, ExecutionEvent {
+                    event: ExecutionEventInner::Finished { result },
+                    ..
+                } => result);
+                Status::Finished(Finished {
+                    result: {
+                        serde_json::to_string(&finished)
+                            .inspect_err(|ser_err| {
+                                error!(
+                                    "Cannot serialize result of {execution_id} - {ser_err:?}",
+                                    execution_id = execution_log.execution_id
+                                )
+                            })
+                            .ok()
+                            .map(|res| prost_wkt_types::Any {
+                                type_url: format!(
+                                    "urn:obelisk:json:params:{ffqn}",
+                                    ffqn = execution_log.ffqn()
+                                ),
+                                value: res.into_bytes(),
+                            })
+                    },
+                    created_at: execution_log
+                        .events
+                        .first()
+                        .map(|event| event.created_at.into()),
+                    first_locked_at: execution_log.events.iter().find_map(|event| {
+                        if let ExecutionEvent {
+                            event: ExecutionEventInner::Locked { .. },
+                            created_at,
+                        } = event
+                        {
+                            Some(prost_wkt_types::Timestamp::from(*created_at))
+                        } else {
+                            None
+                        }
+                    }),
+                    finished_at: Some(finished_at.into()),
+                })
+            }
         }),
     }
 }

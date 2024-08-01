@@ -1,11 +1,12 @@
 use super::grpc;
 use super::grpc::scheduler_client::SchedulerClient;
+use crate::command::grpc::execution_status::Finished;
 use anyhow::Context;
-use concepts::storage::ExecutionEvent;
-use concepts::storage::ExecutionEventInner;
-use concepts::storage::ExecutionLog;
+use chrono::DateTime;
+use concepts::FinishedExecutionResult;
 use concepts::SupportedFunctionResult;
 use concepts::{ExecutionId, FunctionFqn};
+use grpc::execution_status::Status;
 use std::str::FromStr;
 use tonic::transport::Channel;
 use tracing::trace;
@@ -47,59 +48,61 @@ pub(crate) async fn submit(
         .context("cannot stream response status")?
         .into_inner();
     while let Some(response) = stream.message().await? {
-        println!("{:?}", response.status);
-    }
-    // let execution_log = db_connection
-    //     .wait_for_pending_state(execution_id, PendingState::Finished, None)
-    //     .await?;
-    // print_result_if_finished(&execution_log);
-    Ok(())
-}
-
-fn print_result_if_finished(execution_log: &ExecutionLog) -> Option<()> {
-    let finished = execution_log.finished_result();
-    if let Some(res) = finished {
-        let first_locked_at = execution_log
-            .events
-            .iter()
-            .find(|event| matches!(event.event, ExecutionEventInner::Locked { .. }))
-            .expect("must have been locked")
-            .created_at;
-        let duration = (execution_log.last_event().created_at - first_locked_at)
-            .to_std()
-            .unwrap();
-
-        match res {
-            Ok(
-                res @ (SupportedFunctionResult::None
-                | SupportedFunctionResult::Infallible(_)
-                | SupportedFunctionResult::Fallible(WastValWithType {
-                    value: WastVal::Result(Ok(_)),
-                    ..
-                })),
-            ) => {
-                println!("Finished OK");
-                let value = match res {
-                    SupportedFunctionResult::Infallible(WastValWithType { value, .. }) => {
-                        Some(value)
+        match response.status.context("status field must exist")? {
+            Status::Locked(_) => println!("Locked"),
+            Status::PendingAt(_) => println!("Pending"),
+            Status::BlockedByJoinSet(_) => println!("BlockedByJoinSet"),
+            Status::Finished(Finished {
+                result,
+                created_at,
+                first_locked_at,
+                finished_at,
+            }) => {
+                let created_at = DateTime::from(created_at.context("`created_at` must exist")?);
+                let first_locked_at =
+                    DateTime::from(first_locked_at.context("`first_locked_at` must exist")?);
+                let finished_at = DateTime::from(finished_at.context("`finished_at` must exist")?);
+                let result = String::from_utf8(result.context("`result` must exist")?.value)
+                    .context("`result` must be UTF-8 encoded")?;
+                let result: FinishedExecutionResult =
+                    serde_json::from_str(&result).context("cannot deserialize `result`")?;
+                match &result {
+                    Ok(
+                        result @ (SupportedFunctionResult::None
+                        | SupportedFunctionResult::Infallible(_)
+                        | SupportedFunctionResult::Fallible(WastValWithType {
+                            value: WastVal::Result(Ok(_)),
+                            ..
+                        })),
+                    ) => {
+                        println!("Finished OK");
+                        let value = match result {
+                            SupportedFunctionResult::Infallible(WastValWithType {
+                                value, ..
+                            }) => Some(value),
+                            SupportedFunctionResult::Fallible(WastValWithType {
+                                value: WastVal::Result(Ok(Some(value))),
+                                ..
+                            }) => Some(value.as_ref()),
+                            _ => None,
+                        };
+                        if let Some(value) = value {
+                            println!("{value:?}");
+                        }
                     }
-                    SupportedFunctionResult::Fallible(WastValWithType {
-                        value: WastVal::Result(Ok(Some(value))),
-                        ..
-                    }) => Some(value.as_ref()),
-                    _ => None,
-                };
-                if let Some(value) = value {
-                    println!("{value:?}");
+                    _ => {
+                        println!("Finished with an error\n{result:?}");
+                    }
                 }
-            }
-            _ => {
-                println!("Finished with an error\n{res:?}");
+
+                println!("Execution took {since_locked:?} since first locked, {since_created:?} since created.",
+                    since_locked = (finished_at - first_locked_at).to_std().expect("must be non-negative"),
+                    since_created = (finished_at - created_at).to_std().expect("must be non-negative")
+                );
             }
         }
-        println!("Execution took {duration:?}");
     }
-    finished.map(|_| ())
+    Ok(())
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

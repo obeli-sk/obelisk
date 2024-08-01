@@ -2319,6 +2319,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "cfg-if",
+ "chrono",
  "clap",
  "config",
  "console-subscriber",
