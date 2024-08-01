@@ -1,9 +1,13 @@
 use super::grpc;
 use crate::config::store::ConfigStore;
+use crate::config::store::ConfigStoreCommon;
 use crate::config::toml::ConfigHolder;
 use crate::config::toml::ObeliskConfig;
 use crate::config::toml::VerifiedActivityConfig;
 use crate::config::toml::VerifiedWorkflowConfig;
+use crate::grpc_util::grpc_mapping::OptionExt;
+use crate::grpc_util::TonicRespResult;
+use crate::grpc_util::TonicResult;
 use anyhow::Context;
 use concepts::storage::Component;
 use concepts::storage::ComponentToggle;
@@ -12,8 +16,12 @@ use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbError;
 use concepts::storage::DbPool;
+use concepts::storage::ExecutionLog;
+use concepts::storage::PendingState;
 use concepts::storage::SpecificError;
 use concepts::ExecutionId;
+use concepts::FinishedExecutionResult;
+use concepts::FunctionFqn;
 use concepts::FunctionRegistry;
 use concepts::Params;
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -26,9 +34,12 @@ use std::fmt::Debug;
 use std::fmt::Display;
 use std::marker::PhantomData;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::codec::CompressionEncoding;
 use tracing::error;
 use tracing::{debug, info};
@@ -64,30 +75,31 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
     async fn submit(
         &self,
         request: tonic::Request<grpc::SubmitRequest>,
-    ) -> Result<tonic::Response<grpc::SubmitResponse>, tonic::Status> {
-        // TODO: type check params
+    ) -> TonicRespResult<grpc::SubmitResponse> {
         let request = request.into_inner();
         let grpc::FunctionName {
             interface_name,
             function_name,
-        } = request.function.ok_or_else(|| {
-            tonic::Status::invalid_argument("argument `function` must not be empty")
-        })?;
+        } = request.function.argument_must_exist("function")?;
+        let execution_id = request
+            .execution_id
+            .map(ExecutionId::try_from)
+            .unwrap_or_else(|| Ok(ExecutionId::generate()))?;
         let ffqn =
             concepts::FunctionFqn::new_arc(Arc::from(interface_name), Arc::from(function_name));
-        let params = request.params.ok_or_else(|| {
-            tonic::Status::invalid_argument("argument `params` must not be empty")
-        })?;
-        let params = String::from_utf8(params.value).map_err(|_err| {
-            tonic::Status::invalid_argument("argument `params` must be UTF-8 encoded")
-        })?;
-
-        let params = Params::deserialize(&mut serde_json::Deserializer::from_str(&params))
-            .map_err(|serde_err| {
-                tonic::Status::invalid_argument(format!(
-                    "argument `params` must be encoded as JSON array - {serde_err}"
-                ))
+        let params = {
+            let params = request.params.argument_must_exist("params")?;
+            let params = String::from_utf8(params.value).map_err(|_err| {
+                tonic::Status::invalid_argument("argument `params` must be UTF-8 encoded")
             })?;
+            Params::deserialize(&mut serde_json::Deserializer::from_str(&params)).map_err(
+                |serde_err| {
+                    tonic::Status::invalid_argument(format!(
+                        "argument `params` must be encoded as JSON array - {serde_err}"
+                    ))
+                },
+            )?
+        };
 
         let db_connection = self.db_pool.connection();
         // Check that ffqn exists
@@ -106,7 +118,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 })?;
             (config_id, param_types, return_type)
         };
-        // Check parameter cardinality
+        // Type check `params`
         if let Err(err) = params.typecheck(param_types.iter().map(|(_, type_wrapper)| type_wrapper))
         {
             return Err(tonic::Status::invalid_argument(format!(
@@ -125,9 +137,11 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 error!("Cannot deserialize configuration {config_id} - {serde_err:?}");
                 tonic::Status::internal(format!("configuration deserialization error: {serde_err}"))
             })?;
-        let retry_exp_backoff = config_store.common().default_retry_exp_backoff;
-        let max_retries = config_store.common().default_max_retries;
-        let execution_id = ExecutionId::generate();
+        let ConfigStoreCommon {
+            default_retry_exp_backoff,
+            default_max_retries,
+            ..
+        } = config_store.common();
         let created_at = now();
         db_connection
             .create(CreateRequest {
@@ -137,8 +151,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 params,
                 parent: None,
                 scheduled_at: created_at,
-                retry_exp_backoff,
-                max_retries,
+                retry_exp_backoff: *default_retry_exp_backoff,
+                max_retries: *default_max_retries,
                 config_id,
                 return_type,
             })
@@ -154,16 +168,146 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
 
     async fn get_status(
         &self,
-        _request: tonic::Request<grpc::GetStatusRequest>,
-    ) -> Result<tonic::Response<grpc::GetStatusResponse>, tonic::Status> {
+        request: tonic::Request<grpc::GetStatusRequest>,
+    ) -> TonicRespResult<grpc::GetStatusResponse> {
+        let execution_id: ExecutionId = request
+            .into_inner()
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        let db_connection = self.db_pool.connection();
+        let execution_log = db_connection.get(execution_id).await.map_err(|db_err| {
+            if matches!(db_err, DbError::Specific(SpecificError::NotFound)) {
+                tonic::Status::not_found("execution not found")
+            } else {
+                error!("Cannot get execution status - {db_err:?}");
+                tonic::Status::internal(format!("database error: {db_err}"))
+            }
+        })?;
         let resp = grpc::GetStatusResponse {
-            status: Some(grpc::ExecutionStatus {
-                status: Some(grpc::execution_status::Status::Finished(
-                    grpc::execution_status::Finished {},
-                )),
-            }),
+            status: Some(convert_execution_status(execution_log)),
         };
         Ok(tonic::Response::new(resp))
+    }
+
+    type StreamStatusStream =
+        Pin<Box<dyn Stream<Item = Result<grpc::ExecutionStatus, tonic::Status>> + Send>>;
+
+    async fn stream_status(
+        &self,
+        request: tonic::Request<grpc::StreamStatusRequest>,
+    ) -> TonicRespResult<Self::StreamStatusStream> {
+        let execution_id: ExecutionId = request
+            .into_inner()
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        let db_connection = self.db_pool.connection();
+        let execution_log = db_connection.get(execution_id).await.map_err(|db_err| {
+            if matches!(db_err, DbError::Specific(SpecificError::NotFound)) {
+                tonic::Status::not_found("execution not found")
+            } else {
+                error!("Cannot get execution status - {db_err:?}");
+                tonic::Status::internal(format!("database error: {db_err}"))
+            }
+        })?;
+        if execution_log.finished_result().is_some() {
+            let converted = convert_execution_status(execution_log);
+            let output = tokio_stream::once(Ok(converted));
+            Ok(tonic::Response::new(
+                Box::pin(output) as Self::StreamStatusStream
+            ))
+        } else {
+            let (tx, rx) = mpsc::channel(1);
+            let current_pending_state = execution_log.pending_state.clone();
+            let converted = convert_execution_status(execution_log);
+            // send current pending status
+            tx.send(TonicResult::Ok(converted))
+                .await
+                .expect("mpsc bounded channel requires buffer > 0");
+            tokio::spawn(async move {
+                loop {
+                    match db_connection.get(execution_id).await {
+                        Ok(execution_log) => {
+                            if execution_log.pending_state != current_pending_state {
+                                let converted = convert_execution_status(execution_log);
+                                let is_finished = is_finished(&converted);
+                                if tx.send(TonicResult::Ok(converted)).await.is_err() || is_finished
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                        Err(db_err) => {
+                            error!("Database error while streaming status of {execution_id} - {db_err:?}");
+                            return;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await; // TODO: Switch to subscription-based approach
+                }
+            });
+            let output = ReceiverStream::new(rx);
+            Ok(tonic::Response::new(
+                Box::pin(output) as Self::StreamStatusStream
+            ))
+        }
+    }
+}
+
+fn is_finished(status: &grpc::ExecutionStatus) -> bool {
+    use grpc::execution_status::*;
+    matches!(
+        status,
+        grpc::ExecutionStatus {
+            status: Some(Status::Finished(..))
+        }
+    )
+}
+
+fn convert_execution_status(execution_log: ExecutionLog) -> grpc::ExecutionStatus {
+    use grpc::execution_status::*;
+    grpc::ExecutionStatus {
+        status: Some(match execution_log.pending_state {
+            PendingState::Locked {
+                executor_id,
+                run_id,
+                lock_expires_at,
+            } => Status::Locked(Locked {
+                executor_id: Some(executor_id.into()),
+                run_id: Some(run_id.into()),
+                lock_expires_at: Some(lock_expires_at.into()),
+            }),
+            PendingState::PendingAt { scheduled_at } => Status::PendingAt(PendingAt {
+                scheduled_at: Some(scheduled_at.into()),
+            }),
+            PendingState::BlockedByJoinSet {
+                join_set_id,
+                lock_expires_at,
+            } => Status::BlockedByJoinSet(BlockedByJoinSet {
+                join_set_id: Some(join_set_id.into()),
+                lock_expires_at: Some(lock_expires_at.into()),
+            }),
+            PendingState::Finished => Status::Finished(Finished {
+                result: {
+                    let finished = execution_log.finished_result().expect("must be finished");
+                    serde_json::to_string(finished)
+                        .inspect_err(|ser_err| {
+                            error!(
+                                "Cannot serialize result of {execution_id} - {ser_err:?}",
+                                execution_id = execution_log.execution_id
+                            )
+                        })
+                        .ok()
+                        .map(|res| prost_wkt_types::Any {
+                            type_url: format!(
+                                "urn:obelisk:json:params:{ffqn}",
+                                ffqn = execution_log.ffqn()
+                            ),
+                            value: res.into_bytes(),
+                        })
+                },
+            }),
+        }),
     }
 }
 

@@ -584,7 +584,7 @@ pub trait DbConnection: Send + Sync {
     ) -> Result<AppendBatchResponse, DbError>;
 
     /// Get execution log.
-    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError>;
+    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError>; // FIXME: make optional
 
     /// Get currently expired locks and async timers (delay requests)
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError>;

@@ -1,16 +1,18 @@
 mod args;
 mod command;
 mod config;
+mod grpc_util;
 mod init;
 mod oci;
 
 use anyhow::{bail, Context};
 use args::{Args, Executor, Subcommand};
 use clap::Parser;
-use command::execution::ExecutionVerbosity;
+use command::{execution::ExecutionVerbosity, grpc::scheduler_client::SchedulerClient};
 use concepts::storage::ComponentToggle;
 use config::toml::ConfigHolder;
 use directories::ProjectDirs;
+use tonic::codec::CompressionEncoding;
 
 fn main() -> Result<(), anyhow::Error> {
     let _guard = init::init();
@@ -25,6 +27,18 @@ fn main() -> Result<(), anyhow::Error> {
 async fn main_async() -> Result<(), anyhow::Error> {
     let config_holder = ConfigHolder::new(ProjectDirs::from("com", "obelisk", "obelisk"));
     let config = config_holder.load_config().await?;
+    let grpc_url = "http://127.0.0.1:50055";
+    let get_client = async {
+        Ok::<_, anyhow::Error>(
+            SchedulerClient::connect(grpc_url)
+                .await
+                .with_context(|| format!("cannot create gRPC client for {grpc_url}"))?
+                .send_compressed(CompressionEncoding::Zstd)
+                .accept_compressed(CompressionEncoding::Zstd)
+                .accept_compressed(CompressionEncoding::Gzip),
+        )
+    };
+
     let db_file = &config
         .get_sqlite_file(config_holder.project_dirs.as_ref())
         .await?;
@@ -32,10 +46,7 @@ async fn main_async() -> Result<(), anyhow::Error> {
         Subcommand::Executor(Executor::Serve { clean }) => {
             command::server::run(config, db_file, clean, config_holder).await
         }
-        Subcommand::Component(args::Component::Inspect {
-            path,
-            verbose,
-        }) => {
+        Subcommand::Component(args::Component::Inspect { path, verbose }) => {
             command::component::inspect(
                 path,
                 if verbose {
@@ -79,19 +90,21 @@ async fn main_async() -> Result<(), anyhow::Error> {
         Subcommand::Execution(args::Execution::Schedule { ffqn, params }) => {
             // TODO interactive search for ffqn showing param types and result, file name
             // enter parameters one by one
+            let client = get_client.await?;
             let params = serde_json::from_str(&params).context("params should be a json array")?;
             let params = match params {
                 serde_json::Value::Array(vec) => vec,
                 _ => bail!("params should be a JSON array"),
             };
-            command::execution::submit(ffqn, params).await
+            command::execution::submit(client, ffqn, params).await
         }
         Subcommand::Execution(args::Execution::Get {
             execution_id,
             verbosity,
         }) => {
+            let client = get_client.await?;
             command::execution::get(
-                db_file,
+                client,
                 execution_id,
                 match verbosity {
                     0 => None,

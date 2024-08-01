@@ -30,7 +30,7 @@ docker_credential.workspace = true
 hashbrown.workspace = true
 oci-distribution = { workspace = true }
 oci-wasm = { workspace = true }
-prost-types.workspace = true
+prost-wkt-types.workspace = true
 prost.workspace = true
 serde_json.workspace = true
 serde_with.workspace = true
@@ -40,6 +40,7 @@ shadow-rs.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true }
+tokio-stream.workspace = true
 toml.workspace = true
 tonic.workspace = true
 tracing-chrome.workspace = true
@@ -61,6 +62,7 @@ default = ["parallel-compilation"]
 workspace = true
 
 [build-dependencies]
+prost-build.workspace = true
 tonic-build.workspace = true
 shadow-rs.workspace = true
 
@@ -162,7 +164,8 @@ oci-wasm = { version = "0.0.4", default-features = false, features = [
     "rustls-tls",
 ] }
 prost = "0.13.1"
-prost-types = "0.13.1"
+prost-build = "0.13"
+prost-wkt-types = "0.6"
 rand = "0.8.5"
 rstest = "0.21"
 rusqlite = { version = "0.31.0" }
@@ -184,6 +187,7 @@ tokio = { version = "0.2.28", package = "madsim-tokio", features = [
     "time",
     "tracing",
 ] }
+tokio-stream = "0.1.15"
 toml = { version = "0.8.14", features = ["preserve_order"] }
 tonic = { version = "0.12.1", features = ["zstd", "gzip"] }
 tonic-build = "0.12.1"

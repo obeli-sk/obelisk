@@ -8,6 +8,7 @@ package obelisk;
 service Scheduler {
     rpc Submit(SubmitRequest) returns (SubmitResponse);
     rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+    rpc StreamStatus(StreamStatusRequest) returns (stream ExecutionStatus);
 }
 
 message ExecutionId {
@@ -35,6 +36,7 @@ message FunctionName {
 message SubmitRequest {
     FunctionName function = 1;
     google.protobuf.Any params = 2;
+    optional ExecutionId execution_id = 3;
 }
 
 message SubmitResponse {
@@ -59,6 +61,7 @@ message ExecutionStatus {
         google.protobuf.Timestamp lock_expires_at = 2;
     }
     message Finished {
+        google.protobuf.Any result = 1;
     }
     oneof status {
         Locked locked = 1;
@@ -70,4 +73,8 @@ message ExecutionStatus {
 
 message GetStatusResponse {
     ExecutionStatus status = 1;
+}
+
+message StreamStatusRequest {
+    ExecutionId execution_id = 1;
 }
