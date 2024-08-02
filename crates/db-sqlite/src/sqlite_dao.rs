@@ -1693,6 +1693,11 @@ impl DbConnection for SqlitePool {
                         .collect::<Result<Vec<_>, _>>()?
                         .into_iter()
                         .collect::<Result<Vec<_>, _>>()?;
+                    if events.is_empty() {
+                        return Err(SqliteError::DbError(DbError::Specific(
+                            SpecificError::NotFound,
+                        )));
+                    }
                     let pending_state = Self::get_pending_state(tx, execution_id)?
                         .map_or(PendingState::Finished, |it| it.pending_state); // Execution exists and was not found in `t_state` => Finished
                     let version = Version::new(events.len());

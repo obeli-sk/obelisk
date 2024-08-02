@@ -237,7 +237,6 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                 let run_id = locked_execution.run_id;
                 let span =
                     info_span!("worker", %execution_id, %run_id, ffqn = %locked_execution.ffqn,);
-                // TODO: wait for termination of all spawned tasks in `close`.
                 tokio::spawn(
                     async move {
                         let res = Self::run_worker(
