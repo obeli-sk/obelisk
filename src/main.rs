@@ -8,7 +8,7 @@ mod oci;
 use anyhow::{bail, Context};
 use args::{Args, Executor, Subcommand};
 use clap::Parser;
-use command::{execution::ExecutionVerbosity, grpc::scheduler_client::SchedulerClient};
+use command::grpc::scheduler_client::SchedulerClient;
 use concepts::storage::ComponentToggle;
 use config::toml::ConfigHolder;
 use directories::ProjectDirs;
@@ -91,6 +91,7 @@ async fn main_async() -> Result<(), anyhow::Error> {
             ffqn,
             params,
             follow,
+            verbosity,
         }) => {
             // TODO interactive search for ffqn showing param types and result, file name
             // enter parameters one by one
@@ -100,7 +101,7 @@ async fn main_async() -> Result<(), anyhow::Error> {
                 serde_json::Value::Array(vec) => vec,
                 _ => bail!("params should be a JSON array"),
             };
-            command::execution::submit(client, ffqn, params, follow).await
+            command::execution::submit(client, ffqn, params, follow, verbosity.into()).await
         }
         Subcommand::Execution(args::Execution::Get {
             execution_id,
@@ -108,17 +109,7 @@ async fn main_async() -> Result<(), anyhow::Error> {
             follow,
         }) => {
             let client = get_client.await?;
-            command::execution::get(
-                client,
-                execution_id,
-                follow,
-                match verbosity {
-                    0 => None,
-                    1 => Some(ExecutionVerbosity::EventHistory),
-                    _ => Some(ExecutionVerbosity::Full),
-                },
-            )
-            .await
+            command::execution::get(client, execution_id, follow, verbosity.into()).await
         }
     }
 }

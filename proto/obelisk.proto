@@ -7,8 +7,7 @@ package obelisk;
 
 service Scheduler {
     rpc Submit(SubmitRequest) returns (SubmitResponse);
-    rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
-    rpc StreamStatus(StreamStatusRequest) returns (stream ExecutionStatus);
+    rpc GetStatus(GetStatusRequest) returns (stream GetStatusResponse);
 }
 
 message ExecutionId {
@@ -45,6 +44,7 @@ message SubmitResponse {
 
 message GetStatusRequest {
     ExecutionId execution_id = 1;
+    bool follow = 2;
 }
 
 message ExecutionStatus {
@@ -75,9 +75,15 @@ message ExecutionStatus {
 }
 
 message GetStatusResponse {
-    ExecutionStatus status = 1;
-}
+    message ExecutionSummary {
+        FunctionName function_name = 1;
+        ExecutionStatus current_status = 2;
+    }
 
-message StreamStatusRequest {
-    ExecutionId execution_id = 1;
+    oneof message {
+        // First message in the stream
+        ExecutionSummary summary = 1;
+        // Remaining messages
+        ExecutionStatus current_status = 2;
+    }
 }

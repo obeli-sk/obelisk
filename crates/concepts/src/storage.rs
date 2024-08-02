@@ -240,7 +240,7 @@ pub const DUMMY_INTERMITTENT_FAILURE: ExecutionEventInner =
 pub enum ExecutionEventInner {
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
-    // After optional expiry(`scheduled_at`) interpreted as pending.
+    /// The execution is [`PendingState::PendingAt`]`(scheduled_at)`.
     #[display(fmt = "Created({ffqn}, `{scheduled_at}`)")]
     Created {
         ffqn: FunctionFqn,

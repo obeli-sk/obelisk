@@ -1,9 +1,11 @@
+use std::{borrow::Borrow, sync::Arc};
+
 use super::TonicRespResult;
 use crate::command::grpc;
 use anyhow::anyhow;
 use concepts::{
     prefixed_ulid::{ExecutorId, JoinSetId, RunId},
-    ExecutionId,
+    ExecutionId, FunctionFqn,
 };
 
 impl From<ExecutionId> for grpc::ExecutionId {
@@ -60,7 +62,7 @@ impl<T> OptionExt<T> for Option<T> {
     }
 }
 
-pub(crate) fn unwrap_friendly_resp<T>(
+pub(crate) fn unwrap_resp_or_get_err_message<T>(
     res: TonicRespResult<T>,
 ) -> Result<tonic::Response<T>, anyhow::Error> {
     res.map_err(|err| {
@@ -71,4 +73,39 @@ pub(crate) fn unwrap_friendly_resp<T>(
             anyhow!("{msg}")
         }
     })
+}
+
+impl From<grpc::FunctionName> for FunctionFqn {
+    fn from(value: grpc::FunctionName) -> Self {
+        FunctionFqn::new_arc(
+            Arc::from(value.interface_name),
+            Arc::from(value.function_name),
+        )
+    }
+}
+
+impl<T: Borrow<FunctionFqn>> From<T> for grpc::FunctionName {
+    fn from(ffqn: T) -> Self {
+        let ffqn = ffqn.borrow();
+        grpc::FunctionName {
+            interface_name: ffqn.ifc_fqn.to_string(),
+            function_name: ffqn.function_name.to_string(),
+        }
+    }
+}
+
+pub trait PendingStatusExt {
+    fn is_finished(&self) -> bool;
+}
+
+impl PendingStatusExt for grpc::ExecutionStatus {
+    fn is_finished(&self) -> bool {
+        use grpc::execution_status::*;
+        matches!(
+            self,
+            grpc::ExecutionStatus {
+                status: Some(Status::Finished(..))
+            }
+        )
+    }
 }

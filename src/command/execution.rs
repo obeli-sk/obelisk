@@ -1,7 +1,7 @@
 use super::grpc;
 use super::grpc::scheduler_client::SchedulerClient;
 use crate::command::grpc::execution_status::Finished;
-use crate::grpc_util::grpc_mapping::unwrap_friendly_resp;
+use crate::grpc_util::grpc_mapping::unwrap_resp_or_get_err_message;
 use anyhow::Context;
 use chrono::DateTime;
 use concepts::FinishedExecutionResult;
@@ -19,22 +19,20 @@ pub(crate) async fn submit(
     ffqn: FunctionFqn,
     params: Vec<serde_json::Value>,
     follow: bool,
+    verbosity: ExecutionVerbosity,
 ) -> anyhow::Result<()> {
     let resp = client
         .submit(tonic::Request::new(grpc::SubmitRequest {
-            function: Some(grpc::FunctionName {
-                interface_name: ffqn.ifc_fqn.to_string(),
-                function_name: ffqn.function_name.to_string(),
-            }),
             params: Some(prost_wkt_types::Any {
                 type_url: format!("urn:obelisk:json:params:{ffqn}"),
                 value: serde_json::Value::Array(params).to_string().into_bytes(),
             }),
+            function: Some(ffqn.into()),
             execution_id: None,
         }))
         .await;
     trace!("{resp:?}");
-    let resp = unwrap_friendly_resp(resp)?;
+    let resp = unwrap_resp_or_get_err_message(resp)?;
     let execution_id = resp
         .into_inner()
         .execution_id
@@ -44,13 +42,33 @@ pub(crate) async fn submit(
         })??;
     println!("{execution_id} submitted");
     if follow {
-        get(client, execution_id, follow, None).await?;
+        get(client, execution_id, follow, verbosity).await?;
     }
     Ok(())
 }
 
-fn print_status(response: grpc::ExecutionStatus) -> Result<(), anyhow::Error> {
-    match response.status.context("status field must exist")? {
+fn print_status(response: grpc::GetStatusResponse) -> Result<(), anyhow::Error> {
+    use grpc::get_status_response::Message;
+    match response.message {
+        Some(Message::Summary(summary)) => {
+            if let Some(ffqn) = summary.function_name.map(FunctionFqn::from) {
+                println!("Function: {ffqn}");
+            }
+            if let Some(pending_status) = summary.current_status {
+                print_pending_status(pending_status)?;
+            }
+        }
+        Some(Message::CurrentStatus(pending_status)) => print_pending_status(pending_status)?,
+        None => {}
+    }
+    Ok(())
+}
+
+fn print_pending_status(pending_status: grpc::ExecutionStatus) -> Result<(), anyhow::Error> {
+    let Some(status) = pending_status.status else {
+        return Ok(());
+    };
+    match status {
         Status::Locked(_) => println!("Locked"),
         Status::PendingAt(_) => println!("Pending"),
         Status::BlockedByJoinSet(_) => println!("BlockedByJoinSet"),
@@ -106,60 +124,41 @@ fn print_status(response: grpc::ExecutionStatus) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub(crate) enum ExecutionVerbosity {
+    #[default]
+    PendingState,
     EventHistory,
     Full,
+}
+
+impl From<u8> for ExecutionVerbosity {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => ExecutionVerbosity::PendingState,
+            1 => ExecutionVerbosity::EventHistory,
+            _ => ExecutionVerbosity::Full,
+        }
+    }
 }
 
 pub(crate) async fn get(
     mut client: SchedulerClient<Channel>,
     execution_id: ExecutionId,
     follow: bool,
-    verbosity: Option<ExecutionVerbosity>,
+    _verbosity: ExecutionVerbosity, // TODO
 ) -> anyhow::Result<()> {
-    if follow {
-        let mut stream = unwrap_friendly_resp(
-            client
-                .stream_status(tonic::Request::new(grpc::StreamStatusRequest {
-                    execution_id: Some(execution_id.into()),
-                }))
-                .await,
-        )?
-        .into_inner();
-        while let Some(status) = stream.message().await? {
-            print_status(status)?;
-        }
-    } else {
-        let status = unwrap_friendly_resp(
-            client
-                .get_status(grpc::GetStatusRequest {
-                    execution_id: Some(execution_id.into()),
-                })
-                .await,
-        )?
-        .into_inner()
-        .status
-        .context("`status` must exist")?;
+    let mut stream = unwrap_resp_or_get_err_message(
+        client
+            .get_status(tonic::Request::new(grpc::GetStatusRequest {
+                execution_id: Some(execution_id.into()),
+                follow,
+            }))
+            .await,
+    )?
+    .into_inner();
+    while let Some(status) = stream.message().await? {
         print_status(status)?;
     }
-    // println!("Function: {}", execution_log.ffqn());
-    // if print_result_if_finished(&execution_log).is_none() {
-    //     println!("Current state: {}", execution_log.pending_state);
-    // }
-    // if let Some(verbosity) = verbosity {
-    //     println!();
-    //     println!("Event history:");
-    //     for event in execution_log.event_history() {
-    //         println!("{event}");
-    //     }
-    //     if verbosity == ExecutionVerbosity::Full {
-    //         println!();
-    //         println!("Execution log:");
-    //         for ExecutionEvent { created_at, event } in execution_log.events {
-    //             println!("{created_at}\t{event}");
-    //         }
-    //     }
-    // }
     Ok(())
 }
