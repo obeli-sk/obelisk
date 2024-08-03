@@ -5,49 +5,56 @@ expression: exports
 {
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     [
-      [
-        "n",
-        "U8"
-      ]
+      {
+        "name": "n",
+        "wit_type": "u8",
+        "type_wrapper": "U8"
+      }
     ],
     "U64"
   ],
   "testing:fibo-workflow/workflow.fiboa": [
     [
-      [
-        "n",
-        "U8"
-      ],
-      [
-        "iterations",
-        "U32"
-      ]
+      {
+        "name": "n",
+        "wit_type": "u8",
+        "type_wrapper": "U8"
+      },
+      {
+        "name": "iterations",
+        "wit_type": "u32",
+        "type_wrapper": "U32"
+      }
     ],
     "U64"
   ],
   "testing:fibo-workflow/workflow.fiboa-concurrent": [
     [
-      [
-        "n",
-        "U8"
-      ],
-      [
-        "iterations",
-        "U32"
-      ]
+      {
+        "name": "n",
+        "wit_type": "u8",
+        "type_wrapper": "U8"
+      },
+      {
+        "name": "iterations",
+        "wit_type": "u32",
+        "type_wrapper": "U32"
+      }
     ],
     "U64"
   ],
   "testing:fibo-workflow/workflow.fibow": [
     [
-      [
-        "n",
-        "U8"
-      ],
-      [
-        "iterations",
-        "U32"
-      ]
+      {
+        "name": "n",
+        "wit_type": "u8",
+        "type_wrapper": "U8"
+      },
+      {
+        "name": "iterations",
+        "wit_type": "u32",
+        "type_wrapper": "U32"
+      }
     ],
     "U64"
   ]

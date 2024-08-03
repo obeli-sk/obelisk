@@ -13,12 +13,14 @@ version.workspace = true
 concepts.workspace = true
 val-json.workspace = true
 
+anyhow.workspace = true
 cfg-if.workspace = true
 chrono.workspace = true
 derivative.workspace = true
 hashbrown.workspace = true
 hyper.workspace = true
 indexmap.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

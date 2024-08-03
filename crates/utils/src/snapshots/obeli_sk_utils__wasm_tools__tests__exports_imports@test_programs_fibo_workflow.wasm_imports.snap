@@ -9,41 +9,46 @@ expression: imports
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": [
     [
-      [
-        "join-set-id",
-        "String"
-      ]
+      {
+        "name": "join-set-id",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      }
     ],
     "U64"
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-future": [
     [
-      [
-        "join-set-id",
-        "String"
-      ],
-      [
-        "n",
-        "U8"
-      ]
+      {
+        "name": "join-set-id",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      },
+      {
+        "name": "n",
+        "wit_type": "u8",
+        "type_wrapper": "U8"
+      }
     ],
     "String"
   ],
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     [
-      [
-        "n",
-        "U8"
-      ]
+      {
+        "name": "n",
+        "wit_type": "u8",
+        "type_wrapper": "U8"
+      }
     ],
     "U64"
   ],
   "testing:fibo/fibo.fibo": [
     [
-      [
-        "n",
-        "U8"
-      ]
+      {
+        "name": "n",
+        "wit_type": "u8",
+        "type_wrapper": "U8"
+      }
     ],
     "U64"
   ]

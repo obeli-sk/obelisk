@@ -9,10 +9,11 @@ expression: imports
   ],
   "testing:http-obelisk-ext/http-get.get-successful-await-next": [
     [
-      [
-        "join-set-id",
-        "String"
-      ]
+      {
+        "name": "join-set-id",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      }
     ],
     {
       "Result": {
@@ -23,23 +24,26 @@ expression: imports
   ],
   "testing:http-obelisk-ext/http-get.get-successful-future": [
     [
-      [
-        "join-set-id",
-        "String"
-      ],
-      [
-        "url",
-        "String"
-      ]
+      {
+        "name": "join-set-id",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      },
+      {
+        "name": "url",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      }
     ],
     "String"
   ],
   "testing:http/http-get.get": [
     [
-      [
-        "url",
-        "String"
-      ]
+      {
+        "name": "url",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      }
     ],
     {
       "Result": {
@@ -50,10 +54,11 @@ expression: imports
   ],
   "testing:http/http-get.get-successful": [
     [
-      [
-        "url",
-        "String"
-      ]
+      {
+        "name": "url",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      }
     ],
     {
       "Result": {

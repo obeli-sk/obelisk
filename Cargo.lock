@@ -2449,6 +2449,7 @@ dependencies = [
 name = "obeli-sk-utils"
 version = "0.1.10"
 dependencies = [
+ "anyhow",
  "cfg-if",
  "chrono",
  "derivative",
@@ -2461,6 +2462,7 @@ dependencies = [
  "obeli-sk-concepts",
  "obeli-sk-val-json",
  "rstest",
+ "serde",
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-workflow-builder",
  "test-utils",

@@ -4,18 +4,39 @@ expression: exports
 ---
 {
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
-    "n"
+    {
+      "name": "n",
+      "wit_type": "u8"
+    }
   ],
   "testing:fibo-workflow/workflow.fiboa": [
-    "n",
-    "iterations"
+    {
+      "name": "n",
+      "wit_type": "u8"
+    },
+    {
+      "name": "iterations",
+      "wit_type": "u32"
+    }
   ],
   "testing:fibo-workflow/workflow.fiboa-concurrent": [
-    "n",
-    "iterations"
+    {
+      "name": "n",
+      "wit_type": "u8"
+    },
+    {
+      "name": "iterations",
+      "wit_type": "u32"
+    }
   ],
   "testing:fibo-workflow/workflow.fibow": [
-    "n",
-    "iterations"
+    {
+      "name": "n",
+      "wit_type": "u8"
+    },
+    {
+      "name": "iterations",
+      "wit_type": "u32"
+    }
   ]
 }

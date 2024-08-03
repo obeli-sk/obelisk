@@ -25,6 +25,7 @@ use concepts::storage::PendingState;
 use concepts::storage::SpecificError;
 use concepts::ExecutionId;
 use concepts::FunctionRegistry;
+use concepts::ParameterType;
 use concepts::Params;
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::ExecutorTaskHandle;
@@ -120,8 +121,11 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             (config_id, param_types, return_type)
         };
         // Type check `params`
-        if let Err(err) = params.typecheck(param_types.iter().map(|(_, type_wrapper)| type_wrapper))
-        {
+        if let Err(err) = params.typecheck(
+            param_types
+                .iter()
+                .map(|ParameterType { type_wrapper, .. }| type_wrapper),
+        ) {
             return Err(tonic::Status::invalid_argument(format!(
                 "argument `params` invalid - {err}"
             )));

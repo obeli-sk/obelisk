@@ -10,29 +10,44 @@ expression: imports
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": [
     [
-      "join-set-id"
+      {
+        "name": "join-set-id",
+        "wit_type": "string"
+      }
     ],
     "testing:fibo-obelisk-ext/fibo",
     "fibo-await-next"
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-future": [
     [
-      "join-set-id",
-      "n"
+      {
+        "name": "join-set-id",
+        "wit_type": "string"
+      },
+      {
+        "name": "n",
+        "wit_type": "u8"
+      }
     ],
     "testing:fibo-obelisk-ext/fibo",
     "fibo-future"
   ],
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     [
-      "n"
+      {
+        "name": "n",
+        "wit_type": "u8"
+      }
     ],
     "testing:fibo-workflow/workflow-nesting",
     "fibo-nested-workflow"
   ],
   "testing:fibo/fibo.fibo": [
     [
-      "n"
+      {
+        "name": "n",
+        "wit_type": "u8"
+      }
     ],
     "testing:fibo/fibo",
     "fibo"

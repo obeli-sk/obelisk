@@ -920,14 +920,46 @@ pub type ReturnType = Option<TypeWrapper>;
 #[derive(
     Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default, derive_more::Deref,
 )]
-pub struct ParameterTypes(pub Vec<(String, TypeWrapper)>);
+pub struct ParameterTypes(pub Vec<ParameterType>);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ParameterType {
+    pub name: Option<String>,
+    pub wit_type: Option<String>,
+    pub type_wrapper: TypeWrapper,
+}
 
 impl Debug for ParameterTypes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "(")?;
         let mut iter = self.0.iter().peekable();
-        while let Some((name, ty)) = iter.next() {
-            write!(f, "{name}: {ty:?}")?; // TODO: implement Display for TypeWrapper
+        while let Some(p) = iter.next() {
+            write!(f, "{p:?}")?;
+            if iter.peek().is_some() {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ")")
+    }
+}
+
+impl Display for ParameterType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: ", self.name.as_deref().unwrap_or("unknown"))?;
+        if let Some(wit_type) = &self.wit_type {
+            write!(f, "{wit_type}")
+        } else {
+            write!(f, "{:?}", self.type_wrapper)
+        }
+    }
+}
+
+impl Display for ParameterTypes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(")?;
+        let mut iter = self.0.iter().peekable();
+        while let Some(p) = iter.next() {
+            write!(f, "{p}")?;
             if iter.peek().is_some() {
                 write!(f, ", ")?;
             }

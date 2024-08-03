@@ -1,5 +1,6 @@
 pub mod wasi_http;
 pub mod wasm_tools;
+mod wit_printer;
 
 pub mod time {
     pub trait ClockFn: Fn() -> DateTime<Utc> + Send + Sync + Clone {}

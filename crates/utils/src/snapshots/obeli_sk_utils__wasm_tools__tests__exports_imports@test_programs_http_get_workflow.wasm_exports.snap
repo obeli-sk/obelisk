@@ -5,10 +5,11 @@ expression: exports
 {
   "testing:http-workflow/workflow.get": [
     [
-      [
-        "url",
-        "String"
-      ]
+      {
+        "name": "url",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      }
     ],
     {
       "Result": {
@@ -19,10 +20,11 @@ expression: exports
   ],
   "testing:http-workflow/workflow.get-successful": [
     [
-      [
-        "url",
-        "String"
-      ]
+      {
+        "name": "url",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      }
     ],
     {
       "Result": {
@@ -33,12 +35,13 @@ expression: exports
   ],
   "testing:http-workflow/workflow.get-successful-concurrently": [
     [
-      [
-        "urls",
-        {
+      {
+        "name": "urls",
+        "wit_type": "list<string>",
+        "type_wrapper": {
           "List": "String"
         }
-      ]
+      }
     ],
     {
       "Result": {
@@ -51,14 +54,16 @@ expression: exports
   ],
   "testing:http-workflow/workflow.get-successful-concurrently-stress": [
     [
-      [
-        "url",
-        "String"
-      ],
-      [
-        "concurrency",
-        "U32"
-      ]
+      {
+        "name": "url",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      },
+      {
+        "name": "concurrency",
+        "wit_type": "u32",
+        "type_wrapper": "U32"
+      }
     ],
     {
       "Result": {
