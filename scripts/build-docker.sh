@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -e; set -o pipefail;
+cd $(dirname "$0")/..
 
 nix build '.#docker' '.#dockerBinSh'
 image=$((docker load < result) | sed -n '$s/^Loaded image: //p')
