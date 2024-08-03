@@ -43,8 +43,10 @@ impl WasmComponent {
                 ));
             };
             let world = resolve.worlds.get(world_id).expect("world must exist");
-            let exported_ffqns_to_param_names = ffqn_to_param_names(&resolve, world.exports.iter());
-            let imported_ffqns_to_param_names = ffqn_to_param_names(&resolve, world.imports.iter());
+            let exported_ffqns_to_param_names =
+                wit_parsed_ffqn_to_param_names(&resolve, world.exports.iter())?;
+            let imported_ffqns_to_param_names =
+                wit_parsed_ffqn_to_param_names(&resolve, world.imports.iter())?;
             debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
             (exported_ffqns_to_param_names, imported_ffqns_to_param_names)
         };
@@ -105,6 +107,10 @@ pub enum DecodeError {
     },
     #[error("parameter cardinality mismatch in {0}")]
     ParameterCardinalityMismatch(FunctionFqn),
+    #[error("empty package")]
+    EmptyPackage,
+    #[error("empty interface")]
+    EmptyInterface,
 }
 
 #[derive(Debug, Clone)]
@@ -148,7 +154,7 @@ impl ExIm {
     }
 }
 
-fn exported<'a>(
+fn enrich_function_params<'a>(
     iterator: impl ExactSizeIterator<Item = (&'a str, ComponentItem)> + 'a,
     engine: &Engine,
     ffqns_to_param_names: &hashbrown::HashMap<FunctionFqn, Vec<String>>,
@@ -231,12 +237,12 @@ fn decode(
     imported_ffqns_to_param_names: &hashbrown::HashMap<FunctionFqn, Vec<String>>,
 ) -> Result<ExIm, DecodeError> {
     let component_type = component.component_type();
-    let exports = exported(
+    let exports = enrich_function_params(
         component_type.exports(engine),
         engine,
         exported_ffqns_to_param_names,
     )?;
-    let imports = exported(
+    let imports = enrich_function_params(
         component_type.imports(engine),
         engine,
         imported_ffqns_to_param_names,
@@ -244,37 +250,39 @@ fn decode(
     Ok(ExIm::new(exports, imports))
 }
 
-fn ffqn_to_param_names<'a>(
+fn wit_parsed_ffqn_to_param_names<'a>(
     resolve: &'a Resolve,
     iter: impl Iterator<Item = (&'a WorldKey, &'a WorldItem)>,
-) -> hashbrown::HashMap<FunctionFqn, Vec<String>> {
-    iter.filter_map(|(_, item)| match item {
-        wit_parser::WorldItem::Interface {
+) -> Result<hashbrown::HashMap<FunctionFqn, Vec<String>>, DecodeError> {
+    let mut res_map = hashbrown::HashMap::new();
+    for (_, item) in iter {
+        if let wit_parser::WorldItem::Interface {
             id: ifc_id,
             stability: _,
-        } => {
+        } = item
+        {
             let ifc = resolve.interfaces.get(*ifc_id).unwrap();
-            let Some(package_name) = ifc
+            let Some(package) = ifc
                 .package
                 .and_then(|pkg| resolve.packages.get(pkg))
                 .map(|p| &p.name)
             else {
-                panic!("return Some(Err(DecodeError::EmptyPackage));")
+                return Err(DecodeError::EmptyPackage);
             };
             let Some(ifc_name) = ifc.name.as_deref() else {
-                panic!("return Some(Err(DecodeError::EmptyInterface));")
+                return Err(DecodeError::EmptyInterface);
             };
-            let ifc_fqn = if let Some(version) = &package_name.version {
+            let ifc_fqn = if let Some(version) = &package.version {
                 format!(
                     "{namespace}:{name}/{ifc_name}@{version}",
-                    namespace = package_name.namespace,
-                    name = package_name.name
+                    namespace = package.namespace,
+                    name = package.name
                 )
             } else {
-                format!("{package_name}/{ifc_name}")
+                format!("{package}/{ifc_name}")
             };
             let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
-            Some(ifc.functions.iter().map(move |(function_name, function)| {
+            for (function_name, function) in ifc.functions.iter() {
                 let ffqn =
                     FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
                 let param_names = function
@@ -283,25 +291,21 @@ fn ffqn_to_param_names<'a>(
                     .map(|(param_name, _)| param_name)
                     .cloned()
                     .collect();
-                (ffqn, param_names)
-            }))
+                res_map.insert(ffqn, param_names);
+            }
         }
-        _ => None,
-    })
-    .flatten()
-    .collect()
+    }
+    Ok(res_map)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::wit_parsed_ffqn_to_param_names;
+    use crate::wasm_tools::WasmComponent;
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
     use wasmtime::Engine;
     use wit_parser::decoding::DecodedWasm;
-
-    use crate::wasm_tools::WasmComponent;
-
-    use super::ffqn_to_param_names;
 
     fn engine() -> Arc<Engine> {
         let mut wasmtime_config = wasmtime::Config::new();
@@ -343,13 +347,15 @@ mod tests {
             panic!();
         };
         let world = resolve.worlds.get(world_id).expect("world must exist");
-        let exports = ffqn_to_param_names(&resolve, world.exports.iter())
+        let exports = wit_parsed_ffqn_to_param_names(&resolve, world.exports.iter())
+            .unwrap()
             .into_iter()
             .map(|(ffqn, val)| (ffqn.to_string(), val))
             .collect::<hashbrown::HashMap<_, _>>();
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
 
-        let imports = ffqn_to_param_names(&resolve, world.imports.iter())
+        let imports = wit_parsed_ffqn_to_param_names(&resolve, world.imports.iter())
+            .unwrap()
             .into_iter()
             .map(|(ffqn, val)| (ffqn.to_string(), (val, ffqn.ifc_fqn, ffqn.function_name)))
             .collect::<hashbrown::HashMap<_, _>>();
