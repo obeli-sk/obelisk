@@ -100,7 +100,7 @@ pub trait PendingStatusExt {
 
 impl PendingStatusExt for grpc::ExecutionStatus {
     fn is_finished(&self) -> bool {
-        use grpc::execution_status::*;
+        use grpc::execution_status::Status;
         matches!(
             self,
             grpc::ExecutionStatus {

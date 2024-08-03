@@ -97,9 +97,8 @@ async fn main_async() -> Result<(), anyhow::Error> {
             // enter parameters one by one
             let client = get_client.await?;
             let params = serde_json::from_str(&params).context("params should be a json array")?;
-            let params = match params {
-                serde_json::Value::Array(vec) => vec,
-                _ => bail!("params should be a JSON array"),
+            let serde_json::Value::Array(params) = params else {
+                bail!("params should be a JSON array");
             };
             command::execution::submit(client, ffqn, params, follow, verbosity.into()).await
         }

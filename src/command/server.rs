@@ -85,8 +85,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         } = request.function.argument_must_exist("function")?;
         let execution_id = request
             .execution_id
-            .map(ExecutionId::try_from)
-            .unwrap_or_else(|| Ok(ExecutionId::generate()))?;
+            .map_or_else(|| Ok(ExecutionId::generate()), ExecutionId::try_from)?;
         let ffqn =
             concepts::FunctionFqn::new_arc(Arc::from(interface_name), Arc::from(function_name));
         let params = {
@@ -190,7 +189,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 tonic::Status::internal(format!("database error: {db_err}"))
             }
         })?;
-        let current_pending_state = execution_log.pending_state.clone();
+        let current_pending_state = execution_log.pending_state;
         let grpc_pending_status = convert_execution_status(&execution_log);
         let is_finished = grpc_pending_status.is_finished();
         let summary = grpc::GetStatusResponse {
@@ -243,7 +242,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
 }
 
 fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStatus {
-    use grpc::execution_status::*;
+    use grpc::execution_status::{BlockedByJoinSet, Finished, Locked, PendingAt, Status};
     grpc::ExecutionStatus {
         status: Some(match execution_log.pending_state {
             PendingState::Locked {
@@ -279,7 +278,7 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
                                 error!(
                                     "Cannot serialize result of {execution_id} - {ser_err:?}",
                                     execution_id = execution_log.execution_id
-                                )
+                                );
                             })
                             .ok()
                             .map(|res| prost_wkt_types::Any {
@@ -312,6 +311,7 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn run(
     config: ObeliskConfig,
     db_file: &PathBuf,

@@ -541,7 +541,7 @@ pub mod params {
     ) -> Result<Vec<WastVal>, serde_json::Error> {
         let params = params
             .iter()
-            .map(|param| param.to_string())
+            .map(std::string::ToString::to_string)
             .with_position()
             .fold("[".to_string(), |mut acc, (pos, item)| {
                 acc.push_str(&item.to_string());
