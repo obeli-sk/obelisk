@@ -5,7 +5,10 @@ expression: imports
 {
   "obelisk:workflow/host-activities.new-join-set": [
     [],
-    "String"
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
   ],
   "testing:http-obelisk-ext/http-get.get-successful-await-next": [
     [
@@ -16,10 +19,13 @@ expression: imports
       }
     ],
     {
-      "Result": {
-        "ok": "String",
-        "err": "String"
-      }
+      "type_wrapper": {
+        "Result": {
+          "ok": "String",
+          "err": "String"
+        }
+      },
+      "wit_type": "result<string, string>"
     }
   ],
   "testing:http-obelisk-ext/http-get.get-successful-future": [
@@ -35,7 +41,10 @@ expression: imports
         "type_wrapper": "String"
       }
     ],
-    "String"
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
   ],
   "testing:http/http-get.get": [
     [
@@ -46,10 +55,13 @@ expression: imports
       }
     ],
     {
-      "Result": {
-        "ok": "String",
-        "err": "String"
-      }
+      "type_wrapper": {
+        "Result": {
+          "ok": "String",
+          "err": "String"
+        }
+      },
+      "wit_type": "result<string, string>"
     }
   ],
   "testing:http/http-get.get-successful": [
@@ -61,10 +73,13 @@ expression: imports
       }
     ],
     {
-      "Result": {
-        "ok": "String",
-        "err": "String"
-      }
+      "type_wrapper": {
+        "Result": {
+          "ok": "String",
+          "err": "String"
+        }
+      },
+      "wit_type": "result<string, string>"
     }
   ]
 }

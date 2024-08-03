@@ -527,8 +527,14 @@ impl<C: ClockFn> EventHistory<C> {
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
-                let ((ffqn, _param_types, return_type), config_id) =
-                    component_active_get_exported_function(fn_registry, &ffqn).await?; // TODO: consider caching
+                let (
+                    FunctionMetadata {
+                        ffqn,
+                        parameter_types: _,
+                        return_type,
+                    },
+                    config_id,
+                ) = component_active_get_exported_function(fn_registry, &ffqn).await?; // TODO: consider caching
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: child_execution_id,
@@ -539,7 +545,7 @@ impl<C: ClockFn> EventHistory<C> {
                     retry_exp_backoff: child_retry_exp_backoff,
                     max_retries: child_max_retries,
                     config_id,
-                    return_type,
+                    return_type: return_type.map(|rt| rt.type_wrapper),
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
@@ -579,8 +585,14 @@ impl<C: ClockFn> EventHistory<C> {
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%new_execution_id, "ScheduleRequest: appending");
-                let ((ffqn, _param_types, return_type), config_id) =
-                    component_active_get_exported_function(fn_registry, &ffqn).await?;
+                let (
+                    FunctionMetadata {
+                        ffqn,
+                        parameter_types: _,
+                        return_type,
+                    },
+                    config_id,
+                ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: new_execution_id,
@@ -591,7 +603,7 @@ impl<C: ClockFn> EventHistory<C> {
                     retry_exp_backoff: child_retry_exp_backoff,
                     max_retries: child_max_retries,
                     config_id,
-                    return_type,
+                    return_type: return_type.map(|rt| rt.type_wrapper),
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
@@ -661,8 +673,14 @@ impl<C: ClockFn> EventHistory<C> {
                 history_events.push(event.clone());
                 let join_next = ExecutionEventInner::HistoryEvent { event };
                 debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Appending JoinSet,ChildExecutionRequest,JoinNext");
-                let ((ffqn, _param_types, return_type), config_id) =
-                    component_active_get_exported_function(fn_registry, &ffqn).await?;
+                let (
+                    FunctionMetadata {
+                        ffqn,
+                        parameter_types: _,
+                        return_type,
+                    },
+                    config_id,
+                ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child = CreateRequest {
                     created_at,
                     execution_id: child_execution_id,
@@ -673,7 +691,7 @@ impl<C: ClockFn> EventHistory<C> {
                     retry_exp_backoff: child_retry_exp_backoff,
                     max_retries: child_max_retries,
                     config_id,
-                    return_type,
+                    return_type: return_type.map(|rt| rt.type_wrapper),
                 };
                 *version = db_connection
                     .append_batch_create_new_execution(

@@ -24,6 +24,7 @@ use concepts::storage::ExecutionLog;
 use concepts::storage::PendingState;
 use concepts::storage::SpecificError;
 use concepts::ExecutionId;
+use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::ParameterType;
 use concepts::Params;
@@ -107,7 +108,14 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         // Check that ffqn exists
 
         let (config_id, param_types, return_type) = {
-            let (config_id, (_, param_types, return_type)) = db_connection
+            let (
+                config_id,
+                FunctionMetadata {
+                    ffqn: _,
+                    parameter_types,
+                    return_type,
+                },
+            ) = db_connection
                 .component_enabled_get_exported_function(&ffqn)
                 .await
                 .map_err(|db_err| {
@@ -118,7 +126,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                         tonic::Status::internal(format!("database error: {db_err}"))
                     }
                 })?;
-            (config_id, param_types, return_type)
+            (config_id, parameter_types, return_type)
         };
         // Type check `params`
         if let Err(err) = params.typecheck(
@@ -159,7 +167,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 retry_exp_backoff: *default_retry_exp_backoff,
                 max_retries: *default_max_retries,
                 config_id,
-                return_type,
+                return_type: return_type.map(|rt| rt.type_wrapper),
             })
             .await
             .unwrap();

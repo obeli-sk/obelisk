@@ -11,7 +11,10 @@ expression: exports
         "type_wrapper": "U8"
       }
     ],
-    "U64"
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
   ],
   "testing:fibo-workflow/workflow.fiboa": [
     [
@@ -26,7 +29,10 @@ expression: exports
         "type_wrapper": "U32"
       }
     ],
-    "U64"
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
   ],
   "testing:fibo-workflow/workflow.fiboa-concurrent": [
     [
@@ -41,7 +47,10 @@ expression: exports
         "type_wrapper": "U32"
       }
     ],
-    "U64"
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
   ],
   "testing:fibo-workflow/workflow.fibow": [
     [
@@ -56,6 +65,9 @@ expression: exports
         "type_wrapper": "U32"
       }
     ],
-    "U64"
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
   ]
 }

@@ -1297,7 +1297,12 @@ impl SqlitePool {
         tx: &Transaction,
         component: &ComponentWithMetadata,
     ) -> Result<(), SqliteError> {
-        for (ffqn, parameter_types, return_type) in &component.exports {
+        for FunctionMetadata {
+            ffqn,
+            parameter_types,
+            return_type,
+        } in &component.exports
+        {
             let parameter_types = serde_json::to_string(&parameter_types).map_err(|err| {
                 error!("Cannot serialize {:?} - {err:?}", parameter_types);
                 rusqlite::Error::ToSqlConversionFailure(err.into())
@@ -1904,7 +1909,7 @@ impl DbConnection for SqlitePool {
                 move |tx| {
                     if toggle == ComponentToggle::Enabled {
                         let mut conflicts = hashbrown::HashSet::new();
-                        for (export_ffqn, _, _) in &component.exports {
+                        for FunctionMetadata{ffqn: export_ffqn, ..} in &component.exports {
                             if let Some(conflict) = Self::component_get_enabled_by_exported_ffqn(tx, export_ffqn)? {
                                 conflicts.insert(conflict);
                             }
@@ -2001,13 +2006,13 @@ impl DbConnection for SqlitePool {
                     }, |row| {
                         let config_id = row.get::<_, FromStrWrapper<ComponentConfigHash>>("config_id")?.0;
                         let parameter_types = row.get::<_, JsonWrapper<ParameterTypes>>("parameter_types")?.0;
-                        let return_type = row.get::<_, JsonWrapper<ReturnType>>("return_type")?.0;
+                        let return_type = row.get::<_, JsonWrapper<Option<ReturnType>>>("return_type")?.0;
                         Ok((config_id,
-                            (
+                            FunctionMetadata {
                             ffqn,
                             parameter_types,
                             return_type,
-                        )))
+                    }))
                     })
                     .map_err(SqliteError::from)
             },

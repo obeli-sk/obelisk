@@ -10,7 +10,7 @@ use wasmtime::{
     component::{types::ComponentItem, Component, ComponentExportIndex},
     Engine,
 };
-use wit_parser::{decoding::DecodedWasm, Resolve, WorldItem, WorldKey};
+use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
 
 #[derive(derivative::Derivative)]
 #[derivative(Debug)]
@@ -38,7 +38,7 @@ impl WasmComponent {
             component
         };
         trace!("Decoding using wit_parser");
-        let (exported_ffqns_to_params_meta, imported_ffqns_to_params_meta) = {
+        let (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta) = {
             let stopwatch = std::time::Instant::now();
             let decoded = wit_parser::decoding::decode_reader(wasm_file).map_err(|err| {
                 error!("Cannot read component {wasm_path:?} - {err:?}");
@@ -51,18 +51,18 @@ impl WasmComponent {
                 ));
             };
             let world = resolve.worlds.get(world_id).expect("world must exist");
-            let exported_ffqns_to_params =
-                wit_parsed_ffqn_to_param_names_and_wit_types(&resolve, world.exports.iter())?;
-            let imported_ffqns_to_params =
-                wit_parsed_ffqn_to_param_names_and_wit_types(&resolve, world.imports.iter())?;
+            let exported_ffqns_to_wit_meta =
+                wit_parsed_ffqn_to_wit_parsed_fn_metadata(&resolve, world.exports.iter())?;
+            let imported_ffqns_to_wit_meta =
+                wit_parsed_ffqn_to_wit_parsed_fn_metadata(&resolve, world.imports.iter())?;
             debug!("Parsed with wit_parser in {:?}", stopwatch.elapsed());
-            (exported_ffqns_to_params, imported_ffqns_to_params)
+            (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta)
         };
         let exim = ExIm::decode(
             &component,
             engine,
-            exported_ffqns_to_params_meta,
-            imported_ffqns_to_params_meta,
+            exported_ffqns_to_wit_meta,
+            imported_ffqns_to_wit_meta,
         )?;
         Ok(Self { component, exim })
     }
@@ -79,7 +79,7 @@ impl WasmComponent {
         &self,
     ) -> Result<hashbrown::HashMap<FunctionFqn, ComponentExportIndex>, DecodeError> {
         let mut exported_ffqn_to_index = hashbrown::HashMap::new();
-        for (ffqn, _params, _ret) in self.exported_functions() {
+        for FunctionMetadata { ffqn, .. } in self.exported_functions() {
             let Some((_, ifc_export_index)) = self.component.export_index(None, &ffqn.ifc_fqn)
             else {
                 error!("Cannot find exported interface `{}`", ffqn.ifc_fqn);
@@ -130,42 +130,48 @@ pub struct ExIm {
 #[derive(Debug, Clone)]
 pub struct PackageIfcFns {
     pub ifc_fqn: IfcFqnName,
-    pub fns: IndexMap<FnName, (ParameterTypes, ReturnType)>,
+    pub fns: IndexMap<FnName, (ParameterTypes, Option<ReturnType>)>,
 }
 
 impl ExIm {
     fn decode(
         component: &Component,
         engine: &Engine,
-        exported_ffqns_to_params_meta: hashbrown::HashMap<FunctionFqn, Vec<ParameterNameWitType>>,
-        imported_ffqns_to_params_meta: hashbrown::HashMap<FunctionFqn, Vec<ParameterNameWitType>>,
+        exported_ffqns_to_wit_parsed_meta: hashbrown::HashMap<
+            FunctionFqn,
+            WitParsedFunctionMetadata,
+        >,
+        imported_ffqns_to_wit_parsed_meta: hashbrown::HashMap<
+            FunctionFqn,
+            WitParsedFunctionMetadata,
+        >,
     ) -> Result<ExIm, DecodeError> {
         let component_type = component.component_type();
         let exports = enrich_function_params(
             component_type.exports(engine),
             engine,
-            exported_ffqns_to_params_meta,
+            exported_ffqns_to_wit_parsed_meta,
         )?;
         let imports = enrich_function_params(
             component_type.imports(engine),
             engine,
-            imported_ffqns_to_params_meta,
+            imported_ffqns_to_wit_parsed_meta,
         )?;
         Ok(Self { exports, imports })
     }
 
     fn flatten(input: &[PackageIfcFns]) -> impl Iterator<Item = FunctionMetadata> + '_ {
         input.iter().flat_map(|ifc| {
-            ifc.fns.iter().map(|(fun, (param_types, result))| {
-                (
-                    FunctionFqn {
+            ifc.fns
+                .iter()
+                .map(|(fun, (param_types, return_type))| FunctionMetadata {
+                    ffqn: FunctionFqn {
                         ifc_fqn: ifc.ifc_fqn.clone(),
                         function_name: fun.clone(),
                     },
-                    param_types.clone(),
-                    result.clone(),
-                )
-            })
+                    parameter_types: param_types.clone(),
+                    return_type: return_type.clone(),
+                })
         })
     }
 
@@ -181,54 +187,63 @@ impl ExIm {
 fn enrich_function_params<'a>(
     iterator: impl ExactSizeIterator<Item = (&'a str, ComponentItem)> + 'a,
     engine: &Engine,
-    mut ffqns_to_params: hashbrown::HashMap<FunctionFqn, Vec<ParameterNameWitType>>,
+    mut ffqns_to_wit_parsed_meta: hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
     let mut vec = Vec::new();
     for (ifc_fqn, item) in iterator {
+        let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
         if let ComponentItem::ComponentInstance(instance) = item {
             let exports = instance.exports(engine);
             let mut fns = IndexMap::new();
             for (function_name, export) in exports {
                 if let ComponentItem::ComponentFunc(func) = export {
-                    let params = func
+                    let function_name: Arc<str> = Arc::from(function_name);
+                    let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), function_name.clone());
+                    let (wit_meta_params, wit_meta_res) = ffqns_to_wit_parsed_meta
+                        .remove(&ffqn)
+                        .map(|meta| (Some(meta.params), meta.return_type))
+                        .unwrap_or_default();
+
+                    let mut return_type = func.results();
+                    let return_type = if return_type.len() <= 1 {
+                        match return_type.next().map(TypeWrapper::try_from).transpose() {
+                            Ok(type_wrapper) => type_wrapper.map(|type_wrapper| ReturnType {
+                                type_wrapper,
+                                wit_type: wit_meta_res,
+                            }),
+                            Err(err) => {
+                                return Err(DecodeError::TypeNotSupported {
+                                    err,
+                                    ffqn: FunctionFqn::new_arc(ifc_fqn, function_name),
+                                })
+                            }
+                        }
+                    } else {
+                        return Err(DecodeError::MultiValueResultNotSupported(
+                            FunctionFqn::new_arc(ifc_fqn, function_name),
+                        ));
+                    };
+                    let params = match func
                         .params()
                         .map(TypeWrapper::try_from)
                         .collect::<Result<Vec<_>, _>>()
-                        .map_err(|err| DecodeError::TypeNotSupported {
-                            err,
-                            ffqn: FunctionFqn::new_arc(
-                                Arc::from(ifc_fqn),
-                                Arc::from(function_name),
-                            ),
-                        })?;
-                    let mut results = func.results();
-                    let result = if results.len() <= 1 {
-                        results
-                            .next()
-                            .map(TypeWrapper::try_from)
-                            .transpose()
-                            .map_err(|err| DecodeError::TypeNotSupported {
+                    {
+                        Ok(params) => params,
+                        Err(err) => {
+                            return Err(DecodeError::TypeNotSupported {
                                 err,
-                                ffqn: FunctionFqn::new_arc(
-                                    Arc::from(ifc_fqn),
-                                    Arc::from(function_name),
-                                ),
+                                ffqn: FunctionFqn::new_arc(ifc_fqn, function_name),
                             })
-                    } else {
-                        Err(DecodeError::MultiValueResultNotSupported(
-                            FunctionFqn::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)),
-                        ))
-                    }?;
-                    let function_name: Arc<str> = Arc::from(function_name);
-                    let ffqn = FunctionFqn::new_arc(Arc::from(ifc_fqn), function_name.clone());
-                    let params = if let Some(params_meta) = ffqns_to_params.remove(&ffqn) {
-                        if params_meta.len() != params.len() {
+                        }
+                    };
+                    let params = if let Some(wit_meta_params) = wit_meta_params {
+                        if wit_meta_params.len() != params.len() {
                             return Err(DecodeError::ParameterCardinalityMismatch(
-                                FunctionFqn::new_arc(Arc::from(ifc_fqn), function_name),
+                                FunctionFqn::new_arc(ifc_fqn, function_name),
                             ));
                         }
                         ParameterTypes(
-                            params_meta
+                            wit_meta_params
                                 .into_iter()
                                 .zip(params)
                                 .map(|(name_wit, type_wrapper)| ParameterType {
@@ -250,13 +265,13 @@ fn enrich_function_params<'a>(
                                 .collect(),
                         )
                     };
-                    fns.insert(FnName::new_arc(function_name), (params, result));
+                    fns.insert(FnName::new_arc(function_name), (params, return_type));
                 } else {
                     debug!("Ignoring export - not a ComponentFunc: {export:?}");
                 }
             }
             vec.push(PackageIfcFns {
-                ifc_fqn: IfcFqnName::new_arc(Arc::from(ifc_fqn)),
+                ifc_fqn: IfcFqnName::new_arc(ifc_fqn),
                 fns,
             });
         } else {
@@ -268,16 +283,22 @@ fn enrich_function_params<'a>(
     Ok(vec)
 }
 
-#[derive(serde::Serialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
+struct WitParsedFunctionMetadata {
+    params: Vec<ParameterNameWitType>,
+    return_type: Option<String>,
+}
+
+#[cfg_attr(test, derive(serde::Serialize))]
 struct ParameterNameWitType {
     name: String,
     wit_type: Option<String>,
 }
 
-fn wit_parsed_ffqn_to_param_names_and_wit_types<'a>(
+fn wit_parsed_ffqn_to_wit_parsed_fn_metadata<'a>(
     resolve: &'a Resolve,
     iter: impl Iterator<Item = (&'a WorldKey, &'a WorldItem)>,
-) -> Result<hashbrown::HashMap<FunctionFqn, Vec<ParameterNameWitType>>, DecodeError> {
+) -> Result<hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>, DecodeError> {
     let mut res_map = hashbrown::HashMap::new();
     for (_, item) in iter {
         if let wit_parser::WorldItem::Interface {
@@ -309,10 +330,10 @@ fn wit_parsed_ffqn_to_param_names_and_wit_types<'a>(
                 format!("{package}/{ifc_name}")
             };
             let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
-            for (function_name, function) in ifc.functions.iter() {
+            for (function_name, function) in &ifc.functions {
                 let ffqn =
                     FunctionFqn::new_arc(ifc_fqn.clone(), Arc::from(function_name.to_string()));
-                let param_names = function
+                let params = function
                     .params
                     .iter()
                     .map(|(param_name, param_ty)| {
@@ -322,11 +343,26 @@ fn wit_parsed_ffqn_to_param_names_and_wit_types<'a>(
                             wit_type: printer
                                 .print_type_name(resolve, param_ty)
                                 .ok()
-                                .map(|_| String::from(printer)),
+                                .map(|()| String::from(printer)),
                         }
                     })
                     .collect();
-                res_map.insert(ffqn, param_names);
+                let return_type = if let Results::Anon(return_type) = function.results {
+                    let mut printer = WitPrinter::default();
+                    printer
+                        .print_type_name(resolve, &return_type)
+                        .ok()
+                        .map(|()| String::from(printer))
+                } else {
+                    None
+                };
+                res_map.insert(
+                    ffqn,
+                    WitParsedFunctionMetadata {
+                        params,
+                        return_type,
+                    },
+                );
             }
         }
     }
@@ -335,8 +371,9 @@ fn wit_parsed_ffqn_to_param_names_and_wit_types<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::wit_parsed_ffqn_to_param_names_and_wit_types;
+    use super::wit_parsed_ffqn_to_wit_parsed_fn_metadata;
     use crate::wasm_tools::WasmComponent;
+    use concepts::FunctionMetadata;
     use rstest::rstest;
     use std::{path::PathBuf, sync::Arc};
     use wasmtime::Engine;
@@ -361,12 +398,24 @@ mod tests {
         let component = WasmComponent::new(&wasm_path, &engine).unwrap();
         let exports = component
             .exported_functions()
-            .map(|(ffqn, params, ret)| (ffqn.to_string(), (params, ret)))
+            .map(
+                |FunctionMetadata {
+                     ffqn,
+                     parameter_types,
+                     return_type,
+                 }| (ffqn.to_string(), (parameter_types, return_type)),
+            )
             .collect::<hashbrown::HashMap<_, _>>();
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
         let imports = component
             .imported_functions()
-            .map(|(ffqn, params, ret)| (ffqn.to_string(), (params, ret)))
+            .map(
+                |FunctionMetadata {
+                     ffqn,
+                     parameter_types,
+                     return_type,
+                 }| (ffqn.to_string(), (parameter_types, return_type)),
+            )
             .collect::<hashbrown::HashMap<_, _>>();
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});
     }
@@ -382,14 +431,14 @@ mod tests {
             panic!();
         };
         let world = resolve.worlds.get(world_id).expect("world must exist");
-        let exports = wit_parsed_ffqn_to_param_names_and_wit_types(&resolve, world.exports.iter())
+        let exports = wit_parsed_ffqn_to_wit_parsed_fn_metadata(&resolve, world.exports.iter())
             .unwrap()
             .into_iter()
             .map(|(ffqn, val)| (ffqn.to_string(), val))
             .collect::<hashbrown::HashMap<_, _>>();
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
 
-        let imports = wit_parsed_ffqn_to_param_names_and_wit_types(&resolve, world.imports.iter())
+        let imports = wit_parsed_ffqn_to_wit_parsed_fn_metadata(&resolve, world.imports.iter())
             .unwrap()
             .into_iter()
             .map(|(ffqn, val)| (ffqn.to_string(), (val, ffqn.ifc_fqn, ffqn.function_name)))

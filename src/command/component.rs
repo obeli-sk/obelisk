@@ -26,12 +26,17 @@ pub(crate) async fn inspect<P: AsRef<Path>>(
 }
 
 fn inspect_fns(functions: &[FunctionMetadata], verbosity: FunctionMetadataVerbosity) {
-    for (ffqn, parameter_types, result) in functions {
+    for FunctionMetadata {
+        ffqn,
+        parameter_types,
+        return_type,
+    } in functions
+    {
         print!("\t{ffqn}");
         if verbosity == FunctionMetadataVerbosity::WithTypes {
             print!(" func{parameter_types}");
-            if let Some(result) = result {
-                print!(" -> {result:?}");
+            if let Some(return_type) = return_type {
+                print!(" -> {return_type}");
             }
         }
         println!();

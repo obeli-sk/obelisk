@@ -57,7 +57,11 @@ pub(crate) mod tests {
             map.insert(
                 ffqn.clone(),
                 (
-                    (ffqn.clone(), ParameterTypes::default(), None),
+                    FunctionMetadata {
+                        ffqn: ffqn.clone(),
+                        parameter_types: ParameterTypes::default(),
+                        return_type: None,
+                    },
                     component_id.clone(),
                 ),
             );

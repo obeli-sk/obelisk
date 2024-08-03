@@ -7,7 +7,7 @@ use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
     FinishedExecutionError,
 };
-use concepts::{ComponentConfigHash, FinishedExecutionResult};
+use concepts::{ComponentConfigHash, FinishedExecutionResult, FunctionMetadata};
 use derivative::Derivative;
 use std::marker::PhantomData;
 use std::{
@@ -91,7 +91,7 @@ impl Drop for ExecutorTaskHandle {
 pub(crate) fn extract_ffqns(worker: &impl Worker) -> Arc<[FunctionFqn]> {
     worker
         .exported_functions()
-        .map(|(ffqn, _, _)| ffqn)
+        .map(|FunctionMetadata { ffqn, .. }| ffqn)
         .collect::<Arc<_>>()
 }
 
@@ -532,7 +532,12 @@ pub mod simple_worker {
         }
 
         fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            Some((self.ffqn.clone(), ParameterTypes::default(), None)).into_iter()
+            Some(FunctionMetadata {
+                ffqn: self.ffqn.clone(),
+                parameter_types: ParameterTypes::default(),
+                return_type: None,
+            })
+            .into_iter()
         }
 
         fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
@@ -1121,7 +1126,12 @@ mod tests {
         }
 
         fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            Some((FFQN_SOME, ParameterTypes::default(), None)).into_iter()
+            Some(FunctionMetadata {
+                ffqn: FFQN_SOME,
+                parameter_types: ParameterTypes::default(),
+                return_type: None,
+            })
+            .into_iter()
         }
 
         fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {

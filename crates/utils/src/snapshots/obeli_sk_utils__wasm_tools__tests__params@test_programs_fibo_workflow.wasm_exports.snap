@@ -3,40 +3,52 @@ source: crates/utils/src/wasm_tools.rs
 expression: exports
 ---
 {
-  "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
-    {
-      "name": "n",
-      "wit_type": "u8"
-    }
-  ],
-  "testing:fibo-workflow/workflow.fiboa": [
-    {
-      "name": "n",
-      "wit_type": "u8"
-    },
-    {
-      "name": "iterations",
-      "wit_type": "u32"
-    }
-  ],
-  "testing:fibo-workflow/workflow.fiboa-concurrent": [
-    {
-      "name": "n",
-      "wit_type": "u8"
-    },
-    {
-      "name": "iterations",
-      "wit_type": "u32"
-    }
-  ],
-  "testing:fibo-workflow/workflow.fibow": [
-    {
-      "name": "n",
-      "wit_type": "u8"
-    },
-    {
-      "name": "iterations",
-      "wit_type": "u32"
-    }
-  ]
+  "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": {
+    "params": [
+      {
+        "name": "n",
+        "wit_type": "u8"
+      }
+    ],
+    "return_type": "u64"
+  },
+  "testing:fibo-workflow/workflow.fiboa": {
+    "params": [
+      {
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": "u64"
+  },
+  "testing:fibo-workflow/workflow.fiboa-concurrent": {
+    "params": [
+      {
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": "u64"
+  },
+  "testing:fibo-workflow/workflow.fibow": {
+    "params": [
+      {
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": "u64"
+  }
 }

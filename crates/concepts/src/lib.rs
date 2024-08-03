@@ -418,7 +418,12 @@ impl Default for Params {
     }
 }
 
-pub type FunctionMetadata = (FunctionFqn, ParameterTypes, ReturnType);
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FunctionMetadata {
+    pub ffqn: FunctionFqn,
+    pub parameter_types: ParameterTypes,
+    pub return_type: Option<ReturnType>,
+}
 
 mod serde_params {
     use crate::{Params, ParamsInternal};
@@ -915,7 +920,21 @@ pub enum ComponentType {
     WasmWorkflow,
 }
 
-pub type ReturnType = Option<TypeWrapper>;
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ReturnType {
+    pub type_wrapper: TypeWrapper,
+    pub wit_type: Option<String>,
+}
+
+impl Display for ReturnType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(wit_type) = &self.wit_type {
+            write!(f, "{wit_type}")
+        } else {
+            write!(f, "{:?}", self.type_wrapper)
+        }
+    }
+}
 
 #[derive(
     Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Default, derive_more::Deref,

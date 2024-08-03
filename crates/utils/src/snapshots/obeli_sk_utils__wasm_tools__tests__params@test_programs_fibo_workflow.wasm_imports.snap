@@ -4,51 +4,66 @@ expression: imports
 ---
 {
   "obelisk:workflow/host-activities.new-join-set": [
-    [],
+    {
+      "params": [],
+      "return_type": "string"
+    },
     "obelisk:workflow/host-activities",
     "new-join-set"
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": [
-    [
-      {
-        "name": "join-set-id",
-        "wit_type": "string"
-      }
-    ],
+    {
+      "params": [
+        {
+          "name": "join-set-id",
+          "wit_type": "string"
+        }
+      ],
+      "return_type": "u64"
+    },
     "testing:fibo-obelisk-ext/fibo",
     "fibo-await-next"
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-future": [
-    [
-      {
-        "name": "join-set-id",
-        "wit_type": "string"
-      },
-      {
-        "name": "n",
-        "wit_type": "u8"
-      }
-    ],
+    {
+      "params": [
+        {
+          "name": "join-set-id",
+          "wit_type": "string"
+        },
+        {
+          "name": "n",
+          "wit_type": "u8"
+        }
+      ],
+      "return_type": "string"
+    },
     "testing:fibo-obelisk-ext/fibo",
     "fibo-future"
   ],
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
-    [
-      {
-        "name": "n",
-        "wit_type": "u8"
-      }
-    ],
+    {
+      "params": [
+        {
+          "name": "n",
+          "wit_type": "u8"
+        }
+      ],
+      "return_type": "u64"
+    },
     "testing:fibo-workflow/workflow-nesting",
     "fibo-nested-workflow"
   ],
   "testing:fibo/fibo.fibo": [
-    [
-      {
-        "name": "n",
-        "wit_type": "u8"
-      }
-    ],
+    {
+      "params": [
+        {
+          "name": "n",
+          "wit_type": "u8"
+        }
+      ],
+      "return_type": "u64"
+    },
     "testing:fibo/fibo",
     "fibo"
   ]

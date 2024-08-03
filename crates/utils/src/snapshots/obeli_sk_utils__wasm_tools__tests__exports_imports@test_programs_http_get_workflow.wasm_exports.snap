@@ -12,10 +12,13 @@ expression: exports
       }
     ],
     {
-      "Result": {
-        "ok": "String",
-        "err": "String"
-      }
+      "type_wrapper": {
+        "Result": {
+          "ok": "String",
+          "err": "String"
+        }
+      },
+      "wit_type": "result<string, string>"
     }
   ],
   "testing:http-workflow/workflow.get-successful": [
@@ -27,10 +30,13 @@ expression: exports
       }
     ],
     {
-      "Result": {
-        "ok": "String",
-        "err": "String"
-      }
+      "type_wrapper": {
+        "Result": {
+          "ok": "String",
+          "err": "String"
+        }
+      },
+      "wit_type": "result<string, string>"
     }
   ],
   "testing:http-workflow/workflow.get-successful-concurrently": [
@@ -44,12 +50,15 @@ expression: exports
       }
     ],
     {
-      "Result": {
-        "ok": {
-          "List": "String"
-        },
-        "err": "String"
-      }
+      "type_wrapper": {
+        "Result": {
+          "ok": {
+            "List": "String"
+          },
+          "err": "String"
+        }
+      },
+      "wit_type": "result<list<string>, string>"
     }
   ],
   "testing:http-workflow/workflow.get-successful-concurrently-stress": [
@@ -66,12 +75,15 @@ expression: exports
       }
     ],
     {
-      "Result": {
-        "ok": {
-          "List": "String"
-        },
-        "err": "String"
-      }
+      "type_wrapper": {
+        "Result": {
+          "ok": {
+            "List": "String"
+          },
+          "err": "String"
+        }
+      },
+      "wit_type": "result<list<string>, string>"
     }
   ]
 }
