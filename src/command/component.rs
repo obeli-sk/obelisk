@@ -1,11 +1,10 @@
-use crate::config::store::ConfigStore;
+use super::grpc::{self, function_repository_client::FunctionRepositoryClient};
+use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use crate::FunctionMetadataVerbosity;
 use anyhow::Context;
-use concepts::storage::DbPool;
-use concepts::storage::{ComponentToggle, DbConnection};
-use concepts::{ComponentConfigHash, FunctionMetadata};
-use db_sqlite::sqlite_dao::SqlitePool;
+use concepts::{ComponentConfigHash, FunctionFqn, FunctionMetadata};
 use std::path::Path;
+use tonic::transport::Channel;
 use wasm_workers::component_detector::ComponentDetector;
 
 pub(crate) async fn inspect<P: AsRef<Path>>(
@@ -19,13 +18,15 @@ pub(crate) async fn inspect<P: AsRef<Path>>(
     let detected = ComponentDetector::new(wasm_path, &engine).context("parsing error")?;
     println!("Component type:\n\t{}", detected.component_type);
     println!("Exports:");
-    inspect_fns(&detected.exports, FunctionMetadataVerbosity::WithTypes);
-    println!("Imports:");
-    inspect_fns(&detected.imports, verbosity);
+    inspect_fns(&detected.exports, true);
+    if verbosity > FunctionMetadataVerbosity::ExportsOnly {
+        println!("Imports:");
+        inspect_fns(&detected.imports, true);
+    }
     Ok(())
 }
 
-fn inspect_fns(functions: &[FunctionMetadata], verbosity: FunctionMetadataVerbosity) {
+fn inspect_fns(functions: &[FunctionMetadata], show_params: bool) {
     for FunctionMetadata {
         ffqn,
         parameter_types,
@@ -33,8 +34,8 @@ fn inspect_fns(functions: &[FunctionMetadata], verbosity: FunctionMetadataVerbos
     } in functions
     {
         print!("\t{ffqn}");
-        if verbosity == FunctionMetadataVerbosity::WithTypes {
-            print!(" func{parameter_types}");
+        if show_params {
+            print!(" : func{parameter_types}");
             if let Some(return_type) = return_type {
                 print!(" -> {return_type}");
             }
@@ -43,72 +44,72 @@ fn inspect_fns(functions: &[FunctionMetadata], verbosity: FunctionMetadataVerbos
     }
 }
 
-pub(crate) async fn list<P: AsRef<Path>>(
-    db_file: P,
-    toggle: ComponentToggle,
-    verbosity: Option<FunctionMetadataVerbosity>,
+pub(crate) async fn find_components(
+    mut client: FunctionRepositoryClient<Channel>,
+    config_id: Option<&ComponentConfigHash>,
+    ffqn: Option<&FunctionFqn>,
+    verbosity: FunctionMetadataVerbosity,
 ) -> anyhow::Result<()> {
-    let db_file = db_file.as_ref();
-    let db_pool = SqlitePool::new(db_file)
+    let components = client
+        .list_components(tonic::Request::new(super::grpc::ListComponentsRequest {
+            function: ffqn.map(grpc::FunctionName::from),
+            config_id: config_id.map(|config_id| grpc::ConfigId {
+                id: config_id.to_string(),
+            }),
+        }))
         .await
-        .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
-    let db_connection = db_pool.connection();
-    let components = db_connection
-        .component_list(toggle)
-        .await
-        .context("database error")?;
+        .to_anyhow()?
+        .into_inner()
+        .components;
     for component in components {
-        let config_store: ConfigStore = serde_json::from_value(component.config)
-            .context("deserialization of config store failed")?;
         println!(
-            "{component_type}\t{name}\tid: {hash}",
-            component_type = component.config_id.component_type,
-            name = config_store.name(),
-            hash = component.config_id,
+            "{ty}\t{name}\t{id}",
+            ty = component.r#type,
+            name = component.name,
+            id = component.config_id.map(|id| id.id).unwrap_or_default()
         );
-        let component = db_connection
-            .component_get_metadata(&component.config_id)
-            .await
-            .context("database error")?;
         println!("Exports:");
-        inspect_fns(&component.exports, FunctionMetadataVerbosity::WithTypes);
-        if let Some(verbosity) = verbosity {
+        print_fn_details(component.exports)?;
+        if verbosity > FunctionMetadataVerbosity::ExportsOnly {
             println!("Imports:");
-            inspect_fns(&component.imports, verbosity);
+            print_fn_details(component.imports)?;
         }
         println!();
     }
     Ok(())
 }
 
-pub(crate) async fn get<P: AsRef<Path>>(
-    db_file: P,
-    config_id: &ComponentConfigHash,
-    verbosity: Option<FunctionMetadataVerbosity>,
-) -> anyhow::Result<()> {
-    let db_file = db_file.as_ref();
-    let db_pool = SqlitePool::new(db_file)
-        .await
-        .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
-    let db_connection = db_pool.connection();
-    let component = db_connection
-        .component_get_metadata(config_id)
-        .await
-        .context("database error")?;
-    let config_store: ConfigStore = serde_json::from_value(component.component.config)
-        .expect("deserialization of config store failed");
-    println!(
-        "{component_type}\t{name}\tid: {hash}\tToggle: {toggle}",
-        component_type = component.component.config_id.component_type,
-        name = config_store.name(),
-        hash = component.component.config_id,
-        toggle = component.component.enabled,
-    );
-    println!("Exports:");
-    inspect_fns(&component.exports, FunctionMetadataVerbosity::WithTypes);
-    if let Some(verbosity) = verbosity {
-        println!("Imports:");
-        inspect_fns(&component.imports, verbosity);
+fn print_fn_details(vec: Vec<grpc::FunctionDetails>) -> Result<(), anyhow::Error> {
+    for fn_detail in vec {
+        let func = FunctionFqn::from(fn_detail.function.context("function must exist")?);
+        print!("\t{func} : func(");
+        let mut params = fn_detail.params.into_iter().peekable();
+        while let Some(param) = params.next() {
+            print!("{}: ", param.name.as_deref().unwrap_or("unknown"));
+            print_wit_type(param.r#type.context("field `params.type` must exist")?)?;
+            if params.peek().is_some() {
+                print!(", ");
+            }
+        }
+        print!(")");
+        if let Some(return_type) = fn_detail.return_type {
+            print!(" -> ");
+            print_wit_type(return_type)?;
+        }
+        println!();
+    }
+    Ok(())
+}
+
+fn print_wit_type(wit_type: grpc::WitType) -> Result<(), anyhow::Error> {
+    if let Some(wit_type) = wit_type.wit_type {
+        print!("{wit_type}");
+    } else if let Some(internal) = wit_type.internal {
+        let str = String::from_utf8(internal.value)
+            .with_context(|| format!("cannot convert to UTF-8 - {}", internal.type_url))?;
+        print!("{str}");
+    } else {
+        print!("<unknown type>");
     }
     Ok(())
 }

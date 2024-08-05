@@ -1,7 +1,7 @@
 use super::grpc;
 use super::grpc::scheduler_client::SchedulerClient;
 use crate::command::grpc::execution_status::Finished;
-use crate::grpc_util::grpc_mapping::unwrap_resp_or_get_err_message;
+use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use anyhow::Context;
 use chrono::DateTime;
 use concepts::FinishedExecutionResult;
@@ -10,7 +10,6 @@ use concepts::{ExecutionId, FunctionFqn};
 use grpc::execution_status::Status;
 use std::str::FromStr;
 use tonic::transport::Channel;
-use tracing::trace;
 use val_json::wast_val::WastVal;
 use val_json::wast_val::WastValWithType;
 
@@ -30,11 +29,10 @@ pub(crate) async fn submit(
             function: Some(ffqn.into()),
             execution_id: None,
         }))
-        .await;
-    trace!("{resp:?}");
-    let resp = unwrap_resp_or_get_err_message(resp)?;
+        .await
+        .to_anyhow()?
+        .into_inner();
     let execution_id = resp
-        .into_inner()
         .execution_id
         .context("response field `execution_id` must be present")
         .map(|execution_id| {
@@ -148,15 +146,14 @@ pub(crate) async fn get(
     follow: bool,
     _verbosity: ExecutionVerbosity, // TODO
 ) -> anyhow::Result<()> {
-    let mut stream = unwrap_resp_or_get_err_message(
-        client
-            .get_status(tonic::Request::new(grpc::GetStatusRequest {
-                execution_id: Some(execution_id.into()),
-                follow,
-            }))
-            .await,
-    )?
-    .into_inner();
+    let mut stream = client
+        .get_status(tonic::Request::new(grpc::GetStatusRequest {
+            execution_id: Some(execution_id.into()),
+            follow,
+        }))
+        .await
+        .to_anyhow()?
+        .into_inner();
     while let Some(status) = stream.message().await? {
         print_status(status)?;
     }

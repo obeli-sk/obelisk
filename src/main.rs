@@ -8,11 +8,14 @@ mod oci;
 use anyhow::{bail, Context};
 use args::{Args, Executor, Subcommand};
 use clap::Parser;
-use command::grpc::scheduler_client::SchedulerClient;
-use concepts::storage::ComponentToggle;
+use command::grpc::{
+    function_repository_client::FunctionRepositoryClient, scheduler_client::SchedulerClient,
+};
 use config::toml::ConfigHolder;
 use directories::ProjectDirs;
-use tonic::codec::CompressionEncoding;
+use tonic::{codec::CompressionEncoding, transport::Channel};
+
+pub type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 fn main() -> Result<(), anyhow::Error> {
     let _guard = init::init();
@@ -27,63 +30,26 @@ fn main() -> Result<(), anyhow::Error> {
 async fn main_async() -> Result<(), anyhow::Error> {
     let config_holder = ConfigHolder::new(ProjectDirs::from("com", "obelisk", "obelisk"));
     let config = config_holder.load_config().await?;
-    let grpc_url = "http://127.0.0.1:50055";
-    let get_client = async {
-        Ok::<_, anyhow::Error>(
-            SchedulerClient::connect(grpc_url)
-                .await
-                .with_context(|| format!("cannot create gRPC client for {grpc_url}"))?
-                .send_compressed(CompressionEncoding::Zstd)
-                .accept_compressed(CompressionEncoding::Zstd)
-                .accept_compressed(CompressionEncoding::Gzip),
-        )
-    };
+    let grpc_addr = "127.0.0.1:50055";
+    let grpc_url = format!("http://{grpc_addr}");
 
     let db_file = &config
         .get_sqlite_file(config_holder.project_dirs.as_ref())
         .await?;
     match Args::parse().command {
         Subcommand::Executor(Executor::Serve { clean }) => {
-            command::server::run(config, db_file, clean, config_holder).await
+            command::server::run(config, db_file, clean, config_holder, grpc_addr.parse()?).await
         }
-        Subcommand::Component(args::Component::Inspect { path, verbose }) => {
-            command::component::inspect(
-                path,
-                if verbose {
-                    FunctionMetadataVerbosity::WithTypes
-                } else {
-                    FunctionMetadataVerbosity::FfqnOnly
-                },
-            )
-            .await
+        Subcommand::Component(args::Component::Inspect { path, verbosity }) => {
+            command::component::inspect(path, FunctionMetadataVerbosity::from(verbosity)).await
         }
-        Subcommand::Component(args::Component::List {
-            disabled,
-            verbosity,
-        }) => {
-            command::component::list(
-                db_file,
-                ComponentToggle::from(!disabled),
-                match verbosity {
-                    0 => None,
-                    1 => Some(FunctionMetadataVerbosity::FfqnOnly),
-                    _ => Some(FunctionMetadataVerbosity::WithTypes),
-                },
-            )
-            .await
-        }
-        Subcommand::Component(args::Component::Get {
-            config_id,
-            verbosity,
-        }) => {
-            command::component::get(
-                db_file,
-                &config_id,
-                match verbosity {
-                    0 => None,
-                    1 => Some(FunctionMetadataVerbosity::FfqnOnly),
-                    _ => Some(FunctionMetadataVerbosity::WithTypes),
-                },
+        Subcommand::Component(args::Component::List { verbosity }) => {
+            let client = get_fn_repository_client(grpc_url).await?;
+            command::component::find_components(
+                client,
+                None,
+                None,
+                FunctionMetadataVerbosity::from(verbosity),
             )
             .await
         }
@@ -95,7 +61,7 @@ async fn main_async() -> Result<(), anyhow::Error> {
         }) => {
             // TODO interactive search for ffqn showing param types and result, file name
             // enter parameters one by one
-            let client = get_client.await?;
+            let client = get_scheduler_client(grpc_url).await?;
             let params = serde_json::from_str(&params).context("params should be a json array")?;
             let serde_json::Value::Array(params) = params else {
                 bail!("params should be a JSON array");
@@ -107,14 +73,51 @@ async fn main_async() -> Result<(), anyhow::Error> {
             verbosity,
             follow,
         }) => {
-            let client = get_client.await?;
+            let client = get_scheduler_client(grpc_url).await?;
             command::execution::get(client, execution_id, follow, verbosity.into()).await
         }
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+async fn get_scheduler_client<D>(url: D) -> Result<SchedulerClient<Channel>, anyhow::Error>
+where
+    D: TryInto<tonic::transport::Endpoint>,
+    D::Error: Into<StdError>,
+{
+    Ok(SchedulerClient::connect(url)
+        .await
+        .context("cannot create gRPC client")?
+        .send_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Gzip))
+}
+
+async fn get_fn_repository_client<D>(
+    url: D,
+) -> Result<FunctionRepositoryClient<Channel>, anyhow::Error>
+where
+    D: TryInto<tonic::transport::Endpoint>,
+    D::Error: Into<StdError>,
+{
+    Ok(FunctionRepositoryClient::connect(url)
+        .await
+        .context("cannot create gRPC client")?
+        .send_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Gzip))
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd)]
 enum FunctionMetadataVerbosity {
-    FfqnOnly,
-    WithTypes,
+    ExportsOnly,
+    ExportsAndImports,
+}
+
+impl From<u8> for FunctionMetadataVerbosity {
+    fn from(verbosity: u8) -> Self {
+        match verbosity {
+            0 => FunctionMetadataVerbosity::ExportsOnly,
+            _ => FunctionMetadataVerbosity::ExportsAndImports,
+        }
+    }
 }

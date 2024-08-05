@@ -1,12 +1,12 @@
-use std::{borrow::Borrow, sync::Arc};
-
-use super::TonicRespResult;
 use crate::command::grpc;
 use anyhow::anyhow;
 use concepts::{
     prefixed_ulid::{ExecutorId, JoinSetId, RunId},
-    ExecutionId, FunctionFqn,
+    storage::{DbError, SpecificError},
+    ComponentConfigHash, ExecutionId, FunctionFqn,
 };
+use std::{borrow::Borrow, sync::Arc};
+use tracing::error;
 
 impl From<ExecutionId> for grpc::ExecutionId {
     fn from(value: ExecutionId) -> Self {
@@ -40,6 +40,14 @@ impl From<RunId> for grpc::RunId {
     }
 }
 
+impl From<ComponentConfigHash> for grpc::ConfigId {
+    fn from(value: ComponentConfigHash) -> Self {
+        Self {
+            id: value.to_string(),
+        }
+    }
+}
+
 impl TryFrom<grpc::ExecutionId> for ExecutionId {
     type Error = tonic::Status;
 
@@ -50,11 +58,11 @@ impl TryFrom<grpc::ExecutionId> for ExecutionId {
     }
 }
 
-pub trait OptionExt<T> {
+pub trait TonicServerOptionExt<T> {
     fn argument_must_exist(self, argument: &str) -> Result<T, tonic::Status>;
 }
 
-impl<T> OptionExt<T> for Option<T> {
+impl<T> TonicServerOptionExt<T> for Option<T> {
     fn argument_must_exist(self, argument: &str) -> Result<T, tonic::Status> {
         self.ok_or_else(|| {
             tonic::Status::invalid_argument(format!("argument `{argument}` must exist"))
@@ -62,17 +70,47 @@ impl<T> OptionExt<T> for Option<T> {
     }
 }
 
-pub(crate) fn unwrap_resp_or_get_err_message<T>(
-    res: TonicRespResult<T>,
-) -> Result<tonic::Response<T>, anyhow::Error> {
-    res.map_err(|err| {
-        let msg = err.message();
-        if msg.is_empty() {
-            anyhow!("{err}")
-        } else {
-            anyhow!("{msg}")
-        }
-    })
+pub trait TonicClientResultExt<T> {
+    fn to_anyhow(self) -> Result<tonic::Response<T>, anyhow::Error>;
+}
+
+impl<T> TonicClientResultExt<T> for Result<tonic::Response<T>, tonic::Status> {
+    fn to_anyhow(self) -> Result<tonic::Response<T>, anyhow::Error> {
+        self.map_err(|err| {
+            let msg = err.message();
+            if msg.is_empty() {
+                anyhow!("{err}")
+            } else {
+                anyhow!("{msg}")
+            }
+        })
+    }
+}
+
+pub trait TonicServerResultExt<T> {
+    fn to_status(self) -> Result<T, tonic::Status>;
+}
+
+impl<T> TonicServerResultExt<T> for Result<T, DbError> {
+    fn to_status(self) -> Result<T, tonic::Status> {
+        self.map_err(|db_err| {
+            if matches!(db_err, DbError::Specific(SpecificError::NotFound)) {
+                tonic::Status::not_found("entity not found")
+            } else {
+                error!("Got db error {db_err:?}");
+                tonic::Status::internal(format!("database error: {db_err}"))
+            }
+        })
+    }
+}
+
+impl<T> TonicServerResultExt<T> for Result<T, anyhow::Error> {
+    fn to_status(self) -> Result<T, tonic::Status> {
+        self.map_err(|err| {
+            error!("{err:?}");
+            tonic::Status::internal(format!("{err}"))
+        })
+    }
 }
 
 impl From<grpc::FunctionName> for FunctionFqn {

@@ -553,7 +553,7 @@ pub(crate) mod tests {
             .iter()
             .filter_map(|step| match step {
                 WorkflowStep::Call { ffqn } => Some(ffqn.clone()),
-                _ => None,
+                WorkflowStep::Sleep { .. } => None,
             })
             .collect::<Vec<_>>();
         let fn_registry = fn_registry_dummy(ffqns.as_slice());

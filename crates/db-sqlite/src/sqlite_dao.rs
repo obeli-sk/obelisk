@@ -1948,7 +1948,7 @@ impl DbConnection for SqlitePool {
 
     #[instrument(skip(self))]
     async fn component_list(&self, enabled: ComponentToggle) -> Result<Vec<Component>, DbError> {
-        trace!("list_components");
+        debug!("list_components");
         self.pool
             .conn_with_err_and_span::<_, _, SqliteError>(
                 move |conn| {

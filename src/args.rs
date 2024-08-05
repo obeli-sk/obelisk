@@ -1,5 +1,5 @@
 use clap::Parser;
-use concepts::{ComponentConfigHash, ExecutionId, FunctionFqn};
+use concepts::{ExecutionId, FunctionFqn};
 use std::path::PathBuf;
 
 mod shadow {
@@ -44,24 +44,11 @@ pub(crate) enum Component {
     Inspect {
         #[arg(required(true))]
         path: PathBuf,
-        #[arg(short, long)]
-        verbose: bool,
-    },
-    /// List components.
-    List {
-        // Show disabled components
-        #[arg(short, long)]
-        disabled: bool,
-        /// Enable full verbosity with `-vv`
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
     },
-    /// Get metadata of a stored component.
-    Get {
-        /// Component id consisting of a prefix and a hash
-        #[arg()]
-        config_id: ComponentConfigHash,
-        /// Enable full verbosity with `-vv`
+    /// List components.
+    List {
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
     },

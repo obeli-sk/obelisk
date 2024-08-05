@@ -5,8 +5,9 @@ use crate::config::toml::ConfigHolder;
 use crate::config::toml::ObeliskConfig;
 use crate::config::toml::VerifiedActivityConfig;
 use crate::config::toml::VerifiedWorkflowConfig;
-use crate::grpc_util::grpc_mapping::OptionExt;
 use crate::grpc_util::grpc_mapping::PendingStatusExt as _;
+use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
+use crate::grpc_util::grpc_mapping::TonicServerResultExt;
 use crate::grpc_util::TonicRespResult;
 use crate::grpc_util::TonicResult;
 use anyhow::Context;
@@ -22,12 +23,12 @@ use concepts::storage::ExecutionEvent;
 use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
 use concepts::storage::PendingState;
-use concepts::storage::SpecificError;
 use concepts::ExecutionId;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::ParameterType;
 use concepts::Params;
+use concepts::ReturnType;
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::ExecutorTaskHandle;
 use executor::executor::{ExecConfig, ExecTask};
@@ -37,6 +38,7 @@ use serde::Deserialize;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::marker::PhantomData;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -118,14 +120,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             ) = db_connection
                 .component_enabled_get_exported_function(&ffqn)
                 .await
-                .map_err(|db_err| {
-                    if matches!(db_err, DbError::Specific(SpecificError::NotFound)) {
-                        tonic::Status::not_found("function not found")
-                    } else {
-                        error!("Cannot submit execution - {db_err:?}");
-                        tonic::Status::internal(format!("database error: {db_err}"))
-                    }
-                })?;
+                .to_status()?;
             (config_id, parameter_types, return_type)
         };
         // Type check `params`
@@ -141,10 +136,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         let component = db_connection
             .component_get_metadata(&config_id)
             .await
-            .map_err(|db_err| {
-                error!("Cannot submit execution - {db_err:?}");
-                tonic::Status::internal(format!("database error: {db_err}"))
-            })?;
+            .to_status()?;
         let config_store: ConfigStore = serde_json::from_value(component.component.config)
             .map_err(|serde_err| {
                 error!("Cannot deserialize configuration {config_id} - {serde_err:?}");
@@ -170,7 +162,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 return_type: return_type.map(|rt| rt.type_wrapper),
             })
             .await
-            .unwrap();
+            .to_status()?;
         let resp = grpc::SubmitResponse {
             execution_id: Some(grpc::ExecutionId {
                 id: execution_id.to_string(),
@@ -193,14 +185,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             .argument_must_exist("execution_id")?
             .try_into()?;
         let db_connection = self.db_pool.connection();
-        let execution_log = db_connection.get(execution_id).await.map_err(|db_err| {
-            if matches!(db_err, DbError::Specific(SpecificError::NotFound)) {
-                tonic::Status::not_found("execution not found")
-            } else {
-                error!("Cannot get execution status - {db_err:?}");
-                tonic::Status::internal(format!("database error: {db_err}"))
-            }
-        })?;
+        let execution_log = db_connection.get(execution_id).await.to_status()?;
         let current_pending_state = execution_log.pending_state;
         let grpc_pending_status = convert_execution_status(&execution_log);
         let is_finished = grpc_pending_status.is_finished();
@@ -253,6 +238,103 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
     }
 }
 
+#[tonic::async_trait]
+impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
+    grpc::function_repository_server::FunctionRepository for GrpcServer<DB, P>
+{
+    async fn list_components(
+        &self,
+        _request: tonic::Request<grpc::ListComponentsRequest>,
+    ) -> TonicRespResult<grpc::ListComponentsResponse> {
+        let db_connection = self.db_pool.connection();
+        let components = db_connection
+            .component_list(ComponentToggle::Enabled)
+            .await
+            .to_status()?;
+        let mut res_components = Vec::with_capacity(components.len());
+        for component in components {
+            let config_store: ConfigStore = serde_json::from_value(component.config)
+                .context("deserialization of config store failed")
+                .to_status()?;
+            let component_meta = db_connection
+                .component_get_metadata(&component.config_id)
+                .await
+                .to_status()?;
+            let res_component = grpc::Component {
+                name: config_store.name().to_string(),
+                r#type: component.config_id.component_type.to_string(),
+                config_id: Some(component.config_id.into()),
+                digest: "TODO".to_string(),
+                file_path: Some("TODO".to_string()),
+                exports: inspect_fns(component_meta.exports, true),
+                imports: inspect_fns(component_meta.imports, true),
+            };
+            res_components.push(res_component);
+        }
+        Ok(tonic::Response::new(grpc::ListComponentsResponse {
+            components: res_components,
+        }))
+    }
+}
+
+fn inspect_fns(functions: Vec<FunctionMetadata>, show_params: bool) -> Vec<grpc::FunctionDetails> {
+    let mut vec = Vec::with_capacity(functions.len());
+    for FunctionMetadata {
+        ffqn,
+        parameter_types,
+        return_type,
+    } in functions
+    {
+        let fun = grpc::FunctionDetails {
+            params: if show_params {
+                parameter_types
+                    .0
+                    .into_iter()
+                    .map(|p| grpc::FunctionParameter {
+                        name: p.name,
+                        r#type: Some(grpc::WitType {
+                            wit_type: p.wit_type,
+                            internal: to_any(
+                                &p.type_wrapper,
+                                format!("urn:obelisk:json:params:{ffqn}"),
+                            ),
+                        }),
+                    })
+                    .collect()
+            } else {
+                Vec::default()
+            },
+            return_type: return_type.map(
+                |ReturnType {
+                     type_wrapper,
+                     wit_type,
+                 }| grpc::WitType {
+                    wit_type,
+                    internal: to_any(&type_wrapper, format!("urn:obelisk:json:ret:{ffqn}")),
+                },
+            ),
+            function: Some(ffqn.into()),
+        };
+        vec.push(fun);
+    }
+    vec
+}
+
+fn to_any<T: serde::Serialize>(serializable: T, uri: String) -> Option<prost_wkt_types::Any> {
+    serde_json::to_string(&serializable)
+        .inspect_err(|ser_err| {
+            error!(
+                "Cannot serialize {:?} - {ser_err:?}",
+                std::any::type_name::<T>()
+            );
+        })
+        .ok()
+        .map(|res| prost_wkt_types::Any {
+            type_url: uri,
+            value: res.into_bytes(),
+        })
+}
+
 fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStatus {
     use grpc::execution_status::{BlockedByJoinSet, Finished, Locked, PendingAt, Status};
     grpc::ExecutionStatus {
@@ -284,23 +366,13 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
                     ..
                 } => result);
                 Status::Finished(Finished {
-                    result: {
-                        serde_json::to_string(&finished)
-                            .inspect_err(|ser_err| {
-                                error!(
-                                    "Cannot serialize result of {execution_id} - {ser_err:?}",
-                                    execution_id = execution_log.execution_id
-                                );
-                            })
-                            .ok()
-                            .map(|res| prost_wkt_types::Any {
-                                type_url: format!(
-                                    "urn:obelisk:json:params:{ffqn}",
-                                    ffqn = execution_log.ffqn()
-                                ),
-                                value: res.into_bytes(),
-                            })
-                    },
+                    result: to_any(
+                        finished,
+                        format!(
+                            "urn:obelisk:json:params:{ffqn}",
+                            ffqn = execution_log.ffqn()
+                        ),
+                    ),
                     created_at: execution_log
                         .events
                         .first()
@@ -329,6 +401,7 @@ pub(crate) async fn run(
     db_file: &PathBuf,
     clean: bool,
     config_holder: ConfigHolder,
+    grpc_addr: SocketAddr,
 ) -> anyhow::Result<()> {
     let wasm_cache_dir = config
         .oci
@@ -419,16 +492,26 @@ pub(crate) async fn run(
             exec_join_handles.push(exec_task_handle);
         }
     }
-    let addr = "127.0.0.1:50055".parse()?;
     let grpc_server = Arc::new(GrpcServer::new(db_pool));
-    let grpc_service = grpc::scheduler_server::SchedulerServer::from_arc(grpc_server.clone())
-        .send_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Zstd)
-        .send_compressed(CompressionEncoding::Gzip)
-        .accept_compressed(CompressionEncoding::Gzip);
+
     let res = tonic::transport::Server::builder()
-        .add_service(grpc_service)
-        .serve_with_shutdown(addr, async move {
+        .add_service(
+            grpc::scheduler_server::SchedulerServer::from_arc(grpc_server.clone())
+                .send_compressed(CompressionEncoding::Zstd)
+                .accept_compressed(CompressionEncoding::Zstd)
+                .send_compressed(CompressionEncoding::Gzip)
+                .accept_compressed(CompressionEncoding::Gzip),
+        )
+        .add_service(
+            grpc::function_repository_server::FunctionRepositoryServer::from_arc(
+                grpc_server.clone(),
+            )
+            .send_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Zstd)
+            .send_compressed(CompressionEncoding::Gzip)
+            .accept_compressed(CompressionEncoding::Gzip),
+        )
+        .serve_with_shutdown(grpc_addr, async move {
             if let Err(err) = tokio::signal::ctrl_c().await {
                 error!("Error while listening to ctrl-c - {err:?}");
             }

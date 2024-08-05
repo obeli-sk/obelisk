@@ -10,6 +10,55 @@ service Scheduler {
     rpc GetStatus(GetStatusRequest) returns (stream GetStatusResponse);
 }
 
+service FunctionRepository {
+    rpc ListComponents(ListComponentsRequest) returns (ListComponentsResponse);
+//    rpc GetFunction(GetFunctionRequest) returns (GetFunctionResponse);
+}
+
+message ListComponentsRequest {
+    optional FunctionName function = 1;
+    optional ConfigId config_id = 2;
+}
+
+message ListComponentsResponse {
+    repeated Component components = 1;
+}
+
+message Component {
+    ConfigId config_id = 1;
+    string digest = 2;
+    string name = 3;
+    string type = 4;
+    optional string file_path = 5;
+    repeated FunctionDetails exports = 6;
+    repeated FunctionDetails imports = 7;
+}
+
+// message GetFunctionRequest {
+//     FunctionName exported_function = 1;
+// }
+
+// message GetFunctionResponse {
+//     Component component = 1;
+// }
+
+message FunctionDetails {
+    FunctionName function = 1;
+    repeated FunctionParameter params = 2;
+    optional WitType return_type = 3;
+
+}
+
+message FunctionParameter {
+    WitType type = 1;
+    optional string name = 2;
+}
+
+message WitType {
+    optional string wit_type = 1;
+    google.protobuf.Any internal = 2;
+}
+
 message ExecutionId {
     string id = 1;
 }
@@ -23,6 +72,10 @@ message RunId {
 }
 
 message JoinSetId {
+    string id = 1;
+}
+
+message ConfigId {
     string id = 1;
 }
 
