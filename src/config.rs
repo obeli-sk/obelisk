@@ -61,7 +61,7 @@ pub(crate) enum ConfigStore {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         child_retry_exp_backoff: Duration,
         child_max_retries: u32,
-        non_blocking_event_batching: bool,
+        non_blocking_event_batching: u32,
     },
 }
 

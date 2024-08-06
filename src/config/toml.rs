@@ -310,8 +310,8 @@ pub(crate) struct Workflow {
     pub(crate) child_retry_exp_backoff: DurationConfig,
     #[serde(default = "default_child_max_retries")]
     pub(crate) child_max_retries: u32,
-    #[serde(default = "default_true")]
-    pub(crate) non_blocking_event_batching: bool,
+    #[serde(default = "default_non_blocking_event_batching")]
+    pub(crate) non_blocking_event_batching: u32,
 }
 
 #[derive(Debug)]
@@ -346,7 +346,7 @@ impl Workflow {
             join_next_blocking_strategy: self.join_next_blocking_strategy,
             child_retry_exp_backoff: self.child_retry_exp_backoff.into(),
             child_max_retries: self.child_max_retries,
-            non_blocking_event_batching: self.non_blocking_event_batching.into(),
+            non_blocking_event_batching: self.non_blocking_event_batching,
         };
         let exec_config = exec_config.into_exec_exec_config(config_id);
         Ok(VerifiedWorkflowConfig {
@@ -454,4 +454,8 @@ const fn default_lock_expiry() -> DurationConfig {
 
 const fn default_tick_sleep() -> DurationConfig {
     DurationConfig::Millis(200)
+}
+
+const fn default_non_blocking_event_batching() -> u32 {
+    100
 }

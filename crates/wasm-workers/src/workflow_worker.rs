@@ -28,30 +28,13 @@ pub enum JoinNextBlockingStrategy {
     Await,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum NonBlockingEventBatching {
-    #[default]
-    Enabled,
-    Disabled,
-}
-
-impl From<bool> for NonBlockingEventBatching {
-    fn from(value: bool) -> Self {
-        if value {
-            NonBlockingEventBatching::Enabled
-        } else {
-            NonBlockingEventBatching::Disabled
-        }
-    }
-}
-
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WorkflowConfig {
     pub config_id: ComponentConfigHash,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub child_retry_exp_backoff: Duration,
     pub child_max_retries: u32,
-    pub non_blocking_event_batching: NonBlockingEventBatching,
+    pub non_blocking_event_batching: u32,
 }
 
 #[derive(Clone)]
@@ -391,7 +374,7 @@ mod tests {
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        non_blocking_event_batching: NonBlockingEventBatching,
+        non_blocking_event_batching: u32,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         let workflow_engine =
@@ -427,7 +410,7 @@ mod tests {
         db_pool: P,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        non_blocking_event_batching: NonBlockingEventBatching,
+        non_blocking_event_batching: u32,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         spawn_workflow(
@@ -445,8 +428,7 @@ mod tests {
     async fn fibo_workflow_should_schedule_fibo_activity_mem(
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
-        batching: NonBlockingEventBatching,
+        #[values(0, 10)] batching: u32,
     ) {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
@@ -466,8 +448,7 @@ mod tests {
     async fn fibo_workflow_should_schedule_fibo_activity_sqlite(
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
-        batching: NonBlockingEventBatching,
+        #[values(0, 10)] batching: u32,
     ) {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Sqlite.set_up().await;
@@ -488,7 +469,7 @@ mod tests {
         db_pool: P,
         sim_clock: SimClock,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        batching: NonBlockingEventBatching,
+        batching: u32,
     ) {
         const INPUT_ITERATIONS: u32 = 1;
         let _guard = test_utils::set_up();
@@ -559,8 +540,7 @@ mod tests {
     async fn fibo_workflow_with_no_activity_should_fail(
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
-        batching: NonBlockingEventBatching,
+        #[values(0, 10)] batching: u32,
     ) {
         const INPUT_ITERATIONS: u32 = 1;
         let sim_clock = SimClock::default();
@@ -624,7 +604,7 @@ mod tests {
         db_pool: P,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        non_blocking_event_batching: NonBlockingEventBatching,
+        non_blocking_event_batching: u32,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Arc<WorkflowWorker<C, DB, P>> {
         Arc::new(
@@ -650,7 +630,7 @@ mod tests {
         db_pool: P,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        non_blocking_event_batching: NonBlockingEventBatching,
+        non_blocking_event_batching: u32,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         let worker = get_workflow_worker(
@@ -674,8 +654,7 @@ mod tests {
     async fn sleep_should_be_persisted_after_executor_restart(
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
-        batching: NonBlockingEventBatching,
+        #[values(0, 10)] batching: u32,
     ) {
         const SLEEP_MILLIS: u32 = 100;
         let _guard = test_utils::set_up();
@@ -762,8 +741,7 @@ mod tests {
     async fn http_get(
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
-        batching: NonBlockingEventBatching,
+        #[values(0, 10)] batching: u32,
     ) {
         use crate::activity_worker::tests::spawn_activity;
         use chrono::DateTime;
@@ -850,8 +828,7 @@ mod tests {
         #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_strategy: JoinNextBlockingStrategy,
-        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
-        batching: NonBlockingEventBatching,
+        #[values(0, 10)] batching: u32,
     ) {
         use crate::activity_worker::tests::spawn_activity;
         use chrono::DateTime;
@@ -949,8 +926,7 @@ mod tests {
         #[values(db_tests::Database::Memory, db_tests::Database::Sqlite)] db: db_tests::Database,
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_strategy: JoinNextBlockingStrategy,
-        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
-        batching: NonBlockingEventBatching,
+        #[values(0, 10)] batching: u32,
     ) {
         use concepts::prefixed_ulid::ExecutorId;
 

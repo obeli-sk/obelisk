@@ -1,5 +1,5 @@
 use crate::event_history::{EventCall, EventHistory};
-use crate::workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching};
+use crate::workflow_worker::JoinNextBlockingStrategy;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
@@ -105,7 +105,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         execution_deadline: DateTime<Utc>,
         retry_exp_backoff: Duration,
         max_retries: u32,
-        non_blocking_event_batching: NonBlockingEventBatching,
+        non_blocking_event_batching: u32,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Self {
@@ -380,9 +380,8 @@ const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::{
-        tests::fn_registry_dummy,
-        workflow_ctx::WorkflowCtx,
-        workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching},
+        tests::fn_registry_dummy, workflow_ctx::WorkflowCtx,
+        workflow_worker::JoinNextBlockingStrategy,
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
@@ -452,7 +451,7 @@ pub(crate) mod tests {
                 ctx.execution_deadline,
                 Duration::ZERO,
                 0,
-                NonBlockingEventBatching::Disabled, // TODO: parametrize
+                0, // TODO: parametrize batch size
                 Arc::new(std::sync::Mutex::new(WorkerResult::Err(
                     WorkerError::IntermittentTimeout,
                 ))),

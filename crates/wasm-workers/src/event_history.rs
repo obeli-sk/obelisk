@@ -2,7 +2,6 @@ use crate::event_history::ProcessingStatus::Processed;
 use crate::event_history::ProcessingStatus::Unprocessed;
 use crate::workflow_ctx::FunctionError;
 use crate::workflow_worker::JoinNextBlockingStrategy;
-use crate::workflow_worker::NonBlockingEventBatching;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::HistoryEventScheduledAt;
@@ -26,8 +25,6 @@ use utils::time::ClockFn;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 
-const MAX_NON_BLOCKING_CACHE_SIZE: usize = 50;
-
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum ProcessingStatus {
     Unprocessed,
@@ -44,6 +41,7 @@ pub(crate) struct EventHistory<C: ClockFn> {
     child_max_retries: u32,
     event_history: Vec<(HistoryEvent, ProcessingStatus)>,
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
+    non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     clock_fn: C,
     timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
@@ -69,10 +67,11 @@ impl<C: ClockFn> EventHistory<C> {
         execution_deadline: DateTime<Utc>,
         child_retry_exp_backoff: Duration,
         child_max_retries: u32,
-        non_blocking_event_batching: NonBlockingEventBatching,
+        non_blocking_event_batching: u32,
         clock_fn: C,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
     ) -> Self {
+        let non_blocking_event_batch_size = non_blocking_event_batching as usize;
         EventHistory {
             execution_id,
             event_history: event_history
@@ -87,9 +86,11 @@ impl<C: ClockFn> EventHistory<C> {
             execution_deadline,
             child_retry_exp_backoff,
             child_max_retries,
-            non_blocking_event_batch: match non_blocking_event_batching {
-                NonBlockingEventBatching::Disabled => None,
-                NonBlockingEventBatching::Enabled => Some(Vec::new()),
+            non_blocking_event_batch_size,
+            non_blocking_event_batch: if non_blocking_event_batch_size == 0 {
+                None
+            } else {
+                Some(Vec::with_capacity(non_blocking_event_batch_size))
             },
             clock_fn,
             timeout_error_container,
@@ -419,17 +420,12 @@ impl<C: ClockFn> EventHistory<C> {
         db_connection: &DB,
         created_at: DateTime<Utc>,
     ) -> Result<(), DbError> {
-        if self
-            .non_blocking_event_batch
-            .as_ref()
-            .map(std::vec::Vec::len)
-            .unwrap_or_default()
-            >= MAX_NON_BLOCKING_CACHE_SIZE
-        {
-            self.flush_non_blocking_event_cache(db_connection, created_at)
-                .await
-        } else {
-            Ok(())
+        match &self.non_blocking_event_batch {
+            Some(vec) if vec.len() >= self.non_blocking_event_batch_size => {
+                self.flush_non_blocking_event_cache(db_connection, created_at)
+                    .await
+            }
+            _ => Ok(()),
         }
     }
 
@@ -929,7 +925,7 @@ mod tests {
     use crate::event_history::{EventCall, EventHistory};
     use crate::tests::fn_registry_dummy;
     use crate::workflow_ctx::FunctionError;
-    use crate::workflow_worker::{JoinNextBlockingStrategy, NonBlockingEventBatching};
+    use crate::workflow_worker::JoinNextBlockingStrategy;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::JoinSetId;
@@ -958,7 +954,7 @@ mod tests {
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        non_blocking_event_batching: NonBlockingEventBatching,
+        non_blocking_event_batching: u32,
     ) -> (EventHistory<C>, Version) {
         let exec_log = db_connection.get(execution_id).await.unwrap();
         let event_history = EventHistory::new(
@@ -987,8 +983,7 @@ mod tests {
     async fn regular_join_next_child(
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         second_run_strategy: JoinNextBlockingStrategy,
-        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
-        batching: NonBlockingEventBatching,
+        #[values(0, 10)] batching: u32,
     ) {
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
@@ -1115,8 +1110,7 @@ mod tests {
     async fn start_async_respond_then_join_next(
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
-        batching: NonBlockingEventBatching,
+        #[values(0, 10)] batching: u32,
     ) {
         const CHILD_RESP: SupportedFunctionResult =
             SupportedFunctionResult::Infallible(WastValWithType {
@@ -1263,8 +1257,7 @@ mod tests {
     async fn create_two_non_blocking_childs_then_two_join_nexts(
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         second_run_strategy: JoinNextBlockingStrategy,
-        #[values(NonBlockingEventBatching::Disabled, NonBlockingEventBatching::Enabled)]
-        batching: NonBlockingEventBatching,
+        #[values(0, 10)] batching: u32,
     ) {
         const KID_A: SupportedFunctionResult =
             SupportedFunctionResult::Infallible(WastValWithType {
