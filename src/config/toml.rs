@@ -95,6 +95,7 @@ impl ObeliskConfig {
 
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct OciConfig {
+    #[serde(default)]
     wasm_directory: Option<String>,
 }
 
@@ -114,9 +115,11 @@ impl OciConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Default, Deserialize)]
 pub(crate) struct CodegenCache {
+    #[serde(default)]
     enabled: bool,
+    #[serde(default)]
     directory: Option<String>,
 }
 
@@ -230,17 +233,20 @@ impl From<DurationConfig> for Duration {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecConfig {
+    #[serde(default = "default_batch_size")]
     batch_size: u32,
+    #[serde(default = "default_lock_expiry")]
     lock_expiry: DurationConfig,
+    #[serde(default = "default_tick_sleep")]
     tick_sleep: DurationConfig,
 }
 
 impl Default for ExecConfig {
     fn default() -> Self {
         Self {
-            batch_size: 5,
-            lock_expiry: DurationConfig::Secs(1),
-            tick_sleep: DurationConfig::Millis(200),
+            batch_size: default_batch_size(),
+            lock_expiry: default_lock_expiry(),
+            tick_sleep: default_tick_sleep(),
         }
     }
 }
@@ -414,26 +420,38 @@ impl ConfigHolder {
 }
 
 // https://github.com/serde-rs/serde/issues/368
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
 
-fn default_max_retries() -> u32 {
+const fn default_max_retries() -> u32 {
     5
 }
 
-fn default_retry_exp_backoff() -> DurationConfig {
+const fn default_retry_exp_backoff() -> DurationConfig {
     DurationConfig::Millis(100)
 }
 
-fn default_strategy() -> JoinNextBlockingStrategy {
+const fn default_strategy() -> JoinNextBlockingStrategy {
     JoinNextBlockingStrategy::Await
 }
 
-fn default_child_retry_exp_backoff() -> DurationConfig {
+const fn default_child_retry_exp_backoff() -> DurationConfig {
     DurationConfig::Millis(100)
 }
 
-fn default_child_max_retries() -> u32 {
+const fn default_child_max_retries() -> u32 {
     5
+}
+
+const fn default_batch_size() -> u32 {
+    5
+}
+
+const fn default_lock_expiry() -> DurationConfig {
+    DurationConfig::Secs(1)
+}
+
+const fn default_tick_sleep() -> DurationConfig {
+    DurationConfig::Millis(200)
 }
