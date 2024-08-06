@@ -6,7 +6,6 @@ use crate::ComponentConfigHash;
 use crate::ExecutionId;
 use crate::FinishedExecutionResult;
 use crate::FunctionFqn;
-use crate::FunctionMetadata;
 use crate::Params;
 use crate::StrVariant;
 use crate::SupportedFunctionResult;
@@ -653,87 +652,6 @@ pub trait DbConnection: Send + Sync {
             fut.await
         }
     }
-
-    /// Add a component. If the component is enabled and there are
-    /// components with overlapping exports, the operation will fail
-    /// and the error will contain the list of components that
-    /// must be disabled first.
-    async fn component_add(
-        &self,
-        created_at: DateTime<Utc>,
-        component: ComponentWithMetadata,
-        toggle: ComponentToggle,
-    ) -> Result<(), ComponentAddError>;
-
-    /// List the components, sorted by last update date from oldest to newest.
-    async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError>;
-
-    /// Get component and its metadata and state.
-    async fn component_get_metadata(
-        &self,
-        config_id: &ComponentConfigHash,
-    ) -> Result<ComponentWithMetadata, DbError>;
-
-    /// Find exported function in the enabled component list.
-    async fn component_enabled_get_exported_function(
-        &self,
-        ffqn: &FunctionFqn,
-    ) -> Result<(ComponentConfigHash, FunctionMetadata), DbError>;
-
-    // /// Enable or disable a component
-    async fn component_toggle(
-        &self,
-        config_id: &ComponentConfigHash,
-        toggle: ComponentToggle,
-        updated_at: DateTime<Utc>,
-    ) -> Result<(), DbError>;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
-pub enum ComponentToggle {
-    Enabled,
-    Disabled,
-}
-
-impl From<bool> for ComponentToggle {
-    fn from(value: bool) -> Self {
-        if value {
-            Self::Enabled
-        } else {
-            Self::Disabled
-        }
-    }
-}
-
-impl From<ComponentToggle> for bool {
-    fn from(value: ComponentToggle) -> Self {
-        match value {
-            ComponentToggle::Disabled => false,
-            ComponentToggle::Enabled => true,
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ComponentAddError {
-    #[error("conflict")]
-    Conflict(Vec<ComponentConfigHash>),
-    #[error(transparent)]
-    DbError(DbError),
-}
-
-#[derive(Debug, Clone)]
-pub struct Component {
-    pub config_id: ComponentConfigHash, // Unique identifier computed from `config` field.
-    pub config: serde_json::Value, // Configuration that can be deserialized by looking at the component type.
-    pub enabled: ComponentToggle,
-}
-
-#[derive(Debug, Clone)]
-pub struct ComponentWithMetadata {
-    pub component: Component,
-    pub exports: Vec<FunctionMetadata>,
-    pub imports: Vec<FunctionMetadata>,
 }
 
 pub async fn wait_for_pending_state_fn<T: Debug>(

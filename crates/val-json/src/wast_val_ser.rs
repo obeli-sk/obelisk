@@ -138,7 +138,7 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
             type Value = WastVal;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(formatter, "value matching {type:?}", type = self.0)
+                write!(formatter, "value matching {type:?}", type = self.0) // TODO: wit_type instead of TypeWrapper
             }
 
             fn visit_bool<E>(self, val: bool) -> Result<Self::Value, E>

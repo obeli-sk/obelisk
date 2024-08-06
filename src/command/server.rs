@@ -1,20 +1,18 @@
 use super::grpc;
-use crate::config::store::ConfigStore;
-use crate::config::store::ConfigStoreCommon;
 use crate::config::toml::ConfigHolder;
 use crate::config::toml::ObeliskConfig;
 use crate::config::toml::VerifiedActivityConfig;
 use crate::config::toml::VerifiedWorkflowConfig;
+use crate::config::Component;
+use crate::config::ConfigStore;
 use crate::grpc_util::grpc_mapping::PendingStatusExt as _;
 use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
 use crate::grpc_util::grpc_mapping::TonicServerResultExt;
 use crate::grpc_util::TonicRespResult;
 use crate::grpc_util::TonicResult;
+use anyhow::bail;
 use anyhow::Context;
 use assert_matches::assert_matches;
-use concepts::storage::Component;
-use concepts::storage::ComponentToggle;
-use concepts::storage::ComponentWithMetadata;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbError;
@@ -23,7 +21,9 @@ use concepts::storage::ExecutionEvent;
 use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
 use concepts::storage::PendingState;
+use concepts::ComponentConfigHash;
 use concepts::ExecutionId;
+use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::ParameterType;
@@ -39,13 +39,13 @@ use std::fmt::Debug;
 use std::fmt::Display;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, Stream};
+use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
 use tracing::error;
 use tracing::{debug, info};
@@ -58,13 +58,15 @@ use wasm_workers::workflow_worker::WorkflowWorker;
 #[derive(Debug)]
 struct GrpcServer<DB: DbConnection, P: DbPool<DB>> {
     db_pool: P,
+    component_registry: ComponentConfigRegistry,
     phantom_data: PhantomData<DB>,
 }
 
 impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
-    fn new(db_pool: P) -> Self {
+    fn new(db_pool: P, component_registry: ComponentConfigRegistry) -> Self {
         Self {
             db_pool,
+            component_registry,
             phantom_data: PhantomData,
         }
     }
@@ -92,6 +94,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             .map_or_else(|| Ok(ExecutionId::generate()), ExecutionId::try_from)?;
         let ffqn =
             concepts::FunctionFqn::new_arc(Arc::from(interface_name), Arc::from(function_name));
+        // Deserialize params JSON into `Params`
         let params = {
             let params = request.params.argument_must_exist("params")?;
             let params = String::from_utf8(params.value).map_err(|_err| {
@@ -106,26 +109,15 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             )?
         };
 
-        let db_connection = self.db_pool.connection();
         // Check that ffqn exists
-
-        let (config_id, param_types, return_type) = {
-            let (
-                config_id,
-                FunctionMetadata {
-                    ffqn: _,
-                    parameter_types,
-                    return_type,
-                },
-            ) = db_connection
-                .component_enabled_get_exported_function(&ffqn)
-                .await
-                .to_status()?;
-            (config_id, parameter_types, return_type)
+        let Some((component, fn_meta)) = self.component_registry.find_by_exported_ffqn(&ffqn)
+        else {
+            return Err(tonic::Status::not_found("function not found"));
         };
         // Type check `params`
         if let Err(err) = params.typecheck(
-            param_types
+            fn_meta
+                .parameter_types
                 .iter()
                 .map(|ParameterType { type_wrapper, .. }| type_wrapper),
         ) {
@@ -133,20 +125,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 "argument `params` invalid - {err}"
             )));
         }
-        let component = db_connection
-            .component_get_metadata(&config_id)
-            .await
-            .to_status()?;
-        let config_store: ConfigStore = serde_json::from_value(component.component.config)
-            .map_err(|serde_err| {
-                error!("Cannot deserialize configuration {config_id} - {serde_err:?}");
-                tonic::Status::internal(format!("configuration deserialization error: {serde_err}"))
-            })?;
-        let ConfigStoreCommon {
-            default_retry_exp_backoff,
-            default_max_retries,
-            ..
-        } = config_store.common();
+        let db_connection = self.db_pool.connection();
         let created_at = now();
         db_connection
             .create(CreateRequest {
@@ -156,10 +135,13 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 params,
                 parent: None,
                 scheduled_at: created_at,
-                retry_exp_backoff: *default_retry_exp_backoff,
-                max_retries: *default_max_retries,
-                config_id,
-                return_type: return_type.map(|rt| rt.type_wrapper),
+                retry_exp_backoff: component.config_store.common().default_retry_exp_backoff,
+                max_retries: component.config_store.common().default_max_retries,
+                config_id: component.config_id.clone(),
+                return_type: fn_meta
+                    .return_type
+                    .as_ref()
+                    .map(|rt| rt.type_wrapper.clone()),
             })
             .await
             .to_status()?;
@@ -246,28 +228,17 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         &self,
         _request: tonic::Request<grpc::ListComponentsRequest>,
     ) -> TonicRespResult<grpc::ListComponentsResponse> {
-        let db_connection = self.db_pool.connection();
-        let components = db_connection
-            .component_list(ComponentToggle::Enabled)
-            .await
-            .to_status()?;
+        let components = self.component_registry.list();
         let mut res_components = Vec::with_capacity(components.len());
         for component in components {
-            let config_store: ConfigStore = serde_json::from_value(component.config)
-                .context("deserialization of config store failed")
-                .to_status()?;
-            let component_meta = db_connection
-                .component_get_metadata(&component.config_id)
-                .await
-                .to_status()?;
             let res_component = grpc::Component {
-                name: config_store.name().to_string(),
+                name: component.config_store.name().to_string(),
                 r#type: component.config_id.component_type.to_string(),
                 config_id: Some(component.config_id.into()),
-                digest: "TODO".to_string(),
-                file_path: Some("TODO".to_string()),
-                exports: inspect_fns(component_meta.exports, true),
-                imports: inspect_fns(component_meta.imports, true),
+                digest: component.config_store.common().content_digest.to_string(),
+                file_path: Some("TODO - location?".to_string()),
+                exports: inspect_fns(component.exports, true),
+                imports: inspect_fns(component.imports, true),
             };
             res_components.push(res_component);
         }
@@ -398,11 +369,13 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn run(
     config: ObeliskConfig,
-    db_file: &PathBuf,
     clean: bool,
     config_holder: ConfigHolder,
     grpc_addr: SocketAddr,
 ) -> anyhow::Result<()> {
+    let db_file = &config
+        .get_sqlite_file(config_holder.project_dirs.as_ref())
+        .await?;
     let wasm_cache_dir = config
         .oci
         .get_wasm_directory(config_holder.project_dirs.as_ref())
@@ -470,30 +443,27 @@ pub(crate) async fn run(
             clock_fn: now,
         },
     );
-    disable_all_components(db_pool.connection()).await?;
 
     debug!("Loading components: {config:?}");
     let mut exec_join_handles = Vec::new();
-
+    let mut component_registry = ComponentConfigRegistry::default();
     for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
         let activity = activity.verify_content_digest(&wasm_cache_dir).await?;
-
-        if activity.enabled.into() {
+        if activity.enabled {
             let exec_task_handle =
-                instantiate_activity(activity, db_pool.clone(), &engines).await?;
+                instantiate_activity(activity, db_pool.clone(), &mut component_registry, &engines)?;
             exec_join_handles.push(exec_task_handle);
         }
     }
     for workflow in config.workflow.into_iter().filter(|it| it.common.enabled) {
         let workflow = workflow.verify_content_digest(&wasm_cache_dir).await?;
-        if workflow.enabled.into() {
+        if workflow.enabled {
             let exec_task_handle =
-                instantiate_workflow(workflow, db_pool.clone(), &engines).await?;
+                instantiate_workflow(workflow, db_pool.clone(), &engines, &mut component_registry)?;
             exec_join_handles.push(exec_task_handle);
         }
     }
-    let grpc_server = Arc::new(GrpcServer::new(db_pool));
-
+    let grpc_server = Arc::new(GrpcServer::new(db_pool, component_registry));
     let res = tonic::transport::Server::builder()
         .add_service(
             grpc::scheduler_server::SchedulerServer::from_arc(grpc_server.clone())
@@ -581,9 +551,10 @@ fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
     opts
 }
 
-async fn instantiate_activity<DB: DbConnection + 'static>(
+fn instantiate_activity<DB: DbConnection + 'static>(
     activity: VerifiedActivityConfig,
     db_pool: impl DbPool<DB> + 'static,
+    component_registry: &mut ComponentConfigRegistry,
     engines: &Engines,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
     info!(
@@ -601,26 +572,18 @@ async fn instantiate_activity<DB: DbConnection + 'static>(
     )?);
     register_and_spawn(
         worker,
-        &activity.config_store,
-        activity.exec_config,
         db_pool,
+        activity.config_store,
+        activity.exec_config,
+        component_registry,
     )
-    .await
 }
 
-async fn disable_all_components(conn: impl DbConnection) -> Result<(), anyhow::Error> {
-    // TODO: should be in a tx together with enabling the current components
-    for component in conn.component_list(ComponentToggle::Enabled).await? {
-        conn.component_toggle(&component.config_id, ComponentToggle::Disabled, now())
-            .await?;
-    }
-    Ok(())
-}
-
-async fn instantiate_workflow<DB: DbConnection + 'static>(
+fn instantiate_workflow<DB: DbConnection + 'static>(
     workflow: VerifiedWorkflowConfig,
-    db_pool: impl DbPool<DB> + FunctionRegistry + 'static,
+    db_pool: impl DbPool<DB> + 'static,
     engines: &Engines,
+    component_registry: &mut ComponentConfigRegistry,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
     info!(
         "Instantiating workflow {name} with id {config_id} from {wasm_path:?}",
@@ -629,58 +592,120 @@ async fn instantiate_workflow<DB: DbConnection + 'static>(
         wasm_path = workflow.wasm_path,
     );
     debug!("Full configuration: {workflow:?}");
-    let fn_registry = Arc::from(db_pool.clone());
     let worker = Arc::new(WorkflowWorker::new_with_config(
         workflow.wasm_path,
         workflow.workflow_config,
         engines.workflow_engine.clone(),
         db_pool.clone(),
         now,
-        fn_registry,
+        component_registry.get_fn_registry(),
     )?);
     register_and_spawn(
         worker,
-        &workflow.config_store,
-        workflow.exec_config,
         db_pool,
+        workflow.config_store,
+        workflow.exec_config,
+        component_registry,
     )
-    .await
 }
 
-async fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
+fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
     worker: Arc<W>,
-    config: &ConfigStore,
-    exec_config: ExecConfig,
     db_pool: impl DbPool<DB> + 'static,
+    config_store: ConfigStore,
+    exec_config: ExecConfig,
+    component_registry: &mut ComponentConfigRegistry,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
-    let config_id = exec_config.config_id.clone();
-    let connection = db_pool.connection();
-    // If the component exists, just enable it
-    let found = match connection
-        .component_toggle(&config_id, ComponentToggle::Enabled, now())
-        .await
-    {
-        Ok(()) => {
-            debug!("Enabled component {config_id}");
-            true
-        }
-        Err(DbError::Specific(concepts::storage::SpecificError::NotFound)) => false,
-        Err(other) => Err(other)?,
+    let component = Component {
+        config_id: config_store.as_hash(),
+        config_store,
+        exports: worker.exported_functions().collect(),
+        imports: worker.imported_functions().collect(),
     };
-    if !found {
-        let component = ComponentWithMetadata {
-            component: Component {
-                config_id,
-                config: serde_json::to_value(config)
-                    .expect("ConfigStore must be serializable to JSON"),
-                enabled: ComponentToggle::Enabled,
-            },
-            exports: worker.exported_functions().collect(),
-            imports: worker.imported_functions().collect(),
-        };
-        connection
-            .component_add(now(), component, ComponentToggle::Enabled)
-            .await?;
-    }
+    component_registry.insert(component)?;
     Ok(ExecTask::spawn_new(worker, exec_config, now, db_pool, None))
+}
+
+// TODO: If dynamic executor is not needed, split registry into Writer that is turned into a Reader. Reader is passed to the Executor when spawing.
+#[derive(Default, Debug, Clone)]
+struct ComponentConfigRegistry {
+    inner: Arc<std::sync::RwLock<ComponentConfigRegistryInner>>,
+}
+
+#[derive(Default, Debug)]
+struct ComponentConfigRegistryInner {
+    exported_ffqns: hashbrown::HashMap<FunctionFqn, (ComponentConfigHash, FunctionMetadata)>,
+    ids_to_components: hashbrown::HashMap<ComponentConfigHash, Component>,
+}
+
+impl ComponentConfigRegistry {
+    fn insert(&self, component: Component) -> Result<(), anyhow::Error> {
+        let mut write_guad = self.inner.write().unwrap();
+        // check for conflicts
+        if write_guad
+            .ids_to_components
+            .contains_key(&component.config_id)
+        {
+            bail!("component {} is already inserted", component.config_id);
+        }
+        for exported_ffqn in component.exports.iter().map(|f| &f.ffqn) {
+            if let Some((offending_id, _)) = write_guad.exported_ffqns.get(exported_ffqn) {
+                bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
+            }
+        }
+        // insert
+        for exported_fn in &component.exports {
+            assert!(write_guad
+                .exported_ffqns
+                .insert(
+                    exported_fn.ffqn.clone(),
+                    (component.config_id.clone(), exported_fn.clone()),
+                )
+                .is_none());
+        }
+        assert!(write_guad
+            .ids_to_components
+            .insert(component.config_id.clone(), component)
+            .is_none());
+        Ok(())
+    }
+
+    fn find_by_exported_ffqn(&self, ffqn: &FunctionFqn) -> Option<(Component, FunctionMetadata)> {
+        let read_guard = self.inner.read().unwrap();
+        read_guard.exported_ffqns.get(ffqn).map(|(id, meta)| {
+            (
+                read_guard.ids_to_components.get(id).unwrap().clone(),
+                meta.clone(),
+            )
+        })
+    }
+
+    fn list(&self) -> Vec<Component> {
+        self.inner
+            .read()
+            .unwrap()
+            .ids_to_components
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    fn get_fn_registry(&self) -> Arc<dyn FunctionRegistry> {
+        Arc::from(self.clone())
+    }
+}
+
+#[async_trait]
+impl FunctionRegistry for ComponentConfigRegistry {
+    async fn get_by_exported_function(
+        &self,
+        ffqn: &FunctionFqn,
+    ) -> Option<(FunctionMetadata, ComponentConfigHash)> {
+        self.inner
+            .read()
+            .unwrap()
+            .exported_ffqns
+            .get(ffqn)
+            .map(|(id, metadata)| (metadata.clone(), id.clone()))
+    }
 }

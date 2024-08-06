@@ -1,9 +1,8 @@
 use super::{
-    store::{ConfigStore, ConfigStoreCommon},
-    ComponentLocation,
+    ComponentLocation, {ConfigStore, ConfigStoreCommon},
 };
 use anyhow::bail;
-use concepts::{storage::ComponentToggle, ComponentType, ContentDigest};
+use concepts::{ComponentType, ContentDigest};
 use config::{builder::AsyncState, ConfigBuilder, Environment, File, FileFormat};
 use directories::ProjectDirs;
 use serde::Deserialize;
@@ -142,6 +141,17 @@ impl CodegenCache {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ComponentEnabled {
+    Enabled,
+    Disabled,
+}
+impl From<ComponentEnabled> for bool {
+    fn from(value: ComponentEnabled) -> Self {
+        matches!(value, ComponentEnabled::Enabled)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentCommon {
@@ -168,7 +178,7 @@ impl ComponentCommon {
         self,
         r#type: ComponentType,
         wasm_cache_dir: impl AsRef<Path>,
-    ) -> Result<(ConfigStoreCommon, PathBuf, ComponentToggle), anyhow::Error> {
+    ) -> Result<(ConfigStoreCommon, PathBuf, ComponentEnabled), anyhow::Error> {
         let (actual_content_digest, wasm_path) = self.location.obtain_wasm(wasm_cache_dir).await?;
         if let Some(specified) = &self.content_digest {
             if *specified != actual_content_digest {
@@ -180,7 +190,7 @@ impl ComponentCommon {
             name: self.name,
             location: self.location,
             content_digest: actual_content_digest,
-            exec: super::store::ExecConfig {
+            exec: super::ExecConfig {
                 batch_size: self.exec.batch_size,
                 lock_expiry: self.exec.lock_expiry.into(),
                 tick_sleep: self.exec.tick_sleep.into(),
@@ -192,9 +202,9 @@ impl ComponentCommon {
             verified,
             wasm_path,
             if self.enabled {
-                ComponentToggle::Enabled
+                ComponentEnabled::Enabled
             } else {
-                ComponentToggle::Disabled
+                ComponentEnabled::Disabled
             },
         ))
     }
@@ -248,7 +258,7 @@ pub(crate) struct Activity {
 pub(crate) struct VerifiedActivityConfig {
     pub(crate) config_store: ConfigStore,
     pub(crate) wasm_path: PathBuf,
-    pub(crate) enabled: ComponentToggle,
+    pub(crate) enabled: bool,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
 }
@@ -276,7 +286,7 @@ impl Activity {
         Ok(VerifiedActivityConfig {
             config_store,
             wasm_path,
-            enabled,
+            enabled: enabled.into(),
             activity_config,
             exec_config,
         })
@@ -302,7 +312,7 @@ pub(crate) struct Workflow {
 pub(crate) struct VerifiedWorkflowConfig {
     pub(crate) config_store: ConfigStore,
     pub(crate) wasm_path: PathBuf,
-    pub(crate) enabled: ComponentToggle,
+    pub(crate) enabled: bool,
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
 }
@@ -336,7 +346,7 @@ impl Workflow {
         Ok(VerifiedWorkflowConfig {
             config_store,
             wasm_path,
-            enabled,
+            enabled: enabled.into(),
             workflow_config,
             exec_config,
         })

@@ -5,12 +5,11 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError,
-        ComponentToggle, ComponentWithMetadata, CreateRequest, DbConnection, DbError, DbPool,
-        ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent,
+        AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection, DbError,
+        DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Version,
     },
-    ComponentConfigHash, ExecutionId, FunctionFqn, FunctionMetadata,
+    ExecutionId, FunctionFqn,
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -180,41 +179,5 @@ impl DbConnection for DbConnectionProxy {
         self.0
             .subscribe_to_pending(pending_at_or_sooner, ffqns, max_wait)
             .await;
-    }
-
-    async fn component_add(
-        &self,
-        created_at: DateTime<Utc>,
-        component: ComponentWithMetadata,
-        toggle: ComponentToggle,
-    ) -> Result<(), ComponentAddError> {
-        self.0.component_add(created_at, component, toggle).await
-    }
-
-    async fn component_list(&self, toggle: ComponentToggle) -> Result<Vec<Component>, DbError> {
-        self.0.component_list(toggle).await
-    }
-
-    async fn component_get_metadata(
-        &self,
-        config_id: &ComponentConfigHash,
-    ) -> Result<ComponentWithMetadata, DbError> {
-        self.0.component_get_metadata(config_id).await
-    }
-
-    async fn component_enabled_get_exported_function(
-        &self,
-        ffqn: &FunctionFqn,
-    ) -> Result<(ComponentConfigHash, FunctionMetadata), DbError> {
-        self.0.component_enabled_get_exported_function(ffqn).await
-    }
-
-    async fn component_toggle(
-        &self,
-        config_id: &ComponentConfigHash,
-        toggle: ComponentToggle,
-        updated_at: DateTime<Utc>,
-    ) -> Result<(), DbError> {
-        self.0.component_toggle(config_id, toggle, updated_at).await
     }
 }

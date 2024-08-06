@@ -4,18 +4,15 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{DelayId, ExecutorId, JoinSetId, PrefixedUlid, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError,
-        ComponentToggle, ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError,
-        DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog, ExpiredTimer,
-        HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+        AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
+        DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
+        ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution,
         PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
         DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
-    ComponentConfigHash, ExecutionId, FunctionFqn, FunctionMetadata, FunctionRegistry,
-    ParameterTypes, ReturnType, StrVariant,
+    ExecutionId, FunctionFqn, StrVariant,
 };
-use itertools::Itertools as _;
 use rusqlite::{
     types::{FromSql, FromSqlError},
     Connection, OptionalExtension, Transaction,
@@ -111,29 +108,6 @@ CREATE TABLE IF NOT EXISTS t_delay (
     delay_id TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     PRIMARY KEY (execution_id, join_set_id, delay_id)
-)
-";
-
-const CREATE_TABLE_T_COMPONENT: &str = r"
-CREATE TABLE IF NOT EXISTS t_component (
-    created_at TEXT NOT NULL,
-    last_updated_at TEXT NOT NULL,
-    config_id TEXT NOT NULL,
-    toggle INTEGER NOT NULL,
-    config JSONB NOT NULL,
-    exports JSONB NOT NULL,
-    imports JSONB NOT NULL,
-    PRIMARY KEY (config_id)
-)
-";
-
-const CREATE_TABLE_T_COMPONENT_EXPORT: &str = r"
-CREATE TABLE IF NOT EXISTS t_component_export (
-    ffqn TEXT NOT NULL,
-    config_id TEXT NOT NULL,
-    parameter_types JSONB NOT NULL,
-    return_type JSONB,
-    PRIMARY KEY (ffqn)
 )
 ";
 
@@ -343,10 +317,6 @@ impl SqlitePool {
                 conn.execute(CREATE_TABLE_T_STATE, [])?;
                 trace!("Executing `CREATE_TABLE_T_DELAY`");
                 conn.execute(CREATE_TABLE_T_DELAY, [])?;
-                trace!("Executing `CREATE_TABLE_T_COMPONENT`");
-                conn.execute(CREATE_TABLE_T_COMPONENT, [])?;
-                trace!("Executing `CREATE_TABLE_T_COMPONENT_EXPORT`");
-                conn.execute(CREATE_TABLE_T_COMPONENT_EXPORT, [])?;
                 Ok::<_, SqliteError>(())
             },
             Span::current(),
@@ -1236,101 +1206,6 @@ impl SqlitePool {
             _ => {}
         }
     }
-
-    fn component_get_enabled_by_exported_ffqn(
-        tx: &Transaction,
-        ffqn: &FunctionFqn,
-    ) -> Result<Option<ComponentConfigHash>, SqliteError> {
-        tx.prepare(
-            "SELECT c.config_id FROM t_component c INNER JOIN t_component_export e WHERE \
-                c.config_id = e.config_id AND e.ffqn = :ffqn",
-        )?
-        .query_row(
-            named_params! {
-                ":ffqn": ffqn.to_string(),
-            },
-            |row| {
-                row.get::<_, FromStrWrapper<ComponentConfigHash>>("config_id")
-                    .map(|it| it.0)
-            },
-        )
-        .optional()
-        .map_err(|err| SqliteError::Sqlite(err.into()))
-    }
-
-    fn component_get_with_metadata(
-        conn: &Connection,
-        config_id: ComponentConfigHash,
-    ) -> Result<ComponentWithMetadata, SqliteError> {
-        conn.prepare(
-            "SELECT toggle, config, exports, imports FROM t_component WHERE config_id = :config_id",
-        )?
-        .query_row(
-            named_params! {
-                ":config_id": config_id.to_string(),
-            },
-            |row| {
-                let enabled = ComponentToggle::from(row.get::<_, bool>("toggle")?);
-                let config = row.get::<_, serde_json::Value>("config")?;
-                let exports = row
-                    .get::<_, JsonWrapper<Vec<FunctionMetadata>>>("exports")?
-                    .0;
-                let imports = row
-                    .get::<_, JsonWrapper<Vec<FunctionMetadata>>>("imports")?
-                    .0;
-                let component = Component {
-                    config_id,
-                    config,
-                    enabled,
-                };
-                Ok(ComponentWithMetadata {
-                    component,
-                    exports,
-                    imports,
-                })
-            },
-        )
-        .map_err(SqliteError::from)
-    }
-
-    fn component_set_exports(
-        tx: &Transaction,
-        component: &ComponentWithMetadata,
-    ) -> Result<(), SqliteError> {
-        for FunctionMetadata {
-            ffqn,
-            parameter_types,
-            return_type,
-        } in &component.exports
-        {
-            let parameter_types = serde_json::to_string(&parameter_types).map_err(|err| {
-                error!("Cannot serialize {:?} - {err:?}", parameter_types);
-                rusqlite::Error::ToSqlConversionFailure(err.into())
-            })?;
-            let return_type = return_type
-                .as_ref()
-                .map(|return_type| {
-                    serde_json::to_string(return_type).map_err(|err| {
-                        error!("Cannot serialize {return_type:?} - {err:?}");
-                        rusqlite::Error::ToSqlConversionFailure(err.into())
-                    })
-                })
-                .transpose()?;
-            let mut stmt = tx.prepare_cached(
-                "INSERT INTO t_component_export \
-            (config_id, ffqn, parameter_types, return_type)
-            VALUES \
-            (:config_id, :ffqn, :parameter_types, :return_type)",
-            )?;
-            stmt.execute(named_params! {
-                ":config_id": component.component.config_id.to_string(),
-                ":ffqn": ffqn.to_string(),
-                ":parameter_types": parameter_types,
-                ":return_type": return_type
-            })?;
-        }
-        Ok(())
-    }
 }
 
 enum IndexAction {
@@ -1886,205 +1761,6 @@ impl DbConnection for SqlitePool {
             _ = receiver.recv() => {} // Got results eventually
             () = tokio::time::sleep(max_wait) => {} // Timeout
         }
-    }
-
-    #[instrument(skip_all, fields(config_id = %component.component.config_id))]
-    async fn component_add(
-        &self,
-        created_at: DateTime<Utc>,
-        component: ComponentWithMetadata,
-        toggle: ComponentToggle,
-    ) -> Result<(), ComponentAddError> {
-        trace!("component_add");
-        let exports = serde_json::to_string(&component.exports).map_err(|serde| {
-            error!("Cannot serialize exports - {serde:?}");
-            ComponentAddError::DbError(DbError::from(SqliteError::Parsing(serde.into())))
-        })?;
-        let imports = serde_json::to_string(&component.imports).map_err(|serde| {
-            error!("Cannot serialize imports - {serde:?}");
-            ComponentAddError::DbError(DbError::from(SqliteError::Parsing(serde.into())))
-        })?;
-        self.pool
-            .transaction_write_with_span::<_, _, SqliteError>(
-                move |tx| {
-                    if toggle == ComponentToggle::Enabled {
-                        let mut conflicts = hashbrown::HashSet::new();
-                        for FunctionMetadata{ffqn: export_ffqn, ..} in &component.exports {
-                            if let Some(conflict) = Self::component_get_enabled_by_exported_ffqn(tx, export_ffqn)? {
-                                conflicts.insert(conflict);
-                            }
-                        }
-                        if !conflicts.is_empty() {
-                            return Ok(Result::Err(conflicts.into_iter().collect_vec()));
-                        }
-                    }
-
-                    let mut stmt = tx.prepare(
-                        "INSERT INTO t_component \
-                            (created_at, last_updated_at, config_id, toggle, config, exports, imports) \
-                            VALUES \
-                            (:created_at, :last_updated_at, :config_id, :toggle, :config, :exports, :imports)",
-                    )?;
-                    stmt.execute(named_params! {
-                        ":created_at": created_at,
-                        ":last_updated_at": created_at,
-                        ":config_id": component.component.config_id.to_string(),
-                        ":toggle": bool::from(toggle),
-                        ":config": component.component.config,
-                        ":exports": exports,
-                        ":imports": imports
-                        })?;
-                    if toggle == ComponentToggle::Enabled {
-                        Self::component_set_exports(tx, &component)?;
-                    }
-                    Ok(Result::Ok(()))
-                },
-                Span::current(),
-            )
-            .await
-            .map_err(|err| ComponentAddError::DbError(DbError::from(err)))?
-            .map_err(ComponentAddError::Conflict)
-    }
-
-    #[instrument(skip(self))]
-    async fn component_list(&self, enabled: ComponentToggle) -> Result<Vec<Component>, DbError> {
-        debug!("list_components");
-        self.pool
-            .conn_with_err_and_span::<_, _, SqliteError>(
-                move |conn| {
-                    conn.prepare(
-                        "SELECT config_id, config FROM t_component WHERE toggle = :toggle ORDER BY last_updated_at",
-                    )?
-                    .query_map(named_params! {":toggle": bool::from(enabled)}, |row| {
-                        let config_id =
-                            row.get::<_, FromStrWrapper<ComponentConfigHash>>("config_id")?.0;
-                        let config = row.get::<_, serde_json::Value>("config")?;
-                        Ok(Component {
-                            config_id,
-                            config,
-                            enabled,
-                        })
-                    })?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(SqliteError::from)
-                },
-                Span::current(),
-            )
-            .await
-            .map_err(DbError::from)
-    }
-
-    #[instrument(skip(self))]
-    async fn component_get_metadata(
-        &self,
-        config_id: &ComponentConfigHash,
-    ) -> Result<ComponentWithMetadata, DbError> {
-        trace!("get_component_metadata");
-        let config_id = config_id.clone();
-        self.pool
-            .conn_with_err_and_span::<_, _, SqliteError>(
-                move |conn| Self::component_get_with_metadata(conn, config_id),
-                Span::current(),
-            )
-            .await
-            .map_err(DbError::from)
-    }
-
-    #[instrument(skip(self))]
-    //TODO: consider caching this
-    async fn component_enabled_get_exported_function(
-        &self,
-        ffqn: &FunctionFqn,
-    ) -> Result<(ComponentConfigHash, FunctionMetadata), DbError> {
-        trace!("get_exported_function");
-        let ffqn = ffqn.clone();
-        self.pool.conn_with_err_and_span::<_, _, SqliteError>(
-            move |conn| {
-                conn.prepare("SELECT config_id, parameter_types, return_type from t_component_export WHERE ffqn = :ffqn")?
-                    .query_row(named_params! {
-                        ":ffqn": ffqn.to_string()
-                    }, |row| {
-                        let config_id = row.get::<_, FromStrWrapper<ComponentConfigHash>>("config_id")?.0;
-                        let parameter_types = row.get::<_, JsonWrapper<ParameterTypes>>("parameter_types")?.0;
-                        let return_type = row.get::<_, JsonWrapper<Option<ReturnType>>>("return_type")?.0;
-                        Ok((config_id,
-                            FunctionMetadata {
-                            ffqn,
-                            parameter_types,
-                            return_type,
-                    }))
-                    })
-                    .map_err(SqliteError::from)
-            },
-            Span::current(),
-        )
-        .await
-        .map_err(DbError::from)
-    }
-
-    #[instrument(skip(self))]
-    async fn component_toggle(
-        &self,
-        config_id: &ComponentConfigHash,
-        enabled: ComponentToggle,
-        updated_at: DateTime<Utc>,
-    ) -> Result<(), DbError> {
-        trace!("component_toggle");
-        let config_id = config_id.clone();
-        self.pool
-            .transaction_write_with_span::<_, _, SqliteError>(
-                move |tx| {
-                    let current_toggle =
-                        tx.prepare("SELECT toggle FROM t_component WHERE config_id = :config_id")?
-                        .query_row(named_params! {
-                            ":config_id": config_id.to_string(),
-                        }, |row| row.get::<_, bool>("toggle").map(ComponentToggle::from)
-                        )?; // Short circuts when NotFound
-                    if current_toggle != enabled {
-                        tx.prepare(
-                            "UPDATE t_component SET toggle = :toggle, last_updated_at = :last_updated_at WHERE config_id = :config_id",
-                        )?
-                        .execute(named_params! {
-                            ":config_id": config_id.to_string(),
-                            ":last_updated_at": updated_at,
-                            ":toggle": bool::from(enabled),
-                        })?;
-
-                        if enabled == ComponentToggle::Disabled {
-                            tx.prepare(
-                                "DELETE FROM t_component_export WHERE config_id = :config_id",
-                            )?
-                            .execute(named_params! {":config_id": config_id.to_string(),})?;
-                        } else {
-                            let component = Self::component_get_with_metadata(tx, config_id)?;
-                            Self::component_set_exports(tx, &component)?;
-                        }
-                    }
-                    Ok(())
-                },
-                Span::current(),
-            )
-            .await
-            .map_err(DbError::from)
-    }
-}
-
-#[async_trait]
-impl FunctionRegistry for SqlitePool {
-    #[instrument(skip(self))]
-    async fn get_by_exported_function(
-        &self,
-        ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ComponentConfigHash)> {
-        self.component_enabled_get_exported_function(ffqn)
-            .await
-            .map(|(config_id, res)| (res, config_id))
-            .inspect_err(|err| {
-                if !matches!(err, DbError::Specific(SpecificError::NotFound)) {
-                    error!("Masking error as ffqn not found - ${err:?}");
-                }
-            })
-            .ok()
     }
 }
 

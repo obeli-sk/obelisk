@@ -987,6 +987,7 @@ impl Display for ParameterTypes {
     }
 }
 
+// TODO: Add Clone, replace Arc
 #[async_trait]
 pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(

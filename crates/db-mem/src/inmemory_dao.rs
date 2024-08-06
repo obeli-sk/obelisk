@@ -9,13 +9,13 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, Component, ComponentAddError,
-    ComponentToggle, ComponentWithMetadata, CreateRequest, DbConnection, DbConnectionError,
-    DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEventOuter,
-    LockPendingResponse, LockResponse, LockedExecution, SpecificError, Version,
+    AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
+    DbConnectionError, DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer,
+    JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, SpecificError,
+    Version,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
-use concepts::{ComponentConfigHash, ExecutionId, FunctionFqn, FunctionMetadata, StrVariant};
+use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
 use std::collections::BTreeMap;
@@ -216,42 +216,6 @@ impl DbConnection for InMemoryDbConnection {
                 }
             }
         }
-    }
-
-    async fn component_add(
-        &self,
-        _created_at: DateTime<Utc>,
-        _component: ComponentWithMetadata,
-        _toggle: ComponentToggle,
-    ) -> Result<(), ComponentAddError> {
-        unimplemented!()
-    }
-
-    async fn component_list(&self, _toggle: ComponentToggle) -> Result<Vec<Component>, DbError> {
-        unimplemented!()
-    }
-
-    async fn component_get_metadata(
-        &self,
-        _config_id: &ComponentConfigHash,
-    ) -> Result<ComponentWithMetadata, DbError> {
-        unimplemented!()
-    }
-
-    async fn component_enabled_get_exported_function(
-        &self,
-        _ffqn: &FunctionFqn,
-    ) -> Result<(ComponentConfigHash, FunctionMetadata), DbError> {
-        unimplemented!()
-    }
-
-    async fn component_toggle(
-        &self,
-        _config_id: &ComponentConfigHash,
-        _toggle: ComponentToggle,
-        _updated_at: DateTime<Utc>,
-    ) -> Result<(), DbError> {
-        unimplemented!()
     }
 }
 
