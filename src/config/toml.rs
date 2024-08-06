@@ -117,7 +117,7 @@ impl OciConfig {
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct CodegenCache {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     enabled: bool,
     #[serde(default)]
     directory: Option<String>,

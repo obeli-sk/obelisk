@@ -11,8 +11,7 @@
 # oci.wasm_directory = "${CACHE_DIR}/wasm"
 
 ## Path to directory where generated code is cached. Supports path prefixes.
-# codegen_cache = { enabled = false, directory = "${CACHE_DIR}/codegen" }
-codegen_cache.enabled = true
+# codegen_cache = { enabled = true, directory = "${CACHE_DIR}/codegen" }
 
 [[activity]]
 name = "fibo_activity"
