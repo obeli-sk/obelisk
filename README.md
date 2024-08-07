@@ -111,7 +111,7 @@ obelisk execution schedule <function> <params>
 - [x] Move component and general configuration into a TOML file
 - [x] Pull components -from an OCI registry
 - [ ] Publish the obelisk image to the Docker Hub (minimal and an ubuntu based image)
-- [ ] gRPC API for execution management
+- [x] gRPC API for execution management
 - [ ] Interactive CLI for execution management
 - [x] Params typecheck on creation, introspection of types of all functions in the system
 - [ ] HTML based UI for showing executions, event history and relations
@@ -119,6 +119,7 @@ obelisk execution schedule <function> <params>
 ## Milestone 3
 - [ ] HTTP handler triggers, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs)
 - [ ] External activities
+- [ ] Add examples with C#, Go, JS, Python
 - [ ] Cancellation with recursion
 
 ## Milestone 4
