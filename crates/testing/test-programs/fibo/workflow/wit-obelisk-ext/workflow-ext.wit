@@ -1,0 +1,7 @@
+package testing:fibo-workflow-obelisk-ext;
+
+
+interface workflow {
+    fiboa-future: func(join-set-id: string, n: u8, iterations: u32) -> string;
+    fiboa-await-next: func(join-set-id: string) -> u64;
+}

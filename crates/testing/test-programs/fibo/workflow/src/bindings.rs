@@ -338,6 +338,97 @@ pub mod testing {
                     ret as u64
                 }
             }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn fibo_start_fiboas(n: u8, fiboas: u32, iterations_per_fiboa: u32) -> u64 {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "testing:fibo-workflow/workflow-nesting")]
+                    extern "C" {
+                        #[link_name = "fibo-start-fiboas"]
+                        fn wit_import(_: i32, _: i32, _: i32) -> i64;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: i32, _: i32, _: i32) -> i64 {
+                        unreachable!()
+                    }
+                    let ret = wit_import(
+                        _rt::as_i32(&n),
+                        _rt::as_i32(&fiboas),
+                        _rt::as_i32(&iterations_per_fiboa),
+                    );
+                    ret as u64
+                }
+            }
+        }
+    }
+    #[allow(dead_code)]
+    pub mod fibo_workflow_obelisk_ext {
+        #[allow(dead_code, clippy::all)]
+        pub mod workflow {
+            #[used]
+            #[doc(hidden)]
+            #[cfg(target_arch = "wasm32")]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+            use super::super::super::_rt;
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn fiboa_future(join_set_id: &str, n: u8, iterations: u32) -> _rt::String {
+                unsafe {
+                    #[repr(align(4))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
+                    let vec0 = join_set_id;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    let ptr1 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
+                    extern "C" {
+                        #[link_name = "fiboa-future"]
+                        fn wit_import(_: *mut u8, _: usize, _: i32, _: i32, _: *mut u8);
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize, _: i32, _: i32, _: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(
+                        ptr0.cast_mut(),
+                        len0,
+                        _rt::as_i32(&n),
+                        _rt::as_i32(&iterations),
+                        ptr1,
+                    );
+                    let l2 = *ptr1.add(0).cast::<*mut u8>();
+                    let l3 = *ptr1.add(4).cast::<usize>();
+                    let len4 = l3;
+                    let bytes4 = _rt::Vec::from_raw_parts(l2.cast(), len4, len4);
+                    _rt::string_lift(bytes4)
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn fiboa_await_next(join_set_id: &str) -> u64 {
+                unsafe {
+                    let vec0 = join_set_id;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
+                    extern "C" {
+                        #[link_name = "fiboa-await-next"]
+                        fn wit_import(_: *mut u8, _: usize) -> i64;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize) -> i64 {
+                        unreachable!()
+                    }
+                    let ret = wit_import(ptr0.cast_mut(), len0);
+                    ret as u64
+                }
+            }
         }
     }
 }
@@ -522,8 +613,21 @@ pub mod exports {
                     let result0 = T::fibo_nested_workflow(arg0 as u8);
                     _rt::as_i64(result0)
                 }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_fibo_start_fiboas_cabi<T: Guest>(
+                    arg0: i32,
+                    arg1: i32,
+                    arg2: i32,
+                ) -> i64 {
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
+                    let result0 = T::fibo_start_fiboas(arg0 as u8, arg1 as u32, arg2 as u32);
+                    _rt::as_i64(result0)
+                }
                 pub trait Guest {
                     fn fibo_nested_workflow(n: u8) -> u64;
+                    fn fibo_start_fiboas(n: u8, fiboas: u32, iterations_per_fiboa: u32) -> u64;
                 }
                 #[doc(hidden)]
 
@@ -533,6 +637,10 @@ pub mod exports {
     #[export_name = "testing:fibo-workflow/workflow-nesting#fibo-nested-workflow"]
     unsafe extern "C" fn export_fibo_nested_workflow(arg0: i32,) -> i64 {
       $($path_to_types)*::_export_fibo_nested_workflow_cabi::<$ty>(arg0)
+    }
+    #[export_name = "testing:fibo-workflow/workflow-nesting#fibo-start-fiboas"]
+    unsafe extern "C" fn export_fibo_start_fiboas(arg0: i32,arg1: i32,arg2: i32,) -> i64 {
+      $($path_to_types)*::_export_fibo_start_fiboas_cabi::<$ty>(arg0, arg1, arg2)
     }
   };);
 }
@@ -690,9 +798,9 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.25.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 994] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xe8\x06\x01A\x02\x01\
-A\x11\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:fibo/fib\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1253] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xeb\x08\x01A\x02\x01\
+A\x13\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:fibo/fib\
 o\x05\0\x01B\x05\x01r\x02\x07secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\0\x01\
 @\0\0\x01\x04\0\x03now\x01\x02\x04\0\x0aresolution\x01\x02\x03\x01\x1cwasi:clock\
 s/wall-clock@0.2.0\x05\x01\x02\x03\0\x01\x08datetime\x01B\x0c\x02\x03\x02\x01\x02\
@@ -704,14 +812,19 @@ obelisk:workflow/host-activities\x05\x03\x01B\x04\x01@\x02\x0bjoin-set-ids\x01n}
 \0s\x04\0\x0bfibo-future\x01\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x0ffibo-await-n\
 ext\x01\x01\x03\x01\x1dtesting:fibo-obelisk-ext/fibo\x05\x04\x01B\x04\x01@\x02\x01\
 n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-co\
-ncurrent\x01\0\x03\x01\x1etesting:fibo-workflow/workflow\x05\x05\x01B\x02\x01@\x01\
-\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x03\x01&testing:fibo-workflow/work\
-flow-nesting\x05\x06\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\
-\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1etesting:fibo-\
-workflow/workflow\x05\x07\x01B\x02\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workfl\
-ow\x01\0\x04\x01&testing:fibo-workflow/workflow-nesting\x05\x08\x04\x01\x19testi\
-ng:fibo-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cp\
-rocessed-by\x02\x0dwit-component\x070.208.1\x10wit-bindgen-rust\x060.25.0";
+ncurrent\x01\0\x03\x01\x1etesting:fibo-workflow/workflow\x05\x05\x01B\x04\x01@\x01\
+\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14itera\
+tions-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x03\x01&testing:fibo-work\
+flow/workflow-nesting\x05\x06\x01B\x04\x01@\x03\x0bjoin-set-ids\x01n}\x0aiterati\
+onsy\0s\x04\0\x0cfiboa-future\x01\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x10fiboa-a\
+wait-next\x01\x01\x03\x01*testing:fibo-workflow-obelisk-ext/workflow\x05\x07\x01\
+B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\
+\x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1etesting:fibo-workflow/workflow\x05\x08\
+\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06\
+fiboasy\x14iterations-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x04\x01&t\
+esting:fibo-workflow/workflow-nesting\x05\x09\x04\x01\x19testing:fibo-workflow/a\
+ny\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0d\
+wit-component\x070.208.1\x10wit-bindgen-rust\x060.25.0";
 
 #[inline(never)]
 #[doc(hidden)]

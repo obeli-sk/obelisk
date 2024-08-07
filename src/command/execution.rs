@@ -38,7 +38,7 @@ pub(crate) async fn submit(
         .map(|execution_id| {
             ExecutionId::from_str(&execution_id.id).context("cannot parse `execution_id`")
         })??;
-    println!("{execution_id} submitted");
+    println!("{execution_id}");
     if follow {
         get(client, execution_id, follow, verbosity).await?;
     }

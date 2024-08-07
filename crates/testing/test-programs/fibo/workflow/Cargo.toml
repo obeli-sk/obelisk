@@ -19,6 +19,7 @@ crate-type = ["cdylib"]
 [package.metadata.component.target.dependencies]
 "testing:fibo" = { path = "../wit" }
 "testing:fibo-obelisk-ext" = { path = "../wit-obelisk-ext" }
+"testing:fibo-workflow-obelisk-ext" = { path = "wit-obelisk-ext" }
 "obelisk:workflow".path = "../../../../wasm-workers/host-wit/"
 "wasi:clocks".path = "../../../../wasm-workers/host-wit/deps/clocks"
 
