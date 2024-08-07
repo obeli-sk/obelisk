@@ -18,6 +18,7 @@ use std::{
     time::Duration,
 };
 use tokio::task::AbortHandle;
+use tracing::Level;
 use tracing::Span;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 use utils::time::ClockFn;
@@ -121,7 +122,7 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
         }
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = Level::DEBUG, skip_all)]
     pub(crate) async fn tick(&self, executed_at: DateTime<Utc>) -> Result<TickProgress, DbError> {
         let mut expired_locks = 0;
         let mut expired_async_timers = 0;

@@ -28,7 +28,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, info, instrument, trace, warn, Span};
+use tracing::{debug, error, instrument, trace, warn, Level, Span};
 use val_json::type_wrapper::TypeWrapper;
 
 #[derive(Debug, Clone, Copy)]
@@ -71,7 +71,10 @@ CREATE TABLE IF NOT EXISTS t_join_set_response (
     child_execution_id TEXT,
     PRIMARY KEY (execution_id, join_set_id, delay_id, child_execution_id)
 );
-"; // TODO: index and order by created at
+";
+const CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_created_at ON t_join_set_response (execution_id, created_at);
+";
 
 /// Stores executions in state: `Pending`, `PendingAt`, `Locked`, and delay requests.
 /// State to column mapping:
@@ -313,6 +316,7 @@ impl SqlitePool {
                 conn.execute(CREATE_TABLE_T_EXECUTION_LOG, [])?;
                 trace!("Executing `CREATE_TABLE_T_JOIN_SET_RESPONSE`");
                 conn.execute(CREATE_TABLE_T_JOIN_SET_RESPONSE, [])?;
+                conn.execute(CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID, [])?;
                 trace!("Executing `CREATE_TABLE_T_STATE`");
                 conn.execute(CREATE_TABLE_T_STATE, [])?;
                 trace!("Executing `CREATE_TABLE_T_DELAY`");
@@ -334,7 +338,7 @@ impl SqlitePool {
             .open()
             .await?;
         Self::init(&pool).await?;
-        info!(?path, "Done setting up sqlite",);
+        debug!(?path, "Done setting up sqlite",);
         Ok(Self {
             pool,
             response_subscribers: Arc::default(),
@@ -1123,6 +1127,7 @@ impl SqlitePool {
         .map_err(|err| SqliteError::Sqlite(err.into()))
     }
 
+    #[instrument(skip_all)]
     fn get_responses_with_offset(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -1231,7 +1236,7 @@ impl DbConnection for SqlitePool {
         Ok(version)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(level = Level::DEBUG, skip(self))]
     async fn lock_pending(
         &self,
         batch_size: usize,
@@ -1402,8 +1407,8 @@ impl DbConnection for SqlitePool {
         mut version: Version,
         child_req: Vec<CreateRequest>,
     ) -> Result<AppendBatchResponse, DbError> {
-        debug!("append_batch_create_child");
-        trace!(?batch, ?child_req, "append_batch_create_child");
+        debug!("append_batch_create_new_execution");
+        trace!(?batch, ?child_req, "append_batch_create_new_execution");
         if batch.is_empty() {
             error!("Empty batch request");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -1670,7 +1675,7 @@ impl DbConnection for SqlitePool {
     }
 
     /// Get currently expired locks and async timers (delay requests)
-    #[instrument(skip(self))]
+    #[instrument(level = Level::DEBUG, skip(self))]
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
         trace!("get_expired_timers");
         self.pool.conn_with_err_and_span::<_, _, SqliteError>(
@@ -1727,7 +1732,7 @@ impl DbConnection for SqlitePool {
         .map_err(DbError::from)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(level = Level::DEBUG, skip(self))]
     async fn subscribe_to_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,

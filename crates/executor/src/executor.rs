@@ -18,7 +18,7 @@ use std::{
     time::Duration,
 };
 use tokio::task::{AbortHandle, JoinHandle};
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Span};
+use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Level, Span};
 use utils::time::ClockFn;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -196,7 +196,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         self.tick(executed_at).await
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = Level::DEBUG, skip_all)]
     async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
         let locked_executions = {
             let db_connection = self.db_pool.connection();
