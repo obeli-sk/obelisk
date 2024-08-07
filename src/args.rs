@@ -58,7 +58,7 @@ pub(crate) enum Component {
 
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Execution {
-    Schedule {
+    Submit {
         /// Follow the stream of events until the execution finishes
         #[arg(short, long)]
         follow: bool,

@@ -52,7 +52,7 @@ async fn main() -> Result<(), anyhow::Error> {
             )
             .await
         }
-        Subcommand::Execution(args::Execution::Schedule {
+        Subcommand::Execution(args::Execution::Submit {
             ffqn,
             params,
             follow,

@@ -94,7 +94,7 @@ docker tag $image ...
 
 ```sh
 obelisk daemon serve &
-obelisk execution schedule <function> <params>
+obelisk execution submit <function> <params>
 ```
 
 # Milestones
