@@ -17,25 +17,27 @@ use tonic::{codec::CompressionEncoding, transport::Channel};
 
 pub type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
-fn main() -> Result<(), anyhow::Error> {
-    let _guard = init::init();
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(main_async())
-}
-
+#[tokio::main]
 #[allow(clippy::too_many_lines)]
-async fn main_async() -> Result<(), anyhow::Error> {
+async fn main() -> Result<(), anyhow::Error> {
     let config_holder = ConfigHolder::new(ProjectDirs::from("com", "obelisk", "obelisk"));
     let config = config_holder.load_config().await?;
     let grpc_addr = "127.0.0.1:50055";
     let grpc_url = format!("http://{grpc_addr}");
 
     match Args::parse().command {
-        Subcommand::Executor(Daemon::Serve { clean }) => {
-            command::daemon::run(config, clean, config_holder, grpc_addr.parse()?).await
+        Subcommand::Daemon(Daemon::Serve {
+            clean,
+            machine_readable_logs,
+        }) => {
+            command::daemon::run(
+                config,
+                clean,
+                config_holder,
+                grpc_addr.parse()?,
+                machine_readable_logs,
+            )
+            .await
         }
         Subcommand::Component(args::Component::Inspect { path, verbosity }) => {
             command::component::inspect(path, FunctionMetadataVerbosity::from(verbosity)).await

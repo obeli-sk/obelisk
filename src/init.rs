@@ -1,4 +1,5 @@
 use tracing::level_filters::LevelFilter;
+use tracing_subscriber::Layer;
 
 fn is_env_true(key: &str) -> bool {
     std::env::var(key)
@@ -33,19 +34,26 @@ fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
     None
 }
 
-pub(crate) fn init() -> Guard {
+pub(crate) fn init(machine_readable: bool) -> Guard {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
     let mut chrome_guard = None;
     tracing_subscriber::registry()
         .with(tokio_console_layer())
-        .with(
-            tracing_subscriber::fmt::layer()
-                .compact()
-                .without_time()
-                .with_target(false),
-        )
+        .with({
+            if machine_readable {
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+                    .boxed()
+            } else {
+                tracing_subscriber::fmt::layer()
+                    .compact()
+                    .with_target(false)
+                    .boxed()
+            }
+        })
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(LevelFilter::INFO.into())

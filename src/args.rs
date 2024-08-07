@@ -35,6 +35,8 @@ pub(crate) enum Daemon {
         /// Clean sqlite database and wasm cache
         #[arg(short, long)]
         clean: bool,
+        #[arg(short, long)]
+        machine_readable_logs: bool,
     },
 }
 

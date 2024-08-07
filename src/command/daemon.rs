@@ -10,6 +10,7 @@ use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
 use crate::grpc_util::grpc_mapping::TonicServerResultExt;
 use crate::grpc_util::TonicRespResult;
 use crate::grpc_util::TonicResult;
+use crate::init;
 use anyhow::bail;
 use anyhow::Context;
 use assert_matches::assert_matches;
@@ -361,7 +362,9 @@ pub(crate) async fn run(
     clean: bool,
     config_holder: ConfigHolder,
     grpc_addr: SocketAddr,
+    machine_readable_logs: bool,
 ) -> anyhow::Result<()> {
+    let _guard = init::init(machine_readable_logs);
     let db_file = &config
         .get_sqlite_file(config_holder.project_dirs.as_ref())
         .await?;
