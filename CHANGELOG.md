@@ -3,6 +3,65 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.11](https://github.com/obeli-sk/obelisk/compare/v0.1.10...v0.1.11) - 2024-08-07
+
+### Added
+- Make `non_blocking_event_batching` configurable
+- Enable codegen cache by default
+- Expose functions and components via gRPC
+- Show function return type in WIT format
+- Show parameter types in WIT format
+- Add `--follow` flag to `schedule` and `get`
+- Show pending state stream when submitting new execution
+- Add `StreamStatus` rpc
+- Type check `params` in `submit` of the execution
+- Enable codegen cache
+- Make `oci.wasm_directory` configurable
+
+### Fixed
+- Add index on `t_join_set_response`
+- Allow partial configuration of `CodegenCache`, `ExecConfig`
+- Return `NotFound` in `SqlitePool::get`
+- Check params and types cardinality in `Params::as_vals`
+
+### Other
+- Tweak logs of intermittent failures
+- Rename `execution schedule` to `execution submit`
+- Fix snapshots broken by adding `fibo-start-fiboas`
+- Add `machine_readable_logs` switch
+- Rename `executor` command to `daemon`
+- Update the readme
+- Add seconds handling to `jq-analyze-span-close.sh`
+- Remove `first_locked_at` from the `Finished` message
+- Add `fibo-start-fiboas` to test workflow hierarchies
+- Replace db-backed component registry with `ComponentConfigRegistry`
+- Replace panics with Err in `enrich_function_params`
+- Add `scripts` folder
+- Fix clippy issues
+- Merge `StreamStatus` into `GetStatus`
+- Update the readme
+- Rename `location.file` to `location.path` in toml
+- Measure WASM parsing time
+- Simplify `VecVisitor`
+- Use `Params::deserialize` instead of `Params::from_json_value`
+- Represent Params as `Vec<Value>` instead of `Value`
+- Switch execution submission to gRPC
+- Update the readme
+- Extract `Engines::configure_common`
+- Update readme
+- Fix a clippy issue
+- Remove single thread constraint from `nextest`
+- Speed up test by replacing `wit_parser` with a dummy fn_registry
+- Move `write_codegen_config` to `wasm-workers`
+- Add allowance for `cfg(madsim)`
+- Bump Rust to 1.80
+- Put the sqlite file to the data dir by default
+- Remove unused import
+- Extract `ComponentLocation::obtain_wasm`
+- Simplify sqlite initialization
+- Remove unused clippy allowances
+- Move `indexmap` feature selection to workspace deps
+
 ## [0.1.10](https://github.com/obeli-sk/obelisk/compare/v0.1.9...v0.1.10) - 2024-07-23
 
 ### Other
