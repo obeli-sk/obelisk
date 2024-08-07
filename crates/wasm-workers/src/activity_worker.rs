@@ -222,18 +222,18 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
 
             // Interpret `SupportedFunctionResult::Fallible` Err variant as an retry request
             if let Some(exec_err) = result.fallible_err() {
-                info!("Execution returned an error result");
-                let reason = StrVariant::Arc(Arc::from(format!(
-                    "Execution returned an error result: `{exec_err:?}`"
-                )));
                 if ctx.can_be_retried {
+                    let reason = StrVariant::Arc(Arc::from(format!(
+                        "Execution returned an error result: `{exec_err:?}`"
+                    )));
                     return WorkerResult::Err(WorkerError::IntermittentError {
                         reason,
                         err: None,
                         version: ctx.version,
                     });
                 }
-                info!("Not able to retry");
+                info!("Execution returned an error result, not able to retry");
+                // pass the result as is to be stored.
             }
             WorkerResult::Ok(result, ctx.version)
         };

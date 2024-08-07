@@ -13,22 +13,25 @@
 ## Path to directory where generated code is cached. Supports path prefixes.
 # codegen_cache = { enabled = true, directory = "${CACHE_DIR}/codegen" }
 
+# TODO: rename to activity_wasi
 [[activity]]
 name = "fibo_activity"
 location.oci = "docker.io/tomasolvecky/fibo_activity:latest@sha256:46d069c98eea5227ceaabc8a3f8227a45e23e64c08d6bb2d2634f8947261f41f"
-recycle_instances = true
+
+# TODO: FS allowance
 
 [[workflow]]
 name = "fibo_workflow"
-location.oci = "docker.io/tomasolvecky/fibo_workflow:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f1178676e69d@sha256:63a3dd36c33ba240080b5db17a28a4853e00f1e393a1bd6bb7a014679ec3fd32"
-enabled = true
-content_digest = "sha256:6a5685a105e69ad381590bd3e0ca8beeb246e2caa8c693083cf7f1178676e69d"
-default_max_retries = 5
-default_retry_exp_backoff.millis = 100
-exec.batch_size = 10
-exec.lock_expiry.secs = 1
-exec.tick_sleep.millis = 200
-join_next_blocking_strategy = "await"
-child_retry_exp_backoff.millis = 10
-child_max_retries = 5
-non_blocking_event_batching = true
+location.oci = "docker.io/tomasolvecky/fibo_workflow:f54f3f4a145a10c9c855e519d25c31a9a8c48cb9dbd63f94373d21ff6bd7541b@sha256:bb83ec97e7daf3ba23955b2cf0c762308ce6b483a4234ac4250f904c58daff03"
+exec.lock_expiry.secs = 10
+
+[[activity]]
+name = "http_get_activity"
+location.oci = "docker.io/tomasolvecky/http_get_activity:71250d113e9b7a324e74d9ee02e4a7f2399e979ed5c094fda7df0cde3efd6b44@sha256:4a414bc06d5a057525b8e68b874108a97108415988718fafa4b4338a98a1014c"
+exec.lock_expiry.secs = 5
+
+[[workflow]]
+name = "http_get_workflow"
+location.oci = "docker.io/tomasolvecky/http_get_workflow:b4337d9b6867e083a96dd87ec38b36d7417f1637ea0bde7a179c41d3db27aad3@sha256:ee9ae19f2923aea5e30b23f8fbdcfdc78e7c9f2726779a4615e9077cdab9c365"
+exec.lock_expiry.secs = 10
+child_retry_exp_backoff.secs = 1
