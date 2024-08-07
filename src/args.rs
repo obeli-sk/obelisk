@@ -22,7 +22,7 @@ pub(crate) struct Args {
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Subcommand {
     #[command(subcommand)]
-    Executor(Executor),
+    Daemon(Daemon),
     #[command(subcommand)]
     Component(Component),
     #[command(subcommand)]
@@ -30,7 +30,7 @@ pub(crate) enum Subcommand {
 }
 
 #[derive(Debug, clap::Subcommand)]
-pub(crate) enum Executor {
+pub(crate) enum Daemon {
     Serve {
         /// Clean sqlite database and wasm cache
         #[arg(short, long)]

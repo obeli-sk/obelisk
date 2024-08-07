@@ -93,7 +93,7 @@ docker tag $image ...
 ## Usage
 
 ```sh
-obelisk executor serve &
+obelisk daemon serve &
 obelisk execution schedule <function> <params>
 ```
 

@@ -1,6 +1,6 @@
 pub(crate) mod component;
+pub(crate) mod daemon;
 pub(crate) mod execution;
-pub(crate) mod server; // FIXME: Rename to deamon
 
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::default_trait_access)]

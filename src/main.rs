@@ -6,7 +6,7 @@ mod init;
 mod oci;
 
 use anyhow::{bail, Context};
-use args::{Args, Executor, Subcommand};
+use args::{Args, Daemon, Subcommand};
 use clap::Parser;
 use command::grpc::{
     function_repository_client::FunctionRepositoryClient, scheduler_client::SchedulerClient,
@@ -34,8 +34,8 @@ async fn main_async() -> Result<(), anyhow::Error> {
     let grpc_url = format!("http://{grpc_addr}");
 
     match Args::parse().command {
-        Subcommand::Executor(Executor::Serve { clean }) => {
-            command::server::run(config, clean, config_holder, grpc_addr.parse()?).await
+        Subcommand::Executor(Daemon::Serve { clean }) => {
+            command::daemon::run(config, clean, config_holder, grpc_addr.parse()?).await
         }
         Subcommand::Component(args::Component::Inspect { path, verbosity }) => {
             command::component::inspect(path, FunctionMetadataVerbosity::from(verbosity)).await
