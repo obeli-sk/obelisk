@@ -16,6 +16,29 @@ expression: exports
       "wit_type": "u64"
     }
   ],
+  "testing:fibo-workflow/workflow-nesting.fibo-start-fiboas": [
+    [
+      {
+        "name": "n",
+        "wit_type": "u8",
+        "type_wrapper": "U8"
+      },
+      {
+        "name": "fiboas",
+        "wit_type": "u32",
+        "type_wrapper": "U32"
+      },
+      {
+        "name": "iterations-per-fiboa",
+        "wit_type": "u32",
+        "type_wrapper": "U32"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ],
   "testing:fibo-workflow/workflow.fiboa": [
     [
       {

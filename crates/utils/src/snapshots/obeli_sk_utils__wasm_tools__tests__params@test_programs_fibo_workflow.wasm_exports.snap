@@ -12,6 +12,23 @@ expression: exports
     ],
     "return_type": "u64"
   },
+  "testing:fibo-workflow/workflow-nesting.fibo-start-fiboas": {
+    "params": [
+      {
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "name": "fiboas",
+        "wit_type": "u32"
+      },
+      {
+        "name": "iterations-per-fiboa",
+        "wit_type": "u32"
+      }
+    ],
+    "return_type": "u64"
+  },
   "testing:fibo-workflow/workflow.fiboa": {
     "params": [
       {

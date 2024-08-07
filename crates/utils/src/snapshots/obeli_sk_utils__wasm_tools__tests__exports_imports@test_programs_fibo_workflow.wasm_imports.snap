@@ -41,6 +41,42 @@ expression: imports
       "wit_type": "string"
     }
   ],
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": [
+    [
+      {
+        "name": "join-set-id",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-future": [
+    [
+      {
+        "name": "join-set-id",
+        "wit_type": "string",
+        "type_wrapper": "String"
+      },
+      {
+        "name": "n",
+        "wit_type": "u8",
+        "type_wrapper": "U8"
+      },
+      {
+        "name": "iterations",
+        "wit_type": "u32",
+        "type_wrapper": "U32"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     [
       {
