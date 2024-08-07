@@ -73,12 +73,9 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus) -> Result<(), any
         Status::Finished(Finished {
             result,
             created_at,
-            first_locked_at,
             finished_at,
         }) => {
             let created_at = DateTime::from(created_at.context("`created_at` must exist")?);
-            let first_locked_at =
-                DateTime::from(first_locked_at.context("`first_locked_at` must exist")?);
             let finished_at = DateTime::from(finished_at.context("`finished_at` must exist")?);
             let result = String::from_utf8(result.context("`result` must exist")?.value)
                 .context("`result` must be UTF-8 encoded")?;
@@ -113,9 +110,11 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus) -> Result<(), any
                 }
             }
 
-            println!("Execution took {since_locked:?} since first locked, {since_created:?} since created.",
-                since_locked = (finished_at - first_locked_at).to_std().expect("must be non-negative"),
-                since_created = (finished_at - created_at).to_std().expect("must be non-negative")
+            println!(
+                "Execution took {since_created:?}.",
+                since_created = (finished_at - created_at)
+                    .to_std()
+                    .expect("must be non-negative")
             );
         }
     }

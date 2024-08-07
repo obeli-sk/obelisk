@@ -116,7 +116,6 @@ message ExecutionStatus {
     message Finished {
         google.protobuf.Any result = 1;
         google.protobuf.Timestamp created_at = 2;
-        google.protobuf.Timestamp first_locked_at = 3;
         google.protobuf.Timestamp finished_at = 4;
     }
     oneof status {

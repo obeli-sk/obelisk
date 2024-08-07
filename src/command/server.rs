@@ -348,17 +348,6 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
                         .events
                         .first()
                         .map(|event| event.created_at.into()),
-                    first_locked_at: execution_log.events.iter().find_map(|event| {
-                        if let ExecutionEvent {
-                            event: ExecutionEventInner::Locked { .. },
-                            created_at,
-                        } = event
-                        {
-                            Some(prost_wkt_types::Timestamp::from(*created_at))
-                        } else {
-                            None
-                        }
-                    }),
                     finished_at: Some(finished_at.into()),
                 })
             }
