@@ -57,13 +57,13 @@ jobs:
       - name: Build obelisk
         run: nix build '.#${{ matrix.nix_target }}'
 
-      - name: Create a tgz archive
-        run: tar czf archive.tgz --transform='s/^result\/bin\///' result/bin/obelisk
+      - name: Create a tar.gz archive
+        run: tar czf archive.tar.gz --transform='s/^result\/bin\///' result/bin/obelisk
 
       - name: Upload the archive
         run: |
           curl -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/octet-stream" \
-            --data-binary @archive.tgz \
-            "https://uploads.github.com/repos/obeli-sk/obelisk/releases/${{ steps.release-info.outputs.release_id }}/assets?name=obelisk-${{ matrix.target }}"
+            --data-binary @archive.tar.gz \
+            "https://uploads.github.com/repos/obeli-sk/obelisk/releases/${{ steps.release-info.outputs.release_id }}/assets?name=obelisk-${{ matrix.target }}.tar.gz"
