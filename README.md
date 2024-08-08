@@ -16,8 +16,10 @@ Please exercise caution if attempting to use it for production.
 * Backend developer's delight
     * Single process for running the executor, workflows and activities, with an escape hatch for external activities (planned).
     * Automatic retries on errors, timeouts, workflow executions continuing after a server crash.
-    * Observability (planned)
-    * Time traveling debugger for workflows (planned), ability to replay and fork existing workflows(planned).
+    * Observability (planned) - parameters and results together with function hierarchy must be preserved.
+    * Composability - nesting workflows, calling activities written in any supported language
+    * Replay and fork existing workflows(planned). Fix problems and continue.
+    * Time traveling debugger for workflows (planned)
 
 ## Concepts and features
 * *Activities* that must be idempotent, so that they can be stopped and retried at any moment. This contract must be fulfilled by the activity itself.
