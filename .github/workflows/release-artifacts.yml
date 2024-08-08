@@ -5,8 +5,6 @@ permissions:
 
 on:
   workflow_dispatch:
-  release:
-    types: [released]
 
 env:
   CARGO_INCREMENTAL: 0
@@ -39,6 +37,19 @@ jobs:
         run: |
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "tag=$(git tag --contains HEAD)" >> $GITHUB_OUTPUT
+
+      - id: release-info
+        run: |
+          curl -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/obeli-sk/obelisk/releases/tags/${{ steps.git-info.outputs.tag }} > release.json
+          cat release.json
+          RELEASE_ID=$(cat release.json | grep -o '"id":[^,]*' | sed 's/"id"://' | head -n 1)
+          echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
+
       - name: Install Nix
         uses: cachix/install-nix-action@V27
         with:
@@ -46,10 +57,14 @@ jobs:
 
       - name: Build obelisk
         run: nix build '.#${{ matrix.nix_target }}'
-      - uses: taiki-e/upload-rust-binary-action@v1
-        with:
-          bin: result/bin/obelisk
-          target: ${{ matrix.target }}
-          tar: all
-          zip: windows
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create a tgz archive
+        run: tar czf archive.tgz --transform='s/^result\/bin\///' result/bin/obelisk
+
+      - name: Upload the archive
+        run: |
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @archive.tgz \
+            "https://uploads.github.com/repos/obeli-sk/obelisk/releases/${{ steps.release-info.outputs.release_id }}/assets?name=obelisk-${{ matrix.target }}"
