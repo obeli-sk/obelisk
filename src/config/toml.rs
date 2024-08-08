@@ -115,12 +115,21 @@ impl OciConfig {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub(crate) struct CodegenCache {
     #[serde(default = "default_true")]
     enabled: bool,
     #[serde(default)]
     directory: Option<String>,
+}
+
+impl Default for CodegenCache {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            directory: None,
+        }
+    }
 }
 
 impl CodegenCache {
