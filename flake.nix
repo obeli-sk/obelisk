@@ -103,7 +103,7 @@
                 tokio-console
                 wasm-tools
               ];
-              PROTOC = "${pkgs.protobuf}/bin/protoc";
+            PROTOC = "${pkgs.protobuf}/bin/protoc";
           };
           packages = rec {
             inherit wkg;
