@@ -5,6 +5,8 @@ permissions:
 
 on:
   workflow_dispatch:
+  release:
+    types: [released]
 
 env:
   CARGO_INCREMENTAL: 0
