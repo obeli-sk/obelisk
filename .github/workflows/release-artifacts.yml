@@ -27,7 +27,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
-            nix_target: obelisk
+            nix_target: obelisk-patch-for-generic-linux
           - target: x86_64-unknown-linux-musl
             os: ubuntu-22.04
             nix_target: obeliskMusl

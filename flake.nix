@@ -26,7 +26,7 @@
                     isStatic = true;
                   } else null;
               };
-          makeObelisk = pkgs:
+          makeObelisk = pkgs: patch-for-generic-linux:
             pkgs.rustPlatform.buildRustPackage {
               pname = "obelisk";
               version = "0.0.1";
@@ -38,9 +38,18 @@
                 };
               };
               nativeBuildInputs = with pkgs; [
+                patchelf
                 pkg-config
                 protobuf
               ];
+              installPhase = ''
+                BINARY=$(find target -name obelisk)
+                ${if patch-for-generic-linux then ''patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 $BINARY''
+                else '''' }
+                mkdir -p $out/bin/
+                cp $BINARY $out/bin/
+              '';
+              buildType = "release";
               doCheck = false;
             };
           makeDocker = pkgs: obelisk: binSh:
@@ -107,8 +116,9 @@
           };
           packages = rec {
             inherit wkg;
-            obelisk = makeObelisk pkgs;
-            obeliskMusl = makeObelisk pkgsMusl;
+            obelisk = makeObelisk pkgs false;
+            obelisk-patch-for-generic-linux = makeObelisk pkgs true;
+            obeliskMusl = makeObelisk pkgsMusl false;
             docker = makeDocker pkgs obeliskMusl false;
             dockerBinSh = makeDocker pkgs obeliskMusl true;
             default = obelisk;
