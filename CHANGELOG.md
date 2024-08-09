@@ -3,6 +3,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.13](https://github.com/obeli-sk/obelisk/compare/v0.1.12...v0.1.13) - 2024-08-09
+
+### Other
+- Fix elf interpreter in `obelisk-patch-for-generic-linux`
+- Update the readme
+- Add `tar.gz` suffix to binary artifacts
+
 ## [0.1.12](https://github.com/obeli-sk/obelisk/compare/v0.1.11...v0.1.12) - 2024-08-08
 
 ### Other
