@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   fmt:
-    name: stable / fmt
+    name: cargo fmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +30,27 @@ jobs:
         run: nix develop --command echo
       - name: cargo fmt
         run: nix develop --command cargo fmt --check
+  check-dev-deps:
+    name: Check dev-deps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@V27
+        with:
+          extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+      - name: Populate the nix store
+        run: nix develop --command echo
+      - run: nix develop --command ./scripts/dev-deps.sh
+      - run: cat dev-deps.txt
+      - run: |
+          if git diff --quiet -- dev-deps.txt; then
+              echo "No changes in dev-deps"
+          else
+              echo "Changes in dev-deps detected:"
+              echo "$(git diff -- dev-deps.txt)"
+              exit 1
+          fi
   clippy-nosim:
     name: clippy - nosim
     runs-on: ubuntu-latest
