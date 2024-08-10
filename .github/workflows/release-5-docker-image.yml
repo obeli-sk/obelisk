@@ -1,0 +1,18 @@
+name: release-5-docker-image
+
+on:
+  workflow_dispatch:
+
+jobs:
+  upload-assets:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir tmp
+          cd tmp
+          wget https://github.com/obeli-sk/obelisk/releases/latest/download/obelisk-x86_64-unknown-linux-gnu.tar.gz
+          cp ../obelisk.toml .
+          docker build --progress=plain -f ../.github/workflows/release/docker-image/ubuntu-24.04.Dockerfile . --tag getobelisk:obelisk
+
