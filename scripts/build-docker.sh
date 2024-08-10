@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-set -e; set -o pipefail;
+
+# Builds two docker images. WIP.
+
+set -exuo pipefail
 cd $(dirname "$0")/..
 
 nix build '.#docker' '.#dockerBinSh'

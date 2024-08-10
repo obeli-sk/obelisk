@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+
+# This script expects a log file in JSON format to be on stdin,
+# extracts and groups span close events and returns their duration aggregates.
+# It can be used for finding spans that get slower on every iteration,
+# which can be observed by a big difference between min and max duration.
+
+set -exuo pipefail
+
 jq -s '
   def to_milliseconds:
     if . | test("µs$") then

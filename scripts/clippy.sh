@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-set -e; set -o pipefail;
+
+# Runs clippy normally and with `madsim` cfg flag.
+
+set -exuo pipefail
 cd $(dirname "$0")/..
 
 cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged -- -D warnings
