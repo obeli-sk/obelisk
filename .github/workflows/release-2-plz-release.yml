@@ -1,4 +1,4 @@
-name: Release-plz-release
+name: release-2-plz-release
 
 permissions:
   pull-requests: write

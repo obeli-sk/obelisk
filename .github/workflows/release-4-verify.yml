@@ -1,4 +1,4 @@
-name: release-verify
+name: release-4-verify
 
 on:
   workflow_dispatch:
@@ -16,4 +16,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          cat .github/workflows/verify/${{ matrix.target }}.Dockerfile | docker build --progress=plain -
+          cat .github/workflows/release/verify/${{ matrix.target }}.Dockerfile | docker build --progress=plain -
