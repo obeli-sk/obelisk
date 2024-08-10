@@ -3,6 +3,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.15](https://github.com/obeli-sk/obelisk/compare/v0.1.14...v0.1.15) - 2024-08-10
+
+### Added
+- Support `api_listening_addr`
+
+### Other
+- Extract binary from tgz outside of docker build
+- Rename workflows
+- Build ubuntu-based docker image
+- Rename release workflows
+- Update `dev-deps.txt`
+- Update `flake.lock`
+- Check dev-deps.txt in the `check` workflow
+- Add and run `dev-deps.sh`
+- Add docs and unify bash settings for scripts
+- Add `release-verify`
+
 ## [0.1.14](https://github.com/obeli-sk/obelisk/compare/v0.1.13...v0.1.14) - 2024-08-09
 
 ### Other
