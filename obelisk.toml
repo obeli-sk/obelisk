@@ -13,6 +13,9 @@
 ## Path to directory where generated code is cached. Supports path prefixes.
 # codegen_cache = { enabled = true, directory = "${CACHE_DIR}/codegen" }
 
+# Address and port on which the API server will listen.
+# api_listening_addr = "127.0.0.1:5005"
+
 # TODO: rename to activity_wasi
 [[activity]]
 name = "fibo_activity"

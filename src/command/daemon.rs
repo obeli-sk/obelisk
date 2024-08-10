@@ -39,7 +39,6 @@ use serde::Deserialize;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::marker::PhantomData;
-use std::net::SocketAddr;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -361,7 +360,6 @@ pub(crate) async fn run(
     config: ObeliskConfig,
     clean: bool,
     config_holder: ConfigHolder,
-    grpc_addr: SocketAddr,
     machine_readable_logs: bool,
 ) -> anyhow::Result<()> {
     let _guard = init::init(machine_readable_logs);
@@ -439,6 +437,7 @@ pub(crate) async fn run(
     debug!("Loading components: {config:?}");
     let mut exec_join_handles = Vec::new();
     let mut component_registry = ComponentConfigRegistry::default();
+    // FIXME: Ctrl-C here is ignored.
     for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
         let activity = activity.verify_content_digest(&wasm_cache_dir).await?;
         if activity.enabled {
@@ -473,7 +472,7 @@ pub(crate) async fn run(
             .send_compressed(CompressionEncoding::Gzip)
             .accept_compressed(CompressionEncoding::Gzip),
         )
-        .serve_with_shutdown(grpc_addr, async move {
+        .serve_with_shutdown(config.api_listening_addr, async move {
             if let Err(err) = tokio::signal::ctrl_c().await {
                 error!("Error while listening to ctrl-c - {err:?}");
             }

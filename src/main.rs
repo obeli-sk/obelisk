@@ -22,28 +22,18 @@ pub type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 async fn main() -> Result<(), anyhow::Error> {
     let config_holder = ConfigHolder::new(ProjectDirs::from("com", "obelisk", "obelisk"));
     let config = config_holder.load_config().await?;
-    let grpc_addr = "127.0.0.1:50055";
-    let grpc_url = format!("http://{grpc_addr}");
+    let grpc_client_url = "http://127.0.0.1:5005"; // TODO: configure
 
     match Args::parse().command {
         Subcommand::Daemon(Daemon::Serve {
             clean,
             machine_readable_logs,
-        }) => {
-            command::daemon::run(
-                config,
-                clean,
-                config_holder,
-                grpc_addr.parse()?,
-                machine_readable_logs,
-            )
-            .await
-        }
+        }) => command::daemon::run(config, clean, config_holder, machine_readable_logs).await,
         Subcommand::Component(args::Component::Inspect { path, verbosity }) => {
             command::component::inspect(path, FunctionMetadataVerbosity::from(verbosity)).await
         }
         Subcommand::Component(args::Component::List { verbosity }) => {
-            let client = get_fn_repository_client(grpc_url).await?;
+            let client = get_fn_repository_client(grpc_client_url).await?;
             command::component::find_components(
                 client,
                 None,
@@ -60,7 +50,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }) => {
             // TODO interactive search for ffqn showing param types and result, file name
             // enter parameters one by one
-            let client = get_scheduler_client(grpc_url).await?;
+            let client = get_scheduler_client(grpc_client_url).await?;
             let params = serde_json::from_str(&params).context("params should be a json array")?;
             let serde_json::Value::Array(params) = params else {
                 bail!("params should be a JSON array");
@@ -72,7 +62,7 @@ async fn main() -> Result<(), anyhow::Error> {
             verbosity,
             follow,
         }) => {
-            let client = get_scheduler_client(grpc_url).await?;
+            let client = get_scheduler_client(grpc_client_url).await?;
             command::execution::get(client, execution_id, follow, verbosity.into()).await
         }
     }

@@ -14,6 +14,7 @@ jobs:
           cd tmp
           wget https://github.com/obeli-sk/obelisk/releases/latest/download/obelisk-x86_64-unknown-linux-gnu.tar.gz
           tar xvfz obelisk-x86_64-unknown-linux-gnu.tar.gz
-          cp ../obelisk.toml .
+          echo 'api_listening_addr = "0.0.0.0:5005"' > obelisk.toml
+          cat ../obelisk.toml >> obelisk.toml
           docker build --progress=plain -f ../.github/workflows/release/docker-image/ubuntu-24.04.Dockerfile . --tag getobelisk/obelisk
 
