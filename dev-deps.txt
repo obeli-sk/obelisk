@@ -9,7 +9,7 @@ litecli Version: 1.11.0s
 lldb version 18.1.8
 nixpkgs-fmt 1.3.00.29.2
 libprotoc 25.3
-rustc 1.80.0 (051478957 2024-07-21)
+rustc 1.80.1 (3f5fd8dd4 2024-08-06)
 tokio-console 0.1.10
 wasm-tools 1.215.0
 ldd (GNU libc) 2.39
