@@ -1,0 +1,19 @@
+name: release-verify
+
+on:
+  workflow_dispatch:
+
+jobs:
+  upload-assets:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - target: alpine-binstall
+          - target: ubuntu-24.04-binstall
+          - target: ubuntu-24.04-install
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          cat .github/workflows/verify/${{ matrix.target }}.Dockerfile | docker build --progress=plain -
