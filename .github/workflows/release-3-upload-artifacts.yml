@@ -1,4 +1,4 @@
-name: release-3-artifacts
+name: release-3-upload-artifacts
 
 permissions:
   contents: write

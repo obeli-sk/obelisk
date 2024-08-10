@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  upload-assets:
+  verify-assets:
     name: ${{ matrix.target }}
     runs-on: ubuntu-24.04
     strategy:
