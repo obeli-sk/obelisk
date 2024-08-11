@@ -45,21 +45,23 @@ jobs:
           IMAGE="${IMAGE_BASE}:${{ matrix.image_tag }}"
           docker build --progress=plain -f ../.github/workflows/release/docker-image/${{ matrix.dockerfile }} . --tag $IMAGE
           docker push $IMAGE
-          # Add version
+
+          if [ "${{ matrix.latest }}" = "true" ]; then
+            docker tag $IMAGE $IMAGE_BASE
+            docker push $IMAGE_BASE
+          fi
+
           TAGS=$(git tag --points-at HEAD)
-          TAGS=$(echo "$tags" | grep '^v')
+          TAGS=$(echo "$TAGS" | grep '^v' || true)
           if [ -z "$TAGS" ]; then
             echo "No tags starting with 'v' pointing at HEAD."
           elif [ $(echo "$TAGS" | wc -l) -eq 1 ]; then
-            VERSION=${TAGS#v}
-            IMAGE2=""${IMAGE}-{VERSION}"
+            VERSION="${TAGS#v}"
+            echo "Tagging with version ${VERSION}"
+            IMAGE2="${IMAGE}-${VERSION}"
             echo "Tagging as $IMAGE2"
             docker tag $IMAGE $IMAGE2
-            docker push $$IMAGE2
+            docker push $IMAGE2
           else
             echo "More than one tag starting with 'v' pointing at HEAD."
-          fi
-          if [ "$latest" = "true" ]; then
-            docker tag $IMAGE $IMAGE_BASE
-            docker push $IMAGE_BASE
           fi
