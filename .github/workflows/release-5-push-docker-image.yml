@@ -17,4 +17,5 @@ jobs:
           echo 'api_listening_addr = "0.0.0.0:5005"' > obelisk.toml
           cat ../obelisk.toml >> obelisk.toml
           docker build --progress=plain -f ../.github/workflows/release/docker-image/ubuntu-24.04.Dockerfile . --tag getobelisk/obelisk
-
+          docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
+          docker push getobelisk/obelisk
