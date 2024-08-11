@@ -29,3 +29,13 @@ jobs:
           docker build --progress=plain -f ../.github/workflows/release/docker-image/${{ matrix.dockerfile }} . --tag ${{ matrix.docker_image }}
           docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
           docker push ${{ matrix.docker_image }}
+          # Add version
+          tags=$(git tag --points-at HEAD)
+          if [ $(echo "$tags" | wc -l) -eq 1 ]; then
+              if [[ $tags == v* ]]; then
+                  version=${tags#v}
+                  tagged=${{ matrix.docker_image }}
+                  docker tag ${{ matrix.docker_image }} ${tagged}
+                  docker push ${tagged}
+              fi
+          fi
