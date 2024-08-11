@@ -95,7 +95,7 @@ obelisk client execution submit <function> <params>
 ## Milestone 2: Allow remote interaction via CLI and web UI - started
 - [x] Move component and general configuration into a TOML file
 - [x] Pull components -from an OCI registry
-- [ ] Publish the obelisk image to the Docker Hub (minimal and an ubuntu based image)
+- [x] Publish the obelisk image to the Docker Hub (ubuntu, alpine)
 - [ ] obelisk client oci push
 - [x] gRPC API for execution management
 - [ ] Interactive CLI for execution management

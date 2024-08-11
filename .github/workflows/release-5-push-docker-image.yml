@@ -5,17 +5,27 @@ on:
 
 jobs:
   push-image:
-    name: ${{ matrix.target }}
+    name: ${{ matrix.dockerfile }}
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - tarfile: obelisk-x86_64-unknown-linux-gnu.tar.gz
+            dockerfile: ubuntu-24.04.Dockerfile
+            docker_image: getobelisk/obelisk
+          - tarfile: obelisk-x86_64-unknown-linux-musl.tar.gz
+            dockerfile: alpine.Dockerfile
+            docker_image: getobelisk/obelisk:alpine
+
     steps:
       - uses: actions/checkout@v4
       - run: |
           mkdir tmp
           cd tmp
-          wget https://github.com/obeli-sk/obelisk/releases/latest/download/obelisk-x86_64-unknown-linux-gnu.tar.gz
-          tar xvfz obelisk-x86_64-unknown-linux-gnu.tar.gz
+          wget https://github.com/obeli-sk/obelisk/releases/latest/download/${{ matrix.tarfile }}
+          tar xvfz ${{ matrix.tarfile }}
           echo 'api_listening_addr = "0.0.0.0:5005"' > obelisk.toml
           cat ../obelisk.toml >> obelisk.toml
-          docker build --progress=plain -f ../.github/workflows/release/docker-image/ubuntu-24.04.Dockerfile . --tag getobelisk/obelisk
+          docker build --progress=plain -f ../.github/workflows/release/docker-image/${{ matrix.dockerfile }} . --tag ${{ matrix.docker_image }}
           docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
-          docker push getobelisk/obelisk
+          docker push ${{ matrix.docker_image }}
