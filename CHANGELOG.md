@@ -3,6 +3,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/obeli-sk/obelisk/compare/v0.1.15...v0.2.0) - 2024-08-11
+
+### Added
+- [**breaking**] Use `server run` instead of `daemon serve`
+- Make client url configurable, separate client commands
+
+### Other
+- Push alpine-based image
+- Fix github token in `release-2-plz-release`
+- Push the image to docker hub
+
 ## [0.1.15](https://github.com/obeli-sk/obelisk/compare/v0.1.14...v0.1.15) - 2024-08-10
 
 ### Added
