@@ -3,6 +3,10 @@ name: release-4-verify
 on:
   workflow_dispatch:
 
+defaults:
+  run:
+    shell: bash -xe {0}
+
 jobs:
   verify-assets:
     name: ${{ matrix.target }}

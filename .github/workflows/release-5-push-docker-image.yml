@@ -3,6 +3,10 @@ name: release-5-push-docker-image
 on:
   workflow_dispatch:
 
+defaults:
+  run:
+    shell: bash -xe {0}
+
 jobs:
   push-image:
     name: ${{ matrix.dockerfile }}
@@ -35,6 +39,7 @@ jobs:
               if [[ $tags == v* ]]; then
                   version=${tags#v}
                   tagged=${{ matrix.docker_image }}
+                  echo "Tagging as ${tagged}"
                   docker tag ${{ matrix.docker_image }} ${tagged}
                   docker push ${tagged}
               fi

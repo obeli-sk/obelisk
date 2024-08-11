@@ -7,6 +7,10 @@ permissions:
 on:
   workflow_dispatch:
 
+defaults:
+  run:
+    shell: bash -xe {0}
+    
 jobs:
   release-plz-release:
     name: Release-plz-release
