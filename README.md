@@ -50,7 +50,11 @@ Please exercise caution if attempting to use it for production.
 ## Installation
 
 ### Docker
-TODO
+```
+docker run getobelisk/obelisk
+docker exec $CONTAINER_ID obelisk client component list
+# See Usage for more details
+```
 
 ### Pre-built binary
 Download [latest release](https://github.com/obeli-sk/obeli-sk/releases/latest) from the GitHub Release page.
@@ -70,33 +74,12 @@ cargo install --locked obeli-sk
 nix --extra-experimental-features nix-command --extra-experimental-features flakes run github:obeli-sk/obelisk
 ```
 
-## Local development
-Set up the development dependencies using nix flakes:
-```sh
-nix develop
-# or `direnv allow`, after simlinking .envrc-example -> .envrc
-```
-Or manually download
-```sh
-cargo install cargo-component --locked
-```
-Run the program
-```sh
-cargo run --release
-```
-
-### Building the docker image
-```sh
-nix build '.#dockerBinSh' # or '.#docker'
-image=$((docker load < result) | sed -n '$s/^Loaded image: //p')
-docker tag $image ...
-```
-
 ## Usage
 
 ```sh
 obelisk daemon serve &
-obelisk execution submit <function> <params>
+obelisk client execution submit <function> <params>
+# TODO add examples
 ```
 
 # Milestones
@@ -113,13 +96,14 @@ obelisk execution submit <function> <params>
 - [x] Move component and general configuration into a TOML file
 - [x] Pull components -from an OCI registry
 - [ ] Publish the obelisk image to the Docker Hub (minimal and an ubuntu based image)
+- [ ] obelisk client oci push
 - [x] gRPC API for execution management
 - [ ] Interactive CLI for execution management
 - [x] Params typecheck on creation, introspection of types of all functions in the system
 - [ ] HTML based UI for showing executions, event history and relations
 
 ## Milestone 3
-- [ ] HTTP handler triggers, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs)
+- [ ] HTTP webhook triggers, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs)
 - [ ] External activities
 - [ ] Add examples with C#, Go, JS, Python
 - [ ] Cancellation with recursion
@@ -131,14 +115,26 @@ obelisk execution submit <function> <params>
 - [ ] Labels restricting workflows/activities to executors
 - [ ] Periodic scheduling
 
-## Running Tests
+# Building from source
+Set up the development dependencies using nix flakes:
 ```sh
-cargo nextest run --workspace -P ci-test-nosim
+nix develop
+# or `direnv allow`, after simlinking .envrc-example -> .envrc
+```
+Or manually download all dependencies, see [dev-deps.txt](dev-deps.txt) and [Ubuntu based verification Dockerfile](.github/workflows/release/verify/ubuntu-24.04-install.Dockerfile)
+Run the program
+```sh
+cargo run --release
 ```
 
-### Deterministic tests using the `madsim` simulator
+## Running Tests
 ```sh
-MADSIM_ALLOW_SYSTEM_THREAD=1 RUSTFLAGS="--cfg madsim" cargo nextest run --workspace --target-dir=target/debug/madsim -P ci-test-madsim
+./scripts/test.sh
+```
+
+## Deterministic tests using the `madsim` simulator
+```sh
+./scripts/test-madsim.sh
 ```
 
 # Contributing

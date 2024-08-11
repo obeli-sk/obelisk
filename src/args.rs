@@ -23,10 +23,8 @@ pub(crate) struct Args {
 pub(crate) enum Subcommand {
     #[command(subcommand)]
     Daemon(Daemon),
-    #[command(subcommand)]
-    Component(Component),
-    #[command(subcommand)]
-    Execution(Execution),
+    #[command()]
+    Client(Client),
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -38,6 +36,24 @@ pub(crate) enum Daemon {
         #[arg(short, long)]
         machine_readable_logs: bool,
     },
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct Client {
+    /// Address of the obelisk server
+    #[arg(short, long, default_value = "http://127.0.0.1:5005")]
+    pub(crate) api_url: String,
+    #[command(subcommand)]
+    pub(crate) command: ClientSubcommand,
+}
+
+#[derive(Debug, clap::Subcommand)]
+
+pub(crate) enum ClientSubcommand {
+    #[command(subcommand)]
+    Component(Component),
+    #[command(subcommand)]
+    Execution(Execution),
 }
 
 #[derive(Debug, clap::Subcommand)]
