@@ -22,14 +22,14 @@ pub(crate) struct Args {
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum Subcommand {
     #[command(subcommand)]
-    Daemon(Daemon),
+    Server(Server),
     #[command()]
     Client(Client),
 }
 
 #[derive(Debug, clap::Subcommand)]
-pub(crate) enum Daemon {
-    Serve {
+pub(crate) enum Server {
+    Run {
         /// Clean sqlite database and wasm cache
         #[arg(short, long)]
         clean: bool,

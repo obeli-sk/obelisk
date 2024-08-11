@@ -1,5 +1,5 @@
 pub(crate) mod component;
-pub(crate) mod daemon;
+pub(crate) mod server;
 pub(crate) mod execution;
 
 #[allow(clippy::too_many_lines)]

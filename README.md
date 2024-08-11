@@ -77,7 +77,7 @@ nix --extra-experimental-features nix-command --extra-experimental-features flak
 ## Usage
 
 ```sh
-obelisk daemon serve &
+obelisk server run &
 obelisk client execution submit <function> <params>
 # TODO add examples
 ```

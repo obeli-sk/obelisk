@@ -6,7 +6,7 @@ mod init;
 mod oci;
 
 use anyhow::{bail, Context};
-use args::{Args, Client, ClientSubcommand, Daemon, Subcommand};
+use args::{Args, Client, ClientSubcommand, Server, Subcommand};
 use clap::Parser;
 use command::grpc::{
     function_repository_client::FunctionRepositoryClient, scheduler_client::SchedulerClient,
@@ -24,10 +24,10 @@ async fn main() -> Result<(), anyhow::Error> {
     let config = config_holder.load_config().await?;
 
     match Args::parse().command {
-        Subcommand::Daemon(Daemon::Serve {
+        Subcommand::Server(Server::Run {
             clean,
             machine_readable_logs,
-        }) => command::daemon::run(config, clean, config_holder, machine_readable_logs).await,
+        }) => command::server::run(config, clean, config_holder, machine_readable_logs).await,
         Subcommand::Client(Client { api_url, command }) => {
             match command {
                 ClientSubcommand::Component(args::Component::Inspect { path, verbosity }) => {
