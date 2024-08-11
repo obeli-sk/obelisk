@@ -13,7 +13,10 @@ use command::grpc::{
 };
 use config::toml::ConfigHolder;
 use directories::ProjectDirs;
-use tonic::{codec::CompressionEncoding, transport::Channel};
+use tonic::{
+    codec::CompressionEncoding,
+    transport::{Channel, ClientTlsConfig},
+};
 
 pub type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
@@ -73,29 +76,27 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 }
 
-async fn get_scheduler_client<D>(url: D) -> Result<SchedulerClient<Channel>, anyhow::Error>
-where
-    D: TryInto<tonic::transport::Endpoint>,
-    D::Error: Into<StdError>,
-{
-    Ok(SchedulerClient::connect(url)
+async fn to_channel(url: String) -> Result<Channel, anyhow::Error> {
+    let tls = ClientTlsConfig::new().with_native_roots();
+    let url = url.parse().context("cannot parse uri")?;
+    Channel::builder(url)
+        .tls_config(tls)?
+        .connect()
         .await
-        .context("cannot create gRPC client")?
+        .context("connect error")
+}
+
+async fn get_scheduler_client(url: String) -> Result<SchedulerClient<Channel>, anyhow::Error> {
+    Ok(SchedulerClient::new(to_channel(url).await?)
         .send_compressed(CompressionEncoding::Zstd)
         .accept_compressed(CompressionEncoding::Zstd)
         .accept_compressed(CompressionEncoding::Gzip))
 }
 
-async fn get_fn_repository_client<D>(
-    url: D,
-) -> Result<FunctionRepositoryClient<Channel>, anyhow::Error>
-where
-    D: TryInto<tonic::transport::Endpoint>,
-    D::Error: Into<StdError>,
-{
-    Ok(FunctionRepositoryClient::connect(url)
-        .await
-        .context("cannot create gRPC client")?
+async fn get_fn_repository_client(
+    url: String,
+) -> Result<FunctionRepositoryClient<Channel>, anyhow::Error> {
+    Ok(FunctionRepositoryClient::new(to_channel(url).await?)
         .send_compressed(CompressionEncoding::Zstd)
         .accept_compressed(CompressionEncoding::Zstd)
         .accept_compressed(CompressionEncoding::Gzip))
