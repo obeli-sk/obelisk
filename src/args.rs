@@ -8,6 +8,7 @@ mod shadow {
 }
 
 #[derive(Parser, Debug)]
+#[clap(name = "obelisk")]
 #[command(version = const_format::formatcp!("{} {}", shadow::build::PKG_VERSION, shadow::build::SHORT_COMMIT),
 about = "Obelisk: deterministic backend", disable_version_flag = true, disable_help_subcommand = true)]
 pub(crate) struct Args {
