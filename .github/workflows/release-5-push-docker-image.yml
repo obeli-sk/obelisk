@@ -2,6 +2,11 @@ name: release-5-push-docker-image
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'The ref (branch or SHA) to process'
+        required: false
+        type: string
 
 defaults:
   run:
@@ -16,31 +21,45 @@ jobs:
         include:
           - tarfile: obelisk-x86_64-unknown-linux-gnu.tar.gz
             dockerfile: ubuntu-24.04.Dockerfile
-            docker_image: getobelisk/obelisk
+            image_tag: ubuntu
+            latest: true
           - tarfile: obelisk-x86_64-unknown-linux-musl.tar.gz
             dockerfile: alpine.Dockerfile
-            docker_image: getobelisk/obelisk:alpine
+            image_tag: alpine
+            latest: false
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}  # Use the ref if provided, otherwise defaults to the current branch/commit
+
       - run: |
+          docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
           mkdir tmp
           cd tmp
           wget -q https://github.com/obeli-sk/obelisk/releases/latest/download/${{ matrix.tarfile }}
           tar xvfz ${{ matrix.tarfile }}
           echo 'api_listening_addr = "0.0.0.0:5005"' > obelisk.toml
           cat ../obelisk.toml >> obelisk.toml
-          docker build --progress=plain -f ../.github/workflows/release/docker-image/${{ matrix.dockerfile }} . --tag ${{ matrix.docker_image }}
-          docker login -u getobelisk -p ${{ secrets.DOCKER_HUB_TOKEN }}
-          docker push ${{ matrix.docker_image }}
+          IMAGE_BASE="getobelisk/obelisk"
+          IMAGE="${IMAGE_BASE}:${{ matrix.image_tag }}"
+          docker build --progress=plain -f ../.github/workflows/release/docker-image/${{ matrix.dockerfile }} . --tag $IMAGE
+          docker push $IMAGE
           # Add version
-          tags=$(git tag --points-at HEAD)
-          if [ $(echo "$tags" | wc -l) -eq 1 ]; then
-              if [[ $tags == v* ]]; then
-                  version=${tags#v}
-                  tagged=${{ matrix.docker_image }}
-                  echo "Tagging as ${tagged}"
-                  docker tag ${{ matrix.docker_image }} ${tagged}
-                  docker push ${tagged}
-              fi
+          TAGS=$(git tag --points-at HEAD)
+          TAGS=$(echo "$tags" | grep '^v')
+          if [ -z "$TAGS" ]; then
+            echo "No tags starting with 'v' pointing at HEAD."
+          elif [ $(echo "$TAGS" | wc -l) -eq 1 ]; then
+            VERSION=${TAGS#v}
+            IMAGE2=""${IMAGE}-{VERSION}"
+            echo "Tagging as $IMAGE2"
+            docker tag $IMAGE $IMAGE2
+            docker push $$IMAGE2
+          else
+            echo "More than one tag starting with 'v' pointing at HEAD."
+          fi
+          if [ "$latest" = "true" ]; then
+            docker tag $IMAGE $IMAGE_BASE
+            docker push $IMAGE_BASE
           fi
