@@ -1,5 +1,6 @@
 use anyhow::{bail, ensure, Context};
 use concepts::ContentDigest;
+use oci_distribution::Reference;
 use oci_wasm::{WasmClient, WasmConfig};
 use std::{
     path::{Path, PathBuf},
@@ -14,7 +15,7 @@ fn get_client() -> WasmClient {
 }
 
 pub(crate) async fn obtain_wasm_from_oci(
-    image: &oci_distribution::Reference,
+    image: &Reference,
     wasm_cache_dir: impl AsRef<Path>,
 ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
     let wasm_cache_dir = wasm_cache_dir.as_ref();
@@ -36,10 +37,25 @@ pub(crate) async fn obtain_wasm_from_oci(
         content_digest.to_owned()
     } else {
         info!("Fetching metadata for {image}");
-        let (_oci_config, wasm_config, metadata_digest) =
-            client.pull_manifest_and_config(image, &auth).await?;
-        if image.digest().is_none() {
-            info!("Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}");
+        // Workaround for bug somewhere in `WasmClient::pull_manifest_and_config`
+        // metadata digest must be removed from Reference, otherwise no matter
+        // what the pulled image contains, we get the specified digest.
+        let image_without_digest = Reference::with_tag(
+            image.registry().to_string(),
+            image.repository().to_string(),
+            image.tag().unwrap_or("latest").to_string(),
+        );
+        let (_oci_config, wasm_config, metadata_digest) = client
+            .pull_manifest_and_config(&image_without_digest, &auth)
+            .await?;
+        match image.digest() {
+            None => info!("Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}"),
+            Some(specified) => {
+                debug!("Fetched metadata digest {metadata_digest}");
+                if specified != metadata_digest {
+                    bail!("metadata digest mismatch. Specified:\n{image_without_digest}@{specified}\nActually got:\n{image_without_digest}@{metadata_digest}")
+                }
+            }
         }
         wasm_config
             .component
@@ -101,10 +117,10 @@ pub(crate) async fn obtain_wasm_from_oci(
 }
 
 fn get_oci_auth(
-    reference: &oci_distribution::Reference,
+    reference: &Reference,
 ) -> Result<oci_distribution::secrets::RegistryAuth, anyhow::Error> {
     /// Translate the registry into a key for the auth lookup.
-    fn get_docker_config_auth_key(reference: &oci_distribution::Reference) -> &str {
+    fn get_docker_config_auth_key(reference: &Reference) -> &str {
         match reference.resolve_registry() {
             "index.docker.io" => "https://index.docker.io/v1/", // Default registry uses this key.
             other => other, // All other registries are keyed by their domain name without the `https://` prefix or any path suffix.
@@ -127,10 +143,7 @@ fn get_oci_auth(
     Ok(oci_distribution::secrets::RegistryAuth::Anonymous)
 }
 
-pub(crate) async fn push(
-    file: &PathBuf,
-    reference: &oci_distribution::Reference,
-) -> Result<(), anyhow::Error> {
+pub(crate) async fn push(file: &PathBuf, reference: &Reference) -> Result<(), anyhow::Error> {
     if reference.digest().is_some() {
         bail!("cannot push a digest reference");
     }

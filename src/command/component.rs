@@ -3,7 +3,7 @@ use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use crate::FunctionMetadataVerbosity;
 use anyhow::Context;
 use concepts::{ComponentConfigHash, FunctionFqn, FunctionMetadata};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tonic::transport::Channel;
 use wasm_workers::component_detector::ComponentDetector;
 
