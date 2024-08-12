@@ -74,22 +74,6 @@
               };
             };
           pkgs = makePkgs null;
-          wkg =
-            pkgs.rustPlatform.buildRustPackage {
-              pname = "wkg";
-              version = "0.3.0";
-              src = pkgs.fetchFromGitHub {
-                owner = "bytecodealliance";
-                repo = "wasm-pkg-tools";
-                rev = "ff5e16297453930435fdf4126d50c6ec99c0a909";
-                hash = "sha256-cBxXV9eGMU/sB6eNWs0GwVQEtEYrGxm+29OAW75vtgA=";
-              };
-              cargoHash = "sha256-biCexpnRlYdO6VXfseYmAjave430JN1JJB9n12B2RXo=";
-              nativeBuildInputs = [ pkgs.pkg-config ];
-              PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
-              doCheck = false;
-            };
-
           pkgsMusl = makePkgs "x86_64-unknown-linux-musl";
         in
         {
@@ -115,7 +99,6 @@
             PROTOC = "${pkgs.protobuf}/bin/protoc";
           };
           packages = rec {
-            inherit wkg;
             obelisk = makeObelisk pkgs false;
             obelisk-patch-for-generic-linux = makeObelisk pkgs true;
             obeliskMusl = makeObelisk pkgsMusl false;
