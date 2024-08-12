@@ -71,6 +71,15 @@ pub(crate) enum Component {
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
     },
+    /// Push a WASM file to an OCI registry.
+    Push {
+        /// WASM file to be pushed
+        #[arg(required(true))]
+        path: PathBuf,
+        /// OCI reference. Example: docker.io/repo/image:tag
+        #[arg(required(true))]
+        image_name: oci_distribution::Reference,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]

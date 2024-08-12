@@ -225,23 +225,6 @@ impl ComponentCommon {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum DurationConfig {
-    Secs(u64),
-    Millis(u64),
-}
-
-impl From<DurationConfig> for Duration {
-    fn from(value: DurationConfig) -> Self {
-        match value {
-            DurationConfig::Millis(millis) => Duration::from_millis(millis),
-            DurationConfig::Secs(secs) => Duration::from_secs(secs),
-        }
-    }
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecConfig {
@@ -428,6 +411,23 @@ impl ConfigHolder {
             .build()
             .await?;
         Ok(settings.try_deserialize()?)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DurationConfig {
+    Secs(u64),
+    Millis(u64),
+}
+
+impl From<DurationConfig> for Duration {
+    fn from(value: DurationConfig) -> Self {
+        match value {
+            DurationConfig::Millis(millis) => Duration::from_millis(millis),
+            DurationConfig::Secs(secs) => Duration::from_secs(secs),
+        }
     }
 }
 

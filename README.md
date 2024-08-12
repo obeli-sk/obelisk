@@ -96,7 +96,7 @@ obelisk client execution submit <function> <params>
 - [x] Move component and general configuration into a TOML file
 - [x] Pull components -from an OCI registry
 - [x] Publish the obelisk image to the Docker Hub (ubuntu, alpine)
-- [ ] obelisk client oci push
+- [x] obelisk client component push
 - [x] gRPC API for execution management
 - [ ] Interactive CLI for execution management
 - [x] Params typecheck on creation, introspection of types of all functions in the system

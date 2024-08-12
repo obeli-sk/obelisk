@@ -1,21 +1,24 @@
 use anyhow::{bail, ensure, Context};
 use concepts::ContentDigest;
+use oci_wasm::{WasmClient, WasmConfig};
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
 use tracing::{debug, info, warn};
 
+fn get_client() -> WasmClient {
+    WasmClient::new(oci_distribution::Client::new(
+        oci_distribution::client::ClientConfig::default(),
+    ))
+}
+
 pub(crate) async fn obtain_wasm_from_oci(
     image: &oci_distribution::Reference,
     wasm_cache_dir: impl AsRef<Path>,
 ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
     let wasm_cache_dir = wasm_cache_dir.as_ref();
-    let client = {
-        let client =
-            oci_distribution::Client::new(oci_distribution::client::ClientConfig::default());
-        oci_wasm::WasmClient::new(client)
-    };
+    let client = get_client();
     let auth = get_oci_auth(image)?;
     let oci_cache_mapping_file = wasm_cache_dir.join("metadata_to_content_digests.json");
     let mut oci_cache_mapping: hashbrown::HashMap<String, ContentDigest> = {
@@ -122,4 +125,26 @@ fn get_oci_auth(
         }
     }
     Ok(oci_distribution::secrets::RegistryAuth::Anonymous)
+}
+
+pub(crate) async fn push(
+    file: &PathBuf,
+    reference: &oci_distribution::Reference,
+) -> Result<(), anyhow::Error> {
+    if reference.digest().is_some() {
+        bail!("cannot push a digest reference");
+    }
+    let client = get_client();
+    let (conf, layer) = WasmConfig::from_component(file, None)
+        .await
+        .context("Unable to parse component")?;
+
+    let auth = get_oci_auth(reference)?;
+    client
+        .push(reference, &auth, layer, conf, None)
+        .await
+        .context("Unable to push image")?;
+    // FIXME: print it with metadata digest!
+    println!("Pushed {reference}");
+    Ok(())
 }
