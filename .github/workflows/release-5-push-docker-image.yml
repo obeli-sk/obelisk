@@ -58,7 +58,7 @@ jobs:
           elif [ $(echo "$TAGS" | wc -l) -eq 1 ]; then
             VERSION="${TAGS#v}"
             echo "Tagging with version ${VERSION}"
-            IMAGE2="${IMAGE}-${VERSION}"
+            IMAGE2="${IMAGE_BASE}:${VERSION}-${{ matrix.image_tag }}"
             echo "Tagging as $IMAGE2"
             docker tag $IMAGE $IMAGE2
             docker push $IMAGE2
