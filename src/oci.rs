@@ -151,13 +151,16 @@ pub(crate) async fn push(file: &PathBuf, reference: &Reference) -> Result<(), an
     let (conf, layer) = WasmConfig::from_component(file, None)
         .await
         .context("Unable to parse component")?;
-
     let auth = get_oci_auth(reference)?;
-    client
+    let resp = client
         .push(reference, &auth, layer, conf, None)
         .await
         .context("Unable to push image")?;
-    // FIXME: print it with metadata digest!
-    println!("Pushed {reference}");
+
+    if let Some(digest) = resp.manifest_url.rsplit("manifests/sha256:").next() {
+        println!("{reference}@sha256:{digest}");
+    } else {
+        println!("{reference}");
+    }
     Ok(())
 }
