@@ -50,8 +50,8 @@ Please exercise caution if attempting to use it for production.
 ## Installation
 
 ### Docker
-```
-docker run getobelisk/obelisk
+```sh
+CONTAINER_ID=$(docker run getobelisk/obelisk)
 docker exec $CONTAINER_ID obelisk client component list
 # See Usage for more details
 ```
@@ -76,10 +76,25 @@ nix --extra-experimental-features nix-command --extra-experimental-features flak
 
 ## Usage
 
+### Starting the server
 ```sh
-obelisk server run &
-obelisk client execution submit <function> <params>
-# TODO add examples
+obelisk server run
+```
+
+### Getting the list of loaded functions
+```sh
+obelisk client component list
+
+wasm_workflow   fibo_workflow   wasm_workflow:sha256:885d60e8d9b09fadecae99d6143ec65ad819e1991275cba78e2431619381da75
+Exports:
+        testing:fibo-workflow/workflow.fiboa : func(n: u8, iterations: u32) -> u64
+...
+```
+
+### Executing a sample workflow
+```sh
+# Call fibonacci(10) activity from the workflow 500 times in series.
+obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]' --follow
 ```
 
 # Milestones
