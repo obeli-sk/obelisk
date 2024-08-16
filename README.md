@@ -45,7 +45,7 @@ Please exercise caution if attempting to use it for production.
 
 * Work stealing executor
     * Periodically locking a batch of currently pending executions, starts/continues their execution
-    * Cleaning up old hanging executions with expired locks. Executions that have the budget will be retried.
+    * Cleaning up old hanging executions with expired locks. Executions that have the budget will be retried (planned).
 
 ## Installation
 
@@ -113,6 +113,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [x] Publish the obelisk image to the Docker Hub (ubuntu, alpine)
 - [x] obelisk client component push
 - [x] gRPC API for execution management
+- [ ] Track the topmost parent
 - [ ] Interactive CLI for execution management
 - [x] Params typecheck on creation, introspection of types of all functions in the system
 - [ ] HTML based UI for showing executions, event history and relations
@@ -121,7 +122,6 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] HTTP webhook triggers, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs)
 - [ ] External activities
 - [ ] Add examples with C#, Go, JS, Python
-- [ ] Cancellation with recursion
 
 ## Milestone 4
 - [ ] OpenAPI activity generator
@@ -129,6 +129,9 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] Multi process executors
 - [ ] Labels restricting workflows/activities to executors
 - [ ] Periodic scheduling
+- [ ] [Deadline propagation](https://sre.google/sre-book/addressing-cascading-failures)
+- [ ] [Cancellation propagation](https://sre.google/sre-book/addressing-cascading-failures)
+- [ ] Queue capacity setting
 
 # Building from source
 Set up the development dependencies using nix flakes:
@@ -155,3 +158,4 @@ cargo run --release
 # Contributing
 This project has a roadmap and features are added and tested in a certain order.
 If you would like to contribute a feature, please discuss the feature in an issue on this GitHub repository.
+In order for us to accept patches and other contributions, you need to adopt our Contributor License Agreement (the "CLA"). The current version of the CLA can be found [here](https://cla-assistant.io/obeli-sk/obelisk).
