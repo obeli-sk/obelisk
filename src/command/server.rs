@@ -365,16 +365,12 @@ pub(crate) async fn run(
     machine_readable_logs: bool,
 ) -> anyhow::Result<()> {
     let _guard = init::init("obelisk-server", machine_readable_logs);
-
-    run2(config, clean, config_holder).await?;
-
-    // opentelemetry::global::shutdown_tracer_provider(); // FIXME: Move to the guard
-
+    run_internal(config, clean, config_holder).await?;
     Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
-async fn run2(
+async fn run_internal(
     config: ObeliskConfig,
     clean: bool,
     config_holder: ConfigHolder,

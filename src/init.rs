@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::Layer;
 
@@ -68,6 +67,7 @@ where
     Some(telemetry_layer)
 }
 #[cfg(not(feature = "otel"))]
+#[allow(clippy::needless_pass_by_value)]
 fn tokio_tracing_otel(
     _name: impl Into<Cow<'static, str>>,
 ) -> Option<tracing::level_filters::LevelFilter> {
@@ -119,4 +119,14 @@ pub(crate) fn init(name: impl Into<Cow<'static, str>>, machine_readable: bool) -
 
 pub(crate) struct Guard {
     _chrome_guard: Option<tracing_chrome::FlushGuard>,
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "otel")] {
+                opentelemetry::global::shutdown_tracer_provider();
+            }
+        }
+    }
 }
