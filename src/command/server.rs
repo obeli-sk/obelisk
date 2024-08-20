@@ -368,7 +368,7 @@ pub(crate) async fn run(
 
     run2(config, clean, config_holder).await?;
 
-    opentelemetry::global::shutdown_tracer_provider(); // FIXME: Move to the guard
+    // opentelemetry::global::shutdown_tracer_provider(); // FIXME: Move to the guard
 
     Ok(())
 }

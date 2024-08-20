@@ -30,7 +30,12 @@ where
         None
     }
 }
+#[cfg(not(feature = "tokio-console"))]
+fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
+    None
+}
 
+#[cfg(feature = "otel")]
 fn tokio_tracing_otel<S>(
     name: impl Into<Cow<'static, str>>,
 ) -> Option<impl tracing_subscriber::Layer<S>>
@@ -57,14 +62,15 @@ where
             ),
         ])))
         .install_batch(runtime::Tokio)
-        .unwrap();
+        .expect("TODO");
 
     let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
     Some(telemetry_layer)
 }
-
-#[cfg(not(feature = "tokio-console"))]
-fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
+#[cfg(not(feature = "otel"))]
+fn tokio_tracing_otel(
+    _name: impl Into<Cow<'static, str>>,
+) -> Option<tracing::level_filters::LevelFilter> {
     None
 }
 

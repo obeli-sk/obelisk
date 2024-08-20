@@ -49,12 +49,12 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 utils.workspace = true
 wasmtime.workspace = true
-
-opentelemetry = "0.23.0"
-opentelemetry_sdk = { version = "0.23.0", features = ["rt-tokio"] }
-opentelemetry-otlp = "0.16.0"
-opentelemetry-semantic-conventions = "0.16.0"
-tracing-opentelemetry = "0.24"
+# OTEL
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry-semantic-conventions = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 
 [[bin]]
 name = "obelisk"
@@ -63,6 +63,13 @@ path = "src/main.rs"
 [features]
 parallel-compilation = ["wasmtime/parallel-compilation"]
 tokio-console = ["dep:console-subscriber"]
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-semantic-conventions",
+    "dep:tracing-opentelemetry",
+]
 default = ["parallel-compilation"]
 
 [lints]
@@ -231,6 +238,13 @@ wit-parser = "0.212.0"
 # cargo-component
 wit-bindgen-rt = "0.24.0"
 
+# OTEL
+opentelemetry = "0.23.0"
+opentelemetry_sdk = { version = "0.23.0", features = ["rt-tokio"] }
+opentelemetry-otlp = "0.16.0"
+opentelemetry-semantic-conventions = "0.16.0"
+tracing-opentelemetry = "0.24"
+
 [patch.crates-io]
 getrandom = { git = "https://github.com/madsim-rs/getrandom.git", rev = "e79a7aecbcf8a43a802d30742667b77d75c613bd" } # madsim
 
@@ -254,25 +268,6 @@ clippy.module_name_repetitions = "allow"
 [workspace.lints.rust]
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(madsim)'] }
 unknown_lints = "deny"
-
-# Config for 'cargo dist'
-[workspace.metadata.dist]
-# The preferred cargo-dist version to use in CI (Cargo.toml SemVer syntax)
-cargo-dist-version = "0.15.0"
-# CI backends to support
-ci = "github"
-# The installers to generate for each app
-installers = ["shell", "npm"]
-# Target platforms to build apps for (Rust target-triple syntax)
-targets = ["x86_64-unknown-linux-gnu"]
-# The archive format to use for windows builds (defaults .zip)
-windows-archive = ".tar.gz"
-# The archive format to use for non-windows builds (defaults .tar.xz)
-unix-archive = ".tar.gz"
-# Publish jobs to run in CI
-pr-run-mode = "skip"
-# Whether to install an updater program
-install-updater = false
 
 [profile.dev]
 debug = 0
