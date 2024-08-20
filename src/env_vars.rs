@@ -16,6 +16,7 @@ pub(crate) fn is_env_true(key: &SupportedEnvVar) -> bool {
         .unwrap_or_default()
 }
 
+#[allow(dead_code)]
 pub(crate) fn get_env_or_default<'a>(
     key: &SupportedEnvVar,
     default: impl Into<Cow<'a, str>>,

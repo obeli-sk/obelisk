@@ -37,11 +37,9 @@ use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use executor::worker::Worker;
 use serde::Deserialize;
 use std::fmt::Debug;
-use std::fmt::Display;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -486,10 +484,13 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     ),
     anyhow::Error,
 > {
+    debug!("Using toml configuration: {config:?}");
     let codegen_cache_config_file_holder =
         Engines::write_codegen_config(codegen_cache).context("error configuring codegen cache")?;
-    let engines =
-        Engines::auto_detect_allocator(&get_opts_from_env(), codegen_cache_config_file_holder)?;
+    let engines = Engines::auto_detect_allocator(
+        &config.wasmtime_pooling_config.into(),
+        codegen_cache_config_file_holder,
+    )?;
 
     let _epoch_ticker = EpochTicker::spawn_new(
         vec![
@@ -506,7 +507,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             clock_fn: now,
         },
     );
-    debug!("Loading components: {config:?}");
+
     let mut exec_join_handles = Vec::new();
 
     // FIXME: Ctrl-C here is ignored.
@@ -539,57 +540,6 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         }
     }
     Ok((exec_join_handles, timers_watcher))
-}
-
-fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
-    fn get_env<T: FromStr + Display>(key: &str, into: &mut Option<T>)
-    where
-        <T as FromStr>::Err: Debug,
-    {
-        if let Ok(val) = std::env::var(key) {
-            let val = val.parse().unwrap();
-            info!("Setting {key}={val}");
-            *into = Some(val);
-        }
-    }
-    let mut opts = wasm_workers::engines::PoolingOptions::default();
-    get_env(
-        "WASMTIME_POOLING_MEMORY_KEEP_RESIDENT",
-        &mut opts.pooling_memory_keep_resident,
-    );
-    get_env(
-        "WASMTIME_POOLING_TABLE_KEEP_RESIDENT",
-        &mut opts.pooling_table_keep_resident,
-    );
-    get_env(
-        "WASMTIME_MEMORY_PROTECTION_KEYS",
-        &mut opts.memory_protection_keys,
-    );
-    get_env(
-        "WASMTIME_POOLING_TOTAL_CORE_INSTANCES",
-        &mut opts.pooling_total_core_instances,
-    );
-    get_env(
-        "WASMTIME_POOLING_TOTAL_COMPONENT_INSTANCES",
-        &mut opts.pooling_total_component_instances,
-    );
-    get_env(
-        "WASMTIME_POOLING_TOTAL_MEMORIES",
-        &mut opts.pooling_total_memories,
-    );
-    get_env(
-        "WASMTIME_POOLING_TOTAL_TABLES",
-        &mut opts.pooling_total_tables,
-    );
-    get_env(
-        "WASMTIME_POOLING_TOTAL_STACKS",
-        &mut opts.pooling_total_stacks,
-    );
-    get_env(
-        "WASMTIME_POOLING_MAX_MEMORY_SIZE",
-        &mut opts.pooling_max_memory_size,
-    );
-    opts
 }
 
 #[instrument(skip_all, fields(
