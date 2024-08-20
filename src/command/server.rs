@@ -314,11 +314,10 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
     grpc::ExecutionStatus {
         status: Some(match execution_log.pending_state {
             PendingState::Locked {
-                executor_id,
+                executor_id: _,
                 run_id,
                 lock_expires_at,
             } => Status::Locked(Locked {
-                executor_id: Some(executor_id.into()),
                 run_id: Some(run_id.into()),
                 lock_expires_at: Some(lock_expires_at.into()),
             }),

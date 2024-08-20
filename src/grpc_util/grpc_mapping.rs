@@ -1,7 +1,7 @@
 use crate::command::grpc;
 use anyhow::anyhow;
 use concepts::{
-    prefixed_ulid::{ExecutorId, JoinSetId, RunId},
+    prefixed_ulid::{JoinSetId, RunId},
     storage::{DbError, SpecificError},
     ComponentConfigHash, ExecutionId, FunctionFqn,
 };
@@ -18,14 +18,6 @@ impl From<ExecutionId> for grpc::ExecutionId {
 
 impl From<JoinSetId> for grpc::JoinSetId {
     fn from(value: JoinSetId) -> Self {
-        Self {
-            id: value.to_string(),
-        }
-    }
-}
-
-impl From<ExecutorId> for grpc::ExecutorId {
-    fn from(value: ExecutorId) -> Self {
         Self {
             id: value.to_string(),
         }

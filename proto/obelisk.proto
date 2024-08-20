@@ -63,10 +63,6 @@ message ExecutionId {
     string id = 1;
 }
 
-message ExecutorId {
-    string id = 1;
-}
-
 message RunId {
     string id = 1;
 }
@@ -102,7 +98,6 @@ message GetStatusRequest {
 
 message ExecutionStatus {
     message Locked {
-        ExecutorId executor_id = 1;
         RunId run_id = 2;
         google.protobuf.Timestamp lock_expires_at = 3;
     }
