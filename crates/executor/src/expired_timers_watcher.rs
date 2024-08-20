@@ -33,7 +33,7 @@ pub struct TimersWatcherConfig<C: ClockFn> {
 }
 
 pub struct TimersWatcherTask<DB: DbConnection> {
-    pub(crate) db_connection: DB,
+    pub(crate) db_connection: DB, // FIXME: DbPool
 }
 
 #[allow(dead_code)]

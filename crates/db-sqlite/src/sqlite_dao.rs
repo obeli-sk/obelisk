@@ -329,6 +329,7 @@ impl SqlitePool {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, SqliteError> {
         let path = path.as_ref();
         let pool = PoolBuilder::new()

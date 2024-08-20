@@ -16,7 +16,6 @@ use anyhow::Context;
 use assert_matches::assert_matches;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
-use concepts::storage::DbError;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionEvent;
 use concepts::storage::ExecutionEventInner;
@@ -39,6 +38,7 @@ use serde::Deserialize;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::marker::PhantomData;
+use std::path::Path;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -48,6 +48,9 @@ use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
 use tracing::error;
+use tracing::info_span;
+use tracing::instrument;
+use tracing::Instrument;
 use tracing::{debug, info};
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityWorker;
@@ -69,10 +72,6 @@ impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
             component_registry,
             phantom_data: PhantomData,
         }
-    }
-
-    async fn close(self) -> Result<(), DbError> {
-        self.db_pool.close().await
     }
 }
 
@@ -355,14 +354,26 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
     }
 }
 
-#[allow(clippy::too_many_lines)]
 pub(crate) async fn run(
     config: ObeliskConfig,
     clean: bool,
     config_holder: ConfigHolder,
     machine_readable_logs: bool,
 ) -> anyhow::Result<()> {
-    let _guard = init::init(machine_readable_logs);
+    let _guard = init::init("obelisk-server", machine_readable_logs);
+
+    run2(config, clean, config_holder)
+        .instrument(info_span!("foo"))
+        .await
+}
+
+#[allow(clippy::too_many_lines)]
+#[instrument(parent = None, skip_all)]
+async fn run2(
+    config: ObeliskConfig,
+    clean: bool,
+    config_holder: ConfigHolder,
+) -> anyhow::Result<()> {
     let db_file = &config
         .get_sqlite_file(config_holder.project_dirs.as_ref())
         .await?;
@@ -409,9 +420,63 @@ pub(crate) async fn run(
         .await
         .with_context(|| format!("cannot create wasm cache directory {wasm_cache_dir:?}"))?;
 
-    // Set up codegen cache
-    let codegen_cache_config_file_holder = Engines::write_codegen_config(codegen_cache.as_deref())
-        .context("error configuring codegen cache")?;
+    let api_listening_addr = config.api_listening_addr;
+    let db_pool = SqlitePool::new(db_file)
+        .await
+        .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
+
+    let (exec_join_handles, timers_watcher, grpc_server) =
+        load_components(config, &db_pool, codegen_cache.as_deref(), &wasm_cache_dir).await?;
+
+    let res = tonic::transport::Server::builder()
+        .add_service(
+            grpc::scheduler_server::SchedulerServer::from_arc(grpc_server.clone())
+                .send_compressed(CompressionEncoding::Zstd)
+                .accept_compressed(CompressionEncoding::Zstd)
+                .send_compressed(CompressionEncoding::Gzip)
+                .accept_compressed(CompressionEncoding::Gzip),
+        )
+        .add_service(
+            grpc::function_repository_server::FunctionRepositoryServer::from_arc(
+                grpc_server.clone(),
+            )
+            .send_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Zstd)
+            .send_compressed(CompressionEncoding::Gzip)
+            .accept_compressed(CompressionEncoding::Gzip),
+        )
+        .serve_with_shutdown(api_listening_addr, async move {
+            if let Err(err) = tokio::signal::ctrl_c().await {
+                error!("Error while listening to ctrl-c - {err:?}");
+            }
+        })
+        .await
+        .context("grpc server error");
+    // ^ Will await until the gRPC server shuts down.
+    timers_watcher.close().await;
+    for exec_join_handle in exec_join_handles {
+        exec_join_handle.close().await;
+    }
+    db_pool.close().await.context("cannot close database")?;
+    res
+}
+
+#[instrument(skip_all)]
+async fn load_components<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    config: ObeliskConfig,
+    db_pool: &P,
+    codegen_cache: Option<&Path>,
+    wasm_cache_dir: &Path,
+) -> Result<
+    (
+        Vec<ExecutorTaskHandle>,
+        executor::expired_timers_watcher::TaskHandle,
+        Arc<GrpcServer<DB, P>>,
+    ),
+    anyhow::Error,
+> {
+    let codegen_cache_config_file_holder =
+        Engines::write_codegen_config(codegen_cache).context("error configuring codegen cache")?;
     let engines =
         Engines::auto_detect_allocator(&get_opts_from_env(), codegen_cache_config_file_holder)?;
 
@@ -422,9 +487,6 @@ pub(crate) async fn run(
         ],
         Duration::from_millis(10),
     );
-    let db_pool = SqlitePool::new(db_file)
-        .await
-        .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
 
     let timers_watcher = TimersWatcherTask::spawn_new(
         db_pool.connection(),
@@ -433,7 +495,6 @@ pub(crate) async fn run(
             clock_fn: now,
         },
     );
-
     debug!("Loading components: {config:?}");
     let mut exec_join_handles = Vec::new();
     let mut component_registry = ComponentConfigRegistry::default();
@@ -454,41 +515,8 @@ pub(crate) async fn run(
             exec_join_handles.push(exec_task_handle);
         }
     }
-    let grpc_server = Arc::new(GrpcServer::new(db_pool, component_registry));
-    let res = tonic::transport::Server::builder()
-        .add_service(
-            grpc::scheduler_server::SchedulerServer::from_arc(grpc_server.clone())
-                .send_compressed(CompressionEncoding::Zstd)
-                .accept_compressed(CompressionEncoding::Zstd)
-                .send_compressed(CompressionEncoding::Gzip)
-                .accept_compressed(CompressionEncoding::Gzip),
-        )
-        .add_service(
-            grpc::function_repository_server::FunctionRepositoryServer::from_arc(
-                grpc_server.clone(),
-            )
-            .send_compressed(CompressionEncoding::Zstd)
-            .accept_compressed(CompressionEncoding::Zstd)
-            .send_compressed(CompressionEncoding::Gzip)
-            .accept_compressed(CompressionEncoding::Gzip),
-        )
-        .serve_with_shutdown(config.api_listening_addr, async move {
-            if let Err(err) = tokio::signal::ctrl_c().await {
-                error!("Error while listening to ctrl-c - {err:?}");
-            }
-        })
-        .await
-        .context("grpc server error");
-    timers_watcher.close().await;
-    for exec_join_handle in exec_join_handles {
-        exec_join_handle.close().await;
-    }
-    Arc::into_inner(grpc_server)
-        .expect("must be the last reference")
-        .close()
-        .await
-        .context("cannot close database")?;
-    res
+    let grpc_server = Arc::new(GrpcServer::new(db_pool.clone(), component_registry));
+    Ok((exec_join_handles, timers_watcher, grpc_server))
 }
 
 fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
@@ -549,7 +577,7 @@ fn instantiate_activity<DB: DbConnection + 'static>(
     engines: &Engines,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
     info!(
-        "Instantiating activity {name} with id {config_id} from {wasm_path:?}",
+        "Instantiating activity `{name}` with id {config_id} from {wasm_path:?}",
         name = activity.config_store.name(),
         config_id = activity.exec_config.config_id,
         wasm_path = activity.wasm_path,
@@ -577,10 +605,10 @@ fn instantiate_workflow<DB: DbConnection + 'static>(
     component_registry: &mut ComponentConfigRegistry,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
     info!(
-        "Instantiating workflow {name} with id {config_id} from {wasm_path:?}",
         name = workflow.config_store.name(),
-        config_id = workflow.exec_config.config_id,
-        wasm_path = workflow.wasm_path,
+        config_id = %workflow.exec_config.config_id,
+        wasm_path = ?workflow.wasm_path,
+        "Instantiating workflow",
     );
     debug!("Full configuration: {workflow:?}");
     let worker = Arc::new(WorkflowWorker::new_with_config(

@@ -261,7 +261,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         Ok(ExecutionProgress { executions })
     }
 
-    #[instrument(skip_all, fields(%execution_id, ffqn = %locked_execution.ffqn))]
+    #[instrument(parent = None, skip_all, fields(%execution_id, ffqn = %locked_execution.ffqn))]
     async fn run_worker(
         worker: Arc<W>,
         db_pool: P,

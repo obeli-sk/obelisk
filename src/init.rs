@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::Layer;
 
@@ -29,18 +31,46 @@ where
     }
 }
 
+fn tokio_tracing_otel<S>(
+    name: impl Into<Cow<'static, str>>,
+) -> Option<impl tracing_subscriber::Layer<S>>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    use opentelemetry::trace::TracerProvider as _;
+
+    let name = name.into();
+    let tracer_provider = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_batch_config(opentelemetry_sdk::trace::BatchConfig::default())
+        .with_exporter(opentelemetry_otlp::new_exporter().tonic())
+        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(
+            opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
+                opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+                name.clone(),
+            )]),
+        ))
+        .install_batch(opentelemetry_sdk::runtime::Tokio)
+        .unwrap();
+
+    let tracer = tracer_provider.tracer(name); // bug? name not propagated correctly without using SERVICE_NAME above.
+    let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+    Some(telemetry_layer)
+}
+
 #[cfg(not(feature = "tokio-console"))]
 fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
     None
 }
 
-pub(crate) fn init(machine_readable: bool) -> Guard {
+pub(crate) fn init(name: impl Into<Cow<'static, str>>, machine_readable: bool) -> Guard {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
     let mut chrome_guard = None;
     tracing_subscriber::registry()
         .with(tokio_console_layer())
+        .with(tokio_tracing_otel(name))
         .with({
             if machine_readable {
                 tracing_subscriber::fmt::layer()
@@ -68,7 +98,7 @@ pub(crate) fn init(machine_readable: bool) -> Guard {
         } else {
             None
         })
-        .init();
+        .init(); // TODO: try_init
 
     std::panic::set_hook(Box::new(utils::tracing_panic_hook));
     Guard {
