@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::Layer;
 
+#[cfg(any(feature = "tokio-console", feature = "tracing-chrome"))]
 fn is_env_true(key: &str) -> bool {
     std::env::var(key)
         .ok()
@@ -78,36 +79,30 @@ pub(crate) fn init(name: impl Into<Cow<'static, str>>, machine_readable: bool) -
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    let mut chrome_guard = None;
+    let chrome_guard;
     tracing_subscriber::registry()
         .with(tokio_console_layer())
         .with(tokio_tracing_otel(name))
-        .with({
-            if machine_readable {
-                tracing_subscriber::fmt::layer()
-                    .json()
-                    .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-                    .boxed()
-            } else {
-                tracing_subscriber::fmt::layer()
-                    .compact()
-                    .with_target(false)
-                    .boxed()
-            }
+        .with(if machine_readable {
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+                .boxed()
+        } else {
+            tracing_subscriber::fmt::layer()
+                .compact()
+                .with_target(false)
+                .boxed()
         })
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
-        .with(if is_env_true("CHROME_TRACE") {
-            let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
-                .trace_style(tracing_chrome::TraceStyle::Async)
-                .build();
-            chrome_guard = Some(guard);
-            Some(chrome_layer)
-        } else {
-            None
+        .with({
+            let (layer, guard) = chrome_layer();
+            chrome_guard = guard;
+            layer
         })
         .init(); // TODO: try_init
 
@@ -117,8 +112,30 @@ pub(crate) fn init(name: impl Into<Cow<'static, str>>, machine_readable: bool) -
     }
 }
 
+#[cfg(not(feature = "tracing-chrome"))]
+fn chrome_layer() -> (Option<tracing::level_filters::LevelFilter>, Option<()>) {
+    (None, None)
+}
+#[cfg(feature = "tracing-chrome")]
+fn chrome_layer<S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span> + Send + Sync>() -> (
+    Option<tracing_chrome::ChromeLayer<S>>,
+    Option<tracing_chrome::FlushGuard>,
+) {
+    if is_env_true("CHROME_TRACE") {
+        let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+            .trace_style(tracing_chrome::TraceStyle::Async)
+            .build();
+        (Some(chrome_layer), Some(guard))
+    } else {
+        (None, None)
+    }
+}
+
 pub(crate) struct Guard {
+    #[cfg(feature = "tracing-chrome")]
     _chrome_guard: Option<tracing_chrome::FlushGuard>,
+    #[cfg(not(feature = "tracing-chrome"))]
+    _chrome_guard: Option<()>,
 }
 
 impl Drop for Guard {

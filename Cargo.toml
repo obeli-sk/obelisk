@@ -56,7 +56,7 @@ tracing-opentelemetry = { workspace = true, optional = true }
 # tokio-console
 console-subscriber = { workspace = true, optional = true }
 # tracing-chrome
-tracing-chrome = { workspace = true }
+tracing-chrome = { workspace = true, optional = true }
 
 [[bin]]
 name = "obelisk"
@@ -72,6 +72,7 @@ otel = [
     "dep:opentelemetry-semantic-conventions",
     "dep:tracing-opentelemetry",
 ]
+tracing-chrome = ["dep:tracing-chrome"]
 default = ["parallel-compilation"]
 
 [lints]
