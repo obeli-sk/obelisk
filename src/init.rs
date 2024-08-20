@@ -59,7 +59,6 @@ where
         .install_batch(runtime::Tokio)
         .unwrap();
 
-    // let tracer = tracer.tracer(name); // bug? name not propagated correctly without using SERVICE_NAME above.
     let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
     Some(telemetry_layer)
 }
