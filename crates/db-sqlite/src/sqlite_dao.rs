@@ -507,7 +507,7 @@ impl SqlitePool {
         Ok((next_version, index_updated.pending_at))
     }
 
-    #[instrument(skip_all, fields(%execution_id, %pending_state, %next_version, purge, ?ffqn))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %pending_state, %next_version, purge, ?ffqn))]
     fn update_index(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -690,7 +690,7 @@ impl SqlitePool {
         .transpose()
     }
 
-    #[instrument(skip_all, fields(%execution_id, %run_id, %executor_id))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %run_id, %executor_id))]
     fn lock_inner(
         tx: &Transaction,
         created_at: DateTime<Utc>,

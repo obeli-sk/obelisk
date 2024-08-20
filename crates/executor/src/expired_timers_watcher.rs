@@ -62,13 +62,14 @@ impl TaskHandle {
 }
 
 impl Drop for TaskHandle {
-    #[instrument(skip_all, parent = &self.span)]
     fn drop(&mut self) {
         if self.abort_handle.is_finished() {
             return;
         }
-        warn!("Aborting the task");
-        self.abort_handle.abort();
+        self.span.in_scope(|| {
+            warn!("Aborting the task");
+            self.abort_handle.abort();
+        });
     }
 }
 
