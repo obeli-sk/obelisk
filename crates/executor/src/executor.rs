@@ -126,7 +126,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     ) -> ExecutorTaskHandle {
         let executor_id = ExecutorId::generate();
-        let span = info_span!("executor",
+        let span = info_span!(parent: None, "executor",
             %executor_id,
             config_id = %config.config_id,
         );

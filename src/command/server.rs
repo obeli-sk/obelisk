@@ -79,6 +79,7 @@ impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
 impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server::Scheduler
     for GrpcServer<DB, P>
 {
+    #[instrument(skip_all)]
     async fn submit(
         &self,
         request: tonic::Request<grpc::SubmitRequest>,
@@ -155,6 +156,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
     type GetStatusStream =
         Pin<Box<dyn Stream<Item = Result<grpc::GetStatusResponse, tonic::Status>> + Send>>;
 
+    #[instrument(skip_all)]
     async fn get_status(
         &self,
         request: tonic::Request<grpc::GetStatusRequest>,
@@ -210,7 +212,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await; // TODO: Switch to subscription-based approach
                 }
-            });
+            }.in_current_span()
+            );
             let output = ReceiverStream::new(rx);
             Ok(tonic::Response::new(
                 Box::pin(output) as Self::GetStatusStream
@@ -223,6 +226,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
 impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     grpc::function_repository_server::FunctionRepository for GrpcServer<DB, P>
 {
+    #[instrument(skip_all)]
     async fn list_components(
         &self,
         _request: tonic::Request<grpc::ListComponentsRequest>,
@@ -362,17 +366,14 @@ pub(crate) async fn run(
 ) -> anyhow::Result<()> {
     let _guard = init::init("obelisk-server", machine_readable_logs);
 
-    run2(config, clean, config_holder)
-        .instrument(info_span!("foo"))
-        .await?;
+    run2(config, clean, config_holder).await?;
 
-    opentelemetry::global::shutdown_tracer_provider();
+    opentelemetry::global::shutdown_tracer_provider(); // FIXME: Move to the guard
 
     Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
-#[instrument(parent = None, skip_all)]
 async fn run2(
     config: ObeliskConfig,
     clean: bool,
@@ -425,12 +426,16 @@ async fn run2(
         .with_context(|| format!("cannot create wasm cache directory {wasm_cache_dir:?}"))?;
 
     let api_listening_addr = config.api_listening_addr;
+    let init_span = info_span!("init");
     let db_pool = SqlitePool::new(db_file)
+        .instrument(init_span.clone())
         .await
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
 
     let (exec_join_handles, timers_watcher, grpc_server) =
-        load_components(config, &db_pool, codegen_cache.as_deref(), &wasm_cache_dir).await?;
+        load_components(config, &db_pool, codegen_cache.as_deref(), &wasm_cache_dir)
+            .instrument(init_span)
+            .await?;
 
     let res = tonic::transport::Server::builder()
         .add_service(
