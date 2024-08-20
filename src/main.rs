@@ -13,10 +13,8 @@ use command::grpc::{
 };
 use config::toml::ConfigHolder;
 use directories::ProjectDirs;
-use tonic::{
-    codec::CompressionEncoding,
-    transport::{Channel, ClientTlsConfig},
-};
+use grpc_util::to_channel;
+use tonic::{codec::CompressionEncoding, transport::Channel};
 
 pub type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
@@ -77,16 +75,6 @@ async fn main() -> Result<(), anyhow::Error> {
             }
         }
     }
-}
-
-async fn to_channel(url: String) -> Result<Channel, anyhow::Error> {
-    let tls = ClientTlsConfig::new().with_native_roots();
-    let url = url.parse().context("cannot parse uri")?;
-    Channel::builder(url)
-        .tls_config(tls)?
-        .connect()
-        .await
-        .context("connect error")
 }
 
 async fn get_scheduler_client(url: String) -> Result<SchedulerClient<Channel>, anyhow::Error> {
