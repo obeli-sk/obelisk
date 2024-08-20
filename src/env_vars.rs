@@ -21,7 +21,5 @@ pub(crate) fn get_env_or_default<'a>(
     key: &SupportedEnvVar,
     default: impl Into<Cow<'a, str>>,
 ) -> Cow<'a, str> {
-    std::env::var(key.to_string())
-        .map(Cow::from)
-        .unwrap_or_else(|_| default.into())
+    std::env::var(key.to_string()).map_or_else(|_| default.into(), Cow::from)
 }
