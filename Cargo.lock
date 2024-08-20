@@ -2360,6 +2360,7 @@ dependencies = [
  "serde_with",
  "sha2",
  "shadow-rs",
+ "strum",
  "tempfile",
  "thiserror",
  "tokio-stream",

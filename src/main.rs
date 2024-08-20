@@ -1,6 +1,7 @@
 mod args;
 mod command;
 mod config;
+mod env_vars;
 mod grpc_util;
 mod init;
 mod oci;
