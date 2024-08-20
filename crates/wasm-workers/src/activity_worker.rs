@@ -266,6 +266,7 @@ pub(crate) mod tests {
     use super::*;
     use assert_matches::assert_matches;
     use concepts::{
+        prefixed_ulid::ExecutorId,
         storage::{CreateRequest, DbConnection, DbPool, Version},
         ExecutionId, FunctionFqn, Params, SupportedFunctionResult,
     };
@@ -274,6 +275,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::time::Duration;
     use test_utils::{env_or_default, sim_clock::SimClock};
+    use tracing::info_span;
     use utils::time::now;
     use val_json::{
         type_wrapper::TypeWrapper,
@@ -310,7 +312,15 @@ pub(crate) mod tests {
             tick_sleep: Duration::ZERO,
             config_id: ComponentConfigHash::dummy(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, None)
+        ExecTask::spawn_new(
+            worker,
+            exec_config,
+            clock_fn,
+            db_pool,
+            None,
+            ExecutorId::generate(),
+            info_span!("executor"),
+        )
     }
 
     pub(crate) fn spawn_activity_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -493,7 +503,15 @@ pub(crate) mod tests {
                 tick_sleep: TICK_SLEEP,
                 config_id: ComponentConfigHash::dummy(),
             };
-            let exec_task = ExecTask::spawn_new(worker, exec_config, now, db_pool.clone(), None);
+            let exec_task = ExecTask::spawn_new(
+                worker,
+                exec_config,
+                now,
+                db_pool.clone(),
+                None,
+                ExecutorId::generate(),
+                info_span!("executor"),
+            );
 
             // Create an execution.
             let stopwatch = std::time::Instant::now();

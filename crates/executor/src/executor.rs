@@ -124,12 +124,9 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         clock_fn: C,
         db_pool: P,
         task_limiter: Option<Arc<tokio::sync::Semaphore>>,
+        executor_id: ExecutorId,
+        span: Span,
     ) -> ExecutorTaskHandle {
-        let executor_id = ExecutorId::generate();
-        let span = info_span!(parent: None, "executor",
-            %executor_id,
-            config_id = %config.config_id,
-        );
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let ffqns = extract_ffqns(worker.as_ref());
@@ -235,8 +232,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                 let db_pool = self.db_pool.clone();
                 let clock_fn = self.clock_fn.clone();
                 let run_id = locked_execution.run_id;
-                let span =
-                    info_span!("worker", %execution_id, %run_id, ffqn = %locked_execution.ffqn,);
+                let span = info_span!(parent: None, "worker", %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.executor_id);
                 tokio::spawn(
                     async move {
                         let res = Self::run_worker(
@@ -261,7 +257,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         Ok(ExecutionProgress { executions })
     }
 
-    #[instrument(parent = None, skip_all, fields(%execution_id, ffqn = %locked_execution.ffqn))]
+    #[instrument(skip_all)]
     async fn run_worker(
         worker: Arc<W>,
         db_pool: P,
@@ -683,6 +679,8 @@ mod tests {
             clock_fn,
             db_pool.clone(),
             None,
+            ExecutorId::generate(),
+            info_span!("executor"),
         );
 
         let execution_log = create_and_tick(

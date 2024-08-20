@@ -578,6 +578,8 @@ pub(crate) mod tests {
                 sim_clock.get_clock_fn(),
                 db_pool.clone(),
                 None,
+                concepts::prefixed_ulid::ExecutorId::generate(),
+                tracing::info_span!("executor"),
             )
         };
         // Create an execution.

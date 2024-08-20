@@ -343,6 +343,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use concepts::{
+        prefixed_ulid::ExecutorId,
         storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState},
         FinishedExecutionError,
     };
@@ -356,6 +357,7 @@ mod tests {
     use serde_json::json;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
+    use tracing::info_span;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -403,7 +405,15 @@ mod tests {
             tick_sleep: TICK_SLEEP,
             config_id: ComponentConfigHash::dummy(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, None)
+        ExecTask::spawn_new(
+            worker,
+            exec_config,
+            clock_fn,
+            db_pool,
+            None,
+            ExecutorId::generate(),
+            info_span!("executor"),
+        )
     }
 
     pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -646,7 +656,15 @@ mod tests {
             tick_sleep: TICK_SLEEP,
             config_id: ComponentConfigHash::dummy(),
         };
-        ExecTask::spawn_new(worker, exec_config, clock_fn, db_pool, None)
+        ExecTask::spawn_new(
+            worker,
+            exec_config,
+            clock_fn,
+            db_pool,
+            None,
+            ExecutorId::generate(),
+            info_span!("executor"),
+        )
     }
 
     #[rstest]

@@ -14,6 +14,7 @@ use crate::init;
 use anyhow::bail;
 use anyhow::Context;
 use assert_matches::assert_matches;
+use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
@@ -509,17 +510,29 @@ async fn load_components<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     // FIXME: Ctrl-C here is ignored.
     for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
         let activity = activity.verify_content_digest(&wasm_cache_dir).await?;
+        let executor_id = ExecutorId::generate();
         if activity.enabled {
-            let exec_task_handle =
-                instantiate_activity(activity, db_pool.clone(), &mut component_registry, &engines)?;
+            let exec_task_handle = instantiate_activity(
+                activity,
+                db_pool.clone(),
+                &mut component_registry,
+                &engines,
+                executor_id,
+            )?;
             exec_join_handles.push(exec_task_handle);
         }
     }
     for workflow in config.workflow.into_iter().filter(|it| it.common.enabled) {
         let workflow = workflow.verify_content_digest(&wasm_cache_dir).await?;
+        let executor_id = ExecutorId::generate();
         if workflow.enabled {
-            let exec_task_handle =
-                instantiate_workflow(workflow, db_pool.clone(), &engines, &mut component_registry)?;
+            let exec_task_handle = instantiate_workflow(
+                workflow,
+                db_pool.clone(),
+                &engines,
+                &mut component_registry,
+                executor_id,
+            )?;
             exec_join_handles.push(exec_task_handle);
         }
     }
@@ -578,18 +591,20 @@ fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
     opts
 }
 
+#[instrument(skip_all, fields(
+    %executor_id,
+    config_id = %activity.exec_config.config_id,
+    name = activity.config_store.name(),
+    wasm_path = ?activity.wasm_path,
+))]
 fn instantiate_activity<DB: DbConnection + 'static>(
     activity: VerifiedActivityConfig,
     db_pool: impl DbPool<DB> + 'static,
     component_registry: &mut ComponentConfigRegistry,
     engines: &Engines,
+    executor_id: ExecutorId,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
-    info!(
-        "Instantiating activity `{name}` with id {config_id} from {wasm_path:?}",
-        name = activity.config_store.name(),
-        config_id = activity.exec_config.config_id,
-        wasm_path = activity.wasm_path,
-    );
+    info!("Instantiating activity");
     debug!("Full configuration: {activity:?}");
     let worker = Arc::new(ActivityWorker::new_with_config(
         activity.wasm_path,
@@ -603,21 +618,24 @@ fn instantiate_activity<DB: DbConnection + 'static>(
         activity.config_store,
         activity.exec_config,
         component_registry,
+        executor_id,
     )
 }
 
+#[instrument(skip_all, fields(
+    %executor_id,
+    config_id = %workflow.exec_config.config_id,
+    name = workflow.config_store.name(),
+    wasm_path = ?workflow.wasm_path,
+))]
 fn instantiate_workflow<DB: DbConnection + 'static>(
     workflow: VerifiedWorkflowConfig,
     db_pool: impl DbPool<DB> + 'static,
     engines: &Engines,
     component_registry: &mut ComponentConfigRegistry,
+    executor_id: ExecutorId,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
-    info!(
-        name = workflow.config_store.name(),
-        config_id = %workflow.exec_config.config_id,
-        wasm_path = ?workflow.wasm_path,
-        "Instantiating workflow",
-    );
+    info!("Instantiating workflow");
     debug!("Full configuration: {workflow:?}");
     let worker = Arc::new(WorkflowWorker::new_with_config(
         workflow.wasm_path,
@@ -633,6 +651,7 @@ fn instantiate_workflow<DB: DbConnection + 'static>(
         workflow.config_store,
         workflow.exec_config,
         component_registry,
+        executor_id,
     )
 }
 
@@ -642,7 +661,13 @@ fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
     config_store: ConfigStore,
     exec_config: ExecConfig,
     component_registry: &mut ComponentConfigRegistry,
+    executor_id: ExecutorId,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
+    let root_span = info_span!(parent: None, "executor",
+        %executor_id,
+        config_id = %exec_config.config_id,
+        name = config_store.name()
+    );
     let component = Component {
         config_id: config_store.as_hash(),
         config_store,
@@ -650,7 +675,16 @@ fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
         imports: worker.imported_functions().collect(),
     };
     component_registry.insert(component)?;
-    Ok(ExecTask::spawn_new(worker, exec_config, now, db_pool, None))
+
+    Ok(ExecTask::spawn_new(
+        worker,
+        exec_config,
+        now,
+        db_pool,
+        None,
+        executor_id,
+        root_span,
+    ))
 }
 
 // TODO: If dynamic executor is not needed, split registry into Writer that is turned into a Reader. Reader is passed to the Executor when spawing.
