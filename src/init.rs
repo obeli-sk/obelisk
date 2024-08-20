@@ -35,8 +35,8 @@ fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
     None
 }
 
-#[cfg(feature = "otel")]
-fn tokio_tracing_otel<S>(
+#[cfg(feature = "otlp")]
+fn tokio_tracing_otlp<S>(
     name: impl Into<Cow<'static, str>>,
 ) -> Option<impl tracing_subscriber::Layer<S>>
 where
@@ -53,6 +53,7 @@ where
     let name = name.into();
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
+        // TODO: set IP and port
         .with_batch_config(BatchConfig::default())
         .with_exporter(opentelemetry_otlp::new_exporter().tonic())
         .with_trace_config(Config::default().with_resource(Resource::new(vec![
@@ -62,14 +63,14 @@ where
             ),
         ])))
         .install_batch(runtime::Tokio)
-        .expect("TODO");
+        .expect("cannot setup otlp");
 
     let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
     Some(telemetry_layer)
 }
-#[cfg(not(feature = "otel"))]
+#[cfg(not(feature = "otlp"))]
 #[allow(clippy::needless_pass_by_value)]
-fn tokio_tracing_otel(
+fn tokio_tracing_otlp(
     _name: impl Into<Cow<'static, str>>,
 ) -> Option<tracing::level_filters::LevelFilter> {
     None
@@ -82,7 +83,7 @@ pub(crate) fn init(name: impl Into<Cow<'static, str>>, machine_readable: bool) -
     let chrome_guard;
     tracing_subscriber::registry()
         .with(tokio_console_layer())
-        .with(tokio_tracing_otel(name))
+        .with(tokio_tracing_otlp(name))
         .with(if machine_readable {
             tracing_subscriber::fmt::layer()
                 .json()
@@ -117,7 +118,9 @@ fn chrome_layer() -> (Option<tracing::level_filters::LevelFilter>, Option<()>) {
     (None, None)
 }
 #[cfg(feature = "tracing-chrome")]
-fn chrome_layer<S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span> + Send + Sync>() -> (
+fn chrome_layer<
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span> + Send + Sync,
+>() -> (
     Option<tracing_chrome::ChromeLayer<S>>,
     Option<tracing_chrome::FlushGuard>,
 ) {
@@ -141,7 +144,7 @@ pub(crate) struct Guard {
 impl Drop for Guard {
     fn drop(&mut self) {
         cfg_if::cfg_if! {
-            if #[cfg(feature = "otel")] {
+            if #[cfg(feature = "otlp")] {
                 opentelemetry::global::shutdown_tracer_provider();
             }
         }

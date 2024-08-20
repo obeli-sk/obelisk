@@ -47,7 +47,7 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 utils.workspace = true
 wasmtime.workspace = true
-# otel
+# otlp
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
@@ -65,7 +65,7 @@ path = "src/main.rs"
 [features]
 parallel-compilation = ["wasmtime/parallel-compilation"]
 tokio-console = ["dep:console-subscriber"]
-otel = [
+otlp = [
     "dep:opentelemetry",
     "dep:opentelemetry_sdk",
     "dep:opentelemetry-otlp",
@@ -241,7 +241,7 @@ wit-parser = "0.212.0"
 # cargo-component
 wit-bindgen-rt = "0.24.0"
 
-# otel
+# otlp
 opentelemetry = "0.23.0"
 opentelemetry_sdk = { version = "0.23.0", features = ["rt-tokio"] }
 opentelemetry-otlp = "0.16.0"
