@@ -428,11 +428,17 @@ async fn run_internal(
         .await
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
 
-    let (exec_join_handles, timers_watcher, grpc_server) =
-        load_components(config, &db_pool, codegen_cache.as_deref(), &wasm_cache_dir)
-            .instrument(init_span)
-            .await?;
-
+    let mut component_registry = ComponentConfigRegistry::default();
+    let (exec_join_handles, timers_watcher) = spawn_tasks(
+        config,
+        &db_pool,
+        &mut component_registry,
+        codegen_cache.as_deref(),
+        &wasm_cache_dir,
+    )
+    .instrument(init_span)
+    .await?;
+    let grpc_server = Arc::new(GrpcServer::new(db_pool.clone(), component_registry));
     let res = tonic::transport::Server::builder()
         .add_service(
             grpc::scheduler_server::SchedulerServer::from_arc(grpc_server.clone())
@@ -467,16 +473,16 @@ async fn run_internal(
 }
 
 #[instrument(skip_all)]
-async fn load_components<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     config: ObeliskConfig,
     db_pool: &P,
+    component_registry: &mut ComponentConfigRegistry,
     codegen_cache: Option<&Path>,
     wasm_cache_dir: &Path,
 ) -> Result<
     (
         Vec<ExecutorTaskHandle>,
         executor::expired_timers_watcher::TaskHandle,
-        Arc<GrpcServer<DB, P>>,
     ),
     anyhow::Error,
 > {
@@ -502,7 +508,7 @@ async fn load_components<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     );
     debug!("Loading components: {config:?}");
     let mut exec_join_handles = Vec::new();
-    let mut component_registry = ComponentConfigRegistry::default();
+
     // FIXME: Ctrl-C here is ignored.
     for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
         let activity = activity.verify_content_digest(&wasm_cache_dir).await?;
@@ -511,7 +517,7 @@ async fn load_components<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             let exec_task_handle = instantiate_activity(
                 activity,
                 db_pool.clone(),
-                &mut component_registry,
+                component_registry,
                 &engines,
                 executor_id,
             )?;
@@ -526,14 +532,13 @@ async fn load_components<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                 workflow,
                 db_pool.clone(),
                 &engines,
-                &mut component_registry,
+                component_registry,
                 executor_id,
             )?;
             exec_join_handles.push(exec_task_handle);
         }
     }
-    let grpc_server = Arc::new(GrpcServer::new(db_pool.clone(), component_registry));
-    Ok((exec_join_handles, timers_watcher, grpc_server))
+    Ok((exec_join_handles, timers_watcher))
 }
 
 fn get_opts_from_env() -> wasm_workers::engines::PoolingOptions {
