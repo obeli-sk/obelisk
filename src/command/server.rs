@@ -364,7 +364,11 @@ pub(crate) async fn run(
 
     run2(config, clean, config_holder)
         .instrument(info_span!("foo"))
-        .await
+        .await?;
+
+    opentelemetry::global::shutdown_tracer_provider();
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_lines)]

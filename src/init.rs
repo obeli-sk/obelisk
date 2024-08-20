@@ -37,23 +37,29 @@ fn tokio_tracing_otel<S>(
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
-    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::propagation::TraceContextPropagator;
+    use opentelemetry_sdk::runtime;
+    use opentelemetry_sdk::trace::BatchConfig;
+    use opentelemetry_sdk::trace::Config;
+    use opentelemetry_sdk::Resource;
+
+    opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
     let name = name.into();
-    let tracer_provider = opentelemetry_otlp::new_pipeline()
+    let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
-        .with_batch_config(opentelemetry_sdk::trace::BatchConfig::default())
+        .with_batch_config(BatchConfig::default())
         .with_exporter(opentelemetry_otlp::new_exporter().tonic())
-        .with_trace_config(opentelemetry_sdk::trace::Config::default().with_resource(
-            opentelemetry_sdk::Resource::new(vec![opentelemetry::KeyValue::new(
+        .with_trace_config(Config::default().with_resource(Resource::new(vec![
+            opentelemetry::KeyValue::new(
                 opentelemetry_semantic_conventions::resource::SERVICE_NAME,
                 name.clone(),
-            )]),
-        ))
-        .install_batch(opentelemetry_sdk::runtime::Tokio)
+            ),
+        ])))
+        .install_batch(runtime::Tokio)
         .unwrap();
 
-    let tracer = tracer_provider.tracer(name); // bug? name not propagated correctly without using SERVICE_NAME above.
+    // let tracer = tracer.tracer(name); // bug? name not propagated correctly without using SERVICE_NAME above.
     let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
     Some(telemetry_layer)
 }
