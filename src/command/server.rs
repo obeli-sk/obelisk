@@ -364,7 +364,7 @@ pub(crate) async fn run(
     config_holder: ConfigHolder,
     machine_readable_logs: bool,
 ) -> anyhow::Result<()> {
-    let _guard = init::init("obelisk-server", machine_readable_logs);
+    let _guard = init::init(&config, machine_readable_logs);
     run_internal(config, clean, config_holder).await?;
     Ok(())
 }

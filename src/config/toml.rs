@@ -47,6 +47,9 @@ pub(crate) struct ObeliskConfig {
     pub(crate) workflow: Vec<Workflow>,
     #[serde(default)]
     pub(crate) wasmtime_pooling_config: WasmtimePoolingConfig,
+    #[cfg(feature = "otlp")]
+    #[serde(default)]
+    pub(crate) otlp_config: otlp::OtlpConfig,
 }
 
 async fn replace_path_prefix_mkdir(
@@ -478,6 +481,38 @@ impl From<WasmtimePoolingConfig> for wasm_workers::engines::PoolingOptions {
             pooling_total_stacks: value.pooling_total_stacks,
             pooling_max_memory_size: value.pooling_max_memory_size,
         }
+    }
+}
+
+#[cfg(feature = "otlp")]
+pub(crate) mod otlp {
+    use super::*;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct OtlpConfig {
+        #[serde(default = "default_service_name")]
+        pub(crate) service_name: String,
+        #[serde(default = "default_otlp_endpoint")]
+        pub(crate) otlp_endpoint: String,
+    }
+
+    impl Default for OtlpConfig {
+        fn default() -> Self {
+            Self {
+                service_name: default_service_name(),
+                otlp_endpoint: default_otlp_endpoint(),
+            }
+        }
+    }
+
+    fn default_service_name() -> String {
+        "obelisk-server".to_string()
+    }
+
+    fn default_otlp_endpoint() -> String {
+        // Endpoints per protocol https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/exporter.md
+        "http://localhost:4317".to_string()
     }
 }
 

@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use crate::config::toml::ObeliskConfig;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::Layer;
 
@@ -28,9 +28,7 @@ fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
 }
 
 #[cfg(feature = "otlp")]
-fn tokio_tracing_otlp<S>(
-    name: impl Into<Cow<'static, str>>,
-) -> Option<impl tracing_subscriber::Layer<S>>
+fn tokio_tracing_otlp<S>(config: &ObeliskConfig) -> Option<impl tracing_subscriber::Layer<S>>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
@@ -40,25 +38,21 @@ where
     use opentelemetry_sdk::trace::BatchConfig;
     use opentelemetry_sdk::trace::Config;
     use opentelemetry_sdk::Resource;
-    // Endpoints per protocol https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/exporter.md
-    const OTEL_EXPORTER_OTLP_GRPC_ENDPOINT_DEFAULT: &str = "http://localhost:4317";
 
     opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
-    let name = name.into();
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_batch_config(BatchConfig::default())
-        .with_exporter(opentelemetry_otlp::new_exporter().tonic().with_endpoint(
-            crate::env_vars::get_env_or_default(
-                &crate::env_vars::SupportedEnvVar::OTLP_ENDPOIONT,
-                OTEL_EXPORTER_OTLP_GRPC_ENDPOINT_DEFAULT,
-            ),
-        ))
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_endpoint(config.otlp_config.otlp_endpoint.to_string()),
+        )
         .with_trace_config(Config::default().with_resource(Resource::new(vec![
             opentelemetry::KeyValue::new(
                 opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-                name.clone(),
+                config.otlp_config.service_name.clone(),
             ),
         ])))
         .install_batch(runtime::Tokio)
@@ -69,20 +63,18 @@ where
 }
 #[cfg(not(feature = "otlp"))]
 #[allow(clippy::needless_pass_by_value)]
-fn tokio_tracing_otlp(
-    _name: impl Into<Cow<'static, str>>,
-) -> Option<tracing::level_filters::LevelFilter> {
+fn tokio_tracing_otlp(_config: &ObeliskConfig) -> Option<tracing::level_filters::LevelFilter> {
     None
 }
 
-pub(crate) fn init(name: impl Into<Cow<'static, str>>, machine_readable: bool) -> Guard {
+pub(crate) fn init(config: &ObeliskConfig, machine_readable: bool) -> Guard {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
     let chrome_guard;
     tracing_subscriber::registry()
         .with(tokio_console_layer())
-        .with(tokio_tracing_otlp(name))
+        .with(tokio_tracing_otlp(config))
         .with(if machine_readable {
             tracing_subscriber::fmt::layer()
                 .json()

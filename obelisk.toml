@@ -38,3 +38,7 @@ name = "http_get_workflow"
 location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-08-12-1@sha256:d591785af59e5b0809b87a6e32bae7f590f0ea459a53d4bbcb8dc3e4322ddce3"
 exec.lock_expiry.secs = 10
 child_retry_exp_backoff.secs = 1
+
+# [otlp_config]
+# service_name = "obelisk-server"
+# otlp_endpoint = "http://localhost:4317"
