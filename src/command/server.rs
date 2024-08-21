@@ -78,7 +78,7 @@ impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
 impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server::Scheduler
     for GrpcServer<DB, P>
 {
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(execution_id))]
     async fn submit(
         &self,
         request: tonic::Request<grpc::SubmitRequest>,
@@ -91,6 +91,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         let execution_id = request
             .execution_id
             .map_or_else(|| Ok(ExecutionId::generate()), ExecutionId::try_from)?;
+        tracing::Span::current().record("execution_id", tracing::field::display(execution_id));
         let ffqn =
             concepts::FunctionFqn::new_arc(Arc::from(interface_name), Arc::from(function_name));
         // Deserialize params JSON into `Params`
@@ -155,7 +156,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
     type GetStatusStream =
         Pin<Box<dyn Stream<Item = Result<grpc::GetStatusResponse, tonic::Status>> + Send>>;
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(execution_id))]
     async fn get_status(
         &self,
         request: tonic::Request<grpc::GetStatusRequest>,
@@ -166,6 +167,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             .execution_id
             .argument_must_exist("execution_id")?
             .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(execution_id));
         let db_connection = self.db_pool.connection();
         let execution_log = db_connection.get(execution_id).await.to_status()?;
         let current_pending_state = execution_log.pending_state;
