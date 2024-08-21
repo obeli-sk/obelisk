@@ -47,7 +47,7 @@ pub(crate) struct ObeliskConfig {
     pub(crate) wasmtime_pooling_config: WasmtimePoolingConfig,
     #[cfg(feature = "otlp")]
     #[serde(default)]
-    pub(crate) otlp_config: otlp::OtlpConfig,
+    pub(crate) otlp: otlp::OtlpConfig,
 }
 
 async fn replace_path_prefix_mkdir(

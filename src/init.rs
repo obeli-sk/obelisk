@@ -47,12 +47,12 @@ where
         .with_exporter(
             opentelemetry_otlp::new_exporter()
                 .tonic()
-                .with_endpoint(config.otlp_config.otlp_endpoint.to_string()),
+                .with_endpoint(config.otlp.otlp_endpoint.to_string()),
         )
         .with_trace_config(Config::default().with_resource(Resource::new(vec![
             opentelemetry::KeyValue::new(
                 opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-                config.otlp_config.service_name.clone(),
+                config.otlp.service_name.clone(),
             ),
         ])))
         .install_batch(runtime::Tokio)
