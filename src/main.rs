@@ -12,7 +12,7 @@ use clap::Parser;
 use command::grpc::{
     function_repository_client::FunctionRepositoryClient, scheduler_client::SchedulerClient,
 };
-use config::toml::ConfigHolder;
+use config::config_holder::ConfigHolder;
 use directories::ProjectDirs;
 use grpc_util::to_channel;
 use tonic::{codec::CompressionEncoding, transport::Channel};

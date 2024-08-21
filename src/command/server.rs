@@ -1,5 +1,5 @@
 use super::grpc;
-use crate::config::toml::ConfigHolder;
+use crate::config::config_holder::ConfigHolder;
 use crate::config::toml::ObeliskConfig;
 use crate::config::toml::VerifiedActivityConfig;
 use crate::config::toml::VerifiedWorkflowConfig;

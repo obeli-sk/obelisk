@@ -1,3 +1,4 @@
+pub(crate) mod config_holder;
 pub(crate) mod toml;
 
 use crate::oci;
