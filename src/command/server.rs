@@ -192,6 +192,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 .expect("mpsc bounded channel requires buffer > 0");
             tokio::spawn(async move {
                 loop {
+                    tokio::time::sleep(Duration::from_millis(500)).await; // TODO: Switch to subscription-based approach
                     // FIXME: pagination
                     match db_connection.get(execution_id).await {
                         Ok(execution_log) => {
@@ -211,7 +212,6 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                             return;
                         }
                     }
-                    tokio::time::sleep(Duration::from_millis(500)).await; // TODO: Switch to subscription-based approach
                 }
             }.in_current_span()
             );
