@@ -433,7 +433,7 @@ pub(crate) mod otlp {
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct OtlpConfig {
-        #[serde(default = "default_true")]
+        #[serde(default)]
         pub(crate) enabled: bool,
         pub(crate) level: InfoEnvFilter,
         #[serde(default = "default_service_name")]
@@ -445,7 +445,7 @@ pub(crate) mod otlp {
     impl Default for OtlpConfig {
         fn default() -> Self {
             Self {
-                enabled: true,
+                enabled: false,
                 level: InfoEnvFilter::default(),
                 service_name: default_service_name(),
                 otlp_endpoint: default_otlp_endpoint(),
