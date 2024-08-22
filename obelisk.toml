@@ -53,3 +53,13 @@ child_retry_exp_backoff.secs = 1
 # style = "plain_compact"
 # span = "none"
 # target = true
+
+## Sample (rolling) file configuration
+# [log.file]
+# level = "info,obelisk=debug"
+# style = "json"
+# span = "close"
+# target = true
+# rotation = "daily"
+# directory = "."
+# prefix = "obelisk_server_daily"

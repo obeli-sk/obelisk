@@ -489,7 +489,7 @@ pub(crate) mod log {
     #[serde(deny_unknown_fields)]
     pub(crate) struct LoggingConfig {
         #[serde(default)]
-        pub(crate) file: Vec<AppenderRollingFile>,
+        pub(crate) file: Option<AppenderRollingFile>,
         #[serde(default)]
         pub(crate) stdout: AppenderOut,
     }
@@ -599,6 +599,37 @@ pub(crate) mod log {
             Self {
                 common: AppenderCommon::default(),
                 style: default_out_style(),
+            }
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct AppenderRollingFile {
+        #[serde(flatten, default)]
+        pub(crate) common: AppenderCommon,
+        pub(crate) directory: String,
+        pub(crate) prefix: String,
+        pub(crate) rotation: Rotation,
+        #[serde(default)]
+        pub(crate) style: LoggingStyle,
+    }
+
+    #[derive(Debug, Deserialize, Clone, Copy)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum Rotation {
+        Minutely,
+        Hourly,
+        Daily,
+        Never,
+    }
+    impl From<Rotation> for tracing_appender::rolling::Rotation {
+        fn from(value: Rotation) -> Self {
+            match value {
+                Rotation::Minutely => Self::MINUTELY,
+                Rotation::Hourly => Self::HOURLY,
+                Rotation::Daily => Self::DAILY,
+                Rotation::Never => Self::NEVER,
             }
         }
     }

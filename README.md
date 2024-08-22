@@ -117,6 +117,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] Interactive CLI for execution management
 - [x] Params typecheck on creation, introspection of types of all functions in the system
 - [ ] HTML based UI for showing executions, event history and relations
+- [x] Logging and tracing configuration, sending events to an OTLP collector
 
 ## Milestone 3
 - [ ] HTTP webhook triggers, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs)

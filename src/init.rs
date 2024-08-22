@@ -77,7 +77,7 @@ pub(crate) fn init(config: &mut ObeliskConfig) -> Guard {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    let chrome_guard;
+    let mut guard = Guard::default();
 
     let out_layer = if config.log.stdout.common.enabled {
         // EnvFilter missing Clone
@@ -106,22 +106,57 @@ pub(crate) fn init(config: &mut ObeliskConfig) -> Guard {
     } else {
         None
     };
+    let rolling_file_layer = match &mut config.log.file {
+        Some(rolling) if rolling.common.enabled => {
+            // EnvFilter missing Clone
+            let env_filter = std::mem::take(&mut rolling.common.level).0;
 
+            let file_appender = tracing_appender::rolling::RollingFileAppender::new(
+                rolling.rotation.into(),
+                &rolling.directory,
+                &rolling.prefix,
+            );
+            let (non_blocking, file_guard) = tracing_appender::non_blocking(file_appender);
+            guard.file_guard = Some(file_guard);
+            Some(match rolling.style {
+                LoggingStyle::Plain => tracing_subscriber::fmt::layer()
+                    .with_writer(non_blocking)
+                    .with_target(config.log.stdout.common.target)
+                    .with_span_events(config.log.stdout.common.span.into())
+                    .with_filter(env_filter)
+                    .boxed(),
+                LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
+                    .with_writer(non_blocking)
+                    .compact()
+                    .with_target(config.log.stdout.common.target)
+                    .with_span_events(config.log.stdout.common.span.into())
+                    .with_filter(env_filter)
+                    .boxed(),
+                LoggingStyle::Json => tracing_subscriber::fmt::layer()
+                    .with_writer(non_blocking)
+                    .json()
+                    .with_target(config.log.stdout.common.target)
+                    .with_span_events(config.log.stdout.common.span.into())
+                    .with_filter(env_filter)
+                    .boxed(),
+            })
+        }
+        _ => None,
+    };
     tracing_subscriber::registry()
         .with(tokio_console_layer())
         .with(tokio_tracing_otlp(config))
         .with(out_layer)
+        .with(rolling_file_layer)
         .with({
-            let (layer, guard) = chrome_layer();
-            chrome_guard = guard;
+            let (layer, chrome_guard) = chrome_layer();
+            guard.chrome_guard = chrome_guard;
             layer
         })
         .init();
 
     std::panic::set_hook(Box::new(utils::tracing_panic_hook));
-    Guard {
-        _chrome_guard: chrome_guard,
-    }
+    guard
 }
 
 #[cfg(not(feature = "tracing-chrome"))]
@@ -145,11 +180,13 @@ fn chrome_layer<
     }
 }
 
+#[derive(Default)]
 pub(crate) struct Guard {
     #[cfg(feature = "tracing-chrome")]
-    _chrome_guard: Option<tracing_chrome::FlushGuard>,
+    chrome_guard: Option<tracing_chrome::FlushGuard>,
     #[cfg(not(feature = "tracing-chrome"))]
-    _chrome_guard: Option<()>,
+    chrome_guard: Option<()>,
+    file_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
 }
 
 impl Drop for Guard {
