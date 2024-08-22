@@ -40,19 +40,21 @@ exec.lock_expiry.secs = 10
 child_retry_exp_backoff.secs = 1
 
 ## Send spans via gRPC to an OTLP collector.
+## Defaults:
 # [otlp]
-# enabled = false # TODO
-# level = "info"    # TODO
+# enabled = false
+# level = "info"
 # service_name = "obelisk-server"
 # otlp_endpoint = "http://localhost:4317"
 
 # Stdout configuration, by default logs INFO and above
+## Defaults:
 # [log.stdout]
-# level = "warn,obelisk=info,obeli_sk_executor=trace"
+# level = "info"
 # enabled = true
 # style = "plain_compact"
 # span = "none"
-# target = true
+# target = false
 
 ## Sample (rolling) file configuration
 # [log.file]
