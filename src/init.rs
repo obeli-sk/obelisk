@@ -27,7 +27,7 @@ fn tokio_console_layer() -> Option<tracing::level_filters::LevelFilter> {
 }
 
 #[cfg(feature = "otlp")]
-fn tokio_tracing_otlp<S>(config: &ObeliskConfig) -> Option<impl tracing_subscriber::Layer<S>>
+fn tokio_tracing_otlp<S>(config: &mut ObeliskConfig) -> Option<impl tracing_subscriber::Layer<S>>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
@@ -37,6 +37,10 @@ where
     use opentelemetry_sdk::trace::BatchConfig;
     use opentelemetry_sdk::trace::Config;
     use opentelemetry_sdk::Resource;
+
+    if !config.otlp.enabled {
+        return None;
+    }
 
     opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
@@ -56,13 +60,16 @@ where
         ])))
         .install_batch(runtime::Tokio)
         .expect("cannot setup otlp");
-
-    let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+    // EnvFilter missing Clone
+    let env_filter = std::mem::take(&mut config.otlp.level).0;
+    let telemetry_layer = tracing_opentelemetry::layer()
+        .with_tracer(tracer)
+        .with_filter(env_filter);
     Some(telemetry_layer)
 }
 #[cfg(not(feature = "otlp"))]
 #[allow(clippy::needless_pass_by_value)]
-fn tokio_tracing_otlp(_config: &ObeliskConfig) -> Option<tracing::level_filters::LevelFilter> {
+fn tokio_tracing_otlp(_config: &mut ObeliskConfig) -> Option<tracing::level_filters::LevelFilter> {
     None
 }
 

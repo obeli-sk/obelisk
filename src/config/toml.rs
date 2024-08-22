@@ -427,11 +427,15 @@ impl From<WasmtimePoolingConfig> for wasm_workers::engines::PoolingOptions {
 
 #[cfg(feature = "otlp")]
 pub(crate) mod otlp {
-    use super::*;
+    use super::{default_true, log, Deserialize};
+    use log::InfoEnvFilter;
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct OtlpConfig {
+        #[serde(default = "default_true")]
+        pub(crate) enabled: bool,
+        pub(crate) level: InfoEnvFilter,
         #[serde(default = "default_service_name")]
         pub(crate) service_name: String,
         #[serde(default = "default_otlp_endpoint")]
@@ -441,6 +445,8 @@ pub(crate) mod otlp {
     impl Default for OtlpConfig {
         fn default() -> Self {
             Self {
+                enabled: true,
+                level: InfoEnvFilter::default(),
                 service_name: default_service_name(),
                 otlp_endpoint: default_otlp_endpoint(),
             }
@@ -477,7 +483,7 @@ pub(crate) mod log {
 
     use serde_with::serde_as;
 
-    use super::*;
+    use super::{default_out_style, default_true, Deserialize};
 
     #[derive(Debug, Deserialize, Default)]
     #[serde(deny_unknown_fields)]
@@ -549,8 +555,8 @@ pub(crate) mod log {
         fn default() -> Self {
             Self {
                 enabled: true,
-                level: Default::default(),
-                span: Default::default(),
+                level: InfoEnvFilter::default(),
+                span: SpanConfig::default(),
                 target: Default::default(),
             }
         }

@@ -364,7 +364,7 @@ pub(crate) async fn run(
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
     let _guard = init::init(&mut config);
-    run_internal(config, clean, config_holder).await?;
+    Box::pin(run_internal(config, clean, config_holder)).await?;
     Ok(())
 }
 
