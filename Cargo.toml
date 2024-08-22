@@ -44,10 +44,13 @@ tokio = { workspace = true }
 tokio-stream.workspace = true
 toml.workspace = true
 tonic = { workspace = true, features = ["tls", "tls-roots"] }
+tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
 utils.workspace = true
 wasmtime.workspace = true
+
+# Optional deps:
 # otlp
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
@@ -58,6 +61,7 @@ tracing-opentelemetry = { workspace = true, optional = true }
 console-subscriber = { workspace = true, optional = true }
 # tracing-chrome
 tracing-chrome = { workspace = true, optional = true }
+
 
 [[bin]]
 name = "obelisk"
@@ -210,6 +214,7 @@ toml = { version = "0.8.14", features = ["preserve_order"] }
 tonic = { version = "0.12.1", features = ["zstd", "gzip"] }
 tonic-build = "0.12.1"
 tracing = { version = "0.1", features = ["log"] }
+tracing-appender = "0.2.3"
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 ulid = { version = "1.1.0", features = ["serde"] }

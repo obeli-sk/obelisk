@@ -4,6 +4,7 @@ use super::{
 use anyhow::bail;
 use concepts::{ComponentType, ContentDigest};
 use directories::ProjectDirs;
+use log::{LoggingConfig, LoggingStyle};
 use serde::Deserialize;
 use std::{
     net::SocketAddr,
@@ -48,6 +49,8 @@ pub(crate) struct ObeliskConfig {
     #[cfg(feature = "otlp")]
     #[serde(default)]
     pub(crate) otlp: otlp::OtlpConfig,
+    #[serde(default)]
+    pub(crate) log: LoggingConfig,
 }
 
 async fn replace_path_prefix_mkdir(
@@ -455,7 +458,6 @@ pub(crate) mod otlp {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DurationConfig {
     Secs(u64),
@@ -467,6 +469,131 @@ impl From<DurationConfig> for Duration {
         match value {
             DurationConfig::Millis(millis) => Duration::from_millis(millis),
             DurationConfig::Secs(secs) => Duration::from_secs(secs),
+        }
+    }
+}
+pub(crate) mod log {
+    use std::str::FromStr;
+
+    use serde_with::serde_as;
+
+    use super::*;
+
+    #[derive(Debug, Deserialize, Default)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct LoggingConfig {
+        #[serde(default)]
+        pub(crate) file: Vec<AppenderRollingFile>,
+        #[serde(default)]
+        pub(crate) stdout: AppenderOut,
+    }
+
+    #[derive(Debug, Deserialize, Default, Copy, Clone)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum SpanConfig {
+        /// spans are ignored (this is the default)
+        #[default]
+        None,
+        /// one event when span is created
+        New,
+        /// one event per enter of a span
+        Enter,
+        /// one event per exit of a span
+        Exit,
+        /// one event when the span is dropped
+        Close,
+        /// one event per enter/exit of a span
+        Active,
+        /// events at all points (new, enter, exit, drop)
+        Full,
+    }
+
+    impl From<SpanConfig> for tracing_subscriber::fmt::format::FmtSpan {
+        fn from(value: SpanConfig) -> Self {
+            match value {
+                SpanConfig::None => Self::NONE,
+                SpanConfig::New => Self::NEW,
+                SpanConfig::Enter => Self::ENTER,
+                SpanConfig::Exit => Self::EXIT,
+                SpanConfig::Close => Self::CLOSE,
+                SpanConfig::Active => Self::ACTIVE,
+                SpanConfig::Full => Self::FULL,
+            }
+        }
+    }
+
+    #[derive(Debug, Deserialize, Default)]
+    #[serde(rename_all = "snake_case")]
+    pub(crate) enum LoggingStyle {
+        #[default]
+        Plain,
+        PlainCompact,
+        Json,
+    }
+
+    #[serde_as]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct AppenderCommon {
+        #[serde(default = "default_true")]
+        pub(crate) enabled: bool,
+        #[serde(default)]
+        pub(crate) level: InfoEnvFilter,
+        #[serde(default)]
+        pub(crate) span: SpanConfig,
+        #[serde(default)]
+        pub(crate) target: bool,
+    }
+
+    impl Default for AppenderCommon {
+        fn default() -> Self {
+            Self {
+                enabled: true,
+                level: Default::default(),
+                span: Default::default(),
+                target: Default::default(),
+            }
+        }
+    }
+
+    #[derive(Debug, serde_with::DeserializeFromStr)]
+    pub(crate) struct InfoEnvFilter(pub(crate) tracing_subscriber::EnvFilter);
+    impl FromStr for InfoEnvFilter {
+        type Err = tracing_subscriber::filter::ParseError;
+
+        fn from_str(directives: &str) -> Result<Self, Self::Err> {
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
+                .parse(directives)
+                .map(Self)
+        }
+    }
+    impl Default for InfoEnvFilter {
+        fn default() -> Self {
+            Self(
+                tracing_subscriber::EnvFilter::builder()
+                    .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
+                    .parse("")
+                    .expect("empty directive must not fail to parse"),
+            )
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct AppenderOut {
+        #[serde(flatten, default)]
+        pub(crate) common: AppenderCommon,
+        #[serde(default = "default_out_style")]
+        pub(crate) style: LoggingStyle,
+    }
+
+    impl Default for AppenderOut {
+        fn default() -> Self {
+            Self {
+                common: AppenderCommon::default(),
+                style: default_out_style(),
+            }
         }
     }
 }
@@ -514,4 +641,8 @@ const fn default_non_blocking_event_batching() -> u32 {
 
 fn default_api_listening_addr() -> SocketAddr {
     "127.0.0.1:5005".parse().unwrap()
+}
+
+fn default_out_style() -> LoggingStyle {
+    LoggingStyle::PlainCompact
 }

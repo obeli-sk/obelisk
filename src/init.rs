@@ -1,5 +1,4 @@
-use crate::config::toml::ObeliskConfig;
-use tracing::level_filters::LevelFilter;
+use crate::config::toml::{log::LoggingStyle, ObeliskConfig};
 use tracing_subscriber::Layer;
 
 #[cfg(feature = "tokio-console")]
@@ -67,30 +66,44 @@ fn tokio_tracing_otlp(_config: &ObeliskConfig) -> Option<tracing::level_filters:
     None
 }
 
-pub(crate) fn init(config: &ObeliskConfig, machine_readable: bool) -> Guard {
+pub(crate) fn init(config: &mut ObeliskConfig) -> Guard {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
     let chrome_guard;
+
+    let out_layer = if config.log.stdout.common.enabled {
+        // EnvFilter missing Clone
+        let env_filter = std::mem::take(&mut config.log.stdout.common.level).0;
+
+        // Code repetition because of https://github.com/tokio-rs/tracing/issues/575
+        Some(match config.log.stdout.style {
+            LoggingStyle::Plain => tracing_subscriber::fmt::layer()
+                .with_target(config.log.stdout.common.target)
+                .with_span_events(config.log.stdout.common.span.into())
+                .with_filter(env_filter)
+                .boxed(),
+            LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
+                .compact()
+                .with_target(config.log.stdout.common.target)
+                .with_span_events(config.log.stdout.common.span.into())
+                .with_filter(env_filter)
+                .boxed(),
+            LoggingStyle::Json => tracing_subscriber::fmt::layer()
+                .json()
+                .with_target(config.log.stdout.common.target)
+                .with_span_events(config.log.stdout.common.span.into())
+                .with_filter(env_filter)
+                .boxed(),
+        })
+    } else {
+        None
+    };
+
     tracing_subscriber::registry()
         .with(tokio_console_layer())
         .with(tokio_tracing_otlp(config))
-        .with(if machine_readable {
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-                .boxed()
-        } else {
-            tracing_subscriber::fmt::layer()
-                .compact()
-                .with_target(false)
-                .boxed()
-        })
-        .with(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
+        .with(out_layer)
         .with({
             let (layer, guard) = chrome_layer();
             chrome_guard = guard;

@@ -359,12 +359,11 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
 }
 
 pub(crate) async fn run(
-    config: ObeliskConfig,
+    mut config: ObeliskConfig,
     clean: bool,
     config_holder: ConfigHolder,
-    machine_readable_logs: bool,
 ) -> anyhow::Result<()> {
-    let _guard = init::init(&config, machine_readable_logs);
+    let _guard = init::init(&mut config);
     run_internal(config, clean, config_holder).await?;
     Ok(())
 }
@@ -620,7 +619,7 @@ fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
         %executor_id,
         config_id = %exec_config.config_id,
         name = config_store.name()
-    );
+    ); // TODO: span's target should be `obeli_sk_executor`
     let component = Component {
         config_id: config_store.as_hash(),
         config_store,

@@ -26,10 +26,9 @@ async fn main() -> Result<(), anyhow::Error> {
     let config = config_holder.load_config().await?;
 
     match Args::parse().command {
-        Subcommand::Server(Server::Run {
-            clean,
-            machine_readable_logs,
-        }) => command::server::run(config, clean, config_holder, machine_readable_logs).await,
+        Subcommand::Server(Server::Run { clean }) => {
+            command::server::run(config, clean, config_holder).await
+        }
         Subcommand::Client(Client { api_url, command }) => {
             match command {
                 ClientSubcommand::Component(args::Component::Inspect { path, verbosity }) => {
