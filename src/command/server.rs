@@ -428,14 +428,16 @@ async fn run_internal(
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
 
     let mut component_registry = ComponentConfigRegistry::default();
-    let (exec_join_handles, timers_watcher) = spawn_tasks(
-        config,
-        &db_pool,
-        &mut component_registry,
-        codegen_cache.as_deref(),
-        &wasm_cache_dir,
+    let (exec_join_handles, timers_watcher) = Box::pin(
+        spawn_tasks(
+            config,
+            &db_pool,
+            &mut component_registry,
+            codegen_cache.as_deref(),
+            &wasm_cache_dir,
+        )
+        .instrument(init_span),
     )
-    .instrument(init_span)
     .await?;
     let grpc_server = Arc::new(GrpcServer::new(db_pool.clone(), component_registry));
     let res = tonic::transport::Server::builder()
