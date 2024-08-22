@@ -487,7 +487,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     ),
     anyhow::Error,
 > {
-    debug!("Using toml configuration: {config:?}");
+    debug!(?config, "Using toml configuration");
     let codegen_cache_config_file_holder =
         Engines::write_codegen_config(codegen_cache).context("error configuring codegen cache")?;
     let engines = Engines::auto_detect_allocator(
@@ -559,7 +559,7 @@ fn instantiate_activity<DB: DbConnection + 'static>(
     executor_id: ExecutorId,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
     info!("Instantiating activity");
-    debug!("Full configuration: {activity:?}");
+    debug!(?activity, "Full configuration");
     let worker = Arc::new(ActivityWorker::new_with_config(
         activity.wasm_path,
         activity.activity_config,
@@ -590,7 +590,7 @@ fn instantiate_workflow<DB: DbConnection + 'static>(
     executor_id: ExecutorId,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
     info!("Instantiating workflow");
-    debug!("Full configuration: {workflow:?}");
+    debug!(?workflow, "Full configuration");
     let worker = Arc::new(WorkflowWorker::new_with_config(
         workflow.wasm_path,
         workflow.workflow_config,
