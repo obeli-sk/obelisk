@@ -78,7 +78,7 @@ otlp = [
     "dep:tracing-opentelemetry",
 ]
 tracing-chrome = ["dep:tracing-chrome"]
-default = ["parallel-compilation"]
+default = ["parallel-compilation", "otlp"]
 
 [lints]
 workspace = true

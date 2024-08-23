@@ -427,7 +427,7 @@ impl From<WasmtimePoolingConfig> for wasm_workers::engines::PoolingOptions {
 
 #[cfg(feature = "otlp")]
 pub(crate) mod otlp {
-    use super::{default_true, log, Deserialize};
+    use super::{log, Deserialize};
     use log::InfoEnvFilter;
 
     #[derive(Debug, Deserialize)]
