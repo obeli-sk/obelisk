@@ -458,6 +458,7 @@ async fn run_internal(
             .accept_compressed(CompressionEncoding::Gzip),
         )
         .serve_with_shutdown(api_listening_addr, async move {
+            info!("Serving gRPC requests at {api_listening_addr}");
             if let Err(err) = tokio::signal::ctrl_c().await {
                 error!("Error while listening to ctrl-c - {err:?}");
             }

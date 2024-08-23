@@ -51,7 +51,10 @@ Please exercise caution if attempting to use it for production.
 
 ### Docker
 ```sh
-CONTAINER_ID=$(docker run getobelisk/obelisk)
+CONTAINER_ID=$(docker run -d getobelisk/obelisk)
+docker logs --follow $CONTAINER_ID | grep "Serving gRPC requests"
+```
+```sh
 docker exec $CONTAINER_ID obelisk client component list
 # See Usage for more details
 ```
