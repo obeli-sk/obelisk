@@ -117,7 +117,7 @@ impl ComponentLocation {
                     .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
                 Ok((content_digest, wasm_path))
             }
-            ComponentLocation::Oci(image) => oci::obtain_wasm_from_oci(image, wasm_cache_dir).await,
+            ComponentLocation::Oci(image) => oci::pull_to_cache_dir(image, wasm_cache_dir).await,
         }
     }
 }

@@ -14,7 +14,7 @@ fn get_client() -> WasmClient {
     ))
 }
 
-pub(crate) async fn obtain_wasm_from_oci(
+pub(crate) async fn pull_to_cache_dir(
     image: &Reference,
     wasm_cache_dir: impl AsRef<Path>,
 ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
