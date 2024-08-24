@@ -47,7 +47,7 @@ PRAGMA cache_size = 1000000000;
 
 // TODO metadata table with current schema version, migrations
 
-/// Stores execution history.
+/// Stores execution history. Append only.
 const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
 CREATE TABLE IF NOT EXISTS t_execution_log (
     execution_id TEXT NOT NULL,
@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS t_execution_log (
 );
 ";
 
+/// Stores child execution return values. Append only.
 const CREATE_TABLE_T_JOIN_SET_RESPONSE: &str = r"
 CREATE TABLE IF NOT EXISTS t_join_set_response (
     created_at TEXT NOT NULL,
@@ -103,7 +104,7 @@ CREATE TABLE IF NOT EXISTS t_state (
 )
 "; // TODO: index by `pending_at` + `ffqn`
 
-/// Represents [`ExpiredTimer::AsyncDelay`]
+/// Represents [`ExpiredTimer::AsyncDelay`] . Rows are deleted when the delay is processed.
 const CREATE_TABLE_T_DELAY: &str = r"
 CREATE TABLE IF NOT EXISTS t_delay (
     execution_id TEXT NOT NULL,
@@ -377,6 +378,7 @@ impl SqlitePool {
             ffqn,
             params,
             parent,
+            topmost_parent_id,
             scheduled_at,
             retry_exp_backoff,
             max_retries,
@@ -390,6 +392,7 @@ impl SqlitePool {
                 ffqn,
                 params,
                 parent,
+                topmost_parent_id,
                 scheduled_at,
                 retry_exp_backoff,
                 max_retries,
@@ -789,6 +792,7 @@ impl SqlitePool {
             retry_exp_backoff,
             max_retries,
             parent,
+            topmost_parent_id,
             ..
         }) = events.pop_front()
         else {
@@ -817,6 +821,7 @@ impl SqlitePool {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(LockedExecution {
             execution_id,
+            topmost_parent_id,
             run_id,
             version: next_version,
             ffqn,

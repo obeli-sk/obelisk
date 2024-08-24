@@ -116,7 +116,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [x] Publish the obelisk image to the Docker Hub (ubuntu, alpine)
 - [x] obelisk client component push
 - [x] gRPC API for execution management
-- [ ] Track the topmost parent
+- [x] Track the topmost parent
 - [ ] Interactive CLI for execution management
 - [x] Params typecheck on creation, introspection of types of all functions in the system
 - [ ] HTML based UI for showing executions, event history and relations

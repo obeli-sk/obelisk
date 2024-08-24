@@ -406,6 +406,7 @@ impl DbHolder {
         for (journal, scheduled_at) in pending {
             let item = LockedExecution {
                 execution_id: journal.execution_id(),
+                topmost_parent_id: journal.topmost_parent_id(),
                 version: journal.version(), // updated later
                 ffqn: journal.ffqn().clone(),
                 params: journal.params(),
@@ -445,26 +446,17 @@ impl DbHolder {
             )));
         }
         let subscription = self.ffqn_to_pending_subscription.get(&req.ffqn);
-        let mut journal = ExecutionJournal::new(CreateRequest {
-            created_at: req.created_at,
-            execution_id: req.execution_id,
-            ffqn: req.ffqn,
-            params: req.params,
-            parent: req.parent,
-            scheduled_at: req.scheduled_at,
-            retry_exp_backoff: req.retry_exp_backoff,
-            max_retries: req.max_retries,
-            config_id: req.config_id,
-            return_type: req.return_type,
-        });
+        let scheduled_at = req.scheduled_at;
+        let created_at = req.created_at;
+        let mut journal = ExecutionJournal::new(req);
         let version = journal.version();
         self.index.update(&mut journal);
-        let old_val = self.journals.insert(req.execution_id, journal);
+        let old_val = self.journals.insert(journal.execution_id, journal);
         assert!(
             old_val.is_none(),
             "journals cannot contain the new execution"
         );
-        if req.scheduled_at <= req.created_at {
+        if scheduled_at <= created_at {
             if let Some(subscription) = subscription {
                 let _ = subscription.try_send(());
             }

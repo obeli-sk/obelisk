@@ -244,7 +244,6 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
                         let res = Self::run_worker(
                             worker,
                             db_pool,
-                            execution_id,
                             execution_deadline,
                             clock_fn,
                             locked_execution,
@@ -267,7 +266,6 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
     async fn run_worker(
         worker: Arc<W>,
         db_pool: P,
-        execution_id: ExecutionId,
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
         locked_execution: LockedExecution,
@@ -285,7 +283,8 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
             locked_execution.retry_exp_backoff,
         );
         let ctx = WorkerContext {
-            execution_id,
+            execution_id: locked_execution.execution_id,
+            topmost_parent_id: locked_execution.topmost_parent_id,
             ffqn: locked_execution.ffqn,
             params: locked_execution.params,
             event_history: locked_execution.event_history,
@@ -302,7 +301,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         trace!(?worker_result, "Worker::run finished");
         let result_obtained_at = clock_fn();
         match Self::worker_result_to_execution_event(
-            execution_id,
+            locked_execution.execution_id,
             worker_result,
             result_obtained_at,
             locked_execution.parent,
@@ -752,6 +751,7 @@ mod tests {
                 ffqn: FFQN_SOME,
                 params: Params::default(),
                 parent: None,
+                topmost_parent_id: None,
                 scheduled_at: config.created_at,
                 retry_exp_backoff: config.retry_exp_backoff,
                 max_retries: config.max_retries,
@@ -977,6 +977,7 @@ mod tests {
                 ffqn: FFQN_SOME,
                 params: Params::default(),
                 parent: None,
+                topmost_parent_id: None,
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1009,6 +1010,7 @@ mod tests {
                 ffqn: FFQN_CHILD,
                 params: Params::default(),
                 parent: Some((parent_execution_id, join_set_id)),
+                topmost_parent_id: None,
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1176,6 +1178,7 @@ mod tests {
                 ffqn: FFQN_SOME,
                 params: Params::default(),
                 parent: None,
+                topmost_parent_id: None,
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: timeout_duration,
                 max_retries: 1,

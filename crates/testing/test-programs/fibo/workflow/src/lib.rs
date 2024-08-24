@@ -43,8 +43,8 @@ impl crate::bindings::exports::testing::fibo_workflow::workflow::Guest for Compo
 }
 
 impl crate::bindings::exports::testing::fibo_workflow::workflow_nesting::Guest for Component {
+    // Start 2 child workflows each starting 2 child workflows...
     fn fibo_nested_workflow(n: u8) -> u64 {
-        // FIXME: n, iterations_per_fiboa, fiboa_count + concurrent version
         use crate::bindings::testing::fibo_workflow::workflow_nesting::fibo_nested_workflow as fibo;
         if n <= 1 {
             1
@@ -53,6 +53,11 @@ impl crate::bindings::exports::testing::fibo_workflow::workflow_nesting::Guest f
         }
     }
 
+    // Calls `fiboa` workflow concurrently.
+    // Used for testing pressure of the parallel children results on the parent execution.
+    // Having all children compete for write their result to a single parent, like
+    // `fiboa_concurrent`, is significantly slower than having multiple parent executions
+    // behind a single topmost parent.
     fn fibo_start_fiboas(n: u8, fiboas: u32, iterations_per_fiboa: u32) -> u64 {
         use crate::bindings::testing::fibo_workflow_obelisk_ext::workflow::{
             fiboa_await_next, fiboa_future,

@@ -28,21 +28,14 @@ impl ExecutionJournal {
         let pending_state = PendingState::PendingAt {
             scheduled_at: req.scheduled_at,
         };
+        let execution_id = req.execution_id;
+        let created_at = req.created_at;
         let event = ExecutionEvent {
-            event: ExecutionEventInner::Created {
-                ffqn: req.ffqn,
-                params: req.params,
-                scheduled_at: req.scheduled_at,
-                parent: req.parent,
-                retry_exp_backoff: req.retry_exp_backoff,
-                max_retries: req.max_retries,
-                config_id: req.config_id,
-                return_type: req.return_type,
-            },
-            created_at: req.created_at,
+            event: ExecutionEventInner::from(req),
+            created_at,
         };
         Self {
-            execution_id: req.execution_id,
+            execution_id,
             pending_state,
             execution_events: VecDeque::from([event]),
             responses: Vec::default(),
@@ -80,6 +73,21 @@ impl ExecutionJournal {
     #[must_use]
     pub fn execution_id(&self) -> ExecutionId {
         self.execution_id
+    }
+
+    #[must_use]
+    pub fn topmost_parent_id(&self) -> Option<ExecutionId> {
+        match self.execution_events.front().unwrap() {
+            ExecutionEvent {
+                event:
+                    ExecutionEventInner::Created {
+                        topmost_parent_id,
+                        ..
+                    },
+                ..
+            } => *topmost_parent_id,
+            _ => panic!("first event must be `Created`"),
+        }
     }
 
     pub fn append(

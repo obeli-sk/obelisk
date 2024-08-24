@@ -35,6 +35,7 @@ enum ProcessingStatus {
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct EventHistory<C: ClockFn> {
     execution_id: ExecutionId,
+    topmost_parent_id: Option<ExecutionId>,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     execution_deadline: DateTime<Utc>,
     child_retry_exp_backoff: Duration,
@@ -61,6 +62,7 @@ impl<C: ClockFn> EventHistory<C> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
+        topmost_parent_id: Option<ExecutionId>,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -74,6 +76,7 @@ impl<C: ClockFn> EventHistory<C> {
         let non_blocking_event_batch_size = non_blocking_event_batching as usize;
         EventHistory {
             execution_id,
+            topmost_parent_id,
             event_history: event_history
                 .into_iter()
                 .map(|event| (event, Unprocessed))
@@ -129,10 +132,7 @@ impl<C: ClockFn> EventHistory<C> {
                         fn_registry,
                         called_at,
                         lock_expires_at,
-                        self.execution_id,
                         version,
-                        self.child_retry_exp_backoff,
-                        self.child_max_retries,
                     )
                     .await?;
                 self.event_history
@@ -150,10 +150,7 @@ impl<C: ClockFn> EventHistory<C> {
                         fn_registry,
                         called_at,
                         lock_expires_at,
-                        self.execution_id,
                         version,
-                        self.child_retry_exp_backoff,
-                        self.child_max_retries,
                     )
                     .await?;
                 self.event_history
@@ -487,10 +484,7 @@ impl<C: ClockFn> EventHistory<C> {
         fn_registry: &dyn FunctionRegistry,
         created_at: DateTime<Utc>,
         lock_expires_at: DateTime<Utc>,
-        execution_id: ExecutionId,
         version: &mut Version,
-        child_retry_exp_backoff: Duration,
-        child_max_retries: u32,
     ) -> Result<Vec<HistoryEvent>, FunctionError> {
         async fn component_active_get_exported_function(
             fn_registry: &dyn FunctionRegistry,
@@ -513,7 +507,7 @@ impl<C: ClockFn> EventHistory<C> {
                 };
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
                 *version = db_connection
-                    .append(execution_id, version.clone(), join_set)
+                    .append(self.execution_id, version.clone(), join_set)
                     .await?;
                 Ok(history_events)
             }
@@ -544,10 +538,11 @@ impl<C: ClockFn> EventHistory<C> {
                     execution_id: child_execution_id,
                     ffqn,
                     params,
-                    parent: Some((execution_id, join_set_id)),
+                    parent: Some((self.execution_id, join_set_id)),
+                    topmost_parent_id: Some(self.topmost_parent_id.unwrap_or(self.execution_id)),
                     scheduled_at: created_at,
-                    retry_exp_backoff: child_retry_exp_backoff,
-                    max_retries: child_max_retries,
+                    retry_exp_backoff: self.child_retry_exp_backoff,
+                    max_retries: self.child_max_retries,
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
                 };
@@ -566,7 +561,7 @@ impl<C: ClockFn> EventHistory<C> {
                             .append_batch_create_new_execution(
                                 created_at,
                                 vec![child_exec_req],
-                                execution_id,
+                                self.execution_id,
                                 version.clone(),
                                 vec![child_req],
                             )
@@ -600,12 +595,13 @@ impl<C: ClockFn> EventHistory<C> {
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: new_execution_id,
+                    topmost_parent_id: Some(self.topmost_parent_id.unwrap_or(self.execution_id)),
                     ffqn,
                     params,
                     parent: None,
                     scheduled_at: at,
-                    retry_exp_backoff: child_retry_exp_backoff,
-                    max_retries: child_max_retries,
+                    retry_exp_backoff: self.child_retry_exp_backoff,
+                    max_retries: self.child_max_retries,
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
                 };
@@ -624,7 +620,7 @@ impl<C: ClockFn> EventHistory<C> {
                             .append_batch_create_new_execution(
                                 created_at,
                                 vec![child_exec_req],
-                                execution_id,
+                                self.execution_id,
                                 version.clone(),
                                 vec![child_req],
                             )
@@ -647,7 +643,7 @@ impl<C: ClockFn> EventHistory<C> {
                 };
                 debug!(%join_set_id, "BlockingChildJoinNext: appending JoinNext");
                 *version = db_connection
-                    .append(execution_id, version.clone(), join_next)
+                    .append(self.execution_id, version.clone(), join_next)
                     .await?;
                 Ok(history_events)
             }
@@ -690,10 +686,11 @@ impl<C: ClockFn> EventHistory<C> {
                     execution_id: child_execution_id,
                     ffqn,
                     params,
-                    parent: Some((execution_id, join_set_id)),
+                    parent: Some((self.execution_id, join_set_id)),
+                    topmost_parent_id: Some(self.topmost_parent_id.unwrap_or(self.execution_id)),
                     scheduled_at: created_at,
-                    retry_exp_backoff: child_retry_exp_backoff,
-                    max_retries: child_max_retries,
+                    retry_exp_backoff: self.child_retry_exp_backoff,
+                    max_retries: self.child_max_retries,
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
                 };
@@ -701,7 +698,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .append_batch_create_new_execution(
                         created_at,
                         vec![join_set, child_exec_req, join_next],
-                        execution_id,
+                        self.execution_id,
                         version.clone(),
                         vec![child],
                     )
@@ -740,7 +737,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .append_batch(
                         created_at,
                         vec![join_set, delay_req, join_next],
-                        execution_id,
+                        self.execution_id,
                         version.clone(),
                     )
                     .await?;
@@ -967,6 +964,7 @@ mod tests {
         let exec_log = db_connection.get(execution_id).await.unwrap();
         let event_history = EventHistory::new(
             execution_id,
+            None,
             exec_log.event_history().collect(),
             exec_log
                 .responses
@@ -1009,6 +1007,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
+                topmost_parent_id: None,
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1174,6 +1173,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
+                topmost_parent_id: None,
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1350,6 +1350,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
+                topmost_parent_id: None,
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,

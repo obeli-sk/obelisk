@@ -131,6 +131,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             .create(CreateRequest {
                 created_at,
                 execution_id,
+                topmost_parent_id: None,
                 ffqn,
                 params,
                 parent: None,

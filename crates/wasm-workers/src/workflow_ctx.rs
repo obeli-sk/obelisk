@@ -95,6 +95,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
+        topmost_parent_id: Option<ExecutionId>,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         seed: u64,
@@ -113,6 +114,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             execution_id,
             event_history: EventHistory::new(
                 execution_id,
+                topmost_parent_id,
                 event_history,
                 responses,
                 join_next_blocking_strategy,
@@ -441,6 +443,7 @@ pub(crate) mod tests {
             let seed = ctx.execution_id.random_part();
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id,
+                ctx.topmost_parent_id,
                 ctx.event_history,
                 ctx.responses,
                 seed,
@@ -591,6 +594,7 @@ pub(crate) mod tests {
                 ffqn: FFQN_MOCK,
                 params: Params::default(),
                 parent: None,
+                topmost_parent_id: None,
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
