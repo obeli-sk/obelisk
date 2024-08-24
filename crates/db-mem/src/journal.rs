@@ -81,8 +81,7 @@ impl ExecutionJournal {
             ExecutionEvent {
                 event:
                     ExecutionEventInner::Created {
-                        topmost_parent_id,
-                        ..
+                        topmost_parent_id, ..
                     },
                 ..
             } => *topmost_parent_id,
