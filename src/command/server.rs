@@ -39,6 +39,7 @@ use serde::Deserialize;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::path::Path;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -399,6 +400,26 @@ async fn run_internal(
             .await
             .or_else(ignore_not_found)
             .with_context(|| format!("cannot delete database file `{db_file:?}`"))?;
+        let with_suffix = |suffix: &str| {
+            let db_file_name = db_file.file_name().expect("db_file must be a file");
+            let mut wal_file_name = db_file_name.to_owned();
+            wal_file_name.push(suffix);
+            if let Some(parent) = db_file.parent() {
+                parent.join(wal_file_name)
+            } else {
+                PathBuf::from(wal_file_name)
+            }
+        };
+        let wal_file = with_suffix("-wal");
+        tokio::fs::remove_file(&wal_file)
+            .await
+            .or_else(ignore_not_found)
+            .with_context(|| format!("cannot delete database file `{wal_file:?}`"))?;
+        let shm_file = with_suffix("-shm");
+        tokio::fs::remove_file(&shm_file)
+            .await
+            .or_else(ignore_not_found)
+            .with_context(|| format!("cannot delete database file `{shm_file:?}`"))?;
         tokio::fs::remove_dir_all(&wasm_cache_dir)
             .await
             .or_else(ignore_not_found)
@@ -465,7 +486,7 @@ async fn run_internal(
             }
         })
         .await
-        .context("grpc server error");
+        .with_context(|| format!("grpc server error listening on {api_listening_addr}"));
     // ^ Will await until the gRPC server shuts down.
     timers_watcher.close().await;
     for exec_join_handle in exec_join_handles {
