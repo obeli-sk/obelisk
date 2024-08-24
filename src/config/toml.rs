@@ -41,7 +41,7 @@ pub(crate) struct ObeliskConfig {
     #[serde(default)]
     pub(crate) codegen_cache: CodegenCache,
     #[serde(default)]
-    pub(crate) activity: Vec<Activity>,
+    pub(crate) wasm_activity: Vec<WasmActivity>,
     #[serde(default)]
     pub(crate) workflow: Vec<Workflow>,
     #[serde(default)]
@@ -254,7 +254,7 @@ impl Default for ExecConfig {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Activity {
+pub(crate) struct WasmActivity {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     #[serde(default = "default_true")]
@@ -270,7 +270,7 @@ pub(crate) struct VerifiedActivityConfig {
     pub(crate) exec_config: executor::executor::ExecConfig,
 }
 
-impl Activity {
+impl WasmActivity {
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: impl AsRef<Path>,

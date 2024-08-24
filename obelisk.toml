@@ -16,8 +16,7 @@
 # Address and port on which the API server will listen.
 # api_listening_addr = "127.0.0.1:5005"
 
-# TODO: rename to activity_wasi
-[[activity]]
+[[wasm_activity]]
 name = "fibo_activity"
 location.oci = "docker.io/getobelisk/example_activity_fibo:2024-08-12-1@sha256:d33ea7dde23bb8204e8916a4ca868195c1d66b0459bf0e3bc874cb27e25abf3e"
 
@@ -28,7 +27,7 @@ name = "fibo_workflow"
 location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-08-12-1@sha256:3da8be596e87693335423e52482cc2edc7424b40fa7ebcdd82d104eb94c2c418"
 exec.lock_expiry.secs = 10
 
-[[activity]]
+[[wasm_activity]]
 name = "http_get_activity"
 location.oci = "docker.io/getobelisk/example_activity_http_get:2024-08-12-1@sha256:deb576c153e375f7c1f016d82860fa6e1cf50264944b078858f577d54d2a9863"
 exec.lock_expiry.secs = 5
