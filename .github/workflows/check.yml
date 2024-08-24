@@ -71,28 +71,8 @@ jobs:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
       - name: Populate the nix store
         run: nix develop --command echo
-      - name: Restore rust cache
-        id: target-cache-restore
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            target
-            /home/runner/.cargo
-          key: ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-${{ hashFiles('Cargo.lock') }}-${{ steps.git-info.outputs.sha }}
-          restore-keys: |
-            ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-${{ hashFiles('Cargo.lock') }}-
-            ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-
-            ${{ github.job }}-${{ runner.os }}-
       - name: cargo clippy (nosim)
         run: nix develop --command cargo clippy --all-targets -- -D warnings
-      - name: Save rust cache
-        id: target-cache-save
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            target
-            /home/runner/.cargo
-          key: ${{ steps.target-cache-restore.outputs.cache-primary-key }}
   clippy-madsim:
     name: clippy - madsim
     runs-on: ubuntu-latest
@@ -110,27 +90,7 @@ jobs:
           extra_nix_config: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
       - name: Populate the nix store
         run: nix develop --command echo
-      - name: Restore rust cache
-        id: target-cache-restore
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            target
-            /home/runner/.cargo
-          key: ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-${{ hashFiles('Cargo.lock') }}-${{ steps.git-info.outputs.sha }}
-          restore-keys: |
-            ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-${{ hashFiles('Cargo.lock') }}-
-            ${{ github.job }}-${{ runner.os }}-${{ steps.git-info.outputs.branch }}-
-            ${{ github.job }}-${{ runner.os }}-
       - name: cargo clippy (madsim)
         run: nix develop --command cargo clippy --all-targets -- -D warnings
         env:
           RUSTFLAGS: "--cfg madsim"
-      - name: Save rust cache
-        id: target-cache-save
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            target
-            /home/runner/.cargo
-          key: ${{ steps.target-cache-restore.outputs.cache-primary-key }}
