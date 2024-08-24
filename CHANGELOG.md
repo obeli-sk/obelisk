@@ -3,6 +3,70 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/obeli-sk/obelisk/compare/v0.2.1...v0.2.2) - 2024-08-24
+
+### Added
+- Track the topmost parent
+- Add rolling file appender configurable via TOML
+- Configure OTLP level using `EnvFilter` directive in TOML
+- Configure stdout logger via TOML
+- Make OTLP configurable via toml
+- Make Wasmtime's pooling allocator configurable via toml
+- Make `OTEL_ENDPOINT` configurable via envvar
+- Allow pushing WASM files to OCI registries
+
+### Fixed
+- Print the metadata digest on OCI push
+- Verify that pulled image's digest matches specified
+
+### Other
+- Remove rust cache
+- Run `nix flake update`
+- Run `cargo update`
+- Fix clippy warnings
+- Update the readme
+- Rename `component_name` clashing with span name
+- Fix clippy warnings
+- Rename `[activity]` to `[[wasm_activity]]`
+- Rename `fetch_and_verify`
+- Rename `SupportedFunctionResult` to `SupportedFunctionReturnValue`
+- Calculate config store id from `Hash`
+- Shorten display of config id
+- Rename `obtain_wasm_from_oci` to `pull_to_cache_dir`
+- Inform when the gRPC sever is ready
+- Make `otlp` feature default
+- Make OTLP disabled by default
+- Update `obelisk.toml`
+- Extract config dumps into separate log fields
+- Fix clippy issues
+- Rename TOML table `otlp_config` to `otlp`
+- Extract module `config_holder`
+- Avoid a subsequent `get` in `get_status`
+- Instrument `GetStatus`, `Submit`
+- Fix clippy warnings
+- Move `to_channel` to `grpc_util`
+- Rename feature `otel` to `otlp`
+- Make `tracing-chrome` optional
+- Refactor `load_components` into `spawn_tasks`
+- Shutdown otel provider in `Guard::drop`
+- Make OTEL optional
+- Remove failing version `tracing-opentelemetry=0.25`
+- Lower level of some spans
+- Record executor id, name, config id in spans
+- Remove `ExecutorId` from `obelisk.proto`
+- Move exec spans to top level so that the init span finishes on startup
+- Downgrade, add `shutdown_tracer_provider`
+- Integrate with latest tracing-otlp - missing root spans on shutdown
+- Update the readme
+- Update the readme
+- Move test component images to `getobelisk`
+- Remove `wkg`
+- Tag docker image with version-os to allow sorting
+- Fix version tagging
+- Allow specifying target ref in `release-5-push-docker-image`
+- Quiet down wget
+- Log commands to stdout
+
 ## [0.2.1](https://github.com/obeli-sk/obelisk/compare/v0.2.0...v0.2.1) - 2024-08-11
 
 ### Added
