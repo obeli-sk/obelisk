@@ -126,10 +126,10 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         db_pool: P,
         task_limiter: Option<Arc<tokio::sync::Semaphore>>,
         executor_id: ExecutorId,
-        name: impl AsRef<str>,
+        component_name: impl AsRef<str>,
     ) -> ExecutorTaskHandle {
         let span = info_span!(parent: None, "executor",
-            name = name.as_ref(),
+            component_name = component_name.as_ref(),
             %executor_id,
             config_id = %config.config_id,
         );
