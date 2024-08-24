@@ -195,7 +195,7 @@ impl ComponentCommon {
     /// Read wasm file either from local fs or pull from an OCI registry and cache it if needed.
     /// If the `content_digest` is set, verify that it matches the calculated digest.
     /// Otherwise backfill the `content_digest`.
-    async fn verify_content_digest(
+    async fn fetch_and_verify(
         self,
         r#type: ComponentType,
         wasm_cache_dir: impl AsRef<Path>,
@@ -271,13 +271,13 @@ pub(crate) struct VerifiedActivityConfig {
 }
 
 impl Activity {
-    pub(crate) async fn verify_content_digest(
+    pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: impl AsRef<Path>,
     ) -> Result<VerifiedActivityConfig, anyhow::Error> {
         let (common, wasm_path, enabled) = self
             .common
-            .verify_content_digest(ComponentType::WasmActivity, wasm_cache_dir)
+            .fetch_and_verify(ComponentType::WasmActivity, wasm_cache_dir)
             .await?;
         let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmActivityV1 {
@@ -325,14 +325,13 @@ pub(crate) struct VerifiedWorkflowConfig {
 }
 
 impl Workflow {
-    pub(crate) async fn verify_content_digest(
-        // TODO: rename to fetch_and_verify
+    pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: impl AsRef<Path>,
     ) -> Result<VerifiedWorkflowConfig, anyhow::Error> {
         let (common, wasm_path, enabled) = self
             .common
-            .verify_content_digest(ComponentType::WasmActivity, wasm_cache_dir)
+            .fetch_and_verify(ComponentType::WasmActivity, wasm_cache_dir)
             .await?;
         let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmWorkflowV1 {

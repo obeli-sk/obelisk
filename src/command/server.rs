@@ -516,7 +516,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     // TODO: enforce unique name
     // FIXME: Ctrl-C here is ignored.
     for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
-        let activity = activity.verify_content_digest(&wasm_cache_dir).await?;
+        let activity = activity.fetch_and_verify(&wasm_cache_dir).await?;
         let executor_id = ExecutorId::generate();
         if activity.enabled {
             let exec_task_handle = instantiate_activity(
@@ -530,7 +530,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         }
     }
     for workflow in config.workflow.into_iter().filter(|it| it.common.enabled) {
-        let workflow = workflow.verify_content_digest(&wasm_cache_dir).await?;
+        let workflow = workflow.fetch_and_verify(&wasm_cache_dir).await?;
         let executor_id = ExecutorId::generate();
         if workflow.enabled {
             let exec_task_handle = instantiate_workflow(
