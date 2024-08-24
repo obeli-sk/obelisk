@@ -92,9 +92,9 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus) -> Result<(), any
                 ) => {
                     println!("Finished OK");
                     let value = match result {
-                        SupportedFunctionReturnValue::Infallible(WastValWithType { value, .. }) => {
-                            Some(value)
-                        }
+                        SupportedFunctionReturnValue::Infallible(WastValWithType {
+                            value, ..
+                        }) => Some(value),
                         SupportedFunctionReturnValue::Fallible(WastValWithType {
                             value: WastVal::Result(Ok(Some(value))),
                             ..

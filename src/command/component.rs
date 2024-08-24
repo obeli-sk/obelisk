@@ -7,7 +7,7 @@ use std::path::Path;
 use tonic::transport::Channel;
 use wasm_workers::component_detector::ComponentDetector;
 
-pub(crate) async fn inspect<P: AsRef<Path>>(
+pub(crate) fn inspect<P: AsRef<Path>>(
     wasm_path: P,
     verbosity: FunctionMetadataVerbosity,
 ) -> anyhow::Result<()> {

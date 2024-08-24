@@ -277,10 +277,12 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%join_set_id, "Matched JoinSet");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
-                Ok(Some(SupportedFunctionReturnValue::Infallible(WastValWithType {
-                    r#type: TypeWrapper::String,
-                    value: WastVal::String(join_set_id.to_string()),
-                })))
+                Ok(Some(SupportedFunctionReturnValue::Infallible(
+                    WastValWithType {
+                        r#type: TypeWrapper::String,
+                        value: WastVal::String(join_set_id.to_string()),
+                    },
+                )))
             }
 
             (
@@ -297,10 +299,12 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::StartAsync`] , return execution id
-                Ok(Some(SupportedFunctionReturnValue::Infallible(WastValWithType {
-                    r#type: TypeWrapper::String,
-                    value: WastVal::String(execution_id.to_string()),
-                })))
+                Ok(Some(SupportedFunctionReturnValue::Infallible(
+                    WastValWithType {
+                        r#type: TypeWrapper::String,
+                        value: WastVal::String(execution_id.to_string()),
+                    },
+                )))
             }
 
             (
@@ -320,10 +324,12 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%delay_id, %join_set_id, "Matched JoinSetRequest::DelayRequest");
                 self.event_history[found_idx].1 = Processed;
                 // return delay id
-                Ok(Some(SupportedFunctionReturnValue::Infallible(WastValWithType {
-                    r#type: TypeWrapper::String,
-                    value: WastVal::String(delay_id.to_string()),
-                })))
+                Ok(Some(SupportedFunctionReturnValue::Infallible(
+                    WastValWithType {
+                        r#type: TypeWrapper::String,
+                        value: WastVal::String(delay_id.to_string()),
+                    },
+                )))
             }
 
             (
@@ -393,10 +399,12 @@ impl<C: ClockFn> EventHistory<C> {
             ) if execution_id == *found_execution_id => {
                 trace!(%execution_id, "Matched Schedule");
                 // return execution id
-                Ok(Some(SupportedFunctionReturnValue::Infallible(WastValWithType {
-                    r#type: TypeWrapper::String,
-                    value: WastVal::String(execution_id.to_string()),
-                })))
+                Ok(Some(SupportedFunctionReturnValue::Infallible(
+                    WastValWithType {
+                        r#type: TypeWrapper::String,
+                        value: WastVal::String(execution_id.to_string()),
+                    },
+                )))
             }
 
             (key, found) => Err(FunctionError::NonDeterminismDetected(StrVariant::Arc(
