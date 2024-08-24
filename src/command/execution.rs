@@ -5,7 +5,7 @@ use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use anyhow::Context;
 use chrono::DateTime;
 use concepts::FinishedExecutionResult;
-use concepts::SupportedFunctionResult;
+use concepts::SupportedFunctionReturnValue;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::execution_status::Status;
 use std::str::FromStr;
@@ -83,19 +83,19 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus) -> Result<(), any
                 serde_json::from_str(&result).context("cannot deserialize `result`")?;
             match &result {
                 Ok(
-                    result @ (SupportedFunctionResult::None
-                    | SupportedFunctionResult::Infallible(_)
-                    | SupportedFunctionResult::Fallible(WastValWithType {
+                    result @ (SupportedFunctionReturnValue::None
+                    | SupportedFunctionReturnValue::Infallible(_)
+                    | SupportedFunctionReturnValue::Fallible(WastValWithType {
                         value: WastVal::Result(Ok(_)),
                         ..
                     })),
                 ) => {
                     println!("Finished OK");
                     let value = match result {
-                        SupportedFunctionResult::Infallible(WastValWithType { value, .. }) => {
+                        SupportedFunctionReturnValue::Infallible(WastValWithType { value, .. }) => {
                             Some(value)
                         }
-                        SupportedFunctionResult::Fallible(WastValWithType {
+                        SupportedFunctionReturnValue::Fallible(WastValWithType {
                             value: WastVal::Result(Ok(Some(value))),
                             ..
                         }) => Some(value.as_ref()),

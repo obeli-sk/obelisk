@@ -14,7 +14,7 @@ use concepts::ComponentConfigHash;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::{ExecutionId, StrVariant};
-use concepts::{FunctionFqn, Params, SupportedFunctionResult};
+use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use executor::worker::WorkerResult;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -104,7 +104,7 @@ impl<C: ClockFn> EventHistory<C> {
         db_connection: &DB,
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
-    ) -> Result<SupportedFunctionResult, FunctionError> {
+    ) -> Result<SupportedFunctionReturnValue, FunctionError> {
         trace!("replay_or_interrupt: {event_call:?}");
         if let Some(accept_resp) = self.find_matching_atomic(&event_call)? {
             return Ok(accept_resp);
@@ -205,7 +205,7 @@ impl<C: ClockFn> EventHistory<C> {
     fn find_matching_atomic(
         &mut self,
         event_call: &EventCall,
-    ) -> Result<Option<SupportedFunctionResult>, FunctionError> {
+    ) -> Result<Option<SupportedFunctionReturnValue>, FunctionError> {
         let keys = event_call.as_keys();
         assert!(!keys.is_empty());
         let mut last = None;
@@ -262,7 +262,7 @@ impl<C: ClockFn> EventHistory<C> {
     fn process_event_by_key(
         &mut self,
         key: EventHistoryKey,
-    ) -> Result<Option<SupportedFunctionResult>, FunctionError> {
+    ) -> Result<Option<SupportedFunctionReturnValue>, FunctionError> {
         let Some((found_idx, (found_request_event, _))) = self.next_unprocessed_request() else {
             return Ok(None);
         };
@@ -277,7 +277,7 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%join_set_id, "Matched JoinSet");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
-                Ok(Some(SupportedFunctionResult::Infallible(WastValWithType {
+                Ok(Some(SupportedFunctionReturnValue::Infallible(WastValWithType {
                     r#type: TypeWrapper::String,
                     value: WastVal::String(join_set_id.to_string()),
                 })))
@@ -297,7 +297,7 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::StartAsync`] , return execution id
-                Ok(Some(SupportedFunctionResult::Infallible(WastValWithType {
+                Ok(Some(SupportedFunctionReturnValue::Infallible(WastValWithType {
                     r#type: TypeWrapper::String,
                     value: WastVal::String(execution_id.to_string()),
                 })))
@@ -320,7 +320,7 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%delay_id, %join_set_id, "Matched JoinSetRequest::DelayRequest");
                 self.event_history[found_idx].1 = Processed;
                 // return delay id
-                Ok(Some(SupportedFunctionResult::Infallible(WastValWithType {
+                Ok(Some(SupportedFunctionReturnValue::Infallible(WastValWithType {
                     r#type: TypeWrapper::String,
                     value: WastVal::String(delay_id.to_string()),
                 })))
@@ -378,7 +378,7 @@ impl<C: ClockFn> EventHistory<C> {
                         ..
                     }) => {
                         trace!(%join_set_id, "Matched JoinNext & DelayFinished");
-                        Ok(Some(SupportedFunctionResult::None))
+                        Ok(Some(SupportedFunctionReturnValue::None))
                     }
                     _ => Ok(None), // no progress, still at JoinNext
                 }
@@ -393,7 +393,7 @@ impl<C: ClockFn> EventHistory<C> {
             ) if execution_id == *found_execution_id => {
                 trace!(%execution_id, "Matched Schedule");
                 // return execution id
-                Ok(Some(SupportedFunctionResult::Infallible(WastValWithType {
+                Ok(Some(SupportedFunctionReturnValue::Infallible(WastValWithType {
                     r#type: TypeWrapper::String,
                     value: WastVal::String(execution_id.to_string()),
                 })))
@@ -933,7 +933,7 @@ mod tests {
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::{
         ComponentConfigHash, ExecutionId, FunctionFqn, FunctionRegistry, Params,
-        SupportedFunctionResult,
+        SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::worker::{WorkerError, WorkerResult};
@@ -1079,7 +1079,7 @@ mod tests {
                     join_set_id,
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id,
-                        result: Ok(SupportedFunctionResult::None),
+                        result: Ok(SupportedFunctionReturnValue::None),
                     },
                 },
             )
@@ -1112,8 +1112,8 @@ mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         #[values(0, 10)] batching: u32,
     ) {
-        const CHILD_RESP: SupportedFunctionResult =
-            SupportedFunctionResult::Infallible(WastValWithType {
+        const CHILD_RESP: SupportedFunctionReturnValue =
+            SupportedFunctionReturnValue::Infallible(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(1),
             });
@@ -1259,13 +1259,13 @@ mod tests {
         second_run_strategy: JoinNextBlockingStrategy,
         #[values(0, 10)] batching: u32,
     ) {
-        const KID_A: SupportedFunctionResult =
-            SupportedFunctionResult::Infallible(WastValWithType {
+        const KID_A: SupportedFunctionReturnValue =
+            SupportedFunctionReturnValue::Infallible(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(1),
             });
-        const KID_B: SupportedFunctionResult =
-            SupportedFunctionResult::Infallible(WastValWithType {
+        const KID_B: SupportedFunctionReturnValue =
+            SupportedFunctionReturnValue::Infallible(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(2),
             });
@@ -1278,7 +1278,7 @@ mod tests {
             join_set_id: JoinSetId,
             child_execution_id_a: ExecutionId,
             child_execution_id_b: ExecutionId,
-        ) -> Result<SupportedFunctionResult, FunctionError> {
+        ) -> Result<SupportedFunctionReturnValue, FunctionError> {
             event_history
                 .replay_or_interrupt(
                     EventCall::CreateJoinSet { join_set_id },

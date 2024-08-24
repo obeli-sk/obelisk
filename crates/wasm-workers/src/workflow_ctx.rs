@@ -7,7 +7,7 @@ use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, 
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::{
     ExecutionId, FinishedExecutionError, FunctionRegistry, IfcFqnName, StrVariant,
-    SupportedFunctionResult,
+    SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
 use executor::worker::{FatalError, WorkerError, WorkerResult};
@@ -227,7 +227,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             )
             .await?;
         Ok(
-            assert_matches!(res, SupportedFunctionResult::Infallible(WastValWithType {
+            assert_matches!(res, SupportedFunctionReturnValue::Infallible(WastValWithType {
             r#type: TypeWrapper::String,
             value: WastVal::String(execution_id),
         }) => execution_id),
@@ -352,7 +352,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
             )
             .await?;
         Ok(
-            assert_matches!(res, SupportedFunctionResult::Infallible(WastValWithType {
+            assert_matches!(res, SupportedFunctionReturnValue::Infallible(WastValWithType {
             r#type: TypeWrapper::String,
             value: WastVal::String(join_set_id),
         }) => join_set_id),
@@ -393,7 +393,7 @@ pub(crate) mod tests {
         FinishedExecutionResult,
     };
     use concepts::{ComponentConfigHash, FunctionRegistry};
-    use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionResult};
+    use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;
     use derivative::Derivative;
@@ -472,7 +472,7 @@ pub(crate) mod tests {
                 }
             }
             info!("Finishing");
-            WorkerResult::Ok(SupportedFunctionResult::None, workflow_ctx.version)
+            WorkerResult::Ok(SupportedFunctionReturnValue::None, workflow_ctx.version)
         }
 
         fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
@@ -669,7 +669,7 @@ pub(crate) mod tests {
                     let child_log = db_connection.get(*child_execution_id).await.unwrap();
                     let child_res = child_log.finished_result().unwrap();
                     println!("***{child_res:?}");
-                    assert_matches!(child_res, Ok(SupportedFunctionResult::None));
+                    assert_matches!(child_res, Ok(SupportedFunctionReturnValue::None));
                 }
             }
             processed.push(join_set_id);

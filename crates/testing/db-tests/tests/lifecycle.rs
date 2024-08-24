@@ -446,7 +446,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         debug!(now = %created_at, "Finish execution");
         let req = AppendRequest {
             event: ExecutionEventInner::Finished {
-                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
+                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionReturnValue::None),
             },
             created_at,
         };
@@ -460,7 +460,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         debug!(now = %created_at, "Append after finish should fail");
         let req = AppendRequest {
             event: ExecutionEventInner::Finished {
-                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionResult::None),
+                result: FinishedExecutionResult::Ok(concepts::SupportedFunctionReturnValue::None),
             },
             created_at,
         };
@@ -649,7 +649,7 @@ pub async fn append_batch_respond_to_parent(
                 child_id,
                 sim_clock.now(),
                 vec![ExecutionEventInner::Finished {
-                    result: Ok(concepts::SupportedFunctionResult::None),
+                    result: Ok(concepts::SupportedFunctionReturnValue::None),
                 }],
                 child_version,
                 parent_id,
@@ -657,7 +657,7 @@ pub async fn append_batch_respond_to_parent(
                     join_set_id,
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_id,
-                        result: Ok(concepts::SupportedFunctionResult::None),
+                        result: Ok(concepts::SupportedFunctionReturnValue::None),
                     },
                 },
             )
@@ -689,7 +689,7 @@ pub async fn append_batch_respond_to_parent(
             .await
             .unwrap();
         let child_resp = vec![ExecutionEventInner::Finished {
-            result: Ok(concepts::SupportedFunctionResult::None),
+            result: Ok(concepts::SupportedFunctionReturnValue::None),
         }];
 
         db_connection
@@ -703,7 +703,7 @@ pub async fn append_batch_respond_to_parent(
                     join_set_id,
                     event: JoinSetResponse::ChildExecutionFinished {
                         child_execution_id: child_id,
-                        result: Ok(concepts::SupportedFunctionResult::None),
+                        result: Ok(concepts::SupportedFunctionReturnValue::None),
                     },
                 },
             )
@@ -742,7 +742,7 @@ pub async fn append_batch_respond_to_parent(
                 join_set_id,
                 event: JoinSetResponse::ChildExecutionFinished {
                     child_execution_id: child_a,
-                    result: Ok(concepts::SupportedFunctionResult::None),
+                    result: Ok(concepts::SupportedFunctionReturnValue::None),
                 },
             }
         }
@@ -755,7 +755,7 @@ pub async fn append_batch_respond_to_parent(
                 join_set_id,
                 event: JoinSetResponse::ChildExecutionFinished {
                     child_execution_id: child_b,
-                    result: Ok(concepts::SupportedFunctionResult::None),
+                    result: Ok(concepts::SupportedFunctionReturnValue::None),
                 },
             }
         }

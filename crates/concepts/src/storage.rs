@@ -8,7 +8,7 @@ use crate::FinishedExecutionResult;
 use crate::FunctionFqn;
 use crate::Params;
 use crate::StrVariant;
-use crate::SupportedFunctionResult;
+use crate::SupportedFunctionReturnValue;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -171,7 +171,7 @@ pub enum JoinSetResponse {
     },
     ChildExecutionFinished {
         child_execution_id: ExecutionId,
-        #[arbitrary(value = Ok(SupportedFunctionResult::None))]
+        #[arbitrary(value = Ok(SupportedFunctionReturnValue::None))]
         result: FinishedExecutionResult,
     },
 }
@@ -288,7 +288,7 @@ pub enum ExecutionEventInner {
     // also when
     #[display(fmt = "Finished")]
     Finished {
-        #[arbitrary(value = Ok(SupportedFunctionResult::None))]
+        #[arbitrary(value = Ok(SupportedFunctionReturnValue::None))]
         result: FinishedExecutionResult,
     },
     // Created by an external system or a scheduler during a race.

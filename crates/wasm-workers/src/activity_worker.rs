@@ -1,6 +1,6 @@
 use crate::WasmFileError;
 use async_trait::async_trait;
-use concepts::{ComponentConfigHash, FunctionFqn, SupportedFunctionResult};
+use concepts::{ComponentConfigHash, FunctionFqn, SupportedFunctionReturnValue};
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
@@ -195,7 +195,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                     version: ctx.version,
                 });
             }; // guest panic exits here
-            let result = match SupportedFunctionResult::new(
+            let result = match SupportedFunctionReturnValue::new(
                 results.into_iter().zip(result_types.iter().cloned()),
             ) {
                 Ok(result) => result,
@@ -268,7 +268,7 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::ExecutorId,
         storage::{CreateRequest, DbConnection, DbPool, Version},
-        ExecutionId, FunctionFqn, Params, SupportedFunctionResult,
+        ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -361,7 +361,7 @@ pub(crate) mod tests {
             .unwrap();
         // Check the result.
         let fibo = assert_matches!(db_connection.wait_for_finished_result(execution_id, None).await.unwrap(),
-            Ok(SupportedFunctionResult::Infallible(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 })) => val);
+            Ok(SupportedFunctionReturnValue::Infallible(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 })) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
         exec_task.close().await;
@@ -454,7 +454,7 @@ pub(crate) mod tests {
 
         #[rstest::rstest]
         #[case(10, 100, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
-        #[case(10, 10, Ok(SupportedFunctionResult::None))] // 0.1s -> Ok
+        #[case(10, 10, Ok(SupportedFunctionReturnValue::None))] // 0.1s -> Ok
         #[case(1500, 1, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
         #[tokio::test]
         async fn sleep_should_produce_intermittent_timeout(
@@ -701,7 +701,7 @@ pub(crate) mod tests {
             let val = assert_matches!(wast_val, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());
             // check types
-            let (ok, err) = assert_matches!(res, SupportedFunctionResult::Fallible(WastValWithType{value: _,
+            let (ok, err) = assert_matches!(res, SupportedFunctionReturnValue::Fallible(WastValWithType{value: _,
                 r#type: TypeWrapper::Result{ok, err}}) => (ok, err));
             assert_eq!(Some(Box::new(TypeWrapper::String)), ok);
             assert_eq!(Some(Box::new(TypeWrapper::String)), err);
@@ -868,7 +868,7 @@ pub(crate) mod tests {
                 assert_eq!("wrong status code: 404", val.deref());
             }
             // check types
-            let (ok, err) = assert_matches!(res, SupportedFunctionResult::Fallible(WastValWithType{value: _,
+            let (ok, err) = assert_matches!(res, SupportedFunctionReturnValue::Fallible(WastValWithType{value: _,
                 r#type: TypeWrapper::Result{ok, err}}) => (ok, err));
             assert_eq!(Some(Box::new(TypeWrapper::String)), ok);
             assert_eq!(Some(Box::new(TypeWrapper::String)), err);

@@ -559,7 +559,7 @@ mod tests {
     use concepts::storage::{
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
-    use concepts::{FunctionMetadata, ParameterTypes, Params, SupportedFunctionResult};
+    use concepts::{FunctionMetadata, ParameterTypes, Params, SupportedFunctionReturnValue};
     use db_tests::Database;
     use indexmap::IndexMap;
     use simple_worker::FFQN_SOME;
@@ -645,7 +645,7 @@ mod tests {
             pool,
             exec_config,
             Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-                SupportedFunctionResult::None,
+                SupportedFunctionReturnValue::None,
                 Version::new(2),
             ))),
             tick_fn,
@@ -655,7 +655,7 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionResult::None),
+                    result: Ok(SupportedFunctionReturnValue::None),
                 },
                 created_at: _,
             }
@@ -676,7 +676,7 @@ mod tests {
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
-            SupportedFunctionResult::None,
+            SupportedFunctionReturnValue::None,
             Version::new(2),
         )));
         let exec_task = ExecTask::spawn_new(
@@ -713,7 +713,7 @@ mod tests {
             execution_log.events.get(2).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionResult::None),
+                    result: Ok(SupportedFunctionReturnValue::None),
                 },
                 created_at: _,
             }
@@ -847,7 +847,7 @@ mod tests {
                 Version::new(4),
                 (
                     vec![],
-                    WorkerResult::Ok(SupportedFunctionResult::None, Version::new(4)),
+                    WorkerResult::Ok(SupportedFunctionReturnValue::None, Version::new(4)),
                 ),
             )]))),
         });
@@ -888,7 +888,7 @@ mod tests {
             execution_log.events.get(4).unwrap(),
             ExecutionEvent {
                 event: ExecutionEventInner::Finished {
-                    result: Ok(SupportedFunctionResult::None),
+                    result: Ok(SupportedFunctionReturnValue::None),
                 },
                 created_at: finished_at,
             } if *finished_at == sim_clock.now()
@@ -1119,7 +1119,7 @@ mod tests {
     #[derive(Clone, Debug)]
     struct SleepyWorker {
         duration: Duration,
-        result: SupportedFunctionResult,
+        result: SupportedFunctionReturnValue,
     }
 
     #[async_trait]
@@ -1163,7 +1163,7 @@ mod tests {
 
         let worker = Arc::new(SleepyWorker {
             duration: lock_expiry + Duration::from_millis(1), // sleep more than allowed by the lock expiry
-            result: SupportedFunctionResult::None,
+            result: SupportedFunctionReturnValue::None,
         });
         // Create an execution
         let execution_id = ExecutionId::generate();

@@ -9,7 +9,7 @@ use concepts::{
     FinishedExecutionError, StrVariant,
 };
 use concepts::{FunctionFqn, ParamsParsingError, ResultParsingError};
-use concepts::{Params, SupportedFunctionResult};
+use concepts::{Params, SupportedFunctionReturnValue};
 use std::error::Error;
 
 #[async_trait]
@@ -24,7 +24,7 @@ pub trait Worker: Send + Sync + 'static {
 #[must_use]
 #[derive(Debug)]
 pub enum WorkerResult {
-    Ok(SupportedFunctionResult, Version),
+    Ok(SupportedFunctionReturnValue, Version),
     ChildExecutionRequest,
     DelayRequest,
     Err(WorkerError),

@@ -5,7 +5,7 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbError;
 use concepts::storage::JoinSetResponseEvent;
 use concepts::FinishedExecutionResult;
-use concepts::SupportedFunctionResult;
+use concepts::SupportedFunctionReturnValue;
 use concepts::{
     storage::{ExecutionEventInner, ExpiredTimer, JoinSetResponse},
     FinishedExecutionError,
@@ -205,7 +205,7 @@ impl<DB: DbConnection + 'static> TimersWatcherTask<DB> {
 fn convert_permanent_timeout(return_type: Option<TypeWrapper>) -> FinishedExecutionResult {
     match return_type {
         Some(return_type @ TypeWrapper::Result { ok: _, err: None }) => {
-            Ok(SupportedFunctionResult::Fallible(WastValWithType {
+            Ok(SupportedFunctionReturnValue::Fallible(WastValWithType {
                 r#type: return_type,
                 value: WastVal::Result(Err(None)),
             }))
@@ -214,7 +214,7 @@ fn convert_permanent_timeout(return_type: Option<TypeWrapper>) -> FinishedExecut
             ok,
             err: Some(err_type),
         }) if matches!(err_type.as_ref(), TypeWrapper::String) => {
-            Ok(SupportedFunctionResult::Fallible(WastValWithType {
+            Ok(SupportedFunctionReturnValue::Fallible(WastValWithType {
                 r#type: TypeWrapper::Result {
                     ok,
                     err: Some(err_type),

@@ -20,7 +20,7 @@ use wasmtime::component::{Type, Val};
 
 pub mod storage;
 
-pub type FinishedExecutionResult = Result<SupportedFunctionResult, FinishedExecutionError>;
+pub type FinishedExecutionResult = Result<SupportedFunctionReturnValue, FinishedExecutionError>;
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FinishedExecutionError {
@@ -300,8 +300,7 @@ impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-// TODO: rename to SupportedFunctionReturnValue
-pub enum SupportedFunctionResult {
+pub enum SupportedFunctionReturnValue {
     None,
     Fallible(WastValWithType),
     Infallible(WastValWithType),
@@ -317,7 +316,7 @@ pub enum ResultParsingError {
     ValueConversionError(#[from] val_json::wast_val::WastValConversionError),
 }
 
-impl SupportedFunctionResult {
+impl SupportedFunctionReturnValue {
     pub fn new<
         I: ExactSizeIterator<Item = (wasmtime::component::Val, wasmtime::component::Type)>,
     >(
@@ -341,7 +340,7 @@ impl SupportedFunctionResult {
     #[must_use]
     pub fn fallible_err(&self) -> Option<Option<&WastVal>> {
         match self {
-            SupportedFunctionResult::Fallible(WastValWithType {
+            SupportedFunctionReturnValue::Fallible(WastValWithType {
                 value: WastVal::Result(Err(err)),
                 ..
             }) => Some(err.as_deref()),
@@ -352,7 +351,7 @@ impl SupportedFunctionResult {
     #[must_use]
     pub fn fallible_ok(&self) -> Option<Option<&WastVal>> {
         match self {
-            SupportedFunctionResult::Fallible(WastValWithType {
+            SupportedFunctionReturnValue::Fallible(WastValWithType {
                 value: WastVal::Result(Ok(ok)),
                 ..
             }) => Some(ok.as_deref()),
@@ -363,11 +362,11 @@ impl SupportedFunctionResult {
     #[must_use]
     pub fn fallible_result(&self) -> Option<Result<Option<&WastVal>, Option<&WastVal>>> {
         match self {
-            SupportedFunctionResult::Fallible(WastValWithType {
+            SupportedFunctionReturnValue::Fallible(WastValWithType {
                 value: WastVal::Result(Ok(ok)),
                 ..
             }) => Some(Ok(ok.as_deref())),
-            SupportedFunctionResult::Fallible(WastValWithType {
+            SupportedFunctionReturnValue::Fallible(WastValWithType {
                 value: WastVal::Result(Err(err)),
                 ..
             }) => Some(Err(err.as_deref())),
@@ -378,17 +377,16 @@ impl SupportedFunctionResult {
     #[must_use]
     pub fn value(&self) -> Option<&WastVal> {
         match self {
-            SupportedFunctionResult::None => None,
-            SupportedFunctionResult::Fallible(v) | SupportedFunctionResult::Infallible(v) => {
-                Some(&v.value)
-            }
+            SupportedFunctionReturnValue::None => None,
+            SupportedFunctionReturnValue::Fallible(v)
+            | SupportedFunctionReturnValue::Infallible(v) => Some(&v.value),
         }
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
-            SupportedFunctionResult::None => 0,
+            SupportedFunctionReturnValue::None => 0,
             _ => 1,
         }
     }

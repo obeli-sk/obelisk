@@ -3,7 +3,7 @@ use crate::WasmFileError;
 use async_trait::async_trait;
 use concepts::storage::{DbConnection, DbPool};
 use concepts::{ComponentConfigHash, FunctionFqn, FunctionMetadata, StrVariant};
-use concepts::{FunctionRegistry, SupportedFunctionResult};
+use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::error::Error;
@@ -240,7 +240,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
                 return Err(RunError::FunctionCall(err.into(), store.into_data()));
             } // guest panic exits here
-            let result = match SupportedFunctionResult::new(
+            let result = match SupportedFunctionReturnValue::new(
                 results.into_iter().zip(result_types.iter().cloned()),
             ) {
                 Ok(result) => result,
@@ -537,7 +537,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let res = assert_matches!(res, SupportedFunctionResult::Infallible(val) => val);
+        let res = assert_matches!(res, SupportedFunctionReturnValue::Infallible(val) => val);
         assert_eq!(
             FIBO_10_OUTPUT,
             assert_matches!(res, WastValWithType{ value: WastVal::U64(actual), r#type: TypeWrapper::U64} => actual),
@@ -747,7 +747,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(SupportedFunctionResult::None, res);
+        assert_eq!(SupportedFunctionReturnValue::None, res);
         drop(db_connection);
         workflow_exec_task.close().await;
         timers_watcher_task.close().await;
@@ -1008,7 +1008,7 @@ mod tests {
         let res = db_pool.connection().get(execution_id).await.unwrap();
         assert_matches!(
             res.finished_result().unwrap(),
-            Ok(SupportedFunctionResult::None)
+            Ok(SupportedFunctionReturnValue::None)
         );
         // New execution should be pending in SLEEP_MILLIS.
         sim_clock
