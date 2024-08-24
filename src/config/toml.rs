@@ -11,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use tracing::instrument;
 use wasm_workers::{
     activity_worker::ActivityConfig,
     workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig},
@@ -271,6 +272,7 @@ pub(crate) struct VerifiedActivityConfig {
 }
 
 impl WasmActivity {
+    #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: impl AsRef<Path>,
@@ -285,6 +287,7 @@ impl WasmActivity {
             recycle_instances: self.recycle_instances,
         };
         let config_id = config_store.as_hash();
+        tracing::Span::current().record("config_id", tracing::field::display(&config_id));
         let exec_config = exec_config.into_exec_exec_config(config_id.clone());
         let activity_config = ActivityConfig {
             config_id: config_id.clone(),
@@ -325,6 +328,7 @@ pub(crate) struct VerifiedWorkflowConfig {
 }
 
 impl Workflow {
+    #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: impl AsRef<Path>,
@@ -342,6 +346,7 @@ impl Workflow {
             non_blocking_event_batching: self.non_blocking_event_batching,
         };
         let config_id = config_store.as_hash();
+        tracing::Span::current().record("config_id", tracing::field::display(&config_id));
         let workflow_config = WorkflowConfig {
             config_id: config_id.clone(),
             join_next_blocking_strategy: self.join_next_blocking_strategy,
