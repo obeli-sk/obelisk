@@ -126,8 +126,13 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
         db_pool: P,
         task_limiter: Option<Arc<tokio::sync::Semaphore>>,
         executor_id: ExecutorId,
-        span: Span,
+        name: impl AsRef<str>,
     ) -> ExecutorTaskHandle {
+        let span = info_span!(parent: None, "executor",
+            name = name.as_ref(),
+            %executor_id,
+            config_id = %config.config_id,
+        );
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let ffqns = extract_ffqns(worker.as_ref());
@@ -681,7 +686,7 @@ mod tests {
             db_pool.clone(),
             None,
             ExecutorId::generate(),
-            info_span!("executor"),
+            "test",
         );
 
         let execution_log = create_and_tick(

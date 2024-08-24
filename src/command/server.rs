@@ -50,7 +50,7 @@ use tracing::error;
 use tracing::info_span;
 use tracing::instrument;
 use tracing::Instrument;
-use tracing::{trace, debug, info};
+use tracing::{debug, info, trace};
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
@@ -513,7 +513,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     );
 
     let mut exec_join_handles = Vec::new();
-
+    // TODO: enforce unique name
     // FIXME: Ctrl-C here is ignored.
     for activity in config.activity.into_iter().filter(|it| it.common.enabled) {
         let activity = activity.verify_content_digest(&wasm_cache_dir).await?;
@@ -618,11 +618,7 @@ fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
     component_registry: &mut ComponentConfigRegistry,
     executor_id: ExecutorId,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
-    let root_span = info_span!(parent: None, "executor",
-        %executor_id,
-        config_id = %exec_config.config_id,
-        name = config_store.name()
-    ); // TODO: span's target should be `obeli_sk_executor`
+    let name = config_store.name().to_string();
     let component = Component {
         config_id: config_store.as_hash(),
         config_store,
@@ -630,7 +626,6 @@ fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
         imports: worker.imported_functions().collect(),
     };
     component_registry.insert(component)?;
-
     Ok(ExecTask::spawn_new(
         worker,
         exec_config,
@@ -638,7 +633,7 @@ fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
         db_pool,
         None,
         executor_id,
-        root_span,
+        name,
     ))
 }
 

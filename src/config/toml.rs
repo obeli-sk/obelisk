@@ -325,7 +325,8 @@ pub(crate) struct VerifiedWorkflowConfig {
 }
 
 impl Workflow {
-    pub(crate) async fn verify_content_digest( // TODO: rename to fetch_and_verify
+    pub(crate) async fn verify_content_digest(
+        // TODO: rename to fetch_and_verify
         self,
         wasm_cache_dir: impl AsRef<Path>,
     ) -> Result<VerifiedWorkflowConfig, anyhow::Error> {

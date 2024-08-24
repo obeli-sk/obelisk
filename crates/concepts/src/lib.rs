@@ -766,29 +766,20 @@ pub mod prefixed_ulid {
 }
 
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, derive_more::Display,
 )]
+#[display(fmt = "{component_type}:{hash}")]
 pub struct ComponentConfigHash {
     pub component_type: ComponentType,
-    pub config_hash: ContentDigest,
+    pub hash: String,
 }
 impl ComponentConfigHash {
     #[must_use]
     pub const fn dummy() -> Self {
         Self {
             component_type: ComponentType::WasmActivity,
-            config_hash: ContentDigest::empty(),
+            hash: String::new(),
         }
-    }
-}
-impl Display for ComponentConfigHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}:{}",
-            self.component_type,
-            &self.config_hash.hash_base16[0..6]
-        )
     }
 }
 
@@ -806,13 +797,11 @@ impl FromStr for ComponentConfigHash {
     type Err = ComponentConfigHashParseErrror;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let (component_type, config_hash) =
-            input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
+        let (component_type, hash) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
         let component_type = component_type.parse()?;
-        let config_hash = config_hash.parse()?;
         Ok(Self {
             component_type,
-            config_hash,
+            hash: hash.to_string(),
         })
     }
 }

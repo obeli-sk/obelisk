@@ -19,7 +19,9 @@ use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
 /// Defines behavior of the wasm runtime when `HistoryEvent::JoinNextBlocking` is requested.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Hash,
+)]
 pub enum JoinNextBlockingStrategy {
     /// Shut down the current runtime. When the [`JoinSetResponse`] is appended, workflow is reexecuted with a new `RunId`.
     Interrupt,
@@ -357,7 +359,6 @@ mod tests {
     use serde_json::json;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
-    use tracing::info_span;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -412,7 +413,7 @@ mod tests {
             db_pool,
             None,
             ExecutorId::generate(),
-            info_span!("executor"),
+            "test",
         )
     }
 
@@ -663,7 +664,7 @@ mod tests {
             db_pool,
             None,
             ExecutorId::generate(),
-            info_span!("executor"),
+            "test",
         )
     }
 

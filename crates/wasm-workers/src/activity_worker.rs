@@ -275,7 +275,6 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::time::Duration;
     use test_utils::{env_or_default, sim_clock::SimClock};
-    use tracing::info_span;
     use utils::time::now;
     use val_json::{
         type_wrapper::TypeWrapper,
@@ -319,7 +318,7 @@ pub(crate) mod tests {
             db_pool,
             None,
             ExecutorId::generate(),
-            info_span!("executor"),
+            "test",
         )
     }
 
@@ -510,7 +509,7 @@ pub(crate) mod tests {
                 db_pool.clone(),
                 None,
                 ExecutorId::generate(),
-                info_span!("executor"),
+                "test",
             );
 
             // Create an execution.

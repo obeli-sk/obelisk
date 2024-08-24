@@ -7,8 +7,6 @@ use concepts::ComponentConfigHash;
 use concepts::ContentDigest;
 use concepts::{ComponentType, FunctionMetadata};
 use serde_with::serde_as;
-use sha2::Digest as _;
-use sha2::Sha256;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use wasm_workers::workflow_worker::JoinNextBlockingStrategy;
@@ -21,7 +19,7 @@ pub struct Component {
     pub imports: Vec<FunctionMetadata>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Hash, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ExecConfig {
     pub(crate) batch_size: u32,
     pub(crate) lock_expiry: Duration,
@@ -41,7 +39,7 @@ impl ExecConfig {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Hash)]
 pub(crate) struct ConfigStoreCommon {
     pub(crate) name: String,
     pub(crate) location: ComponentLocation,
@@ -51,7 +49,7 @@ pub(crate) struct ConfigStoreCommon {
     pub(crate) default_retry_exp_backoff: Duration,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Hash)]
 pub(crate) enum ConfigStore {
     WasmActivityV1 {
         common: ConfigStoreCommon,
@@ -85,17 +83,22 @@ impl ConfigStore {
     }
 
     pub(crate) fn as_hash(&self) -> ComponentConfigHash {
-        let json = serde_json::to_string(&self).unwrap();
-        let hash_base16 = format!("{:x}", Sha256::digest(json.as_bytes()));
+        let hash = {
+            use std::hash::Hash as _;
+            use std::hash::Hasher as _;
+            let mut hasher = std::hash::DefaultHasher::new();
+            self.hash(&mut hasher);
+            format!("{:x}", hasher.finish())
+        };
         ComponentConfigHash {
             component_type: self.as_component_type(),
-            config_hash: ContentDigest::new(concepts::HashType::Sha256, hash_base16),
+            hash,
         }
     }
 }
 
 #[serde_as]
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Hash, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ComponentLocation {
     Path(PathBuf),

@@ -579,7 +579,7 @@ pub(crate) mod tests {
                 db_pool.clone(),
                 None,
                 concepts::prefixed_ulid::ExecutorId::generate(),
-                tracing::info_span!("executor"),
+                "test",
             )
         };
         // Create an execution.
