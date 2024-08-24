@@ -12,8 +12,6 @@ pub(crate) async fn inspect<P: AsRef<Path>>(
     verbosity: FunctionMetadataVerbosity,
 ) -> anyhow::Result<()> {
     let wasm_path = wasm_path.as_ref();
-    let component_id = wasm_workers::component_detector::file_hash(wasm_path).await?;
-    println!("Id:\n\t{component_id}");
     let engine = ComponentDetector::get_engine();
     let detected = ComponentDetector::new(wasm_path, &engine).context("parsing error")?;
     println!("Component type:\n\t{}", detected.component_type);

@@ -50,7 +50,7 @@ use tracing::error;
 use tracing::info_span;
 use tracing::instrument;
 use tracing::Instrument;
-use tracing::{debug, info};
+use tracing::{trace, debug, info};
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
@@ -559,8 +559,8 @@ fn instantiate_activity<DB: DbConnection + 'static>(
     engines: &Engines,
     executor_id: ExecutorId,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
-    info!("Instantiating activity");
-    debug!(?activity, "Full configuration");
+    debug!("Instantiating activity");
+    trace!(?activity, "Full configuration");
     let worker = Arc::new(ActivityWorker::new_with_config(
         activity.wasm_path,
         activity.activity_config,
@@ -590,8 +590,8 @@ fn instantiate_workflow<DB: DbConnection + 'static>(
     component_registry: &mut ComponentConfigRegistry,
     executor_id: ExecutorId,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
-    info!("Instantiating workflow");
-    debug!(?workflow, "Full configuration");
+    debug!("Instantiating workflow");
+    trace!(?workflow, "Full configuration");
     let worker = Arc::new(WorkflowWorker::new_with_config(
         workflow.wasm_path,
         workflow.workflow_config,

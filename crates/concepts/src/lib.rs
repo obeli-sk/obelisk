@@ -744,14 +744,12 @@ pub mod prefixed_ulid {
     pub mod prefix {
         pub struct E;
         pub struct Exr;
-        // pub struct Conf;
         pub struct JoinSet;
         pub struct Run;
         pub struct Delay;
     }
 
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
-    // pub type ConfigId = PrefixedUlid<prefix::Conf>;
     pub type JoinSetId = PrefixedUlid<prefix::JoinSet>;
     pub type ExecutionId = PrefixedUlid<prefix::E>;
     pub type RunId = PrefixedUlid<prefix::Run>;
@@ -768,14 +766,12 @@ pub mod prefixed_ulid {
 }
 
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, derive_more::Display,
+    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
 )]
-#[display(fmt = "{component_type}:{config_hash}")]
 pub struct ComponentConfigHash {
     pub component_type: ComponentType,
     pub config_hash: ContentDigest,
 }
-
 impl ComponentConfigHash {
     #[must_use]
     pub const fn dummy() -> Self {
@@ -785,9 +781,18 @@ impl ComponentConfigHash {
         }
     }
 }
+impl Display for ComponentConfigHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}",
+            self.component_type,
+            &self.config_hash.hash_base16[0..6]
+        )
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
-
 pub enum ComponentConfigHashParseErrror {
     #[error("cannot parse ComponentConfigHash - delimiter ':' not found")]
     DelimiterNotFound,
