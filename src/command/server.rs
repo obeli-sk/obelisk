@@ -3,6 +3,8 @@ use crate::config::config_holder::ConfigHolder;
 use crate::config::toml::ObeliskConfig;
 use crate::config::toml::VerifiedActivityConfig;
 use crate::config::toml::VerifiedWorkflowConfig;
+use crate::config::toml::WasmActivity;
+use crate::config::toml::Workflow;
 use crate::config::Component;
 use crate::config::ConfigStore;
 use crate::grpc_util::grpc_mapping::PendingStatusExt as _;
@@ -537,12 +539,10 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     let mut exec_join_handles = Vec::new();
     // TODO: enforce unique name
     // FIXME: Ctrl-C here is ignored.
-    for activity in config
-        .wasm_activity
-        .into_iter()
-        .filter(|it| it.common.enabled)
-    {
-        let activity = activity.fetch_and_verify(&wasm_cache_dir).await?;
+    let (activities, workflows) =
+        fetch_and_verify(config.wasm_activity, config.workflow, wasm_cache_dir).await?;
+
+    for activity in activities {
         let executor_id = ExecutorId::generate();
         if activity.enabled {
             let exec_task_handle = instantiate_activity(
@@ -555,8 +555,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             exec_join_handles.push(exec_task_handle);
         }
     }
-    for workflow in config.workflow.into_iter().filter(|it| it.common.enabled) {
-        let workflow = workflow.fetch_and_verify(&wasm_cache_dir).await?;
+    for workflow in workflows {
         let executor_id = ExecutorId::generate();
         if workflow.enabled {
             let exec_task_handle = instantiate_workflow(
@@ -570,6 +569,24 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         }
     }
     Ok((exec_join_handles, timers_watcher))
+}
+
+async fn fetch_and_verify(
+    wasm_activities: Vec<WasmActivity>,
+    workflows: Vec<Workflow>,
+    wasm_cache_dir: &Path,
+) -> Result<(Vec<VerifiedActivityConfig>, Vec<VerifiedWorkflowConfig>), anyhow::Error> {
+    let mut dst_activities = Vec::with_capacity(wasm_activities.len());
+    let mut dst_workflows = Vec::with_capacity(workflows.len());
+    for activity in wasm_activities.into_iter().filter(|it| it.common.enabled) {
+        let activity = activity.fetch_and_verify(&wasm_cache_dir).await?;
+        dst_activities.push(activity);
+    }
+    for workflow in workflows.into_iter().filter(|it| it.common.enabled) {
+        let workflow = workflow.fetch_and_verify(&wasm_cache_dir).await?;
+        dst_workflows.push(workflow);
+    }
+    Ok((dst_activities, dst_workflows))
 }
 
 #[instrument(skip_all, fields(
