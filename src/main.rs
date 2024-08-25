@@ -26,8 +26,17 @@ async fn main() -> Result<(), anyhow::Error> {
     let config = config_holder.load_config().await?;
 
     match Args::parse().command {
-        Subcommand::Server(Server::Run { clean }) => {
-            Box::pin(command::server::run(config, clean, clean, config_holder)).await
+        Subcommand::Server(Server::Run {
+            clean_db,
+            clean_cache,
+        }) => {
+            Box::pin(command::server::run(
+                config,
+                clean_db,
+                clean_cache,
+                config_holder,
+            ))
+            .await
         }
         Subcommand::Client(Client { api_url, command }) => {
             match command {
