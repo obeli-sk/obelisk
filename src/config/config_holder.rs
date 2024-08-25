@@ -57,7 +57,7 @@ impl ConfigHolder {
             );
         }
         let settings = builder
-            .add_source(Environment::with_prefix("obelisk"))
+            .add_source(Environment::with_prefix("obelisk").separator("_"))
             .build()
             .await?;
         Ok(settings.try_deserialize()?)
