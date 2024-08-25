@@ -364,18 +364,20 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
 
 pub(crate) async fn run(
     mut config: ObeliskConfig,
-    clean: bool,
+    clean_db: bool,
+    clean_cache: bool,
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
     let _guard = init::init(&mut config);
-    Box::pin(run_internal(config, clean, config_holder)).await?;
+    Box::pin(run_internal(config, clean_db, clean_cache, config_holder)).await?;
     Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
 async fn run_internal(
     config: ObeliskConfig,
-    clean: bool,
+    clean_db: bool,
+    clean_cache: bool,
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
     let db_file = &config
@@ -390,14 +392,14 @@ async fn run_internal(
         .get_directory_if_enabled(config_holder.project_dirs.as_ref())
         .await?;
     debug!("Using codegen cache? {codegen_cache:?}");
-    if clean {
-        let ignore_not_found = |err: std::io::Error| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                Ok(())
-            } else {
-                Err(err)
-            }
-        };
+    let ignore_not_found = |err: std::io::Error| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            Ok(())
+        } else {
+            Err(err)
+        }
+    };
+    if clean_db {
         tokio::fs::remove_file(db_file)
             .await
             .or_else(ignore_not_found)
@@ -422,6 +424,8 @@ async fn run_internal(
             .await
             .or_else(ignore_not_found)
             .with_context(|| format!("cannot delete database file `{shm_file:?}`"))?;
+    }
+    if clean_cache {
         tokio::fs::remove_dir_all(&wasm_cache_dir)
             .await
             .or_else(ignore_not_found)
@@ -443,6 +447,10 @@ async fn run_internal(
     tokio::fs::create_dir_all(&wasm_cache_dir)
         .await
         .with_context(|| format!("cannot create wasm cache directory {wasm_cache_dir:?}"))?;
+    let metadata_dir = wasm_cache_dir.join("metadata");
+    tokio::fs::create_dir_all(&metadata_dir)
+        .await
+        .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
 
     let api_listening_addr = config.api_listening_addr;
     let init_span = info_span!("init");
@@ -459,6 +467,7 @@ async fn run_internal(
             &mut component_registry,
             codegen_cache.as_deref(),
             &wasm_cache_dir,
+            &metadata_dir,
         )
         .instrument(init_span),
     )
@@ -505,6 +514,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     component_registry: &mut ComponentConfigRegistry,
     codegen_cache: Option<&Path>,
     wasm_cache_dir: &Path,
+    metadata_dir: &Path,
 ) -> Result<
     (
         Vec<ExecutorTaskHandle>,
@@ -539,8 +549,13 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     let mut exec_join_handles = Vec::new();
     // TODO: enforce unique name
     // FIXME: Ctrl-C here is ignored.
-    let (activities, workflows) =
-        fetch_and_verify(config.wasm_activity, config.workflow, wasm_cache_dir).await?;
+    let (activities, workflows) = fetch_and_verify(
+        config.wasm_activity,
+        config.workflow,
+        wasm_cache_dir,
+        metadata_dir,
+    )
+    .await?;
 
     for activity in activities {
         let executor_id = ExecutorId::generate();
@@ -575,15 +590,20 @@ async fn fetch_and_verify(
     wasm_activities: Vec<WasmActivity>,
     workflows: Vec<Workflow>,
     wasm_cache_dir: &Path,
+    metadata_dir: &Path,
 ) -> Result<(Vec<VerifiedActivityConfig>, Vec<VerifiedWorkflowConfig>), anyhow::Error> {
     let mut dst_activities = Vec::with_capacity(wasm_activities.len());
     let mut dst_workflows = Vec::with_capacity(workflows.len());
     for activity in wasm_activities.into_iter().filter(|it| it.common.enabled) {
-        let activity = activity.fetch_and_verify(&wasm_cache_dir).await?;
+        let activity = activity
+            .fetch_and_verify(wasm_cache_dir, metadata_dir)
+            .await?;
         dst_activities.push(activity);
     }
     for workflow in workflows.into_iter().filter(|it| it.common.enabled) {
-        let workflow = workflow.fetch_and_verify(&wasm_cache_dir).await?;
+        let workflow = workflow
+            .fetch_and_verify(wasm_cache_dir, metadata_dir)
+            .await?;
         dst_workflows.push(workflow);
     }
     Ok((dst_activities, dst_workflows))

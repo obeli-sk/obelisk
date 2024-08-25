@@ -108,7 +108,8 @@ pub(crate) enum ComponentLocation {
 impl ComponentLocation {
     pub(crate) async fn obtain_wasm(
         &self,
-        wasm_cache_dir: impl AsRef<Path>,
+        wasm_cache_dir: &Path,
+        metadata_dir: &Path,
     ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
         match self {
             ComponentLocation::Path(wasm_path) => {
@@ -120,7 +121,13 @@ impl ComponentLocation {
                     .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
                 Ok((content_digest, wasm_path))
             }
-            ComponentLocation::Oci(image) => oci::pull_to_cache_dir(image, wasm_cache_dir).await,
+            ComponentLocation::Oci(image) => {
+                oci::pull_to_cache_dir(image, wasm_cache_dir, metadata_dir)
+                    .await
+                    .with_context(|| {
+                        format!("try cleaning the cache directory with `--clean-cache`")
+                    })
+            }
         }
     }
 }

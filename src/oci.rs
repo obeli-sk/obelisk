@@ -14,27 +14,43 @@ fn get_client() -> WasmClient {
     ))
 }
 
+fn digest_to_metadata_file(
+    metadata_dir: &Path,
+    metadata_file: &ContentDigest, // TODO: Digest
+) -> PathBuf {
+    metadata_dir.join(format!(
+        "{}_{}.txt",
+        metadata_file.hash_type, metadata_file.hash_base16
+    ))
+}
+
+async fn metadata_to_content_digest(
+    image: &Reference,
+    metadata_dir: &Path,
+) -> Result<Option<ContentDigest>, anyhow::Error> {
+    let metadata_digest = image.digest().map(ContentDigest::from_str).transpose()?;
+    if let Some(metadata_digest) = metadata_digest {
+        let metadata_file = digest_to_metadata_file(metadata_dir, &metadata_digest);
+        if metadata_file.is_file() {
+            let content = tokio::fs::read_to_string(&metadata_file).await?;
+            return Ok(Some(ContentDigest::from_str(&content)?));
+        }
+    }
+    Ok(None)
+}
+
 pub(crate) async fn pull_to_cache_dir(
     image: &Reference,
-    wasm_cache_dir: impl AsRef<Path>,
+    wasm_cache_dir: &Path,
+    metadata_dir: &Path,
 ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
-    let wasm_cache_dir = wasm_cache_dir.as_ref();
     let client = get_client();
     let auth = get_oci_auth(image)?;
-    let oci_cache_mapping_file = wasm_cache_dir.join("metadata_to_content_digests.json");
-    let mut oci_cache_mapping: hashbrown::HashMap<String, ContentDigest> = {
-        tokio::fs::read_to_string(&oci_cache_mapping_file)
-            .await
-            .ok()
-            .and_then(|content| serde_json::from_str(&content).ok())
-            .unwrap_or_default()
-    };
-    // Try to find the content digest using the json mapping if the `image` specifies the metadata digest.
-    let content_digest = if let Some(content_digest) = image
-        .digest()
-        .and_then(|metadata_digest| oci_cache_mapping.get(metadata_digest))
+    // If the `image` specifies the metadata digest, try to find the link in the `metadata_dir`.
+    let content_digest = if let Some(content_digest) =
+        metadata_to_content_digest(image, metadata_dir).await?
     {
-        content_digest.to_owned()
+        content_digest
     } else {
         info!("Fetching metadata for {image}");
         // Workaround for bug somewhere in `WasmClient::pull_manifest_and_config`
@@ -66,19 +82,17 @@ pub(crate) async fn pull_to_cache_dir(
                 .first()
                 .expect("layer length asserted in WasmClient"),
         )?;
-        // Update the mapping and persist.
-        oci_cache_mapping.insert(metadata_digest, content_digest.clone());
-        let json = serde_json::to_string(&oci_cache_mapping)?;
-        if let Err(err) = tokio::fs::write(&oci_cache_mapping_file, json.as_bytes()).await {
-            warn!("Cannot write {oci_cache_mapping_file:?} - {err:?}");
-        }
+        // Create new file in the metadata directory.
+        let metadata_file =
+            digest_to_metadata_file(metadata_dir, &ContentDigest::from_str(&metadata_digest)?);
+        tokio::fs::write(&metadata_file, content_digest.to_string()).await?;
         content_digest
     };
-    let wasm_path = wasm_cache_dir.join(PathBuf::from(format!(
+    let wasm_path = wasm_cache_dir.join(format!(
         "{hash_type}_{content_digest}.wasm",
         hash_type = content_digest.hash_type,
         content_digest = content_digest.hash_base16,
-    )));
+    ));
     // Do not download if the file exists and matches the expected sha256 digest.
     match wasm_workers::component_detector::file_hash(&wasm_path).await {
         Ok(actual) if actual == content_digest => {

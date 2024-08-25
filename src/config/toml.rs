@@ -195,9 +195,13 @@ impl ComponentCommon {
     /// Otherwise backfill the `content_digest`.
     async fn fetch_and_verify(
         self,
-        wasm_cache_dir: impl AsRef<Path>,
+        wasm_cache_dir: &Path,
+        metadata_dir: &Path,
     ) -> Result<(ConfigStoreCommon, PathBuf, ComponentEnabled), anyhow::Error> {
-        let (actual_content_digest, wasm_path) = self.location.obtain_wasm(wasm_cache_dir).await?;
+        let (actual_content_digest, wasm_path) = self
+            .location
+            .obtain_wasm(wasm_cache_dir, metadata_dir)
+            .await?;
         let verified = ConfigStoreCommon {
             name: self.name,
             location: self.location,
@@ -265,9 +269,13 @@ impl WasmActivity {
     #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
     pub(crate) async fn fetch_and_verify(
         self,
-        wasm_cache_dir: impl AsRef<Path>,
+        wasm_cache_dir: &Path,
+        metadata_dir: &Path,
     ) -> Result<VerifiedActivityConfig, anyhow::Error> {
-        let (common, wasm_path, enabled) = self.common.fetch_and_verify(wasm_cache_dir).await?;
+        let (common, wasm_path, enabled) = self
+            .common
+            .fetch_and_verify(wasm_cache_dir, metadata_dir)
+            .await?;
         let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmActivityV1 {
             common,
@@ -318,9 +326,13 @@ impl Workflow {
     #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
     pub(crate) async fn fetch_and_verify(
         self,
-        wasm_cache_dir: impl AsRef<Path>,
+        wasm_cache_dir: &Path,
+        metadata_dir: &Path,
     ) -> Result<VerifiedWorkflowConfig, anyhow::Error> {
-        let (common, wasm_path, enabled) = self.common.fetch_and_verify(wasm_cache_dir).await?;
+        let (common, wasm_path, enabled) = self
+            .common
+            .fetch_and_verify(wasm_cache_dir, metadata_dir)
+            .await?;
         let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmWorkflowV1 {
             common,
