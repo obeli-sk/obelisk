@@ -788,7 +788,7 @@ pub enum ComponentConfigHashParseErrror {
     #[error("cannot parse prefix of ComponentConfigHash - {0}")]
     ComponentTypeParseError(#[from] strum::ParseError),
     #[error("cannot parse suffix of ComponentConfigHash - {0}")]
-    ContentDigestParseErrror(#[from] ContentDigestParseErrror),
+    ContentDigestParseErrror(#[from] DigestParseErrror),
 }
 
 impl FromStr for ComponentConfigHash {
@@ -825,6 +825,27 @@ pub enum HashType {
     Debug,
     Clone,
     derive_more::Display,
+    derive_more::FromStr,
+    derive_more::Deref,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+pub struct ContentDigest(Digest);
+
+impl ContentDigest {
+    #[must_use]
+    pub fn new(hash_type: HashType, hash_base16: String) -> Self {
+        Self(Digest::new(hash_type, hash_base16))
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    derive_more::Display,
     PartialEq,
     Eq,
     Hash,
@@ -832,22 +853,11 @@ pub enum HashType {
     serde_with::DeserializeFromStr,
 )]
 #[display(fmt = "{hash_type}:{hash_base16}")]
-pub struct ContentDigest {
-    pub hash_type: HashType,
-    pub hash_base16: StrVariant,
+pub struct Digest {
+    hash_type: HashType,
+    hash_base16: StrVariant,
 }
-
-impl ContentDigest {
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self {
-            hash_type: HashType::Sha256,
-            hash_base16: StrVariant::Static(
-                "0000000000000000000000000000000000000000000000000000000000000000",
-            ),
-        }
-    }
-
+impl Digest {
     #[must_use]
     pub fn new(hash_type: HashType, hash_base16: String) -> Self {
         Self {
@@ -855,11 +865,21 @@ impl ContentDigest {
             hash_base16: StrVariant::Arc(Arc::from(hash_base16)),
         }
     }
+
+    #[must_use]
+    pub fn hash_type(&self) -> HashType {
+        self.hash_type
+    }
+
+    #[must_use]
+    pub fn digest_base16(&self) -> &str {
+        &self.hash_base16
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 
-pub enum ContentDigestParseErrror {
+pub enum DigestParseErrror {
     #[error("cannot parse ContentDigest - delimiter ':' not found")]
     DelimiterNotFound,
     #[error("cannot parse ContentDigest - invalid prefix `{hash_type}`")]
@@ -872,8 +892,8 @@ pub enum ContentDigestParseErrror {
     SuffixInvalid(char),
 }
 
-impl FromStr for ContentDigest {
-    type Err = ContentDigestParseErrror;
+impl FromStr for Digest {
+    type Err = DigestParseErrror;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         let (hash_type, hash_base16) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;

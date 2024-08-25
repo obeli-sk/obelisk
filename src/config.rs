@@ -124,9 +124,7 @@ impl ComponentLocation {
             ComponentLocation::Oci(image) => {
                 oci::pull_to_cache_dir(image, wasm_cache_dir, metadata_dir)
                     .await
-                    .with_context(|| {
-                        format!("try cleaning the cache directory with `--clean-cache`")
-                    })
+                    .context("try cleaning the cache directory with `--clean-cache`")
             }
         }
     }

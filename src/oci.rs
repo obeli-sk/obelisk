@@ -1,5 +1,5 @@
 use anyhow::{bail, ensure, Context};
-use concepts::ContentDigest;
+use concepts::{ContentDigest, Digest};
 use oci_distribution::Reference;
 use oci_wasm::{WasmClient, WasmConfig};
 use std::{
@@ -14,13 +14,11 @@ fn get_client() -> WasmClient {
     ))
 }
 
-fn digest_to_metadata_file(
-    metadata_dir: &Path,
-    metadata_file: &ContentDigest, // TODO: Digest
-) -> PathBuf {
+fn digest_to_metadata_file(metadata_dir: &Path, metadata_file: &Digest) -> PathBuf {
     metadata_dir.join(format!(
         "{}_{}.txt",
-        metadata_file.hash_type, metadata_file.hash_base16
+        metadata_file.hash_type(),
+        metadata_file.digest_base16()
     ))
 }
 
@@ -28,7 +26,7 @@ async fn metadata_to_content_digest(
     image: &Reference,
     metadata_dir: &Path,
 ) -> Result<Option<ContentDigest>, anyhow::Error> {
-    let metadata_digest = image.digest().map(ContentDigest::from_str).transpose()?;
+    let metadata_digest = image.digest().map(Digest::from_str).transpose()?;
     if let Some(metadata_digest) = metadata_digest {
         let metadata_file = digest_to_metadata_file(metadata_dir, &metadata_digest);
         if metadata_file.is_file() {
@@ -84,14 +82,14 @@ pub(crate) async fn pull_to_cache_dir(
         )?;
         // Create new file in the metadata directory.
         let metadata_file =
-            digest_to_metadata_file(metadata_dir, &ContentDigest::from_str(&metadata_digest)?);
+            digest_to_metadata_file(metadata_dir, &Digest::from_str(&metadata_digest)?);
         tokio::fs::write(&metadata_file, content_digest.to_string()).await?;
         content_digest
     };
     let wasm_path = wasm_cache_dir.join(format!(
         "{hash_type}_{content_digest}.wasm",
-        hash_type = content_digest.hash_type,
-        content_digest = content_digest.hash_base16,
+        hash_type = content_digest.hash_type(),
+        content_digest = content_digest.digest_base16(),
     ));
     // Do not download if the file exists and matches the expected sha256 digest.
     match wasm_workers::component_detector::file_hash(&wasm_path).await {
