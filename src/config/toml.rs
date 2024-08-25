@@ -7,6 +7,7 @@ use serde::Deserialize;
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 use tracing::instrument;
@@ -269,12 +270,12 @@ impl WasmActivity {
     #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
     pub(crate) async fn fetch_and_verify(
         self,
-        wasm_cache_dir: &Path,
-        metadata_dir: &Path,
+        wasm_cache_dir: Arc<Path>,
+        metadata_dir: Arc<Path>,
     ) -> Result<VerifiedActivityConfig, anyhow::Error> {
         let (common, wasm_path, enabled) = self
             .common
-            .fetch_and_verify(wasm_cache_dir, metadata_dir)
+            .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
         let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmActivityV1 {
@@ -326,12 +327,12 @@ impl Workflow {
     #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
     pub(crate) async fn fetch_and_verify(
         self,
-        wasm_cache_dir: &Path,
-        metadata_dir: &Path,
+        wasm_cache_dir: Arc<Path>,
+        metadata_dir: Arc<Path>,
     ) -> Result<VerifiedWorkflowConfig, anyhow::Error> {
         let (common, wasm_path, enabled) = self
             .common
-            .fetch_and_verify(wasm_cache_dir, metadata_dir)
+            .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
         let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmWorkflowV1 {

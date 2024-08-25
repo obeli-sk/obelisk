@@ -46,6 +46,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
@@ -466,8 +467,8 @@ async fn run_internal(
             &db_pool,
             &mut component_registry,
             codegen_cache.as_deref(),
-            &wasm_cache_dir,
-            &metadata_dir,
+            Arc::from(wasm_cache_dir),
+            Arc::from(metadata_dir),
         )
         .instrument(init_span),
     )
@@ -513,8 +514,8 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     db_pool: &P,
     component_registry: &mut ComponentConfigRegistry,
     codegen_cache: Option<&Path>,
-    wasm_cache_dir: &Path,
-    metadata_dir: &Path,
+    wasm_cache_dir: Arc<Path>,
+    metadata_dir: Arc<Path>,
 ) -> Result<
     (
         Vec<ExecutorTaskHandle>,
@@ -548,7 +549,6 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 
     let mut exec_join_handles = Vec::new();
     // TODO: enforce unique name
-    // FIXME: Ctrl-C here is ignored.
     let (activities, workflows) = fetch_and_verify(
         config.wasm_activity,
         config.workflow,
@@ -557,6 +557,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     )
     .await?;
 
+    // FIXME: Ctrl-C here is ignored.
     for activity in activities {
         let executor_id = ExecutorId::generate();
         if activity.enabled {
@@ -589,24 +590,38 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 async fn fetch_and_verify(
     wasm_activities: Vec<WasmActivity>,
     workflows: Vec<Workflow>,
-    wasm_cache_dir: &Path,
-    metadata_dir: &Path,
+    wasm_cache_dir: Arc<Path>,
+    metadata_dir: Arc<Path>,
 ) -> Result<(Vec<VerifiedActivityConfig>, Vec<VerifiedWorkflowConfig>), anyhow::Error> {
-    let mut dst_activities = Vec::with_capacity(wasm_activities.len());
-    let mut dst_workflows = Vec::with_capacity(workflows.len());
-    for activity in wasm_activities.into_iter().filter(|it| it.common.enabled) {
-        let activity = activity
-            .fetch_and_verify(wasm_cache_dir, metadata_dir)
-            .await?;
-        dst_activities.push(activity);
+    let mut set_activities = JoinSet::new();
+    let mut set_workflows = JoinSet::new();
+    wasm_activities
+        .into_iter()
+        .filter(|it| it.common.enabled)
+        .for_each(|activity| {
+            set_activities
+                .spawn(activity.fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone()));
+        });
+    workflows
+        .into_iter()
+        .filter(|it| it.common.enabled)
+        .for_each(|workflow| {
+            set_workflows
+                .spawn(workflow.fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone()));
+        });
+    // TODO: Abort on Ctrl-C
+    let mut wasm_activities = Vec::new();
+    while let Some(res) = set_activities.join_next().await {
+        let res = res??; // other tasks will be shut down which is OK
+        wasm_activities.push(res);
     }
-    for workflow in workflows.into_iter().filter(|it| it.common.enabled) {
-        let workflow = workflow
-            .fetch_and_verify(wasm_cache_dir, metadata_dir)
-            .await?;
-        dst_workflows.push(workflow);
+
+    let mut workflows = Vec::new();
+    while let Some(res) = set_workflows.join_next().await {
+        let res = res??; // other tasks will be shut down which is OK
+        workflows.push(res);
     }
-    Ok((dst_activities, dst_workflows))
+    Ok((wasm_activities, workflows))
 }
 
 #[instrument(skip_all, fields(
