@@ -609,19 +609,32 @@ async fn fetch_and_verify(
             set_workflows
                 .spawn(workflow.fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone()));
         });
-    // TODO: Abort on Ctrl-C
-    let mut wasm_activities = Vec::new();
-    while let Some(res) = set_activities.join_next().await {
-        let res = res??; // other tasks will be shut down which is OK
-        wasm_activities.push(res);
-    }
 
-    let mut workflows = Vec::new();
-    while let Some(res) = set_workflows.join_next().await {
-        let res = res??; // other tasks will be shut down which is OK
-        workflows.push(res);
+    let collect = async move {
+        // Abort/cancel safety:
+        // If an error happens or Ctrl-C is pressed the whole process will shut down.
+        // Downloading metadata and content must be robust enough to handle it.
+        // We do not need to abort the join sets here.
+        let mut wasm_activities = Vec::new();
+        while let Some(res) = set_activities.join_next().await {
+            let res = res??;
+            wasm_activities.push(res);
+        }
+
+        let mut workflows = Vec::new();
+        while let Some(res) = set_workflows.join_next().await {
+            let res = res??;
+            workflows.push(res);
+        }
+        Ok((wasm_activities, workflows))
+    };
+
+    tokio::select! {
+        collect_res = collect => { collect_res },
+        _ = tokio::signal::ctrl_c() => {
+            anyhow::bail!("cancelled downloading images from OCI registries")
+        }
     }
-    Ok((wasm_activities, workflows))
 }
 
 #[instrument(skip_all, fields(
