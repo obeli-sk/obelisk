@@ -1,8 +1,6 @@
 use super::{
     ComponentLocation, {ConfigStore, ConfigStoreCommon},
 };
-use anyhow::bail;
-use concepts::{ComponentType, ContentDigest};
 use directories::ProjectDirs;
 use log::{LoggingConfig, LoggingStyle};
 use serde::Deserialize;
@@ -181,7 +179,6 @@ pub(crate) struct ComponentCommon {
     pub(crate) enabled: bool,
     pub(crate) name: String,
     pub(crate) location: ComponentLocation,
-    pub(crate) content_digest: Option<ContentDigest>,
     #[serde(default)]
     pub(crate) exec: ExecConfig,
     #[serde(default = "default_max_retries")]
@@ -198,16 +195,9 @@ impl ComponentCommon {
     /// Otherwise backfill the `content_digest`.
     async fn fetch_and_verify(
         self,
-        r#type: ComponentType,
         wasm_cache_dir: impl AsRef<Path>,
     ) -> Result<(ConfigStoreCommon, PathBuf, ComponentEnabled), anyhow::Error> {
         let (actual_content_digest, wasm_path) = self.location.obtain_wasm(wasm_cache_dir).await?;
-        if let Some(specified) = &self.content_digest {
-            if *specified != actual_content_digest {
-                bail!("Wrong content digest for {type} {name}, specified {specified} , actually got {actual_content_digest}",
-                name = self.name)
-            }
-        }
         let verified = ConfigStoreCommon {
             name: self.name,
             location: self.location,
@@ -277,10 +267,7 @@ impl WasmActivity {
         self,
         wasm_cache_dir: impl AsRef<Path>,
     ) -> Result<VerifiedActivityConfig, anyhow::Error> {
-        let (common, wasm_path, enabled) = self
-            .common
-            .fetch_and_verify(ComponentType::WasmActivity, wasm_cache_dir)
-            .await?;
+        let (common, wasm_path, enabled) = self.common.fetch_and_verify(wasm_cache_dir).await?;
         let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmActivityV1 {
             common,
@@ -333,10 +320,7 @@ impl Workflow {
         self,
         wasm_cache_dir: impl AsRef<Path>,
     ) -> Result<VerifiedWorkflowConfig, anyhow::Error> {
-        let (common, wasm_path, enabled) = self
-            .common
-            .fetch_and_verify(ComponentType::WasmActivity, wasm_cache_dir)
-            .await?;
+        let (common, wasm_path, enabled) = self.common.fetch_and_verify(wasm_cache_dir).await?;
         let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmWorkflowV1 {
             common,
