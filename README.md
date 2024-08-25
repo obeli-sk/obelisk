@@ -137,6 +137,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] [Cancellation propagation](https://sre.google/sre-book/addressing-cascading-failures)
 - [ ] Queue capacity setting, adding backpressure to execution submission
 - [ ] Retry budget, disabling retries when the activity is failing certain % of requests
+- [ ] Ability to simulate behaviour of the system with injected failures
 
 # Building from source
 Set up the development dependencies using nix flakes:
