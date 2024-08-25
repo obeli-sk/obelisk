@@ -2360,6 +2360,7 @@ dependencies = [
  "const_format",
  "directories",
  "docker_credential",
+ "futures-util",
  "hashbrown 0.14.5",
  "madsim-tokio",
  "obeli-sk-concepts",

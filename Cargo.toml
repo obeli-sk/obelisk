@@ -27,6 +27,7 @@ config.workspace = true
 const_format.workspace = true
 directories.workspace = true
 docker_credential.workspace = true
+futures-util.workspace = true
 hashbrown.workspace = true
 oci-distribution = { workspace = true }
 oci-wasm = { workspace = true }

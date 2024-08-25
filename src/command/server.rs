@@ -46,7 +46,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::task::JoinSet;
 use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
@@ -593,44 +592,44 @@ async fn fetch_and_verify(
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
 ) -> Result<(Vec<VerifiedActivityConfig>, Vec<VerifiedWorkflowConfig>), anyhow::Error> {
-    let mut set_activities = JoinSet::new();
-    let mut set_workflows = JoinSet::new();
-    wasm_activities
+    // TODO: Switch to `JoinSet` when madsim supports it.
+    let wasm_activities = wasm_activities
         .into_iter()
         .filter(|it| it.common.enabled)
-        .for_each(|activity| {
-            set_activities
-                .spawn(activity.fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone()));
-        });
-    workflows
+        .map(|activity| {
+            tokio::spawn(activity.fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone()))
+        })
+        .collect::<Vec<_>>();
+    let workflows = workflows
         .into_iter()
         .filter(|it| it.common.enabled)
-        .for_each(|workflow| {
-            set_workflows
-                .spawn(workflow.fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone()));
-        });
+        .map(|workflow| {
+            tokio::spawn(workflow.fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone()))
+        })
+        .collect::<Vec<_>>();
 
-    let collect = async move {
+    let collect = {
         // Abort/cancel safety:
         // If an error happens or Ctrl-C is pressed the whole process will shut down.
         // Downloading metadata and content must be robust enough to handle it.
         // We do not need to abort the join sets here.
-        let mut wasm_activities = Vec::new();
-        while let Some(res) = set_activities.join_next().await {
-            let res = res??;
-            wasm_activities.push(res);
-        }
-
-        let mut workflows = Vec::new();
-        while let Some(res) = set_workflows.join_next().await {
-            let res = res??;
-            workflows.push(res);
-        }
-        Ok((wasm_activities, workflows))
+        let wasm_activities = futures_util::future::join_all(wasm_activities);
+        let workflows = futures_util::future::join_all(workflows);
+        futures_util::future::join(wasm_activities, workflows)
     };
 
     tokio::select! {
-        collect_res = collect => { collect_res },
+        (a, w) = collect => {
+            let mut wasm_activities = Vec::new();
+            for a in a {
+                wasm_activities.push(a??);
+            }
+            let mut workflows = Vec::new();
+            for w in w {
+                workflows.push(w??);
+            }
+            Ok((wasm_activities, workflows))
+        },
         _ = tokio::signal::ctrl_c() => {
             anyhow::bail!("cancelled downloading images from OCI registries")
         }
