@@ -7,4 +7,7 @@
         "--all-targets",
         "--message-format=json"
     ],
+    "rust-analyzer.cargo.features": [
+
+    ],
 }

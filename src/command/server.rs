@@ -37,6 +37,7 @@ use executor::executor::ExecutorTaskHandle;
 use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
 use executor::worker::Worker;
+use hashbrown::HashSet;
 use serde::Deserialize;
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -52,6 +53,7 @@ use tonic::codec::CompressionEncoding;
 use tracing::error;
 use tracing::info_span;
 use tracing::instrument;
+use tracing::warn;
 use tracing::Instrument;
 use tracing::{debug, info, trace};
 use utils::time::now;
@@ -547,7 +549,21 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     );
 
     let mut exec_join_handles = Vec::new();
-    // TODO: enforce unique name
+    {
+        // Check for name clashes which might make for confusing traces.
+        let mut seen = HashSet::new();
+        for name in config
+            .wasm_activity
+            .iter()
+            .map(|a| &a.common.name)
+            .chain(config.workflow.iter().map(|w| &w.common.name))
+        {
+            if !seen.insert(name) {
+                warn!("Component with the same name already exists - {name}");
+            }
+        }
+    }
+
     let (activities, workflows) = fetch_and_verify(
         config.wasm_activity,
         config.workflow,
