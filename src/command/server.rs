@@ -624,18 +624,15 @@ async fn fetch_and_verify(
         })
         .collect::<Vec<_>>();
 
-    let collect = {
-        // Abort/cancel safety:
-        // If an error happens or Ctrl-C is pressed the whole process will shut down.
-        // Downloading metadata and content must be robust enough to handle it.
-        // We do not need to abort the join sets here.
-        let wasm_activities = futures_util::future::join_all(wasm_activities);
-        let workflows = futures_util::future::join_all(workflows);
-        futures_util::future::join(wasm_activities, workflows)
-    };
+    let wasm_activities = futures_util::future::join_all(wasm_activities);
+    let workflows = futures_util::future::join_all(workflows);
 
+    // Abort/cancel safety:
+    // If an error happens or Ctrl-C is pressed the whole process will shut down.
+    // Downloading metadata and content must be robust enough to handle it.
+    // We do not need to abort the tasks here.
     tokio::select! {
-        (a, w) = collect => {
+        (a, w) = futures_util::future::join(wasm_activities, workflows) => {
             let mut wasm_activities = Vec::new();
             for a in a {
                 wasm_activities.push(a??);
