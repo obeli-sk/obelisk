@@ -1204,12 +1204,37 @@ impl SqlitePool {
         Ok(execution_ids_versions)
     }
 
+    #[instrument(skip_all)]
     fn notify_pending(&self, pending_at: PendingAt, created_at: DateTime<Utc>) {
+        Self::notify_pending_locked(
+            pending_at,
+            created_at,
+            &self.ffqn_to_pending_subscription.lock().unwrap(),
+        );
+    }
+
+    #[instrument(skip_all)]
+    fn notify_pending_all(
+        &self,
+        pending_ats: impl Iterator<Item = PendingAt>,
+        created_at: DateTime<Utc>,
+    ) {
+        let ffqn_to_pending_subscription = self.ffqn_to_pending_subscription.lock().unwrap();
+        for pending_at in pending_ats {
+            Self::notify_pending_locked(pending_at, created_at, &ffqn_to_pending_subscription);
+        }
+    }
+
+    fn notify_pending_locked(
+        pending_at: PendingAt,
+        created_at: DateTime<Utc>,
+        ffqn_to_pending_subscription: &std::sync::MutexGuard<
+            hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>,
+        >,
+    ) {
         match pending_at {
             PendingAt { scheduled_at, ffqn } if scheduled_at <= created_at => {
-                if let Some(subscription) =
-                    self.ffqn_to_pending_subscription.lock().unwrap().get(&ffqn)
-                {
+                if let Some(subscription) = ffqn_to_pending_subscription.get(&ffqn) {
                     debug!("Notifying pending subscriber");
                     let _ = subscription.try_send(());
                 }
@@ -1459,9 +1484,7 @@ impl DbConnection for SqlitePool {
             )
             .await
             .map_err(DbError::from)?;
-        for pending_at in pending_ats {
-            self.notify_pending(pending_at, created_at);
-        }
+        self.notify_pending_all(pending_ats.into_iter(), created_at);
         Ok(version)
     }
 
@@ -1546,10 +1569,7 @@ impl DbConnection for SqlitePool {
             debug!("Notifying response subscriber");
             let _ = response_subscriber.send(event);
         }
-        pending_ats
-            .into_iter()
-            .flatten()
-            .for_each(|pending_at| self.notify_pending(pending_at, created_at));
+        self.notify_pending_all(pending_ats.into_iter().flatten(), created_at);
         Ok(version)
     }
 
