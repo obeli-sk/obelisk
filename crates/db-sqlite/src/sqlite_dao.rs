@@ -858,6 +858,7 @@ impl SqlitePool {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[instrument(skip_all)]
     fn append(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -1435,7 +1436,7 @@ impl DbConnection for SqlitePool {
         created_at: DateTime<Utc>,
         batch: Vec<ExecutionEventInner>,
         execution_id: ExecutionId,
-        mut version: Version,
+        version: Version,
         child_req: Vec<CreateRequest>,
     ) -> Result<AppendBatchResponse, DbError> {
         debug!("append_batch_create_new_execution");
@@ -1455,30 +1456,50 @@ impl DbConnection for SqlitePool {
                 StrVariant::Static("Cannot append `Created` event - use `create` instead"),
             )));
         }
+
+        #[instrument(skip_all)]
+        fn append_batch_create_new_execution_inner(
+            tx: &mut rusqlite::Transaction,
+            created_at: DateTime<Utc>,
+            batch: Vec<ExecutionEventInner>,
+            execution_id: ExecutionId,
+            mut version: Version,
+            child_req: Vec<CreateRequest>,
+        ) -> Result<(Version, Vec<PendingAt>), SqliteError> {
+            let mut pending_at = None;
+            for event in batch {
+                (version, pending_at) = SqlitePool::append(
+                    tx,
+                    execution_id,
+                    &AppendRequest { created_at, event },
+                    version,
+                )?;
+            }
+            let mut pending_ats = Vec::new();
+            if let Some(pending_at) = pending_at {
+                pending_ats.push(pending_at);
+            }
+            for child_req in child_req {
+                let (_, pending_at) = SqlitePool::create_inner(tx, child_req)?;
+                if let Some(pending_at) = pending_at {
+                    pending_ats.push(pending_at);
+                }
+            }
+            Ok((version, pending_ats))
+        }
+
         let (version, pending_ats) = self
             .pool
             .transaction_write_with_span::<_, _, SqliteError>(
                 move |tx| {
-                    let mut pending_at = None;
-                    for event in batch {
-                        (version, pending_at) = Self::append(
-                            tx,
-                            execution_id,
-                            &AppendRequest { created_at, event },
-                            version,
-                        )?;
-                    }
-                    let mut pending_ats = Vec::new();
-                    if let Some(pending_at) = pending_at {
-                        pending_ats.push(pending_at);
-                    }
-                    for child_req in child_req {
-                        let (_, pending_at) = Self::create_inner(tx, child_req)?;
-                        if let Some(pending_at) = pending_at {
-                            pending_ats.push(pending_at);
-                        }
-                    }
-                    Ok((version, pending_ats))
+                    append_batch_create_new_execution_inner(
+                        tx,
+                        created_at,
+                        batch,
+                        execution_id,
+                        version,
+                        child_req,
+                    )
                 },
                 Span::current(),
             )
