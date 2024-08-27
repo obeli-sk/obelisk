@@ -110,24 +110,24 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [x] Basic CLI for wasm component configuration and scheduling
 - [x] Github release, docker image, publish to crates.io, support `cargo-binstall`
 
-## Milestone 2: Allow remote interaction via CLI and web UI - started
+## Milestone 2: Allow remote interaction via CLI - done
 - [x] Move component and general configuration into a TOML file
 - [x] Pull components -from an OCI registry
 - [x] Publish the obelisk image to the Docker Hub (ubuntu, alpine)
 - [x] obelisk client component push
 - [x] gRPC API for execution management
 - [x] Track the topmost parent
-- [ ] Interactive CLI for execution management
 - [x] Params typecheck on creation, introspection of types of all functions in the system
-- [ ] HTML based UI for showing executions, event history and relations
 - [x] Logging and tracing configuration, sending events to an OTLP collector
 
-## Milestone 3
-- [ ] HTTP webhook triggers, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs)
-- [ ] External activities
+## Milestone 3: Triggers, external activities, Web UI - started
+- [ ] HTTP webhook triggers, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs), starting or continuing a workflow
+- [ ] External activities - running external processes
+- [ ] HTML based UI for showing executions, event history and relations
 - [ ] Add examples with C#, Go, JS, Python
 
 ## Milestone 4
+- [ ] Interactive CLI for execution management
 - [ ] OpenAPI activity generator
 - [ ] Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
 - [ ] Multi process executors
