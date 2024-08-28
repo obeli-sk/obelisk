@@ -55,6 +55,7 @@ impl ComponentDetector {
 }
 
 #[cfg(not(madsim))]
+#[tracing::instrument(skip_all)]
 pub async fn file_hash<P: AsRef<Path>>(path: P) -> Result<ContentDigest, std::io::Error> {
     use sha2::Digest;
     use tokio::io::AsyncReadExt;

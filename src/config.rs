@@ -7,6 +7,7 @@ use concepts::ComponentConfigHash;
 use concepts::ContentDigest;
 use concepts::{ComponentType, FunctionMetadata};
 use serde_with::serde_as;
+use tracing::instrument;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use wasm_workers::workflow_worker::JoinNextBlockingStrategy;
@@ -106,6 +107,7 @@ pub(crate) enum ComponentLocation {
 }
 
 impl ComponentLocation {
+    #[instrument(skip_all)]
     pub(crate) async fn obtain_wasm(
         &self,
         wasm_cache_dir: &Path,

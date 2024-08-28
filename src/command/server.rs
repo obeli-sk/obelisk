@@ -564,7 +564,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         }
     }
 
-    let (activities, workflows) = fetch_and_verify(
+    let (activities, workflows) = fetch_and_verify_all(
         config.wasm_activity,
         config.workflow,
         wasm_cache_dir,
@@ -602,7 +602,8 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     Ok((exec_join_handles, timers_watcher))
 }
 
-async fn fetch_and_verify(
+#[instrument(skip_all)]
+async fn fetch_and_verify_all(
     wasm_activities: Vec<WasmActivity>,
     workflows: Vec<Workflow>,
     wasm_cache_dir: Arc<Path>,
@@ -613,14 +614,27 @@ async fn fetch_and_verify(
         .into_iter()
         .filter(|it| it.common.enabled)
         .map(|activity| {
-            tokio::spawn(activity.fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone()))
+            tokio::spawn({
+                let wasm_cache_dir = wasm_cache_dir.clone();
+                let metadata_dir = metadata_dir.clone();
+                async move {
+                    activity
+                        .fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone())
+                        .await
+                }
+                .in_current_span()
+            })
         })
         .collect::<Vec<_>>();
     let workflows = workflows
         .into_iter()
         .filter(|it| it.common.enabled)
         .map(|workflow| {
-            tokio::spawn(workflow.fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone()))
+            tokio::spawn(
+                workflow
+                    .fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone())
+                    .in_current_span(),
+            )
         })
         .collect::<Vec<_>>();
 

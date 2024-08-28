@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, info, info_span, instrument, warn, Instrument};
 
 fn get_client() -> WasmClient {
     WasmClient::new(oci_distribution::Client::new(
@@ -22,6 +22,7 @@ fn digest_to_metadata_file(metadata_dir: &Path, metadata_file: &Digest) -> PathB
     ))
 }
 
+#[instrument(skip_all)]
 async fn metadata_to_content_digest(
     image: &Reference,
     metadata_dir: &Path,
@@ -37,6 +38,7 @@ async fn metadata_to_content_digest(
     Ok(None)
 }
 
+#[instrument(skip_all)]
 pub(crate) async fn pull_to_cache_dir(
     image: &Reference,
     wasm_cache_dir: &Path,
@@ -61,6 +63,7 @@ pub(crate) async fn pull_to_cache_dir(
         );
         let (_oci_config, wasm_config, metadata_digest) = client
             .pull_manifest_and_config(&image_without_digest, &auth)
+            .instrument(info_span!("pull_manifest_and_config"))
             .await?;
         match image.digest() {
             None => info!("Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}"),
