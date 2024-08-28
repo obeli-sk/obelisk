@@ -48,7 +48,7 @@ pub(crate) struct ObeliskConfig {
     pub(crate) wasmtime_pooling_config: WasmtimePoolingConfig,
     #[cfg(feature = "otlp")]
     #[serde(default)]
-    pub(crate) otlp: otlp::OtlpConfig,
+    pub(crate) otlp: Option<otlp::OtlpConfig>,
     #[serde(default)]
     pub(crate) log: LoggingConfig,
 }
@@ -429,13 +429,13 @@ impl From<WasmtimePoolingConfig> for wasm_workers::engines::PoolingOptions {
 
 #[cfg(feature = "otlp")]
 pub(crate) mod otlp {
-    use super::{log, Deserialize};
+    use super::{default_true, log, Deserialize};
     use log::InfoEnvFilter;
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct OtlpConfig {
-        #[serde(default)]
+        #[serde(default = "default_true")]
         pub(crate) enabled: bool,
         #[serde(default)]
         pub(crate) level: InfoEnvFilter,
@@ -448,7 +448,7 @@ pub(crate) mod otlp {
     impl Default for OtlpConfig {
         fn default() -> Self {
             Self {
-                enabled: false,
+                enabled: true,
                 level: InfoEnvFilter::default(),
                 service_name: default_service_name(),
                 otlp_endpoint: default_otlp_endpoint(),

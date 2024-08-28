@@ -41,7 +41,7 @@ child_retry_exp_backoff.secs = 1
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:
 # [otlp]
-# enabled = false
+# enabled = true
 # level = "info"
 # service_name = "obelisk-server"
 # otlp_endpoint = "http://localhost:4317"

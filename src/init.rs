@@ -38,34 +38,35 @@ where
     use opentelemetry_sdk::trace::Config;
     use opentelemetry_sdk::Resource;
 
-    if !config.otlp.enabled {
-        return None;
+    match &mut config.otlp {
+        Some(otlp) if otlp.enabled => {
+            opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
+
+            let tracer = opentelemetry_otlp::new_pipeline()
+                .tracing()
+                .with_batch_config(BatchConfig::default())
+                .with_exporter(
+                    opentelemetry_otlp::new_exporter()
+                        .tonic()
+                        .with_endpoint(otlp.otlp_endpoint.to_string()),
+                )
+                .with_trace_config(Config::default().with_resource(Resource::new(vec![
+                    opentelemetry::KeyValue::new(
+                        opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+                        otlp.service_name.clone(),
+                    ),
+                ])))
+                .install_batch(runtime::Tokio)
+                .expect("cannot setup otlp");
+            // EnvFilter missing Clone
+            let env_filter = std::mem::take(&mut otlp.level).0;
+            let telemetry_layer = tracing_opentelemetry::layer()
+                .with_tracer(tracer)
+                .with_filter(env_filter);
+            Some(telemetry_layer)
+        }
+        _ => None,
     }
-
-    opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
-
-    let tracer = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_batch_config(BatchConfig::default())
-        .with_exporter(
-            opentelemetry_otlp::new_exporter()
-                .tonic()
-                .with_endpoint(config.otlp.otlp_endpoint.to_string()),
-        )
-        .with_trace_config(Config::default().with_resource(Resource::new(vec![
-            opentelemetry::KeyValue::new(
-                opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-                config.otlp.service_name.clone(),
-            ),
-        ])))
-        .install_batch(runtime::Tokio)
-        .expect("cannot setup otlp");
-    // EnvFilter missing Clone
-    let env_filter = std::mem::take(&mut config.otlp.level).0;
-    let telemetry_layer = tracing_opentelemetry::layer()
-        .with_tracer(tracer)
-        .with_filter(env_filter);
-    Some(telemetry_layer)
 }
 #[cfg(not(feature = "otlp"))]
 #[allow(clippy::needless_pass_by_value)]
