@@ -54,6 +54,7 @@ impl ComponentDetector {
     }
 }
 
+// TODO: Rename to `calculate_sha256_file`
 #[cfg(not(madsim))]
 #[tracing::instrument(skip_all)]
 pub async fn file_hash<P: AsRef<Path>>(path: P) -> Result<ContentDigest, std::io::Error> {
@@ -81,6 +82,17 @@ pub async fn file_hash<P: AsRef<Path>>(_path: P) -> Result<ContentDigest, std::i
         concepts::HashType::Sha256,
         ulid::Ulid::new().to_string(),
     ))
+}
+
+#[must_use]
+pub fn calculate_sha256_mem(data: &[u8]) -> ContentDigest {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::default();
+    hasher.update(data);
+    ContentDigest::new(
+        concepts::HashType::Sha256,
+        format!("{:x}", hasher.finalize()),
+    )
 }
 
 #[cfg(test)]

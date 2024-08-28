@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use tracing::{debug, info, info_span, instrument, warn, Instrument};
+use tracing::{debug, info, info_span, instrument, Instrument};
 
 fn get_client() -> WasmClient {
     WasmClient::new(oci_distribution::Client::new(
@@ -94,16 +94,9 @@ pub(crate) async fn pull_to_cache_dir(
         hash_type = content_digest.hash_type(),
         content_digest = content_digest.digest_base16(),
     ));
-    // Do not download if the file exists and matches the expected sha256 digest.
-    match wasm_workers::component_detector::file_hash(&wasm_path).await {
-        Ok(actual_hash) if actual_hash == content_digest => {
-            debug!("Found in cache {wasm_path:?}");
-            return Ok((actual_hash, wasm_path));
-        }
-        other if other.is_ok() => {
-            warn!("Wrong content digest, rewriting the cached file {wasm_path:?}");
-        }
-        _ => {}
+    // Do not download if the file exists. Content hash must match as it was verified before writing, see below.
+    if wasm_path.is_file() {
+        return Ok((content_digest, wasm_path));
     }
     info!("Pulling image to {wasm_path:?}");
     let data = client
@@ -118,17 +111,13 @@ pub(crate) async fn pull_to_cache_dir(
         .next()
         .expect("layer length asserted in WasmClient")
         .data;
+    let actual_hash = wasm_workers::component_detector::calculate_sha256_mem(&data);
+    ensure!(content_digest == actual_hash,
+        "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {content_digest}, got {actual_hash}");
+    // Write only after verifying the hash.
     tokio::fs::write(&wasm_path, data)
         .await
         .with_context(|| format!("unable to write file {wasm_path:?}"))?;
-    // Verify that the sha256 matches the actual download.
-    let actual_hash = wasm_workers::component_detector::file_hash(&wasm_path)
-        .await
-        .with_context(|| {
-            format!("failed to compute sha256 of the downloaded wasm file {wasm_path:?}")
-        })?;
-    ensure!(content_digest == actual_hash,
-        "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {content_digest}, got {actual_hash}");
     Ok((actual_hash, wasm_path))
 }
 

@@ -7,9 +7,9 @@ use concepts::ComponentConfigHash;
 use concepts::ContentDigest;
 use concepts::{ComponentType, FunctionMetadata};
 use serde_with::serde_as;
-use tracing::instrument;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tracing::instrument;
 use wasm_workers::workflow_worker::JoinNextBlockingStrategy;
 
 #[derive(Debug, Clone)]
@@ -118,6 +118,7 @@ impl ComponentLocation {
                 let wasm_path = wasm_path
                     .canonicalize()
                     .with_context(|| format!("cannot canonicalize file `{wasm_path:?}`"))?;
+                // Optimization idea: If the sha256 is in the config file and in the cache dir, do not recalculate it.
                 let content_digest = wasm_workers::component_detector::file_hash(&wasm_path)
                     .await
                     .with_context(|| format!("cannot compute hash of file `{wasm_path:?}`"))?;
