@@ -571,71 +571,41 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     )
     .await?;
 
-    // Start compiling WASM components and launch executors in parallel if possible.
-    let all = activities
-        .into_iter()
-        .filter(|activity| activity.enabled)
-        .map(|activity| {
-            let mut component_registry = component_registry.clone();
-            let engines = engines.clone();
-            let db_pool = db_pool.clone();
-            let span = tracing::Span::current();
-            #[allow(deprecated)] // for Madsim
-            tokio::task::spawn_blocking(move || {
-                span.in_scope(|| {
-                    let executor_id = ExecutorId::generate();
-                    instantiate_activity(
-                        activity,
-                        db_pool,
-                        &mut component_registry,
-                        &engines,
-                        executor_id,
-                    )
-                })
-            })
-        })
-        .chain(
-            workflows
-                .into_iter()
-                .filter(|workflow| workflow.enabled)
-                .map(|workflow| {
-                    let mut component_registry = component_registry.clone();
-                    let engines = engines.clone();
-                    let db_pool = db_pool.clone();
-                    let span = tracing::Span::current();
-                    #[allow(deprecated)] // for Madsim
-                    tokio::task::spawn_blocking(move || {
-                        span.in_scope(|| {
-                            let executor_id = ExecutorId::generate();
-                            instantiate_workflow(
-                                workflow,
-                                db_pool,
-                                &mut component_registry,
-                                &engines,
-                                executor_id,
-                            )
-                        })
-                    })
-                }),
-        )
-        .collect::<Vec<_>>();
+    let pre_spawns = prespawn_all(activities, workflows, component_registry, &engines, db_pool);
 
     // Abort/cancel safety:
     // If an error happens or Ctrl-C is pressed the whole process will shut down.
-    // FIXME: Extract into two steps - compile everything and launch executors afterwards, otherwise we might start locking executions needlesly.
-    let all = futures_util::future::join_all(all);
-    tokio::select! {
-        exec_join_handle_results = all => {
-            let mut exec_join_handles = Vec::with_capacity(exec_join_handle_results.len());
-            for handle in exec_join_handle_results {
-                exec_join_handles.push(handle??);
+    let pre_spawns = futures_util::future::join_all(pre_spawns);
+    let pre_spawns = tokio::select! {
+        results_of_results = pre_spawns => {
+            let mut pre_spawns = Vec::with_capacity(results_of_results.len());
+            for handle in results_of_results {
+                pre_spawns.push(handle??);
             }
-            Ok((exec_join_handles, timers_watcher))
+            pre_spawns
         },
         _ = tokio::signal::ctrl_c() => {
             anyhow::bail!("cancelled downloading images from OCI registries")
         }
-    }
+    };
+    // Start all executors
+    Ok((
+        pre_spawns
+            .into_iter()
+            .map(|pre_spawn| {
+                ExecTask::spawn_new(
+                    pre_spawn.worker,
+                    pre_spawn.exec_config,
+                    now,
+                    db_pool.clone(),
+                    pre_spawn.task_limiter,
+                    pre_spawn.executor_id,
+                    pre_spawn.component_name,
+                )
+            })
+            .collect(),
+        timers_watcher,
+    ))
 }
 
 #[instrument(skip_all)]
@@ -700,19 +670,69 @@ async fn fetch_and_verify_all(
     }
 }
 
+/// Compile WASM components in parallel.
+#[instrument(skip_all)]
+fn prespawn_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    activities: Vec<VerifiedActivityConfig>,
+    workflows: Vec<VerifiedWorkflowConfig>,
+    component_registry: &mut ComponentConfigRegistry,
+    engines: &Engines,
+    db_pool: &P,
+) -> Vec<tokio::task::JoinHandle<Result<ExecutorPreSpawn, anyhow::Error>>> {
+    activities
+        .into_iter()
+        .filter(|activity| activity.enabled)
+        .map(|activity| {
+            let mut component_registry = component_registry.clone();
+            let engines = engines.clone();
+            let span = tracing::Span::current();
+            #[allow(deprecated)] // for Madsim
+            tokio::task::spawn_blocking(move || {
+                span.in_scope(|| {
+                    let executor_id = ExecutorId::generate();
+                    prespawn_activity(activity, &mut component_registry, &engines, executor_id)
+                })
+            })
+        })
+        .chain(
+            workflows
+                .into_iter()
+                .filter(|workflow| workflow.enabled)
+                .map(|workflow| {
+                    let mut component_registry = component_registry.clone();
+                    let engines = engines.clone();
+                    let db_pool = db_pool.clone();
+                    let span = tracing::Span::current();
+                    #[allow(deprecated)] // for Madsim
+                    tokio::task::spawn_blocking(move || {
+                        span.in_scope(|| {
+                            let executor_id = ExecutorId::generate();
+                            prespawn_workflow(
+                                workflow,
+                                db_pool,
+                                &mut component_registry,
+                                &engines,
+                                executor_id,
+                            )
+                        })
+                    })
+                }),
+        )
+        .collect()
+}
+
 #[instrument(skip_all, fields(
     %executor_id,
     config_id = %activity.exec_config.config_id,
     name = activity.config_store.name(),
     wasm_path = ?activity.wasm_path,
 ))]
-fn instantiate_activity<DB: DbConnection + 'static>(
+fn prespawn_activity(
     activity: VerifiedActivityConfig,
-    db_pool: impl DbPool<DB> + 'static,
     component_registry: &mut ComponentConfigRegistry,
     engines: &Engines,
     executor_id: ExecutorId,
-) -> Result<ExecutorTaskHandle, anyhow::Error> {
+) -> Result<ExecutorPreSpawn, anyhow::Error> {
     debug!("Instantiating activity");
     trace!(?activity, "Full configuration");
     let worker = Arc::new(ActivityWorker::new_with_config(
@@ -721,9 +741,8 @@ fn instantiate_activity<DB: DbConnection + 'static>(
         engines.activity_engine.clone(),
         now,
     )?);
-    register_and_spawn(
+    register_and_prespawn(
         worker,
-        db_pool,
         activity.config_store,
         activity.exec_config,
         component_registry,
@@ -737,13 +756,13 @@ fn instantiate_activity<DB: DbConnection + 'static>(
     name = workflow.config_store.name(),
     wasm_path = ?workflow.wasm_path,
 ))]
-fn instantiate_workflow<DB: DbConnection + 'static>(
+fn prespawn_workflow<DB: DbConnection + 'static>(
     workflow: VerifiedWorkflowConfig,
     db_pool: impl DbPool<DB> + 'static,
     component_registry: &mut ComponentConfigRegistry,
     engines: &Engines,
     executor_id: ExecutorId,
-) -> Result<ExecutorTaskHandle, anyhow::Error> {
+) -> Result<ExecutorPreSpawn, anyhow::Error> {
     debug!("Instantiating workflow");
     trace!(?workflow, "Full configuration");
     let worker = Arc::new(WorkflowWorker::new_with_config(
@@ -754,9 +773,8 @@ fn instantiate_workflow<DB: DbConnection + 'static>(
         now,
         component_registry.get_fn_registry(),
     )?);
-    register_and_spawn(
+    register_and_prespawn(
         worker,
-        db_pool,
         workflow.config_store,
         workflow.exec_config,
         component_registry,
@@ -764,15 +782,14 @@ fn instantiate_workflow<DB: DbConnection + 'static>(
     )
 }
 
-fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
-    worker: Arc<W>,
-    db_pool: impl DbPool<DB> + 'static,
+fn register_and_prespawn(
+    worker: Arc<dyn Worker>,
     config_store: ConfigStore,
     exec_config: ExecConfig,
     component_registry: &mut ComponentConfigRegistry,
     executor_id: ExecutorId,
-) -> Result<ExecutorTaskHandle, anyhow::Error> {
-    let name = config_store.name().to_string();
+) -> Result<ExecutorPreSpawn, anyhow::Error> {
+    let component_name = config_store.name().to_string();
     let component = Component {
         config_id: config_store.as_hash(),
         config_store,
@@ -780,15 +797,21 @@ fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
         imports: worker.imported_functions().iter().cloned().collect(),
     };
     component_registry.insert(component)?;
-    Ok(ExecTask::spawn_new(
+    Ok(ExecutorPreSpawn {
         worker,
         exec_config,
-        now,
-        db_pool,
-        None,
+        task_limiter: None,
         executor_id,
-        name,
-    ))
+        component_name,
+    })
+}
+
+struct ExecutorPreSpawn {
+    worker: Arc<dyn Worker>,
+    exec_config: ExecConfig,
+    task_limiter: Option<Arc<tokio::sync::Semaphore>>,
+    executor_id: ExecutorId,
+    component_name: String,
 }
 
 // TODO: If dynamic executor is not needed, split registry into Writer that is turned into a Reader. Reader is passed to the Executor when spawing.
