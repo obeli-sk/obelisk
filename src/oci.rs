@@ -96,30 +96,31 @@ pub(crate) async fn pull_to_cache_dir(
     ));
     // Do not download if the file exists and matches the expected sha256 digest.
     match wasm_workers::component_detector::file_hash(&wasm_path).await {
-        Ok(actual) if actual == content_digest => {
+        Ok(actual_hash) if actual_hash == content_digest => {
             debug!("Found in cache {wasm_path:?}");
+            return Ok((actual_hash, wasm_path));
         }
-        other => {
-            if other.is_ok() {
-                warn!("Wrong content digest, rewriting the cached file {wasm_path:?}");
-            }
-            info!("Pulling image to {wasm_path:?}");
-            let data = client
-                // FIXME: do not download all layers at once to memory, based on a size limit
-                .pull(image, &auth)
-                .await
-                .with_context(|| format!("Unable to pull image {image}"))?;
-            let data = data
-                .layers
-                .into_iter()
-                .next()
-                .expect("layer length asserted in WasmClient")
-                .data;
-            tokio::fs::write(&wasm_path, data)
-                .await
-                .with_context(|| format!("unable to write file {wasm_path:?}"))?;
+        other if other.is_ok() => {
+            warn!("Wrong content digest, rewriting the cached file {wasm_path:?}");
         }
+        _ => {}
     }
+    info!("Pulling image to {wasm_path:?}");
+    let data = client
+        // FIXME: do not download all layers at once to memory, based on a size limit
+        .pull(image, &auth)
+        .instrument(info_span!("pull"))
+        .await
+        .with_context(|| format!("Unable to pull image {image}"))?;
+    let data = data
+        .layers
+        .into_iter()
+        .next()
+        .expect("layer length asserted in WasmClient")
+        .data;
+    tokio::fs::write(&wasm_path, data)
+        .await
+        .with_context(|| format!("unable to write file {wasm_path:?}"))?;
     // Verify that the sha256 matches the actual download.
     let actual_hash = wasm_workers::component_detector::file_hash(&wasm_path)
         .await
