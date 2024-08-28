@@ -43,7 +43,7 @@ thiserror.workspace = true
 tokio = { workspace = true }
 tokio-stream.workspace = true
 toml.workspace = true
-tonic = { workspace = true, features = ["tls", "tls-roots"] }
+tonic.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
@@ -211,7 +211,7 @@ tokio = { version = "0.2.28", package = "madsim-tokio", features = [
 ] }
 tokio-stream = "0.1.15"
 toml = { version = "0.8.14", features = ["preserve_order"] }
-tonic = { version = "0.12.1", features = ["zstd", "gzip"] }
+tonic = { version = "0.12.1", features = ["zstd", "gzip", "tls", "tls-roots"] }
 tonic-build = "0.12.1"
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.3"
@@ -250,7 +250,7 @@ wit-bindgen-rt = "0.24.0"
 # otlp
 opentelemetry = "0.23.0"
 opentelemetry_sdk = { version = "0.23.0", features = ["rt-tokio"] }
-opentelemetry-otlp = "0.16.0"
+opentelemetry-otlp = { version = "0.16.0", features = ["tls", "tls-roots"] }
 opentelemetry-semantic-conventions = "0.16.0"
 tracing-opentelemetry = "0.24"
 

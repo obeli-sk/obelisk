@@ -437,6 +437,7 @@ pub(crate) mod otlp {
     pub(crate) struct OtlpConfig {
         #[serde(default)]
         pub(crate) enabled: bool,
+        #[serde(default)]
         pub(crate) level: InfoEnvFilter,
         #[serde(default = "default_service_name")]
         pub(crate) service_name: String,
