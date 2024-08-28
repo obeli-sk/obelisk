@@ -16,9 +16,9 @@ use std::error::Error;
 pub trait Worker: Send + Sync + 'static {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult;
 
-    fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata>;
+    fn exported_functions(&self) -> &[FunctionMetadata];
 
-    fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata>;
+    fn imported_functions(&self) -> &[FunctionMetadata];
 }
 
 #[must_use]

@@ -67,12 +67,12 @@ impl WasmComponent {
         Ok(Self { component, exim })
     }
 
-    pub fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> + '_ {
-        self.exim.exported_functions()
+    pub fn exported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.exports_flat
     }
 
-    pub fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> + '_ {
-        self.exim.imported_functions()
+    pub fn imported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.imports_flat
     }
 
     pub fn index_exported_functions(
@@ -96,7 +96,7 @@ impl WasmComponent {
                     "cannot find exported function {ffqn}"
                 )));
             };
-            exported_ffqn_to_index.insert(ffqn, fn_export_index);
+            exported_ffqn_to_index.insert(ffqn.clone(), fn_export_index);
         }
         Ok(exported_ffqn_to_index)
     }
@@ -123,8 +123,10 @@ pub enum DecodeError {
 
 #[derive(Debug, Clone)]
 pub struct ExIm {
-    pub exports: Vec<PackageIfcFns>,
-    pub imports: Vec<PackageIfcFns>,
+    pub exports_hierarchy: Vec<PackageIfcFns>,
+    pub imports_hierarchy: Vec<PackageIfcFns>,
+    pub exports_flat: Vec<FunctionMetadata>,
+    pub imports_flat: Vec<FunctionMetadata>,
 }
 
 #[derive(Debug, Clone)]
@@ -147,40 +149,43 @@ impl ExIm {
         >,
     ) -> Result<ExIm, DecodeError> {
         let component_type = component.component_type();
-        let exports = enrich_function_params(
+        let exports_hierarchy = enrich_function_params(
             component_type.exports(engine),
             engine,
             exported_ffqns_to_wit_parsed_meta,
         )?;
-        let imports = enrich_function_params(
+        let exports = Self::flatten(&exports_hierarchy);
+        let imports_hierarchy = enrich_function_params(
             component_type.imports(engine),
             engine,
             imported_ffqns_to_wit_parsed_meta,
         )?;
-        Ok(Self { exports, imports })
-    }
-
-    fn flatten(input: &[PackageIfcFns]) -> impl Iterator<Item = FunctionMetadata> + '_ {
-        input.iter().flat_map(|ifc| {
-            ifc.fns
-                .iter()
-                .map(|(fun, (param_types, return_type))| FunctionMetadata {
-                    ffqn: FunctionFqn {
-                        ifc_fqn: ifc.ifc_fqn.clone(),
-                        function_name: fun.clone(),
-                    },
-                    parameter_types: param_types.clone(),
-                    return_type: return_type.clone(),
-                })
+        let imports = Self::flatten(&imports_hierarchy);
+        Ok(Self {
+            exports_hierarchy,
+            imports_hierarchy,
+            exports_flat: exports,
+            imports_flat: imports,
         })
     }
 
-    pub fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> + '_ {
-        Self::flatten(&self.exports)
-    }
-
-    pub fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> + '_ {
-        Self::flatten(&self.imports)
+    // FIXME: Vec<PIF>
+    fn flatten(input: &[PackageIfcFns]) -> Vec<FunctionMetadata> {
+        input
+            .iter()
+            .flat_map(|ifc| {
+                ifc.fns
+                    .iter()
+                    .map(|(fun, (param_types, return_type))| FunctionMetadata {
+                        ffqn: FunctionFqn {
+                            ifc_fqn: ifc.ifc_fqn.clone(),
+                            function_name: fun.clone(),
+                        },
+                        parameter_types: param_types.clone(),
+                        return_type: return_type.clone(),
+                    })
+            })
+            .collect()
     }
 }
 
@@ -398,6 +403,7 @@ mod tests {
         let component = WasmComponent::new(&wasm_path, &engine).unwrap();
         let exports = component
             .exported_functions()
+            .iter()
             .map(
                 |FunctionMetadata {
                      ffqn,
@@ -409,6 +415,7 @@ mod tests {
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
         let imports = component
             .imported_functions()
+            .iter()
             .map(
                 |FunctionMetadata {
                      ffqn,

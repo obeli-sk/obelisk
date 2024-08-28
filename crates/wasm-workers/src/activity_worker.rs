@@ -121,12 +121,12 @@ impl<C: ClockFn> ActivityWorker<C> {
 
 #[async_trait]
 impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
-    fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-        self.exim.exported_functions()
+    fn exported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.exports_flat
     }
 
-    fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-        self.exim.imported_functions()
+    fn imported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.imports_flat
     }
 
     #[allow(clippy::too_many_lines)]

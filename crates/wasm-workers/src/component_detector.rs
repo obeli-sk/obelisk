@@ -31,7 +31,7 @@ impl ComponentDetector {
             .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
         let types = wasm_component
             .exim
-            .exports
+            .exports_hierarchy
             .iter()
             .map(|pkg_ifc_fns| {
                 if pkg_ifc_fns.ifc_fqn.contains("workflow") {
@@ -48,8 +48,16 @@ impl ComponentDetector {
         }?;
         Ok(Self {
             component_type,
-            exports: wasm_component.exported_functions().collect(),
-            imports: wasm_component.imported_functions().collect(),
+            exports: wasm_component
+                .exported_functions()
+                .iter()
+                .cloned()
+                .collect(),
+            imports: wasm_component
+                .imported_functions()
+                .iter()
+                .cloned()
+                .collect(),
         })
     }
 }

@@ -70,7 +70,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         // Mock imported functions
         let wasm_component = WasmComponent::new(wasm_path, &engine)
             .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
-        for import in &wasm_component.exim.imports {
+        for import in &wasm_component.exim.imports_hierarchy {
             if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
                 // Skip host-implemented functions
                 continue;
@@ -147,12 +147,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
 impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
     for WorkflowWorker<C, DB, P>
 {
-    fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-        self.exim.exported_functions()
+    fn exported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.exports_flat
     }
 
-    fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-        self.exim.imported_functions()
+    fn imported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.imports_flat
     }
 
     #[allow(clippy::too_many_lines)]

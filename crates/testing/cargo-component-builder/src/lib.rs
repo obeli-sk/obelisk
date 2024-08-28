@@ -67,7 +67,7 @@ fn build_internal(tripple: &str) {
             WasmComponent::new(wasm_path, &engine).expect("cannot decode wasm component");
         generated_code += "pub mod exports {\n";
         let mut outer_map: IndexMap<String, Value> = IndexMap::new();
-        for export in component.exim.exports {
+        for export in component.exim.exports_hierarchy {
             let ifc_fqn_split = export
                 .ifc_fqn
                 .split_terminator([':', '/', '@'])

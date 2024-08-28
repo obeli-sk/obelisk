@@ -461,7 +461,7 @@ pub(crate) mod otlp {
     }
 
     fn default_otlp_endpoint() -> String {
-        // Endpoints per protocol https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/exporter.md
+        // Default port as per https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/exporter.md
         "http://localhost:4317".to_string()
     }
 }

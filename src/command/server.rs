@@ -776,8 +776,8 @@ fn register_and_spawn<W: Worker, DB: DbConnection + 'static>(
     let component = Component {
         config_id: config_store.as_hash(),
         config_store,
-        exports: worker.exported_functions().collect(),
-        imports: worker.imported_functions().collect(),
+        exports: worker.exported_functions().iter().cloned().collect(),
+        imports: worker.imported_functions().iter().cloned().collect(),
     };
     component_registry.insert(component)?;
     Ok(ExecTask::spawn_new(

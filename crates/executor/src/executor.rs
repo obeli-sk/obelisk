@@ -29,8 +29,8 @@ pub struct ExecConfig {
     pub config_id: ComponentConfigHash,
 }
 
-pub struct ExecTask<W: Worker, C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
-    worker: Arc<W>,
+pub struct ExecTask<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+    worker: Arc<dyn Worker>,
     config: ExecConfig,
     clock_fn: C, // Used for obtaining current time when the execution finishes.
     db_pool: P,
@@ -89,19 +89,18 @@ impl Drop for ExecutorTaskHandle {
     }
 }
 
-pub(crate) fn extract_ffqns(worker: &impl Worker) -> Arc<[FunctionFqn]> {
+pub(crate) fn extract_ffqns(worker: &dyn Worker) -> Arc<[FunctionFqn]> {
     worker
         .exported_functions()
-        .map(|FunctionMetadata { ffqn, .. }| ffqn)
+        .iter()
+        .map(|FunctionMetadata { ffqn, .. }| ffqn.clone())
         .collect::<Arc<_>>()
 }
 
-impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
-    ExecTask<W, C, DB, P>
-{
+impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecTask<C, DB, P> {
     #[cfg(feature = "test")]
     pub fn new(
-        worker: Arc<W>,
+        worker: Arc<dyn Worker>,
         config: ExecConfig,
         clock_fn: C,
         db_pool: P,
@@ -120,7 +119,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
     }
 
     pub fn spawn_new(
-        worker: Arc<W>,
+        worker: Arc<dyn Worker>,
         config: ExecConfig,
         clock_fn: C,
         db_pool: P,
@@ -264,7 +263,7 @@ impl<W: Worker, C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> 
 
     #[instrument(skip_all)]
     async fn run_worker(
-        worker: Arc<W>,
+        worker: Arc<dyn Worker>,
         db_pool: P,
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
@@ -498,25 +497,41 @@ pub mod simple_worker {
     pub struct SimpleWorker {
         pub worker_results_rev: SimpleWorkerResultMap,
         pub ffqn: FunctionFqn,
+        exported: [FunctionMetadata; 1],
     }
 
     impl SimpleWorker {
         #[must_use]
         pub fn with_single_result(res: WorkerResult) -> Self {
-            Self {
-                worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
-                    Version::new(2),
-                    (vec![], res),
-                )]))),
-                ffqn: FFQN_SOME,
-            }
+            Self::with_worker_results_rev(Arc::new(std::sync::Mutex::new(IndexMap::from([(
+                Version::new(2),
+                (vec![], res),
+            )]))))
         }
 
         #[must_use]
         pub fn with_ffqn(self, ffqn: FunctionFqn) -> Self {
             Self {
                 worker_results_rev: self.worker_results_rev,
+                exported: [FunctionMetadata {
+                    ffqn: ffqn.clone(),
+                    parameter_types: ParameterTypes::default(),
+                    return_type: None,
+                }],
                 ffqn,
+            }
+        }
+
+        #[must_use]
+        pub fn with_worker_results_rev(worker_results_rev: SimpleWorkerResultMap) -> Self {
+            Self {
+                worker_results_rev,
+                ffqn: FFQN_SOME,
+                exported: [FunctionMetadata {
+                    ffqn: FFQN_SOME,
+                    parameter_types: ParameterTypes::default(),
+                    return_type: None,
+                }],
             }
         }
     }
@@ -532,17 +547,12 @@ pub mod simple_worker {
             worker_result
         }
 
-        fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            Some(FunctionMetadata {
-                ffqn: self.ffqn.clone(),
-                parameter_types: ParameterTypes::default(),
-                return_type: None,
-            })
-            .into_iter()
+        fn exported_functions(&self) -> &[FunctionMetadata] {
+            &self.exported
         }
 
-        fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            None.into_iter()
+        fn imported_functions(&self) -> &[FunctionMetadata] {
+            &[]
         }
     }
 }
@@ -841,16 +851,15 @@ mod tests {
             assert_eq!(at, sim_clock.now());
             assert_eq!(sim_clock.now() + retry_exp_backoff, expires_at);
         }
-        let worker = Arc::new(SimpleWorker {
-            ffqn: FFQN_SOME,
-            worker_results_rev: Arc::new(std::sync::Mutex::new(IndexMap::from([(
+        let worker = Arc::new(SimpleWorker::with_worker_results_rev(Arc::new(
+            std::sync::Mutex::new(IndexMap::from([(
                 Version::new(4),
                 (
                     vec![],
                     WorkerResult::Ok(SupportedFunctionReturnValue::None, Version::new(4)),
                 ),
-            )]))),
-        });
+            )])),
+        )));
         // noop until `retry_exp_backoff` expires
         assert!(tick_fn(
             exec_config.clone(),
@@ -1122,6 +1131,7 @@ mod tests {
     struct SleepyWorker {
         duration: Duration,
         result: SupportedFunctionReturnValue,
+        exported: [FunctionMetadata; 1],
     }
 
     #[async_trait]
@@ -1131,17 +1141,12 @@ mod tests {
             WorkerResult::Ok(self.result.clone(), ctx.version)
         }
 
-        fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            Some(FunctionMetadata {
-                ffqn: FFQN_SOME,
-                parameter_types: ParameterTypes::default(),
-                return_type: None,
-            })
-            .into_iter()
+        fn exported_functions(&self) -> &[FunctionMetadata] {
+            &self.exported
         }
 
-        fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            None.into_iter()
+        fn imported_functions(&self) -> &[FunctionMetadata] {
+            &[]
         }
     }
 
@@ -1166,6 +1171,11 @@ mod tests {
         let worker = Arc::new(SleepyWorker {
             duration: lock_expiry + Duration::from_millis(1), // sleep more than allowed by the lock expiry
             result: SupportedFunctionReturnValue::None,
+            exported: [FunctionMetadata {
+                ffqn: FFQN_SOME,
+                parameter_types: ParameterTypes::default(),
+                return_type: None,
+            }],
         });
         // Create an execution
         let execution_id = ExecutionId::generate();
