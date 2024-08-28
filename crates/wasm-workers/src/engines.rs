@@ -90,6 +90,7 @@ impl EngineConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct Engines {
     pub activity_engine: Arc<Engine>,
     pub workflow_engine: Arc<Engine>,

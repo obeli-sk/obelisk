@@ -548,7 +548,6 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         },
     );
 
-    let mut exec_join_handles = Vec::new();
     {
         // Check for name clashes which might make for confusing traces.
         let mut seen = HashSet::new();
@@ -572,45 +571,82 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     )
     .await?;
 
-    // FIXME: Ctrl-C here is ignored.
-    for activity in activities {
-        let executor_id = ExecutorId::generate();
-        if activity.enabled {
-            let exec_task_handle = instantiate_activity(
-                activity,
-                db_pool.clone(),
-                component_registry,
-                &engines,
-                executor_id,
-            )?;
-            exec_join_handles.push(exec_task_handle);
+    // Start compiling WASM components and launch executors in parallel if possible.
+    let all = activities
+        .into_iter()
+        .filter(|activity| activity.enabled)
+        .map(|activity| {
+            let mut component_registry = component_registry.clone();
+            let engines = engines.clone();
+            let db_pool = db_pool.clone();
+            let span = tracing::Span::current();
+            #[allow(deprecated)] // for Madsim
+            tokio::task::spawn_blocking(move || {
+                span.in_scope(|| {
+                    let executor_id = ExecutorId::generate();
+                    instantiate_activity(
+                        activity,
+                        db_pool,
+                        &mut component_registry,
+                        &engines,
+                        executor_id,
+                    )
+                })
+            })
+        })
+        .chain(
+            workflows
+                .into_iter()
+                .filter(|workflow| workflow.enabled)
+                .map(|workflow| {
+                    let mut component_registry = component_registry.clone();
+                    let engines = engines.clone();
+                    let db_pool = db_pool.clone();
+                    let span = tracing::Span::current();
+                    #[allow(deprecated)] // for Madsim
+                    tokio::task::spawn_blocking(move || {
+                        span.in_scope(|| {
+                            let executor_id = ExecutorId::generate();
+                            instantiate_workflow(
+                                workflow,
+                                db_pool,
+                                &mut component_registry,
+                                &engines,
+                                executor_id,
+                            )
+                        })
+                    })
+                }),
+        )
+        .collect::<Vec<_>>();
+
+    // Abort/cancel safety:
+    // If an error happens or Ctrl-C is pressed the whole process will shut down.
+    // FIXME: Extract into two steps - compile everything and launch executors afterwards, otherwise we might start locking executions needlesly.
+    let all = futures_util::future::join_all(all);
+    tokio::select! {
+        exec_join_handle_results = all => {
+            let mut exec_join_handles = Vec::with_capacity(exec_join_handle_results.len());
+            for handle in exec_join_handle_results {
+                exec_join_handles.push(handle??);
+            }
+            Ok((exec_join_handles, timers_watcher))
+        },
+        _ = tokio::signal::ctrl_c() => {
+            anyhow::bail!("cancelled downloading images from OCI registries")
         }
     }
-    for workflow in workflows {
-        let executor_id = ExecutorId::generate();
-        if workflow.enabled {
-            let exec_task_handle = instantiate_workflow(
-                workflow,
-                db_pool.clone(),
-                &engines,
-                component_registry,
-                executor_id,
-            )?;
-            exec_join_handles.push(exec_task_handle);
-        }
-    }
-    Ok((exec_join_handles, timers_watcher))
 }
 
 #[instrument(skip_all)]
 async fn fetch_and_verify_all(
-    wasm_activities: Vec<WasmActivity>,
+    activities: Vec<WasmActivity>,
     workflows: Vec<Workflow>,
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
 ) -> Result<(Vec<VerifiedActivityConfig>, Vec<VerifiedWorkflowConfig>), anyhow::Error> {
     // TODO: Switch to `JoinSet` when madsim supports it.
-    let wasm_activities = wasm_activities
+    let activities = activities
         .into_iter()
         .filter(|it| it.common.enabled)
         .map(|activity| {
@@ -638,24 +674,25 @@ async fn fetch_and_verify_all(
         })
         .collect::<Vec<_>>();
 
-    let wasm_activities = futures_util::future::join_all(wasm_activities);
-    let workflows = futures_util::future::join_all(workflows);
-
     // Abort/cancel safety:
     // If an error happens or Ctrl-C is pressed the whole process will shut down.
     // Downloading metadata and content must be robust enough to handle it.
     // We do not need to abort the tasks here.
+    let all = futures_util::future::join(
+        futures_util::future::join_all(activities),
+        futures_util::future::join_all(workflows),
+    );
     tokio::select! {
-        (a, w) = futures_util::future::join(wasm_activities, workflows) => {
-            let mut wasm_activities = Vec::new();
-            for a in a {
-                wasm_activities.push(a??);
+        (activity_results, workflow_results) = all => {
+            let mut activities = Vec::with_capacity(activity_results.len());
+            for a in activity_results {
+                activities.push(a??);
             }
-            let mut workflows = Vec::new();
-            for w in w {
+            let mut workflows = Vec::with_capacity(workflow_results.len());
+            for w in workflow_results {
                 workflows.push(w??);
             }
-            Ok((wasm_activities, workflows))
+            Ok((activities, workflows))
         },
         _ = tokio::signal::ctrl_c() => {
             anyhow::bail!("cancelled downloading images from OCI registries")
@@ -703,8 +740,8 @@ fn instantiate_activity<DB: DbConnection + 'static>(
 fn instantiate_workflow<DB: DbConnection + 'static>(
     workflow: VerifiedWorkflowConfig,
     db_pool: impl DbPool<DB> + 'static,
-    engines: &Engines,
     component_registry: &mut ComponentConfigRegistry,
+    engines: &Engines,
     executor_id: ExecutorId,
 ) -> Result<ExecutorTaskHandle, anyhow::Error> {
     debug!("Instantiating workflow");
