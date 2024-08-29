@@ -686,7 +686,7 @@ fn prespawn_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             let mut component_registry = component_registry.clone();
             let engines = engines.clone();
             let span = tracing::Span::current();
-            #[allow(deprecated)] // for Madsim
+            #[cfg_attr(madsim, allow(deprecated))]
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     let executor_id = ExecutorId::generate();
@@ -703,7 +703,7 @@ fn prespawn_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                     let engines = engines.clone();
                     let db_pool = db_pool.clone();
                     let span = tracing::Span::current();
-                    #[allow(deprecated)] // for Madsim
+                    #[cfg_attr(madsim, allow(deprecated))]
                     tokio::task::spawn_blocking(move || {
                         span.in_scope(|| {
                             let executor_id = ExecutorId::generate();
@@ -793,8 +793,8 @@ fn register_and_prespawn(
     let component = Component {
         config_id: config_store.as_hash(),
         config_store,
-        exports: worker.exported_functions().iter().cloned().collect(),
-        imports: worker.imported_functions().iter().cloned().collect(),
+        exports: worker.exported_functions().to_vec(),
+        imports: worker.imported_functions().to_vec(),
     };
     component_registry.insert(component)?;
     Ok(ExecutorPreSpawn {

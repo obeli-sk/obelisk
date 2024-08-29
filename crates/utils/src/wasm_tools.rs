@@ -67,10 +67,12 @@ impl WasmComponent {
         Ok(Self { component, exim })
     }
 
+    #[must_use]
     pub fn exported_functions(&self) -> &[FunctionMetadata] {
         &self.exim.exports_flat
     }
 
+    #[must_use]
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         &self.exim.imports_flat
     }

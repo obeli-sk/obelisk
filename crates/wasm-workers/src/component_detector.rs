@@ -48,16 +48,8 @@ impl ComponentDetector {
         }?;
         Ok(Self {
             component_type,
-            exports: wasm_component
-                .exported_functions()
-                .iter()
-                .cloned()
-                .collect(),
-            imports: wasm_component
-                .imported_functions()
-                .iter()
-                .cloned()
-                .collect(),
+            exports: wasm_component.exported_functions().to_vec(),
+            imports: wasm_component.imported_functions().to_vec(),
         })
     }
 }

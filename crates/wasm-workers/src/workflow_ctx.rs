@@ -432,6 +432,32 @@ pub(crate) mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
         #[derivative(Debug = "ignore")]
         phantom_data: PhantomData<DB>,
+        #[derivative(Debug = "ignore")]
+        exports: [FunctionMetadata; 1],
+    }
+
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerMock<C, DB, P> {
+        fn new(
+            ffqn: FunctionFqn,
+            steps: Vec<WorkflowStep>,
+            clock_fn: C,
+            db_pool: P,
+            fn_registry: Arc<dyn FunctionRegistry>,
+        ) -> Self {
+            Self {
+                exports: [FunctionMetadata {
+                    ffqn: ffqn.clone(),
+                    parameter_types: ParameterTypes::default(),
+                    return_type: None,
+                }],
+                ffqn,
+                steps,
+                clock_fn,
+                db_pool,
+                fn_registry,
+                phantom_data: PhantomData,
+            }
+        }
     }
 
     #[async_trait]
@@ -478,17 +504,12 @@ pub(crate) mod tests {
             WorkerResult::Ok(SupportedFunctionReturnValue::None, workflow_ctx.version)
         }
 
-        fn exported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            Some(FunctionMetadata {
-                ffqn: self.ffqn.clone(),
-                parameter_types: ParameterTypes::default(),
-                return_type: None,
-            })
-            .into_iter()
+        fn exported_functions(&self) -> &[FunctionMetadata] {
+            &self.exports
         }
 
-        fn imported_functions(&self) -> impl Iterator<Item = FunctionMetadata> {
-            None.into_iter()
+        fn imported_functions(&self) -> &[FunctionMetadata] {
+            &[]
         }
     }
 
@@ -561,14 +582,13 @@ pub(crate) mod tests {
         let fn_registry = fn_registry_dummy(ffqns.as_slice());
 
         let workflow_exec_task = {
-            let worker = Arc::new(WorkflowWorkerMock {
-                ffqn: FFQN_MOCK,
+            let worker = Arc::new(WorkflowWorkerMock::new(
+                FFQN_MOCK,
                 steps,
-                clock_fn: sim_clock.get_clock_fn(),
-                db_pool: db_pool.clone(),
-                fn_registry: fn_registry.clone(),
-                phantom_data: PhantomData,
-            });
+                sim_clock.get_clock_fn(),
+                db_pool.clone(),
+                fn_registry.clone(),
+            ));
             let exec_config = ExecConfig {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
@@ -645,14 +665,13 @@ pub(crate) mod tests {
                     assert_eq!(Some((execution_id, join_set_id)), child_log.parent());
                     // execute
                     let child_exec_tick = {
-                        let worker = Arc::new(WorkflowWorkerMock {
-                            ffqn: child_log.ffqn().clone(),
-                            steps: vec![],
-                            clock_fn: sim_clock.get_clock_fn(),
-                            db_pool: db_pool.clone(),
-                            fn_registry: fn_registry.clone(),
-                            phantom_data: PhantomData,
-                        });
+                        let worker = Arc::new(WorkflowWorkerMock::new(
+                            child_log.ffqn().clone(),
+                            vec![],
+                            sim_clock.get_clock_fn(),
+                            db_pool.clone(),
+                            fn_registry.clone(),
+                        ));
                         let exec_config = ExecConfig {
                             batch_size: 1,
                             lock_expiry: Duration::from_secs(1),
