@@ -3,7 +3,6 @@ use std::{error::Error, fmt::Debug, path::PathBuf};
 use utils::wasm_tools::{self};
 
 pub mod activity_worker;
-pub mod component_detector;
 pub mod engines;
 pub mod epoch_ticker;
 mod event_history;
@@ -22,10 +21,6 @@ pub enum WasmFileError {
         reason: StrVariant,
         err: Box<dyn Error + Send + Sync>,
     },
-    #[error("no exported interfaces")]
-    NoExportedInterfaces, // TODO: deprecate
-    #[error("mixed workflows and activities")]
-    MixedWorkflowsAndActivities, // TODO: deprecate
 }
 
 #[cfg(test)]

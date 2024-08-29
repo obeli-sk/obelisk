@@ -5,21 +5,25 @@ use anyhow::Context;
 use concepts::{ComponentConfigHash, FunctionFqn, FunctionMetadata};
 use std::path::Path;
 use tonic::transport::Channel;
-use wasm_workers::component_detector::ComponentDetector;
+use utils::wasm_tools::WasmComponent;
+use wasmtime::Engine;
 
 pub(crate) fn inspect<P: AsRef<Path>>(
     wasm_path: P,
     verbosity: FunctionMetadataVerbosity,
 ) -> anyhow::Result<()> {
     let wasm_path = wasm_path.as_ref();
-    let engine = ComponentDetector::get_engine();
-    let detected = ComponentDetector::new(wasm_path, &engine).context("parsing error")?;
-    println!("Component type:\n\t{}", detected.component_type);
+    let engine = {
+        let mut wasmtime_config = wasmtime::Config::new();
+        wasmtime_config.wasm_component_model(true);
+        Engine::new(&wasmtime_config).unwrap()
+    };
+    let wasm_component = WasmComponent::new(wasm_path, &engine)?;
     println!("Exports:");
-    inspect_fns(&detected.exports, true);
+    inspect_fns(wasm_component.exported_functions(), true);
     if verbosity > FunctionMetadataVerbosity::ExportsOnly {
         println!("Imports:");
-        inspect_fns(&detected.imports, true);
+        inspect_fns(wasm_component.imported_functions(), true);
     }
     Ok(())
 }
