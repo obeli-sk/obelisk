@@ -111,7 +111,7 @@ pub(crate) async fn pull_to_cache_dir(
         .next()
         .expect("layer length asserted in WasmClient")
         .data;
-    let actual_hash = wasm_workers::component_detector::calculate_sha256_mem(&data);
+    let actual_hash = calculate_sha256_mem(&data);
     ensure!(content_digest == actual_hash,
         "sha256 digest mismatch for {image}, file {wasm_path:?}. Expected {content_digest}, got {actual_hash}");
     // Write only after verifying the hash.
@@ -168,4 +168,15 @@ pub(crate) async fn push(file: &PathBuf, reference: &Reference) -> Result<(), an
         println!("{reference}");
     }
     Ok(())
+}
+
+#[must_use]
+fn calculate_sha256_mem(data: &[u8]) -> ContentDigest {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::default();
+    hasher.update(data);
+    ContentDigest::new(
+        concepts::HashType::Sha256,
+        format!("{:x}", hasher.finalize()),
+    )
 }
