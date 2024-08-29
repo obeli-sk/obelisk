@@ -5,13 +5,10 @@ use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use anyhow::Context;
 use chrono::DateTime;
 use concepts::FinishedExecutionResult;
-use concepts::SupportedFunctionReturnValue;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::execution_status::Status;
 use std::str::FromStr;
 use tonic::transport::Channel;
-use val_json::wast_val::WastVal;
-use val_json::wast_val::WastValWithType;
 
 pub(crate) async fn submit(
     mut client: SchedulerClient<Channel>,
@@ -82,24 +79,19 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus) -> Result<(), any
             let result: FinishedExecutionResult =
                 serde_json::from_str(&result).context("cannot deserialize `result`")?;
             match &result {
-                Ok(SupportedFunctionReturnValue::Fallible(WastValWithType {
-                    value: WastVal::Result(Err(_)),
-                    ..
-                })) => {
-                    println!("Execution returned an error result.");
-                }
-                Ok(_) => {
-                    println!("Execution finished successfuly.");
+                Ok(ret_val) => {
+                    if ret_val.fallible_err().is_some() {
+                        println!("Execution returned an error result.");
+                    } else {
+                        println!("Execution finished successfuly.");
+                    }
+                    let val = serde_json::to_string_pretty(&ret_val.value()).unwrap();
+                    println!("{val}");
                 }
                 Err(err) => {
                     println!("Execution error - {err}");
                 }
             }
-            if let Ok(ret_val) = result {
-                let val = serde_json::to_string_pretty(&ret_val.value()).unwrap();
-                println!("{val}");
-            }
-
             println!(
                 "Execution took {since_created:?}.",
                 since_created = (finished_at - created_at)
