@@ -10,8 +10,10 @@
 ## Path to directory where wasm files downloaded from an OCI registry are stored. Supports path prefixes.
 # oci.wasm_directory = "${CACHE_DIR}/wasm"
 
+# Comment the table to disable the codegen cache.
+[codegen_cache]
 ## Path to directory where generated code is cached. Supports path prefixes.
-# codegen_cache = { enabled = true, directory = "${CACHE_DIR}/codegen" }
+# directory = "${CACHE_DIR}/codegen"
 
 # Address and port on which the API server will listen.
 # api_listening_addr = "127.0.0.1:5005"
@@ -46,9 +48,10 @@ child_retry_exp_backoff.secs = 1
 # service_name = "obelisk-server"
 # otlp_endpoint = "http://localhost:4317"
 
-# Stdout configuration, by default logs INFO and above
+# Stdout configuration, by default logs INFO and above.
+# Comment the table to disable stdout logging.
+[log.stdout]
 ## Defaults:
-# [log.stdout]
 # level = "info"
 # enabled = true
 # style = "plain_compact"

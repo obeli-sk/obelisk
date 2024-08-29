@@ -38,34 +38,33 @@ where
     use opentelemetry_sdk::trace::Config;
     use opentelemetry_sdk::Resource;
 
-    match &mut config.otlp {
-        Some(otlp) if otlp.enabled => {
-            opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
+    if let Some(otlp) = &mut config.otlp {
+        opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
-            let tracer = opentelemetry_otlp::new_pipeline()
-                .tracing()
-                .with_batch_config(BatchConfig::default())
-                .with_exporter(
-                    opentelemetry_otlp::new_exporter()
-                        .tonic()
-                        .with_endpoint(otlp.otlp_endpoint.to_string()),
-                )
-                .with_trace_config(Config::default().with_resource(Resource::new(vec![
-                    opentelemetry::KeyValue::new(
-                        opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-                        otlp.service_name.clone(),
-                    ),
-                ])))
-                .install_batch(runtime::Tokio)
-                .expect("cannot setup otlp");
-            // EnvFilter missing Clone
-            let env_filter = std::mem::take(&mut otlp.level).0;
-            let telemetry_layer = tracing_opentelemetry::layer()
-                .with_tracer(tracer)
-                .with_filter(env_filter);
-            Some(telemetry_layer)
-        }
-        _ => None,
+        let tracer = opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_batch_config(BatchConfig::default())
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_endpoint(otlp.otlp_endpoint.to_string()),
+            )
+            .with_trace_config(Config::default().with_resource(Resource::new(vec![
+                opentelemetry::KeyValue::new(
+                    opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+                    otlp.service_name.clone(),
+                ),
+            ])))
+            .install_batch(runtime::Tokio)
+            .expect("cannot setup otlp");
+        // EnvFilter missing Clone
+        let env_filter = std::mem::take(&mut otlp.level).0;
+        let telemetry_layer = tracing_opentelemetry::layer()
+            .with_tracer(tracer)
+            .with_filter(env_filter);
+        Some(telemetry_layer)
+    } else {
+        None
     }
 }
 #[cfg(not(feature = "otlp"))]
@@ -80,69 +79,67 @@ pub(crate) fn init(config: &mut ObeliskConfig) -> Guard {
 
     let mut guard = Guard::default();
 
-    let out_layer = if config.log.stdout.common.enabled {
+    let out_layer = if let Some(stdout) = &mut config.log.stdout {
         // EnvFilter missing Clone
-        let env_filter = std::mem::take(&mut config.log.stdout.common.level).0;
+        let env_filter = std::mem::take(&mut stdout.common.level).0;
 
         // Code repetition because of https://github.com/tokio-rs/tracing/issues/575
-        Some(match config.log.stdout.style {
+        Some(match stdout.style {
             LoggingStyle::Plain => tracing_subscriber::fmt::layer()
-                .with_target(config.log.stdout.common.target)
-                .with_span_events(config.log.stdout.common.span.into())
+                .with_target(stdout.common.target)
+                .with_span_events(stdout.common.span.into())
                 .with_filter(env_filter)
                 .boxed(),
             LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
                 .compact()
-                .with_target(config.log.stdout.common.target)
-                .with_span_events(config.log.stdout.common.span.into())
+                .with_target(stdout.common.target)
+                .with_span_events(stdout.common.span.into())
                 .with_filter(env_filter)
                 .boxed(),
             LoggingStyle::Json => tracing_subscriber::fmt::layer()
                 .json()
-                .with_target(config.log.stdout.common.target)
-                .with_span_events(config.log.stdout.common.span.into())
+                .with_target(stdout.common.target)
+                .with_span_events(stdout.common.span.into())
                 .with_filter(env_filter)
                 .boxed(),
         })
     } else {
         None
     };
-    let rolling_file_layer = match &mut config.log.file {
-        Some(rolling) if rolling.common.enabled => {
-            // EnvFilter missing Clone
-            let env_filter = std::mem::take(&mut rolling.common.level).0;
-
-            let file_appender = tracing_appender::rolling::RollingFileAppender::new(
-                rolling.rotation.into(),
-                &rolling.directory,
-                &rolling.prefix,
-            );
-            let (non_blocking, file_guard) = tracing_appender::non_blocking(file_appender);
-            guard.file_guard = Some(file_guard);
-            Some(match rolling.style {
-                LoggingStyle::Plain => tracing_subscriber::fmt::layer()
-                    .with_writer(non_blocking)
-                    .with_target(rolling.common.target)
-                    .with_span_events(rolling.common.span.into())
-                    .with_filter(env_filter)
-                    .boxed(),
-                LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
-                    .with_writer(non_blocking)
-                    .compact()
-                    .with_target(rolling.common.target)
-                    .with_span_events(rolling.common.span.into())
-                    .with_filter(env_filter)
-                    .boxed(),
-                LoggingStyle::Json => tracing_subscriber::fmt::layer()
-                    .with_writer(non_blocking)
-                    .json()
-                    .with_target(rolling.common.target)
-                    .with_span_events(rolling.common.span.into())
-                    .with_filter(env_filter)
-                    .boxed(),
-            })
-        }
-        _ => None,
+    let rolling_file_layer = if let Some(rolling) = &mut config.log.file {
+        // EnvFilter missing Clone
+        let env_filter = std::mem::take(&mut rolling.common.level).0;
+        let file_appender = tracing_appender::rolling::RollingFileAppender::new(
+            rolling.rotation.into(),
+            &rolling.directory,
+            &rolling.prefix,
+        );
+        let (non_blocking, file_guard) = tracing_appender::non_blocking(file_appender);
+        guard.file_guard = Some(file_guard);
+        Some(match rolling.style {
+            LoggingStyle::Plain => tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking)
+                .with_target(rolling.common.target)
+                .with_span_events(rolling.common.span.into())
+                .with_filter(env_filter)
+                .boxed(),
+            LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking)
+                .compact()
+                .with_target(rolling.common.target)
+                .with_span_events(rolling.common.span.into())
+                .with_filter(env_filter)
+                .boxed(),
+            LoggingStyle::Json => tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking)
+                .json()
+                .with_target(rolling.common.target)
+                .with_span_events(rolling.common.span.into())
+                .with_filter(env_filter)
+                .boxed(),
+        })
+    } else {
+        None
     };
     tracing_subscriber::registry()
         .with(tokio_console_layer())

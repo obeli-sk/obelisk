@@ -39,7 +39,7 @@ pub(crate) struct ObeliskConfig {
     #[serde(default)]
     pub(crate) oci: OciConfig,
     #[serde(default)]
-    pub(crate) codegen_cache: CodegenCache,
+    pub(crate) codegen_cache: Option<CodegenCache>,
     #[serde(default)]
     pub(crate) wasm_activity: Vec<WasmActivity>,
     #[serde(default)]
@@ -126,29 +126,15 @@ impl OciConfig {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CodegenCache {
-    #[serde(default = "default_true")]
-    enabled: bool,
     #[serde(default)]
     directory: Option<String>,
 }
 
-impl Default for CodegenCache {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            directory: None,
-        }
-    }
-}
-
 impl CodegenCache {
-    pub(crate) async fn get_directory_if_enabled(
+    pub(crate) async fn get_directory(
         &self,
         project_dirs: Option<&ProjectDirs>,
-    ) -> Result<Option<PathBuf>, anyhow::Error> {
-        if !self.enabled {
-            return Ok(None);
-        }
+    ) -> Result<PathBuf, anyhow::Error> {
         let directory = self.directory.as_deref().unwrap_or_else(|| {
             if project_dirs.is_some() {
                 DEFAULT_CODEGEN_CACHE_DIRECTORY_IF_PROJECT_DIRS
@@ -156,28 +142,13 @@ impl CodegenCache {
                 DEFAULT_CODEGEN_CACHE_DIRECTORY
             }
         });
-        Ok(Some(
-            replace_path_prefix_mkdir(directory, project_dirs, FileOrFolder::Folder).await?,
-        ))
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ComponentEnabled {
-    Enabled,
-    Disabled,
-}
-impl From<ComponentEnabled> for bool {
-    fn from(value: ComponentEnabled) -> Self {
-        matches!(value, ComponentEnabled::Enabled)
+        replace_path_prefix_mkdir(directory, project_dirs, FileOrFolder::Folder).await
     }
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentCommon {
-    #[serde(default = "default_true")]
-    pub(crate) enabled: bool,
     pub(crate) name: String,
     pub(crate) location: ComponentLocation,
     #[serde(default)]
@@ -198,7 +169,7 @@ impl ComponentCommon {
         self,
         wasm_cache_dir: &Path,
         metadata_dir: &Path,
-    ) -> Result<(ConfigStoreCommon, PathBuf, ComponentEnabled), anyhow::Error> {
+    ) -> Result<(ConfigStoreCommon, PathBuf), anyhow::Error> {
         let (actual_content_digest, wasm_path) = self
             .location
             .obtain_wasm(wasm_cache_dir, metadata_dir)
@@ -215,15 +186,7 @@ impl ComponentCommon {
             default_max_retries: self.default_max_retries,
             default_retry_exp_backoff: self.default_retry_exp_backoff.into(),
         };
-        Ok((
-            verified,
-            wasm_path,
-            if self.enabled {
-                ComponentEnabled::Enabled
-            } else {
-                ComponentEnabled::Disabled
-            },
-        ))
+        Ok((verified, wasm_path))
     }
 }
 
@@ -261,7 +224,6 @@ pub(crate) struct WasmActivity {
 pub(crate) struct VerifiedActivityConfig {
     pub(crate) config_store: ConfigStore,
     pub(crate) wasm_path: PathBuf,
-    pub(crate) enabled: bool,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
 }
@@ -273,7 +235,7 @@ impl WasmActivity {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
     ) -> Result<VerifiedActivityConfig, anyhow::Error> {
-        let (common, wasm_path, enabled) = self
+        let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
@@ -292,7 +254,6 @@ impl WasmActivity {
         Ok(VerifiedActivityConfig {
             config_store,
             wasm_path,
-            enabled: enabled.into(),
             activity_config,
             exec_config,
         })
@@ -318,7 +279,6 @@ pub(crate) struct Workflow {
 pub(crate) struct VerifiedWorkflowConfig {
     pub(crate) config_store: ConfigStore,
     pub(crate) wasm_path: PathBuf,
-    pub(crate) enabled: bool,
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
 }
@@ -330,7 +290,7 @@ impl Workflow {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
     ) -> Result<VerifiedWorkflowConfig, anyhow::Error> {
-        let (common, wasm_path, enabled) = self
+        let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
@@ -355,7 +315,6 @@ impl Workflow {
         Ok(VerifiedWorkflowConfig {
             config_store,
             wasm_path,
-            enabled: enabled.into(),
             workflow_config,
             exec_config,
         })
@@ -429,14 +388,12 @@ impl From<WasmtimePoolingConfig> for wasm_workers::engines::PoolingOptions {
 
 #[cfg(feature = "otlp")]
 pub(crate) mod otlp {
-    use super::{default_true, log, Deserialize};
+    use super::{log, Deserialize};
     use log::InfoEnvFilter;
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct OtlpConfig {
-        #[serde(default = "default_true")]
-        pub(crate) enabled: bool,
         #[serde(default)]
         pub(crate) level: InfoEnvFilter,
         #[serde(default = "default_service_name")]
@@ -448,7 +405,6 @@ pub(crate) mod otlp {
     impl Default for OtlpConfig {
         fn default() -> Self {
             Self {
-                enabled: true,
                 level: InfoEnvFilter::default(),
                 service_name: default_service_name(),
                 otlp_endpoint: default_otlp_endpoint(),
@@ -486,7 +442,7 @@ pub(crate) mod log {
 
     use serde_with::serde_as;
 
-    use super::{default_out_style, default_true, Deserialize};
+    use super::{default_out_style, Deserialize};
 
     #[derive(Debug, Deserialize, Default)]
     #[serde(deny_unknown_fields)]
@@ -494,7 +450,7 @@ pub(crate) mod log {
         #[serde(default)]
         pub(crate) file: Option<AppenderRollingFile>,
         #[serde(default)]
-        pub(crate) stdout: AppenderOut,
+        pub(crate) stdout: Option<AppenderOut>,
     }
 
     #[derive(Debug, Deserialize, Default, Copy, Clone)]
@@ -543,26 +499,14 @@ pub(crate) mod log {
     #[serde_as]
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    #[derive(Default)]
     pub(crate) struct AppenderCommon {
-        #[serde(default = "default_true")]
-        pub(crate) enabled: bool,
         #[serde(default)]
         pub(crate) level: InfoEnvFilter,
         #[serde(default)]
         pub(crate) span: SpanConfig,
         #[serde(default)]
         pub(crate) target: bool,
-    }
-
-    impl Default for AppenderCommon {
-        fn default() -> Self {
-            Self {
-                enabled: true,
-                level: InfoEnvFilter::default(),
-                span: SpanConfig::default(),
-                target: Default::default(),
-            }
-        }
     }
 
     #[derive(Debug, serde_with::DeserializeFromStr)]
@@ -595,15 +539,6 @@ pub(crate) mod log {
         pub(crate) common: AppenderCommon,
         #[serde(default = "default_out_style")]
         pub(crate) style: LoggingStyle,
-    }
-
-    impl Default for AppenderOut {
-        fn default() -> Self {
-            Self {
-                common: AppenderCommon::default(),
-                style: default_out_style(),
-            }
-        }
     }
 
     #[derive(Debug, Deserialize)]

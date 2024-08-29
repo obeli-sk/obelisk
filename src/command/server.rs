@@ -389,10 +389,15 @@ async fn run_internal(
         .oci
         .get_wasm_directory(config_holder.project_dirs.as_ref())
         .await?;
-    let codegen_cache = config
-        .codegen_cache
-        .get_directory_if_enabled(config_holder.project_dirs.as_ref())
-        .await?;
+    let codegen_cache = if let Some(codegen_cache) = &config.codegen_cache {
+        Some(
+            codegen_cache
+                .get_directory(config_holder.project_dirs.as_ref())
+                .await?,
+        )
+    } else {
+        None
+    };
     debug!("Using codegen cache? {codegen_cache:?}");
     let ignore_not_found = |err: std::io::Error| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -618,7 +623,6 @@ async fn fetch_and_verify_all(
     // TODO: Switch to `JoinSet` when madsim supports it.
     let activities = activities
         .into_iter()
-        .filter(|it| it.common.enabled)
         .map(|activity| {
             tokio::spawn({
                 let wasm_cache_dir = wasm_cache_dir.clone();
@@ -634,7 +638,6 @@ async fn fetch_and_verify_all(
         .collect::<Vec<_>>();
     let workflows = workflows
         .into_iter()
-        .filter(|it| it.common.enabled)
         .map(|workflow| {
             tokio::spawn(
                 workflow
@@ -681,7 +684,6 @@ fn prespawn_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 ) -> Vec<tokio::task::JoinHandle<Result<ExecutorPreSpawn, anyhow::Error>>> {
     activities
         .into_iter()
-        .filter(|activity| activity.enabled)
         .map(|activity| {
             let mut component_registry = component_registry.clone();
             let engines = engines.clone();
@@ -694,30 +696,25 @@ fn prespawn_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                 })
             })
         })
-        .chain(
-            workflows
-                .into_iter()
-                .filter(|workflow| workflow.enabled)
-                .map(|workflow| {
-                    let mut component_registry = component_registry.clone();
-                    let engines = engines.clone();
-                    let db_pool = db_pool.clone();
-                    let span = tracing::Span::current();
-                    #[cfg_attr(madsim, allow(deprecated))]
-                    tokio::task::spawn_blocking(move || {
-                        span.in_scope(|| {
-                            let executor_id = ExecutorId::generate();
-                            prespawn_workflow(
-                                workflow,
-                                db_pool,
-                                &mut component_registry,
-                                &engines,
-                                executor_id,
-                            )
-                        })
-                    })
-                }),
-        )
+        .chain(workflows.into_iter().map(|workflow| {
+            let mut component_registry = component_registry.clone();
+            let engines = engines.clone();
+            let db_pool = db_pool.clone();
+            let span = tracing::Span::current();
+            #[cfg_attr(madsim, allow(deprecated))]
+            tokio::task::spawn_blocking(move || {
+                span.in_scope(|| {
+                    let executor_id = ExecutorId::generate();
+                    prespawn_workflow(
+                        workflow,
+                        db_pool,
+                        &mut component_registry,
+                        &engines,
+                        executor_id,
+                    )
+                })
+            })
+        }))
         .collect()
 }
 
