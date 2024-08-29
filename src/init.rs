@@ -122,22 +122,22 @@ pub(crate) fn init(config: &mut ObeliskConfig) -> Guard {
             Some(match rolling.style {
                 LoggingStyle::Plain => tracing_subscriber::fmt::layer()
                     .with_writer(non_blocking)
-                    .with_target(config.log.stdout.common.target)
-                    .with_span_events(config.log.stdout.common.span.into())
+                    .with_target(rolling.common.target)
+                    .with_span_events(rolling.common.span.into())
                     .with_filter(env_filter)
                     .boxed(),
                 LoggingStyle::PlainCompact => tracing_subscriber::fmt::layer()
                     .with_writer(non_blocking)
                     .compact()
-                    .with_target(config.log.stdout.common.target)
-                    .with_span_events(config.log.stdout.common.span.into())
+                    .with_target(rolling.common.target)
+                    .with_span_events(rolling.common.span.into())
                     .with_filter(env_filter)
                     .boxed(),
                 LoggingStyle::Json => tracing_subscriber::fmt::layer()
                     .with_writer(non_blocking)
                     .json()
-                    .with_target(config.log.stdout.common.target)
-                    .with_span_events(config.log.stdout.common.span.into())
+                    .with_target(rolling.common.target)
+                    .with_span_events(rolling.common.span.into())
                     .with_filter(env_filter)
                     .boxed(),
             })
