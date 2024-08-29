@@ -94,7 +94,7 @@ Exports:
 ...
 ```
 
-### Executing a sample workflow
+### Submitting a function to execute (either workflow or activity)
 ```sh
 # Call fibonacci(10) activity from the workflow 500 times in series.
 obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]' --follow

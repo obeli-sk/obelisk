@@ -4,19 +4,31 @@
 ## | ${CACHE_DIR} |  ~/.cache/obelisk       | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.cache_dir
 ## | ${CONFIG_DIR}|  ~/.config/obelisk      | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.config_dir
 
-## Path to sqlite database. Supports path prefixes.
-# sqlite_file = "${DATA_DIR}/obelisk.sqlite"
+## Server configuration
+# api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server will listen.
 
-## Path to directory where wasm files downloaded from an OCI registry are stored. Supports path prefixes.
-# oci.wasm_directory = "${CACHE_DIR}/wasm"
+# sqlite_file = "${DATA_DIR}/obelisk.sqlite" # Path to sqlite database. Supports path prefixes.
 
-# Comment the table to disable the codegen cache.
+# oci.wasm_directory = "${CACHE_DIR}/wasm" # Path to directory where wasm files downloaded from an OCI registry are stored. Supports path prefixes.
+
+## Comment out the `codegen_cache` table to disable the codegen cache.
 [codegen_cache]
-## Path to directory where generated code is cached. Supports path prefixes.
-# directory = "${CACHE_DIR}/codegen"
+# directory = "${CACHE_DIR}/codegen" # Path to directory where generated code is cached. Supports path prefixes.
 
-# Address and port on which the API server will listen.
-# api_listening_addr = "127.0.0.1:5005"
+## WASM Activity components configuration
+# [[wasm_activity]]
+## Common settings for all components:
+# name = "name" # Each component must be named.
+## Location can be a file path or an OCI registry reference.
+# location.path = "path/to/wasm"
+# location.oci = "docker.io/repo/image:tag"
+# default_max_retries = 5 # When calling the activity directly, `default_max_retries` is applied.
+# default_retry_exp_backoff.millis = 100 # Exponential backoff setting.
+## Specific settings for wasm_activity:
+# recycle_instances = true # If true, the same WASM instance will be used again instead of creating new instance for performance reasons.
+
+
+#
 
 [[wasm_activity]]
 name = "fibo_activity"
@@ -43,7 +55,6 @@ child_retry_exp_backoff.secs = 1
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:
 # [otlp]
-# enabled = true
 # level = "info"
 # service_name = "obelisk-server"
 # otlp_endpoint = "http://localhost:4317"
@@ -53,7 +64,6 @@ child_retry_exp_backoff.secs = 1
 [log.stdout]
 ## Defaults:
 # level = "info"
-# enabled = true
 # style = "plain_compact"
 # span = "none"
 # target = false
