@@ -125,6 +125,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] External activities - running external processes
 - [ ] HTML based UI for showing executions, event history and relations
 - [ ] Add examples with C#, Go, JS, Python
+- [ ] Add jitter to retries
 
 ## Milestone 4
 - [ ] Interactive CLI for execution management
