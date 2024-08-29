@@ -22,6 +22,7 @@ use wasmtime::{Store, UpdateDeadline};
 #[derive(
     Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Hash,
 )]
+#[serde(rename_all = "snake_case")]
 pub enum JoinNextBlockingStrategy {
     /// Shut down the current runtime. When the [`JoinSetResponse`] is appended, workflow is reexecuted with a new `RunId`.
     Interrupt,
