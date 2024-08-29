@@ -82,32 +82,22 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus) -> Result<(), any
             let result: FinishedExecutionResult =
                 serde_json::from_str(&result).context("cannot deserialize `result`")?;
             match &result {
-                Ok(
-                    result @ (SupportedFunctionReturnValue::None
-                    | SupportedFunctionReturnValue::Infallible(_)
-                    | SupportedFunctionReturnValue::Fallible(WastValWithType {
-                        value: WastVal::Result(Ok(_)),
-                        ..
-                    })),
-                ) => {
-                    println!("Finished OK");
-                    let value = match result {
-                        SupportedFunctionReturnValue::Infallible(WastValWithType {
-                            value, ..
-                        }) => Some(value),
-                        SupportedFunctionReturnValue::Fallible(WastValWithType {
-                            value: WastVal::Result(Ok(Some(value))),
-                            ..
-                        }) => Some(value.as_ref()),
-                        _ => None,
-                    };
-                    if let Some(value) = value {
-                        println!("{value:?}");
-                    }
+                Ok(SupportedFunctionReturnValue::Fallible(WastValWithType {
+                    value: WastVal::Result(Err(_)),
+                    ..
+                })) => {
+                    println!("Execution returned an error result.");
                 }
-                _ => {
-                    println!("Finished with an error\n{result:?}");
+                Ok(_) => {
+                    println!("Execution finished successfuly.");
                 }
+                Err(err) => {
+                    println!("Execution error - {err}");
+                }
+            }
+            if let Ok(ret_val) = result {
+                let val = serde_json::to_string_pretty(&ret_val.value()).unwrap();
+                println!("{val}");
             }
 
             println!(
