@@ -163,5 +163,5 @@ cargo run --release
 
 # Contributing
 This project has a roadmap and features are added and tested in a certain order.
-If you would like to contribute a feature, please discuss the feature in an issue on this GitHub repository.
+If you would like to contribute a feature, please [discuss](https://github.com/obeli-sk/obelisk/discussions) the feature on GitHub.
 In order for us to accept patches and other contributions, you need to adopt our Contributor License Agreement (the "CLA"). The current version of the CLA can be found [here](https://cla-assistant.io/obeli-sk/obelisk).
