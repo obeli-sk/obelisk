@@ -929,7 +929,7 @@ impl FromStr for Digest {
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentType {
     WasmActivity,
-    WasmWorkflow,
+    WasmWorkflow, // TODO: Rename to Workflow
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -999,7 +999,7 @@ impl Display for ParameterTypes {
     }
 }
 
-// TODO: Add Clone, replace Arc
+// TODO: consider making the workflow worker generic over this type
 #[async_trait]
 pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(
