@@ -122,7 +122,7 @@ mod serde_strvariant {
 }
 
 #[derive(Hash, Clone, PartialEq, Eq, derive_more::Display, Serialize, Deserialize)]
-#[display(fmt = "{value}")]
+#[display("{value}")]
 #[serde(transparent)]
 pub struct Name<T> {
     value: StrVariant,
@@ -609,7 +609,7 @@ pub mod prefixed_ulid {
     use ulid::Ulid;
 
     #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr)]
-    #[display(fmt = "{}_{ulid}", "Self::prefix()")]
+    #[display("{}_{ulid}", Self::prefix())]
     pub struct PrefixedUlid<T: 'static> {
         ulid: Ulid,
         phantom_data: PhantomData<fn(T) -> T>,
@@ -766,7 +766,7 @@ pub mod prefixed_ulid {
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, derive_more::Display,
 )]
-#[display(fmt = "{component_type}:{hash}")]
+#[display("{component_type}:{hash}")]
 pub struct ComponentConfigHash {
     pub component_type: ComponentType,
     pub hash: String,
@@ -852,7 +852,7 @@ impl ContentDigest {
     serde_with::SerializeDisplay,
     serde_with::DeserializeFromStr,
 )]
-#[display(fmt = "{hash_type}:{hash_base16}")]
+#[display("{hash_type}:{hash_base16}")]
 pub struct Digest {
     hash_type: HashType,
     hash_base16: StrVariant,

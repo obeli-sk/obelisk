@@ -143,7 +143,7 @@ impl Version {
 #[derive(
     Clone, Debug, derive_more::Display, PartialEq, Eq, serde::Serialize, serde::Deserialize,
 )]
-#[display(fmt = "{event}")]
+#[display("{event}")]
 pub struct ExecutionEvent {
     pub created_at: DateTime<Utc>,
     pub event: ExecutionEventInner,
@@ -241,7 +241,7 @@ pub enum ExecutionEventInner {
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .
     /// The execution is [`PendingState::PendingAt`]`(scheduled_at)`.
-    #[display(fmt = "Created({ffqn}, `{scheduled_at}`)")]
+    #[display("Created({ffqn}, `{scheduled_at}`)")]
     Created {
         ffqn: FunctionFqn,
         #[arbitrary(default)]
@@ -259,7 +259,7 @@ pub enum ExecutionEventInner {
     // Created by an executor.
     // Either immediately followed by an execution request by an executor or
     // after expiry immediately followed by WaitingForExecutor by a scheduler.
-    #[display(fmt = "Locked(`{lock_expires_at}`, {executor_id})")]
+    #[display("Locked(`{lock_expires_at}`, {executor_id})")]
     Locked {
         executor_id: ExecutorId,
         run_id: RunId,
@@ -273,7 +273,7 @@ pub enum ExecutionEventInner {
     // Created by the executor holding last lock.
     // Processed by a scheduler.
     // After expiry interpreted as pending.
-    #[display(fmt = "IntermittentFailure(`{expires_at}`)")]
+    #[display("IntermittentFailure(`{expires_at}`)")]
     IntermittentFailure {
         //TODO: Rename to IntermittentlyFailed
         expires_at: DateTime<Utc>,
@@ -283,12 +283,12 @@ pub enum ExecutionEventInner {
     // Created by the executor holding last lock.
     // Processed by a scheduler.
     // After expiry interpreted as pending.
-    #[display(fmt = "IntermittentTimeout(`{expires_at}`)")]
+    #[display("IntermittentTimeout(`{expires_at}`)")]
     IntermittentTimeout { expires_at: DateTime<Utc> }, // TODO: Rename to IntermittentlyTimeouted
     // Created by the executor holding last lock.
     // Processed by a scheduler if a parent execution needs to be notified,
     // also when
-    #[display(fmt = "Finished")]
+    #[display("Finished")]
     Finished {
         #[arbitrary(value = Ok(SupportedFunctionReturnValue::None))]
         result: FinishedExecutionResult,
@@ -296,10 +296,10 @@ pub enum ExecutionEventInner {
     // Created by an external system or a scheduler during a race.
     // Processed by the executor holding the last Lock.
     // Imediately followed by Finished by a scheduler.
-    #[display(fmt = "CancelRequest")]
+    #[display("CancelRequest")]
     CancelRequest, // TODO Rename to CancelRequested
 
-    #[display(fmt = "HistoryEvent({event})")]
+    #[display("HistoryEvent({event})")]
     HistoryEvent { event: HistoryEvent },
 }
 
@@ -340,16 +340,16 @@ impl ExecutionEventInner {
 )]
 #[serde(tag = "type")]
 pub enum HistoryEvent {
-    #[display(fmt = "Persist")]
+    #[display("Persist")]
     /// Must be created by the executor in [`PendingState::Locked`].
     Persist { value: Vec<u8> },
     /// Must be created by the executor in [`PendingState::Locked`].
-    #[display(fmt = "JoinSet({join_set_id})")]
+    #[display("JoinSet({join_set_id})")]
     JoinSet {
         join_set_id: JoinSetId,
         // TODO: add JoinSetKind (unordered, ordered)
     },
-    #[display(fmt = "JoinSetRequest({join_set_id}, {request})")]
+    #[display("JoinSetRequest({join_set_id}, {request})")]
     JoinSetRequest {
         join_set_id: JoinSetId,
         request: JoinSetRequest,
@@ -360,13 +360,13 @@ pub enum HistoryEvent {
     /// The execution is [`PendingState::PendingAt`]`(max(resp_time, lock_expires_at)`, so that the
     /// original executor can continue. After the expiry any executor can continue without
     /// marking the execution as timed out.
-    #[display(fmt = "JoinNext({join_set_id})")]
+    #[display("JoinNext({join_set_id})")]
     JoinNext {
         join_set_id: JoinSetId,
         /// Set to a future time if the executor is keeping the execution warm waiting for the result.
         lock_expires_at: DateTime<Utc>,
     },
-    #[display(fmt = "Schedule({execution_id}, {scheduled_at})")]
+    #[display("Schedule({execution_id}, {scheduled_at})")]
     Schedule {
         execution_id: ExecutionId,
         scheduled_at: HistoryEventScheduledAt,
@@ -379,7 +379,7 @@ pub enum HistoryEvent {
 pub enum HistoryEventScheduledAt {
     Now,
     At(DateTime<Utc>),
-    #[display(fmt = "In({_0:?})")]
+    #[display("In({_0:?})")]
     In(Duration),
 }
 impl HistoryEventScheduledAt {
@@ -399,13 +399,13 @@ impl HistoryEventScheduledAt {
 #[serde(tag = "type")]
 pub enum JoinSetRequest {
     // Must be created by the executor in `PendingState::Locked`.
-    #[display(fmt = "DelayRequest({delay_id}, expires_at: `{expires_at}`)")]
+    #[display("DelayRequest({delay_id}, expires_at: `{expires_at}`)")]
     DelayRequest {
         delay_id: DelayId,
         expires_at: DateTime<Utc>,
     },
     // Must be created by the executor in `PendingState::Locked`.
-    #[display(fmt = "ChildExecutionRequest({child_execution_id})")]
+    #[display("ChildExecutionRequest({child_execution_id})")]
     ChildExecutionRequest { child_execution_id: ExecutionId },
 }
 
@@ -469,7 +469,7 @@ pub type LockPendingResponse = Vec<LockedExecution>;
 pub type AppendBatchResponse = Version;
 
 #[derive(Debug, Clone, derive_more::Display, Serialize, Deserialize)]
-#[display(fmt = "{event}")]
+#[display("{event}")]
 pub struct AppendRequest {
     pub created_at: DateTime<Utc>,
     pub event: ExecutionEventInner,
@@ -708,17 +708,17 @@ pub enum ExpiredTimer {
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum PendingState {
-    #[display(fmt = "Locked(`{lock_expires_at}`, {executor_id}, {run_id})")]
+    #[display("Locked(`{lock_expires_at}`, {executor_id}, {run_id})")]
     Locked {
         executor_id: ExecutorId,
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
     },
-    #[display(fmt = "PendingAt(`{scheduled_at}`)")]
+    #[display("PendingAt(`{scheduled_at}`)")]
     PendingAt {
         scheduled_at: DateTime<Utc>,
     }, // e.g. created with a schedule, intermittent timeout/failure
-    #[display(fmt = "BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
+    #[display("BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
     /// Caused by [`HistoryEvent::JoinNext`]
     BlockedByJoinSet {
         join_set_id: JoinSetId,
