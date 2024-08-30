@@ -122,6 +122,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 
 ## Milestone 3: Triggers, external activities, Web UI - started
 - [ ] HTTP webhook triggers, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs), able to start new executions
+- [ ] Expose filesystem for WASI activities with directory mapping, store stdout and stderr (configurable)
 - [ ] External activities - running external processes
 - [ ] HTML based UI for showing executions, event history and relations
 - [ ] Add examples with C#, Go, JS, Python
