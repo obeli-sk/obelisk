@@ -709,7 +709,7 @@ impl WitPrinter {
         Ok(())
     }
 
-    fn print_type_name(&mut self, resolve: &Resolve, ty: &Type) -> Result<()> {
+    pub(crate) fn print_type_name(&mut self, resolve: &Resolve, ty: &Type) -> Result<()> {
         match ty {
             Type::Bool => self.output.push_str("bool"),
             Type::U8 => self.output.push_str("u8"),
@@ -1303,5 +1303,11 @@ impl Write for Output {
 impl From<Output> for String {
     fn from(output: Output) -> String {
         output.output
+    }
+}
+
+impl From<WitPrinter> for String {
+    fn from(value: WitPrinter) -> String {
+        value.output.output
     }
 }
