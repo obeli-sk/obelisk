@@ -141,8 +141,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 params,
                 parent: None,
                 scheduled_at: created_at,
-                retry_exp_backoff: component.config_store.common().default_retry_exp_backoff,
-                max_retries: component.config_store.common().default_max_retries,
+                retry_exp_backoff: component.config_store.default_retry_exp_backoff(),
+                max_retries: component.config_store.default_max_retries(),
                 config_id: component.config_id.clone(),
                 return_type: fn_meta
                     .return_type

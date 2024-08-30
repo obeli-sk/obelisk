@@ -22,8 +22,6 @@
 # location.path = "path/to/wasm"
 # location.oci = "docker.io/repo/image:tag"
 # content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash.
-# default_max_retries = 5 # When calling the activity directly, `default_max_retries` is applied.
-# default_retry_exp_backoff.millis = 100 # Exponential backoff setting.
 # exec_config.batch_size = 5 # Number of executions to lock for every event loop tick.
 # exec_config.lock_expiry.secs = 1 # Each execution is locked for 1s by default.
 # exec_config.tick_sleep.millis = 200 # Sleep between event loop ticks.
@@ -33,6 +31,8 @@
 ## Common settings for all components - see above
 ## Specific settings for wasm_activity:
 # recycle_instances = true # If true, the same WASM instance will be used again instead of creating new instance for performance reasons.
+# default_max_retries = 5 # When calling the activity directly, `default_max_retries` is applied.
+# default_retry_exp_backoff.millis = 100 # Exponential backoff setting.
 
 ## WASM Workflow components configuration
 ## Common settings for all components - see above

@@ -153,10 +153,6 @@ pub(crate) struct ComponentCommon {
     pub(crate) location: ComponentLocation,
     #[serde(default)]
     pub(crate) exec: ExecConfig,
-    #[serde(default = "default_max_retries")]
-    pub(crate) default_max_retries: u32,
-    #[serde(default = "default_retry_exp_backoff")]
-    pub(crate) default_retry_exp_backoff: DurationConfig,
 }
 
 impl ComponentCommon {
@@ -183,8 +179,6 @@ impl ComponentCommon {
                 lock_expiry: self.exec.lock_expiry.into(),
                 tick_sleep: self.exec.tick_sleep.into(),
             },
-            default_max_retries: self.default_max_retries,
-            default_retry_exp_backoff: self.default_retry_exp_backoff.into(),
         };
         Ok((verified, wasm_path))
     }
@@ -216,6 +210,10 @@ impl Default for ExecConfig {
 pub(crate) struct WasmActivity {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
+    #[serde(default = "default_max_retries")]
+    pub(crate) default_max_retries: u32,
+    #[serde(default = "default_retry_exp_backoff")]
+    pub(crate) default_retry_exp_backoff: DurationConfig,
     #[serde(default = "default_true")]
     pub(crate) recycle_instances: bool,
 }
@@ -242,6 +240,8 @@ impl WasmActivity {
         let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmActivityV1 {
             common,
+            default_max_retries: self.default_max_retries,
+            default_retry_exp_backoff: self.default_retry_exp_backoff.into(),
             recycle_instances: self.recycle_instances,
         };
         let config_id = config_store.as_hash();

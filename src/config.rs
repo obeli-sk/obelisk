@@ -46,14 +46,14 @@ pub(crate) struct ConfigStoreCommon {
     pub(crate) location: ComponentLocation,
     pub(crate) content_digest: ContentDigest,
     pub(crate) exec: ExecConfig,
-    pub(crate) default_max_retries: u32,
-    pub(crate) default_retry_exp_backoff: Duration,
 }
 
 #[derive(Debug, Clone, Hash)]
 pub(crate) enum ConfigStore {
     WasmActivityV1 {
         common: ConfigStoreCommon,
+        default_max_retries: u32,
+        default_retry_exp_backoff: Duration,
         recycle_instances: bool,
     },
     WasmWorkflowV1 {
@@ -81,6 +81,30 @@ impl ConfigStore {
 
     pub(crate) fn name(&self) -> &str {
         &self.common().name
+    }
+
+    pub(crate) fn default_max_retries(&self) -> u32 {
+        if let Self::WasmActivityV1 {
+            default_max_retries,
+            ..
+        } = self
+        {
+            *default_max_retries
+        } else {
+            0
+        }
+    }
+
+    pub(crate) fn default_retry_exp_backoff(&self) -> Duration {
+        if let Self::WasmActivityV1 {
+            default_retry_exp_backoff,
+            ..
+        } = self
+        {
+            *default_retry_exp_backoff
+        } else {
+            Duration::ZERO
+        }
     }
 
     pub(crate) fn as_hash(&self) -> ComponentConfigHash {
