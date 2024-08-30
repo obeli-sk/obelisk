@@ -96,6 +96,7 @@
                 rustToolchain
                 tokio-console
                 wasm-tools
+                wasmtime
               ];
             PROTOC = "${pkgs.protobuf}/bin/protoc";
           };
