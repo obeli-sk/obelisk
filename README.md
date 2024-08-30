@@ -121,11 +121,12 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [x] Logging and tracing configuration, sending events to an OTLP collector
 
 ## Milestone 3: Triggers, external activities, Web UI - started
-- [ ] HTTP webhook triggers, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs), starting or continuing a workflow
+- [ ] HTTP webhook triggers, similar to the [proxy handler example](https://github.com/sunfishcode/hello-wasi-http/blob/main/src/lib.rs), able to start new executions
 - [ ] External activities - running external processes
 - [ ] HTML based UI for showing executions, event history and relations
 - [ ] Add examples with C#, Go, JS, Python
 - [ ] Add jitter to retries
+- [ ] WASM to WIT exporter with extensions
 
 ## Milestone 4
 - [ ] Interactive CLI for execution management
@@ -139,6 +140,9 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] Queue capacity setting, adding backpressure to execution submission
 - [ ] Retry budget, disabling retries when the activity is failing certain % of requests
 - [ ] Ability to simulate behaviour of the system with injected failures
+- [ ] Notify activities. When called, thir return value must be supplied via an API endpoint.
+- [ ] An API for listing executions with their open notify activities.
+- [ ] Read only query function that can be called during an await point or after execution finishes.
 
 # Building from source
 Set up the development dependencies using nix flakes:
