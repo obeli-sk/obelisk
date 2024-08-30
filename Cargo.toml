@@ -146,7 +146,7 @@ anyhow = { version = "1.0", features = ["backtrace"] }
 directories = "5.0"
 arbitrary = { version = "1.3.2", features = ["derive"] }
 assert_matches = "1.5.0"
-async-channel = "2.1.1"
+async-channel = "2.3.1"
 async-sqlite = { package = "obeli-sk-deps-async-sqlite", version = "0.1.0", features = [
     "serde_json",
     "chrono",
@@ -155,8 +155,8 @@ async-sqlite = { package = "obeli-sk-deps-async-sqlite", version = "0.1.0", feat
 async-trait = "0.1"
 cargo_metadata = "0.18"
 cfg-if = "1.0.0"
-chrono = { version = "0.4.34", features = ["arbitrary", "serde"] }
-clap = { version = "4.5.4", features = ["derive"] }
+chrono = { version = "0.4.38", features = ["arbitrary", "serde"] }
+clap = { version = "4.5.16", features = ["derive"] }
 config = { version = "0.14.0", default-features = false, features = [
     "toml",
     "preserve_order",
@@ -167,18 +167,18 @@ console-subscriber = "0.4.0"
 const_format = "0.2.32"
 criterion = "0.5"
 derivative = "2.2.0"
-derive_more = "0.99.17"
-docker_credential = "1.2.1"
+derive_more = "0.99.18"
+docker_credential = "1.3.1"
 futures-util = "0.3.30"
 getrandom = "=0.2.11" # For madsim patch
-hashbrown = { version = "0.14.3", features = ["serde"] }
+hashbrown = { version = "0.14.5", features = ["serde"] }
 http-body-util = "0.1"
-hyper = "1.1.0"
+hyper = "1.4.1"
 hyper-util = "0.1"
-indexmap = { version = "2.1", features = ["serde"] }
-insta = { version = "1.38.0", features = ["json"] }
+indexmap = { version = "2.4", features = ["serde"] }
+insta = { version = "1.39.0", features = ["json"] }
 itertools = "0.13"
-lazy_static = "1.4"
+lazy_static = "1.5"
 madsim = "0.2.30"
 oci-distribution = { version = "0.11.0", default-features = false, features = [
     "rustls-tls",
@@ -192,15 +192,15 @@ prost-wkt-types = "0.6"
 rand = "0.8.5"
 rusqlite = { version = "0.31.0" }
 rstest = "0.22"
-serde = { version = "1.0.193", features = ["derive"] }
-serde_json = "1.0.108"
-serde_with = "3.7.0"
+serde = { version = "1.0.209", features = ["derive"] }
+serde_json = "1.0.127"
+serde_with = "3.9.0"
 sha2 = "0.10.8"
 shadow-rs = "0.31"
-strum = { version = "0.26.0", features = ["derive"] }
-tempfile = "3.10.1"
+strum = { version = "0.26.3", features = ["derive"] }
+tempfile = "3.12.0"
 thiserror = "1.0"
-tokio = { version = "0.2.28", package = "madsim-tokio", features = [
+tokio = { version = "0.2.29", package = "madsim-tokio", features = [
     "fs",
     "macros",
     "rt-multi-thread",
@@ -211,19 +211,19 @@ tokio = { version = "0.2.28", package = "madsim-tokio", features = [
     "tracing",
 ] }
 tokio-stream = "0.1.15"
-toml = { version = "0.8.14", features = ["preserve_order"] }
-tonic = { version = "0.12.1", features = ["zstd", "gzip", "tls", "tls-roots"] }
-tonic-build = "0.12.1"
+toml = { version = "0.8.19", features = ["preserve_order"] }
+tonic = { version = "0.12.2", features = ["zstd", "gzip", "tls", "tls-roots"] }
+tonic-build = "0.12.2"
 tracing = { version = "0.1", features = ["log"] }
 tracing-appender = "0.2.3"
-tracing-chrome = "0.7.1"
+tracing-chrome = "0.7.2"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
-ulid = { version = "1.1.0", features = ["serde"] }
-waki = "0.3.0"
+ulid = { version = "1.1.3", features = ["serde"] }
+waki = "0.3.1"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "23.0.1", default-features = false, features = [
+wasmtime = { version = "23.0.2", default-features = false, features = [
     # remove "parallel-compilation"
     "addr2line",
     "async",
@@ -240,8 +240,8 @@ wasmtime = { version = "23.0.1", default-features = false, features = [
     "profiling",
     "wat",
 ] }
-wasmtime-wasi = "23.0.1"
-wasmtime-wasi-http = "23.0.1"
+wasmtime-wasi = "23.0.2"
+wasmtime-wasi-http = "23.0.2"
 wast = "212.0.0"
 wit-parser = "0.212.0"
 
@@ -273,6 +273,7 @@ clippy.missing_errors_doc = "allow" # Allow missing docs for now
 clippy.missing_panics_doc = "allow" # Allow missing docs for now
 # lower the priority to allow overriding later
 clippy.trivially_copy_pass_by_ref = "allow" # Lots of false positives.
+# Move nested functions closer to where they are used.
 clippy.module_name_repetitions = "allow"
 
 [workspace.lints.rust]
