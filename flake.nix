@@ -83,6 +83,7 @@
                 cargo-binstall
                 cargo-component
                 cargo-dist
+                cargo-edit
                 cargo-expand
                 cargo-insta
                 cargo-nextest

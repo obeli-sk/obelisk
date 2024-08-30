@@ -1,6 +1,7 @@
 cargo-binstall 1.10.2
 cargo-component 0.15.0
 cargo-dist 0.21.1
+cargo-edit-upgrade 0.12.2
 cargo-expand 1.0.89
 cargo-nextest 0.9.72
 dive 0.12.0

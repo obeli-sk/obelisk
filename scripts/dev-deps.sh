@@ -10,6 +10,7 @@ rm -f dev-deps.txt
 echo "cargo-binstall $(cargo-binstall -V)" >> dev-deps.txt
 cargo-component --version >> dev-deps.txt
 cargo dist --version >> dev-deps.txt
+cargo upgrade --version >> dev-deps.txt
 cargo-expand --version >> dev-deps.txt
 # cargo-insta --version >> dev-deps.txt  # Broken as of 1.39-unstable-2024-08-22
 cargo-nextest --version >> dev-deps.txt
