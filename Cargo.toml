@@ -252,7 +252,7 @@ wast = "215.0.0"
 wit-parser = "0.215.0"
 
 # cargo-component
-wit-bindgen-rt = "0.24.0"
+wit-bindgen-rt = "0.25.0"
 
 # otlp
 opentelemetry = "0.23.0"
