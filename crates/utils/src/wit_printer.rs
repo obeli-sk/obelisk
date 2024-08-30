@@ -1,3 +1,4 @@
+// https://github.com/bytecodealliance/wasm-tools/blob/v1.215.0/crates/wit-component/src/printing.rs
 /*
 Apache License
 Version 2.0, January 2004
@@ -285,59 +286,72 @@ impl WitPrinter {
         self
     }
 
-    /// Print a set of one or more WIT packages into a string.
-    pub fn print(&mut self, resolve: &Resolve, pkg_ids: &[PackageId]) -> Result<String> {
-        let has_multiple_packages = pkg_ids.len() > 1;
-        for (i, pkg_id) in pkg_ids.into_iter().enumerate() {
+    /// Prints the specified `pkg` which is located in `resolve` to a string.
+    ///
+    /// The `nested` list of packages are other packages to include at the end
+    /// of the output in `package ... { ... }` syntax.
+    pub fn print(
+        &mut self,
+        resolve: &Resolve,
+        pkg: PackageId,
+        nested: &[PackageId],
+    ) -> Result<String> {
+        self.print_package(resolve, pkg, true)?;
+        for (i, pkg_id) in nested.iter().enumerate() {
             if i > 0 {
                 self.output.push_str("\n\n");
             }
-
-            let pkg = &resolve.packages[pkg_id.clone()];
-            self.print_docs(&pkg.docs);
-            self.output.push_str("package ");
-            self.print_name(&pkg.name.namespace);
-            self.output.push_str(":");
-            self.print_name(&pkg.name.name);
-            if let Some(version) = &pkg.name.version {
-                self.output.push_str(&format!("@{version}"));
-            }
-
-            if has_multiple_packages {
-                self.output.push_str("{");
-                self.output.indent += 1
-            } else {
-                self.print_semicolon();
-                self.output.push_str("\n\n");
-            }
-
-            for (name, id) in pkg.interfaces.iter() {
-                self.print_docs(&resolve.interfaces[*id].docs);
-                self.print_stability(&resolve.interfaces[*id].stability);
-                self.output.push_str("interface ");
-                self.print_name(name);
-                self.output.push_str(" {\n");
-                self.print_interface(resolve, *id)?;
-                writeln!(&mut self.output, "}}\n")?;
-            }
-
-            for (name, id) in pkg.worlds.iter() {
-                self.print_docs(&resolve.worlds[*id].docs);
-                self.print_stability(&resolve.worlds[*id].stability);
-                self.output.push_str("world ");
-                self.print_name(name);
-                self.output.push_str(" {\n");
-                self.print_world(resolve, *id)?;
-                writeln!(&mut self.output, "}}")?;
-            }
-
-            if has_multiple_packages {
-                self.output.push_str("}");
-                self.output.indent -= 1
-            }
+            self.print_package(resolve, *pkg_id, false)?;
         }
 
         Ok(std::mem::take(&mut self.output).into())
+    }
+
+    fn print_package(&mut self, resolve: &Resolve, pkg: PackageId, is_main: bool) -> Result<()> {
+        let pkg = &resolve.packages[pkg];
+        self.print_docs(&pkg.docs);
+        self.output.push_str("package ");
+        self.print_name(&pkg.name.namespace);
+        self.output.push_str(":");
+        self.print_name(&pkg.name.name);
+        if let Some(version) = &pkg.name.version {
+            self.output.push_str(&format!("@{version}"));
+        }
+
+        if is_main {
+            self.print_semicolon();
+            self.output.push_str("\n\n");
+        } else {
+            self.output.push_str(" {\n");
+        }
+
+        for (name, id) in pkg.interfaces.iter() {
+            self.print_docs(&resolve.interfaces[*id].docs);
+            self.print_stability(&resolve.interfaces[*id].stability);
+            self.output.push_str("interface ");
+            self.print_name(name);
+            self.output.push_str(" {\n");
+            self.print_interface(resolve, *id)?;
+            if is_main {
+                writeln!(&mut self.output, "}}\n")?;
+            } else {
+                writeln!(&mut self.output, "}}")?;
+            }
+        }
+
+        for (name, id) in pkg.worlds.iter() {
+            self.print_docs(&resolve.worlds[*id].docs);
+            self.print_stability(&resolve.worlds[*id].stability);
+            self.output.push_str("world ");
+            self.print_name(name);
+            self.output.push_str(" {\n");
+            self.print_world(resolve, *id)?;
+            writeln!(&mut self.output, "}}")?;
+        }
+        if !is_main {
+            writeln!(&mut self.output, "}}")?;
+        }
+        Ok(())
     }
 
     fn print_semicolon(&mut self) {
@@ -695,7 +709,7 @@ impl WitPrinter {
         Ok(())
     }
 
-    pub(crate) fn print_type_name(&mut self, resolve: &Resolve, ty: &Type) -> Result<()> {
+    fn print_type_name(&mut self, resolve: &Resolve, ty: &Type) -> Result<()> {
         match ty {
             Type::Bool => self.output.push_str("bool"),
             Type::U8 => self.output.push_str("u8"),
@@ -1135,7 +1149,11 @@ impl WitPrinter {
     fn print_stability(&mut self, stability: &Stability) {
         match stability {
             Stability::Unknown => {}
-            Stability::Stable { since, feature, .. } => {
+            Stability::Stable {
+                since,
+                feature,
+                deprecated,
+            } => {
                 self.output.push_str("@since(version = ");
                 self.output.push_str(&since.to_string());
                 if let Some(feature) = feature {
@@ -1143,11 +1161,24 @@ impl WitPrinter {
                     self.output.push_str(feature);
                 }
                 self.output.push_str(")\n");
+                if let Some(version) = deprecated {
+                    self.output.push_str("@deprecated(version = ");
+                    self.output.push_str(&version.to_string());
+                    self.output.push_str(")\n");
+                }
             }
-            Stability::Unstable { feature, .. } => {
+            Stability::Unstable {
+                feature,
+                deprecated,
+            } => {
                 self.output.push_str("@unstable(feature = ");
                 self.output.push_str(feature);
                 self.output.push_str(")\n");
+                if let Some(version) = deprecated {
+                    self.output.push_str("@deprecated(version = ");
+                    self.output.push_str(&version.to_string());
+                    self.output.push_str(")\n");
+                }
             }
         }
     }
@@ -1272,11 +1303,5 @@ impl Write for Output {
 impl From<Output> for String {
     fn from(output: Output) -> String {
         output.output
-    }
-}
-
-impl From<WitPrinter> for String {
-    fn from(value: WitPrinter) -> String {
-        value.output.output
     }
 }
