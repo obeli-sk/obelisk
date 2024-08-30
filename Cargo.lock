@@ -4332,6 +4332,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "trigger-http-hello"
+version = "0.2.2"
+dependencies = [
+ "wit-bindgen-rt 0.24.0",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5440,6 +5447,9 @@ name = "wit-bindgen-rt"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b0780cf7046630ed70f689a098cd8d56c5c3b22f2a7379bbdb088879963ff96"
+dependencies = [
+ "bitflags 2.6.0",
+]
 
 [[package]]
 name = "wit-bindgen-rt"

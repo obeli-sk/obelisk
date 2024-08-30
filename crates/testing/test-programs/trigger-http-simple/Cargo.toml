@@ -1,0 +1,30 @@
+[package]
+name = "trigger-http-hello"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wit-bindgen-rt = { workspace = true, features = ["bitflags"] }
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "component:trigger-http-hello"
+proxy = true
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = { path = "wit/deps/http/" }
+"wasi:random" = { path = "wit/deps/random/" }
+"wasi:cli" = { path = "wit/deps/cli" }
+"wasi:io" = { path = "wit/deps/io" }
+"wasi:clocks" = { path = "wit/deps/clocks" }
+"wasi:filesystem" = { path = "wit/deps/filesystem" }
+"wasi:sockets" = { path = "wit/deps/sockets" }

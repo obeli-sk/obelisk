@@ -93,8 +93,8 @@ shadow-rs.workspace = true
 resolver = "2"
 members = [
     "crates/concepts",
-    "crates/db-sqlite",
     "crates/db-mem",
+    "crates/db-sqlite",
     "crates/executor",
     "crates/testing/cargo-component-builder",
     "crates/testing/db-tests",
@@ -110,6 +110,7 @@ members = [
     "crates/testing/test-programs/sleep/activity/builder",
     "crates/testing/test-programs/sleep/workflow",
     "crates/testing/test-programs/sleep/workflow/builder",
+    "crates/testing/test-programs/trigger-http-simple",
     "crates/testing/test-utils",
     "crates/utils",
     "crates/val-json",
