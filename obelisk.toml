@@ -5,7 +5,7 @@
 ## | ${CONFIG_DIR}|  ~/.config/obelisk      | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.config_dir
 
 ## Server configuration
-# api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server will listen.
+api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server will listen.
 
 # sqlite_file = "${DATA_DIR}/obelisk.sqlite" # Path to sqlite database. Supports path prefixes.
 

@@ -34,7 +34,6 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 pub(crate) struct ObeliskConfig {
     #[serde(default)]
     sqlite_file: Option<String>,
-    #[serde(default = "default_api_listening_addr")]
     pub(crate) api_listening_addr: SocketAddr,
     #[serde(default)]
     pub(crate) oci: OciConfig,
@@ -612,10 +611,6 @@ const fn default_tick_sleep() -> DurationConfig {
 
 const fn default_non_blocking_event_batching() -> u32 {
     100
-}
-
-fn default_api_listening_addr() -> SocketAddr {
-    "127.0.0.1:5005".parse().unwrap()
 }
 
 fn default_out_style() -> LoggingStyle {
