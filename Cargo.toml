@@ -69,7 +69,6 @@ name = "obelisk"
 path = "src/main.rs"
 
 [features]
-parallel-compilation = ["wasmtime/parallel-compilation"]
 tokio-console = ["dep:console-subscriber"]
 otlp = [
     "dep:opentelemetry",
@@ -79,7 +78,7 @@ otlp = [
     "dep:tracing-opentelemetry",
 ]
 tracing-chrome = ["dep:tracing-chrome"]
-default = ["parallel-compilation", "otlp"]
+default = ["otlp"]
 
 [lints]
 workspace = true
@@ -229,23 +228,7 @@ waki = "0.3.1"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "24.0", default-features = false, features = [
-    # remove "parallel-compilation"
-    "addr2line",
-    "async",
-    "cache",
-    "component-model",
-    "component-model",
-    "coredump",
-    "cranelift",
-    "debug-builtins",
-    "demangle",
-    "gc",
-    "memory-protection-keys",
-    "pooling-allocator",
-    "profiling",
-    "wat",
-] }
+wasmtime = "24.0"
 wasmtime-wasi = "24.0"
 wasmtime-wasi-http = "24.0"
 wast = "215.0.0"
