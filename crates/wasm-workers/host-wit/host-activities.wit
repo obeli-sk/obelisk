@@ -9,6 +9,7 @@ interface host-activities {
     /// A duration of time, in nanoseconds.
     type duration = u64;
 
+
     variant scheduled-at {
         now,
         at(datetime),

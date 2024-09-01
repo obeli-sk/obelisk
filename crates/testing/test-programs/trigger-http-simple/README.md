@@ -21,7 +21,7 @@ To implement the contract in `src/lib.rs`
 I adapted code from this [repo](https://github.com/sunfishcode/hello-wasi-http/blob/9f0e7081b987ff9bfbb71f08106b00217eed9d7e/src/lib.rs)
 and built the component:
 ```sh
-cargo component build
+cargo component build --release
 ```
 To test, I used `wasmtime` binary:
 ```sh

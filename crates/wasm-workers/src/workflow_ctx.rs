@@ -337,6 +337,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activities::Host
     for WorkflowCtx<C, DB, P>
 {
+    // TODO: Apply jitter, should be configured on the component level
     async fn sleep(&mut self, millis: u32) -> wasmtime::Result<()> {
         Ok(self.call_sleep(millis).await?)
     }
@@ -361,6 +362,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
         )
     }
 
+    // TODO: Apply jitter, should be configured on the component level
     #[instrument(skip(self))]
     async fn schedule(
         &mut self,

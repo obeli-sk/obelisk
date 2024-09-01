@@ -58,12 +58,23 @@ exec.lock_expiry.secs = 10
 name = "http_get_activity"
 location.oci = "docker.io/getobelisk/example_activity_http_get:2024-08-12-1@sha256:deb576c153e375f7c1f016d82860fa6e1cf50264944b078858f577d54d2a9863"
 exec.lock_expiry.secs = 5
+# TODO: inherit_network, allow_ip_name_lookup in wasmtime_wasi::WasiCtxBuilder
 
 [[workflow]]
 name = "http_get_workflow"
 location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-08-12-1@sha256:d591785af59e5b0809b87a6e32bae7f590f0ea459a53d4bbcb8dc3e4322ddce3"
 exec.lock_expiry.secs = 10
 child_retry_exp_backoff.secs = 1
+
+# [[http_server]]
+# name = "external"
+# listening_addr = "0.0.0.0:9090"
+
+# [[webhook_trigger]]
+# name = "hello_world"
+# http_server = "external"
+# location.path = "target/wasm32-wasip1/release/trigger_http_hello.wasm"
+# path = "/"
 
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:
