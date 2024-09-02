@@ -75,6 +75,7 @@ child_retry_exp_backoff.secs = 1
 # http_server = "external"
 # location.path = "target/wasm32-wasip1/release/trigger_http_hello.wasm"
 # path = "/"
+# execution-timeout.millis = 100
 
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:

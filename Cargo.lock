@@ -2532,6 +2532,9 @@ dependencies = [
  "derive_more",
  "futures-util",
  "hashbrown 0.14.5",
+ "http-body-util",
+ "hyper 1.4.1",
+ "hyper-util",
  "indexmap 2.4.0",
  "itertools 0.13.0",
  "madsim",
@@ -4332,7 +4335,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "trigger-http-hello"
+name = "trigger-http-simple"
 version = "0.2.2"
 dependencies = [
  "wit-bindgen-rt 0.25.0",

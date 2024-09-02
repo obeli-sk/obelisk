@@ -6,6 +6,8 @@ pub mod activity_worker;
 pub mod engines;
 pub mod epoch_ticker;
 mod event_history;
+pub mod http_trigger;
+mod wasi_http;
 mod workflow_ctx;
 pub mod workflow_worker;
 

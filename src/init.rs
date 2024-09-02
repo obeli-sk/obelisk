@@ -8,7 +8,7 @@ where
 {
     if crate::env_vars::is_env_true(&crate::env_vars::SupportedEnvVar::TOKIO_CONSOLE) {
         // Run with
-        // TOKIO_CONSOLE=true RUSTFLAGS="--cfg tokio_unstable" DB=mem RUST_LOG=error,runtime=trace,tokio=trace cargo run --target-dir=target/debug/tokio-console --features parallel-compilation,tokio-console > /dev/null
+        // TOKIO_CONSOLE=true RUSTFLAGS="--cfg tokio_unstable" cargo run --features tokio-console
         use tracing_subscriber::Layer;
         Some(
             console_subscriber::spawn().with_filter(

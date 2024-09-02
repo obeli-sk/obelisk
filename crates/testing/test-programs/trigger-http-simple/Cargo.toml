@@ -1,5 +1,5 @@
 [package]
-name = "trigger-http-hello"
+name = "trigger-http-simple"
 version.workspace = true
 license.workspace = true
 repository.workspace = true

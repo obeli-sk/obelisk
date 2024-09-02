@@ -228,7 +228,7 @@ waki = "0.3.1"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = "24.0"
+wasmtime = { version = "24.0", features = ["memory-protection-keys"] }
 wasmtime-wasi = "24.0"
 wasmtime-wasi-http = "24.0"
 wast = "215.0.0"

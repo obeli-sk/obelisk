@@ -15,8 +15,9 @@ use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 use wasmtime_wasi_http::WasiHttpImpl;
 
-type StoreCtx = utils::wasi_http::Ctx;
+type StoreCtx = crate::wasi_http::Ctx;
 
+//TODO: Benchmark and decide whether this is still needed.
 #[derive(Clone, Debug, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub enum RecycleInstancesSetting {
     #[default]
@@ -140,7 +141,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         let (instance, mut store) = if let Some((instance, store)) = instance_and_store {
             (instance, store)
         } else {
-            let mut store = utils::wasi_http::store(&self.engine);
+            let mut store = crate::wasi_http::store(&self.engine);
             match self
                 .linker
                 .instantiate_async(&mut store, &self.component)
