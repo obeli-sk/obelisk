@@ -145,6 +145,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] An API for listing executions with their open notify activities.
 - [ ] Read only query function that can be called during an await point or after execution finishes.
 - [ ] Workflow snapshots for faster replay
+- [ ] Optional stdout,stderr persistence / forwarding
 
 # Building from source
 Set up the development dependencies using nix flakes:
