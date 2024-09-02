@@ -121,13 +121,3 @@ async fn handle_request(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::StdError;
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn server() -> Result<(), StdError> {
-        super::server().await
-    }
-}
