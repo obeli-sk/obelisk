@@ -1,31 +1,18 @@
-use crate::WasmFileError;
-use async_trait::async_trait;
-use concepts::{ComponentConfigHash, FunctionFqn, SupportedFunctionReturnValue};
-use concepts::{FunctionMetadata, StrVariant};
-use executor::worker::{FatalError, WorkerContext, WorkerResult};
-use executor::worker::{Worker, WorkerError};
-use http_body_util::Full;
-use hyper::body::Bytes;
+use concepts::ComponentConfigHash;
 use hyper::server::conn::http1;
-use hyper::Response;
 use hyper_util::rt::TokioIo;
-use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::path::Path;
-use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, trace};
-use utils::time::{now_tokio_instant, ClockFn};
-use utils::wasm_tools::{ExIm, WasmComponent};
-use wasmtime::component::{ComponentExportIndex, Linker};
-use wasmtime::{component::Val, Engine};
-use wasmtime::{PoolingAllocationConfig, Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline};
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
+use tracing::{error, info};
+use utils::wasm_tools::WasmComponent;
+use wasmtime::component::Linker;
+use wasmtime::Engine;
+use wasmtime::PoolingAllocationConfig;
 use wasmtime_wasi_http::bindings::http::types::Scheme;
 use wasmtime_wasi_http::bindings::ProxyPre;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpImpl, WasiHttpView};
+use wasmtime_wasi_http::WasiHttpView;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HttpTriggerConfig {
@@ -36,7 +23,7 @@ type StdError = Box<dyn std::error::Error + Send + Sync>;
 
 type Request = hyper::Request<hyper::body::Incoming>;
 
-async fn server() -> Result<(), StdError> {
+pub async fn server() -> Result<(), StdError> {
     let wasm_path = "target/wasm32-wasip1/release/trigger_http_simple.wasm";
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
 

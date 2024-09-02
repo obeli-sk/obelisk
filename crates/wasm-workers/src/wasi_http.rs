@@ -3,6 +3,7 @@ use wasmtime::{component::ResourceTable, Store};
 use wasmtime_wasi::{self, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
+#[allow(clippy::struct_field_names)]
 pub struct Ctx {
     table: ResourceTable,
     wasi_ctx: WasiCtx,
