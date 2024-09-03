@@ -103,7 +103,9 @@ impl<C: ClockFn> EventHistory<C> {
     }
 
     #[allow(clippy::too_many_lines)]
-    pub(crate) async fn replay_or_interrupt<DB: DbConnection>(
+    /// Apply the event and wait if new, replay if already in the event history, or
+    /// apply with an interrupt.
+    pub(crate) async fn apply<DB: DbConnection>(
         &mut self,
         event_call: EventCall,
         db_connection: &DB,
@@ -1073,7 +1075,7 @@ mod tests {
                 let db_pool = db_pool.clone();
                 async move {
                     event_history
-                        .replay_or_interrupt(
+                        .apply(
                             EventCall::CreateJoinSet { join_set_id },
                             &db_pool.connection(),
                             &mut version,
@@ -1083,7 +1085,7 @@ mod tests {
                         .unwrap();
 
                     event_history
-                        .replay_or_interrupt(
+                        .apply(
                             EventCall::StartAsync {
                                 ffqn: MOCK_FFQN,
                                 join_set_id,
@@ -1097,7 +1099,7 @@ mod tests {
                         .await
                         .unwrap();
                     event_history
-                        .replay_or_interrupt(
+                        .apply(
                             EventCall::BlockingChildJoinNext { join_set_id },
                             &db_pool.connection(),
                             &mut version,
@@ -1170,7 +1172,7 @@ mod tests {
             fn_registry: &dyn FunctionRegistry,
         ) {
             event_history
-                .replay_or_interrupt(
+                .apply(
                     EventCall::CreateJoinSet { join_set_id },
                     &db_pool.connection(),
                     version,
@@ -1179,7 +1181,7 @@ mod tests {
                 .await
                 .unwrap();
             event_history
-                .replay_or_interrupt(
+                .apply(
                     EventCall::StartAsync {
                         ffqn: MOCK_FFQN,
                         join_set_id,
@@ -1281,7 +1283,7 @@ mod tests {
         .await;
         // issue BlockingChildJoinNext
         let res = event_history
-            .replay_or_interrupt(
+            .apply(
                 EventCall::BlockingChildJoinNext { join_set_id },
                 &db_pool.connection(),
                 &mut version,
@@ -1324,7 +1326,7 @@ mod tests {
             child_execution_id_b: ExecutionId,
         ) -> Result<SupportedFunctionReturnValue, FunctionError> {
             event_history
-                .replay_or_interrupt(
+                .apply(
                     EventCall::CreateJoinSet { join_set_id },
                     &db_pool.connection(),
                     version,
@@ -1333,7 +1335,7 @@ mod tests {
                 .await
                 .unwrap();
             event_history
-                .replay_or_interrupt(
+                .apply(
                     EventCall::StartAsync {
                         ffqn: MOCK_FFQN,
                         join_set_id,
@@ -1347,7 +1349,7 @@ mod tests {
                 .await
                 .unwrap();
             event_history
-                .replay_or_interrupt(
+                .apply(
                     EventCall::StartAsync {
                         ffqn: MOCK_FFQN,
                         join_set_id,
@@ -1361,7 +1363,7 @@ mod tests {
                 .await
                 .unwrap();
             event_history
-                .replay_or_interrupt(
+                .apply(
                     EventCall::BlockingChildJoinNext { join_set_id },
                     &db_pool.connection(),
                     version,
@@ -1481,7 +1483,7 @@ mod tests {
 
         // second child result should be found
         let res = event_history
-            .replay_or_interrupt(
+            .apply(
                 EventCall::BlockingChildJoinNext { join_set_id },
                 &db_pool.connection(),
                 &mut version,

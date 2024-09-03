@@ -150,7 +150,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         let event_call = self.imported_fn_to_event_call(ffqn, params)?;
         let res = self
             .event_history
-            .replay_or_interrupt(
+            .apply(
                 event_call,
                 &self.db_pool.connection(),
                 &mut self.version,
@@ -175,7 +175,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
         let delay_id = DelayId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
         self.event_history
-            .replay_or_interrupt(
+            .apply(
                 EventCall::BlockingDelayRequest {
                     join_set_id,
                     delay_id,
@@ -217,7 +217,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         };
         let res = self
             .event_history
-            .replay_or_interrupt(
+            .apply(
                 EventCall::ScheduleRequest {
                     scheduled_at,
                     execution_id,
@@ -353,7 +353,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
             JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
         let res = self
             .event_history
-            .replay_or_interrupt(
+            .apply(
                 EventCall::CreateJoinSet { join_set_id },
                 &self.db_pool.connection(),
                 &mut self.version,
