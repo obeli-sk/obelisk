@@ -1,26 +1,25 @@
 use concepts::StrVariant;
-use std::{error::Error, fmt::Debug, path::PathBuf};
+use std::{error::Error, fmt::Debug};
 use utils::wasm_tools::{self};
 
 pub mod activity_worker;
 pub mod engines;
 pub mod epoch_ticker;
 mod event_history;
+mod activity_ctx;
 pub mod webhook_trigger;
-mod wasi_http;
 mod workflow_ctx;
 pub mod workflow_worker;
 
 #[derive(thiserror::Error, Debug)]
 pub enum WasmFileError {
-    #[error("cannot read wasm component from `{0}` - {1}")]
-    CannotReadComponent(PathBuf, wasmtime::Error),
-    #[error("cannot decode `{0}` - {1}")]
-    DecodeError(PathBuf, wasm_tools::DecodeError),
-    #[error("cannot link `{file}` - {reason}, details: {err}")]
+    #[error("cannot read WASM file: {0}")]
+    CannotReadComponent(wasmtime::Error),
+    #[error("cannot decode: {0}")]
+    DecodeError(wasm_tools::DecodeError),
+    #[error("linking error - {context}, details: {err}")]
     LinkingError {
-        file: PathBuf,
-        reason: StrVariant,
+        context: StrVariant,
         err: Box<dyn Error + Send + Sync>,
     },
 }

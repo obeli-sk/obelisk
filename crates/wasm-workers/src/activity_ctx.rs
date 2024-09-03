@@ -4,13 +4,13 @@ use wasmtime_wasi::{self, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 #[allow(clippy::struct_field_names)]
-pub struct Ctx {
+pub struct ActivityCtx {
     table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
 }
 
-impl WasiView for Ctx {
+impl WasiView for ActivityCtx {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
@@ -19,7 +19,7 @@ impl WasiView for Ctx {
     }
 }
 
-impl WasiHttpView for Ctx {
+impl WasiHttpView for ActivityCtx {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http_ctx
     }
@@ -30,9 +30,9 @@ impl WasiHttpView for Ctx {
 }
 
 #[must_use]
-pub fn store(engine: &Engine) -> Store<Ctx> {
+pub fn store(engine: &Engine) -> Store<ActivityCtx> {
     let mut builder = WasiCtxBuilder::new();
-    let ctx = Ctx {
+    let ctx = ActivityCtx {
         table: ResourceTable::new(),
         wasi_ctx: builder.build(),
         http_ctx: WasiHttpCtx::new(),

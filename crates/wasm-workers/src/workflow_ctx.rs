@@ -1,5 +1,6 @@
 use crate::event_history::{EventCall, EventHistory};
 use crate::workflow_worker::JoinNextBlockingStrategy;
+use crate::WasmFileError;
 use assert_matches::assert_matches;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
@@ -242,8 +243,13 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         u128::from_be_bytes(bytes)
     }
 
-    pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), wasmtime::Error> {
-        obelisk::workflow::host_activities::add_to_linker(linker, |state: &mut Self| state)
+    pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
+        obelisk::workflow::host_activities::add_to_linker(linker, |state: &mut Self| state).map_err(
+            |err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking host activities"),
+                err: err.into(),
+            },
+        )
     }
 
     fn imported_fn_to_event_call(

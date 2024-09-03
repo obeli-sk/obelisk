@@ -13,6 +13,8 @@ pub mod obelisk {
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             pub type Datetime = super::super::super::wasi::clocks::wall_clock::Datetime;
+            /// TODO: new-execution-id: func() -> string;
+            /// FIXME: import Duration from wasi:clocks
             /// A duration of time, in nanoseconds.
             pub type Duration = u64;
             #[derive(Clone, Copy)]
@@ -798,8 +800,8 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.25.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1258] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf0\x08\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1239] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xdd\x08\x01A\x02\x01\
 A\x13\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:fibo/fib\
 o\x05\0\x01B\x05\x01r\x02\x07secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\0\x01\
 @\0\0\x01\x04\0\x03now\x01\x02\x04\0\x0aresolution\x01\x02\x03\x01\x1cwasi:clock\
@@ -822,9 +824,9 @@ B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0
 \x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1etesting:fibo-workflow/workflow\x05\x08\
 \x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06\
 fiboasy\x14iterations-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x04\x01&t\
-esting:fibo-workflow/workflow-nesting\x05\x09\x04\x01\x1etesting:fibo-workflow-i\
-mpl/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\
-\x0dwit-component\x070.208.1\x10wit-bindgen-rust\x060.25.0";
+esting:fibo-workflow/workflow-nesting\x05\x09\x04\x01\x0bany:any/any\x04\0\x0b\x09\
+\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x07\
+0.208.1\x10wit-bindgen-rust\x060.25.0";
 
 #[inline(never)]
 #[doc(hidden)]

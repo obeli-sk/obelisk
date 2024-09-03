@@ -15,9 +15,9 @@ use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 use wasmtime_wasi_http::WasiHttpImpl;
 
-type StoreCtx = crate::wasi_http::Ctx;
+type StoreCtx = crate::activity_ctx::ActivityCtx;
 
-//TODO: Benchmark and decide whether this is still needed.
+//TODO: Benchmark and decide whether this is still needed, consider using InstancePre instead.
 #[derive(Clone, Debug, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub enum RecycleInstancesSetting {
     #[default]
@@ -84,10 +84,9 @@ impl<C: ClockFn> ActivityWorker<C> {
 
         let wasm_path = wasm_path.as_ref();
         let wasm_component = WasmComponent::new(wasm_path, &engine)
-            .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
+            .map_err(|err| WasmFileError::DecodeError(err))?;
         let map_err = |err: wasmtime::Error| WasmFileError::LinkingError {
-            file: wasm_path.to_owned(),
-            reason: StrVariant::Static("linking error"),
+            context: StrVariant::Static("linking error"),
             err: err.into(),
         };
 
@@ -107,7 +106,7 @@ impl<C: ClockFn> ActivityWorker<C> {
         let recycled_instances = config.recycle_instances.instantiate();
         let exported_ffqn_to_index = wasm_component
             .index_exported_functions()
-            .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
+            .map_err(|err| WasmFileError::DecodeError(err))?;
         Ok(Self {
             engine,
             linker,
@@ -141,7 +140,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         let (instance, mut store) = if let Some((instance, store)) = instance_and_store {
             (instance, store)
         } else {
-            let mut store = crate::wasi_http::store(&self.engine);
+            let mut store = crate::activity_ctx::store(&self.engine);
             match self
                 .linker
                 .instantiate_async(&mut store, &self.component)

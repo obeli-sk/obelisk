@@ -68,9 +68,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         let wasm_path = wasm_path.as_ref();
         let mut linker = wasmtime::component::Linker::new(&engine);
 
-        // Mock imported functions
         let wasm_component = WasmComponent::new(wasm_path, &engine)
-            .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
+            .map_err(|err| WasmFileError::DecodeError(err))?;
+        // Mock imported functions
         for import in &wasm_component.exim.imports_hierarchy {
             if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
                 // Skip host-implemented functions
@@ -109,8 +109,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                             debug!("Skipping mocking of {ffqn}");
                         } else {
                             return Err(WasmFileError::LinkingError {
-                                file: wasm_path.to_owned(),
-                                reason: StrVariant::Arc(Arc::from(format!(
+                                context: StrVariant::Arc(Arc::from(format!(
                                     "cannot add mock for imported function {ffqn}"
                                 ))),
                                 err: err.into(),
@@ -122,14 +121,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                 trace!("Skipping interface {ifc_fqn}", ifc_fqn = import.ifc_fqn);
             }
         }
-        WorkflowCtx::add_to_linker(&mut linker).map_err(|err| WasmFileError::LinkingError {
-            file: wasm_path.to_owned(),
-            reason: StrVariant::Arc(Arc::from("cannot add host activities".to_string())),
-            err: err.into(),
-        })?;
+        WorkflowCtx::add_to_linker(&mut linker)?;
         let exported_ffqn_to_index = wasm_component
             .index_exported_functions()
-            .map_err(|err| WasmFileError::DecodeError(wasm_path.to_owned(), err))?;
+            .map_err(|err| WasmFileError::DecodeError(err))?;
         Ok(Self {
             config,
             engine,
@@ -336,7 +331,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
 #[cfg(test)]
 mod tests {
-    // TODO: test timeouts, retries
+    // TODO: test timeouts
     use super::*;
     use crate::{
         activity_worker::tests::{

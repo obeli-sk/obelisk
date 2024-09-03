@@ -13,6 +13,8 @@ pub mod obelisk {
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             pub type Datetime = super::super::super::wasi::clocks::wall_clock::Datetime;
+            /// TODO: new-execution-id: func() -> string;
+            /// FIXME: import Duration from wasi:clocks
             /// A duration of time, in nanoseconds.
             pub type Duration = u64;
             #[derive(Clone, Copy)]

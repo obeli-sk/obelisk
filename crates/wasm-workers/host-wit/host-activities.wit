@@ -6,7 +6,10 @@ interface host-activities {
     sleep: func(millis: u32);
     new-join-set: func() -> string;
 
-    /// A duration of time, in nanoseconds.
+    // TODO: new-execution-id: func() -> string;
+
+    // FIXME: import Duration from wasi:clocks
+    // A duration of time, in nanoseconds.
     type duration = u64;
 
 
@@ -16,5 +19,5 @@ interface host-activities {
         in(duration),
     }
 
-    schedule: func(ffqn: string, params-json: string, scheduled-at: scheduled-at) -> string;
+    schedule: func(ffqn: string, params-json: string, scheduled-at: scheduled-at) -> string; // FIXME Result<ExecutionId, execution error>
 }

@@ -90,6 +90,7 @@ fn build_internal(tripple: &str) {
                 .fns
                 .iter()
                 .map(|(function_name, (parameter_types, ret_type))| {
+                    // FIXME: Use WIT format in the comment
                     format!(
                         "pub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\"); // func{parameter_types:?} {arrow_ret_type}\n",
                         name_upper = to_snake_case(function_name).to_uppercase(),
