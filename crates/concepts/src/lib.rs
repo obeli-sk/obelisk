@@ -10,6 +10,7 @@ use std::{
     ops::Deref,
     str::FromStr,
     sync::Arc,
+    time::Duration,
 };
 use val_json::{
     type_wrapper::{TypeConversionError, TypeWrapper},
@@ -999,13 +1000,19 @@ impl Display for ParameterTypes {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ComponentRetryConfig {
+    pub max_retries: u32,
+    pub retry_exp_backoff: Duration,
+}
+
 // TODO: consider making the workflow worker generic over this type
 #[async_trait]
 pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ComponentConfigHash)>;
+    ) -> Option<(FunctionMetadata, ComponentConfigHash, ComponentRetryConfig)>;
 }
 
 #[cfg(test)]

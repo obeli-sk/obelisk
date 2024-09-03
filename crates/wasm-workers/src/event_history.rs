@@ -1,6 +1,6 @@
 use crate::event_history::ProcessingStatus::Processed;
 use crate::event_history::ProcessingStatus::Unprocessed;
-use crate::workflow_ctx::FunctionError;
+use crate::workflow_ctx::WorkflowFunctionError;
 use crate::workflow_worker::JoinNextBlockingStrategy;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
@@ -11,6 +11,7 @@ use concepts::storage::{
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::ComponentConfigHash;
+use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
@@ -111,7 +112,7 @@ impl<C: ClockFn> EventHistory<C> {
         db_connection: &DB,
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
-    ) -> Result<SupportedFunctionReturnValue, FunctionError> {
+    ) -> Result<SupportedFunctionReturnValue, WorkflowFunctionError> {
         trace!("replay_or_interrupt: {event_call:?}");
         if let Some(accept_resp) = self.find_matching_atomic(&event_call)? {
             return Ok(accept_resp);
@@ -206,7 +207,7 @@ impl<C: ClockFn> EventHistory<C> {
     fn find_matching_atomic(
         &mut self,
         event_call: &EventCall,
-    ) -> Result<Option<SupportedFunctionReturnValue>, FunctionError> {
+    ) -> Result<Option<SupportedFunctionReturnValue>, WorkflowFunctionError> {
         let keys = event_call.as_keys();
         assert!(!keys.is_empty());
         let mut last = None;
@@ -263,7 +264,7 @@ impl<C: ClockFn> EventHistory<C> {
     fn process_event_by_key(
         &mut self,
         key: EventHistoryKey,
-    ) -> Result<Option<SupportedFunctionReturnValue>, FunctionError> {
+    ) -> Result<Option<SupportedFunctionReturnValue>, WorkflowFunctionError> {
         let Some((found_idx, (found_request_event, _))) = self.next_unprocessed_request() else {
             return Ok(None);
         };
@@ -358,7 +359,7 @@ impl<C: ClockFn> EventHistory<C> {
                                 error!(%child_execution_id,
                                     %join_set_id,
                                     "Child execution finished with an execution error, failing the parent");
-                                Err(FunctionError::ChildExecutionError(err.clone()))
+                                Err(WorkflowFunctionError::ChildExecutionError(err.clone()))
                             }
                         }
                     }
@@ -408,11 +409,11 @@ impl<C: ClockFn> EventHistory<C> {
                 )))
             }
 
-            (key, found) => Err(FunctionError::NonDeterminismDetected(StrVariant::Arc(
-                Arc::from(format!(
+            (key, found) => Err(WorkflowFunctionError::NonDeterminismDetected(
+                StrVariant::Arc(Arc::from(format!(
                     "unexpected key {key:?} not matching {found:?} at index {found_idx}",
-                )),
-            ))),
+                ))),
+            )),
         }
     }
 
@@ -489,15 +490,20 @@ impl<C: ClockFn> EventHistory<C> {
         created_at: DateTime<Utc>,
         lock_expires_at: DateTime<Utc>,
         version: &mut Version,
-    ) -> Result<Vec<HistoryEvent>, FunctionError> {
+    ) -> Result<Vec<HistoryEvent>, WorkflowFunctionError> {
         async fn component_active_get_exported_function(
             fn_registry: &dyn FunctionRegistry,
             ffqn: &FunctionFqn,
-        ) -> Result<(FunctionMetadata, ComponentConfigHash), FunctionError> {
+        ) -> Result<
+            (FunctionMetadata, ComponentConfigHash, ComponentRetryConfig),
+            WorkflowFunctionError,
+        > {
             fn_registry
                 .get_by_exported_function(ffqn)
                 .await
-                .ok_or_else(|| FunctionError::FunctionMetadataNotFound { ffqn: ffqn.clone() })
+                .ok_or_else(|| WorkflowFunctionError::FunctionMetadataNotFound {
+                    ffqn: ffqn.clone(),
+                })
         }
 
         trace!(%version, "append_to_db");
@@ -536,6 +542,7 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type,
                     },
                     config_id,
+                    component_retry_config,
                 ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child_req = CreateRequest {
                     created_at,
@@ -599,6 +606,7 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type,
                     },
                     config_id,
+                    component_retry_config,
                 ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child_req = CreateRequest {
                     created_at,
@@ -692,6 +700,7 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type,
                     },
                     config_id,
+                    component_retry_config,
                 ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child = CreateRequest {
                     created_at,
@@ -809,10 +818,10 @@ impl PollVariant {
         }
     }
 
-    fn as_function_error(&self) -> FunctionError {
+    fn as_function_error(&self) -> WorkflowFunctionError {
         match self {
-            PollVariant::JoinNextChild(_) => FunctionError::ChildExecutionRequest,
-            PollVariant::JoinNextDelay(_) => FunctionError::DelayRequest,
+            PollVariant::JoinNextChild(_) => WorkflowFunctionError::ChildExecutionRequest,
+            PollVariant::JoinNextDelay(_) => WorkflowFunctionError::DelayRequest,
         }
     }
 
@@ -967,7 +976,7 @@ impl EventCall {
 mod tests {
     use crate::event_history::{EventCall, EventHistory};
     use crate::tests::fn_registry_dummy;
-    use crate::workflow_ctx::FunctionError;
+    use crate::workflow_ctx::WorkflowFunctionError;
     use crate::workflow_worker::JoinNextBlockingStrategy;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
@@ -1113,7 +1122,7 @@ mod tests {
             blocking_join_first(event_history, version, fn_registry.clone())
                 .await
                 .unwrap_err(),
-            FunctionError::ChildExecutionRequest,
+            WorkflowFunctionError::ChildExecutionRequest,
             "should have ended with an interrupt"
         );
         db_connection
@@ -1324,7 +1333,7 @@ mod tests {
             join_set_id: JoinSetId,
             child_execution_id_a: ExecutionId,
             child_execution_id_b: ExecutionId,
-        ) -> Result<SupportedFunctionReturnValue, FunctionError> {
+        ) -> Result<SupportedFunctionReturnValue, WorkflowFunctionError> {
             event_history
                 .apply(
                     EventCall::CreateJoinSet { join_set_id },
@@ -1424,7 +1433,7 @@ mod tests {
             )
             .await
             .unwrap_err(),
-            FunctionError::ChildExecutionRequest
+            WorkflowFunctionError::ChildExecutionRequest
         );
         // append two responses
         db_connection

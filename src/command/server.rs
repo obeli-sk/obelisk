@@ -25,6 +25,7 @@ use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
 use concepts::storage::PendingState;
 use concepts::ComponentConfigHash;
+use concepts::ComponentRetryConfig;
 use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
@@ -819,7 +820,10 @@ struct ComponentConfigRegistry {
 
 #[derive(Default, Debug)]
 struct ComponentConfigRegistryInner {
-    exported_ffqns: hashbrown::HashMap<FunctionFqn, (ComponentConfigHash, FunctionMetadata)>,
+    exported_ffqns: hashbrown::HashMap<
+        FunctionFqn,
+        (ComponentConfigHash, FunctionMetadata, ComponentRetryConfig),
+    >,
     ids_to_components: hashbrown::HashMap<ComponentConfigHash, Component>,
 }
 
@@ -834,7 +838,7 @@ impl ComponentConfigRegistry {
             bail!("component {} is already inserted", component.config_id);
         }
         for exported_ffqn in component.exports.iter().map(|f| &f.ffqn) {
-            if let Some((offending_id, _)) = write_guad.exported_ffqns.get(exported_ffqn) {
+            if let Some((offending_id, _, _)) = write_guad.exported_ffqns.get(exported_ffqn) {
                 bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
             }
         }
@@ -844,7 +848,14 @@ impl ComponentConfigRegistry {
                 .exported_ffqns
                 .insert(
                     exported_fn.ffqn.clone(),
-                    (component.config_id.clone(), exported_fn.clone()),
+                    (
+                        component.config_id.clone(),
+                        exported_fn.clone(),
+                        ComponentRetryConfig {
+                            max_retries: component.config_store.default_max_retries(),
+                            retry_exp_backoff: component.config_store.default_retry_exp_backoff()
+                        }
+                    ),
                 )
                 .is_none());
         }
@@ -857,7 +868,7 @@ impl ComponentConfigRegistry {
 
     fn find_by_exported_ffqn(&self, ffqn: &FunctionFqn) -> Option<(Component, FunctionMetadata)> {
         let read_guard = self.inner.read().unwrap();
-        read_guard.exported_ffqns.get(ffqn).map(|(id, meta)| {
+        read_guard.exported_ffqns.get(ffqn).map(|(id, meta, ..)| {
             (
                 read_guard.ids_to_components.get(id).unwrap().clone(),
                 meta.clone(),
@@ -885,12 +896,12 @@ impl FunctionRegistry for ComponentConfigRegistry {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ComponentConfigHash)> {
+    ) -> Option<(FunctionMetadata, ComponentConfigHash, ComponentRetryConfig)> {
         self.inner
             .read()
             .unwrap()
             .exported_ffqns
             .get(ffqn)
-            .map(|(id, metadata)| (metadata.clone(), id.clone()))
+            .map(|(id, metadata, retry)| (metadata.clone(), id.clone(), *retry))
     }
 }

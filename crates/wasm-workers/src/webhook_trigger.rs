@@ -1,11 +1,15 @@
-use concepts::storage::{DbConnection, DbPool};
-use concepts::{ComponentConfigHash, FunctionFqn, FunctionRegistry, StrVariant};
+use concepts::storage::{ClientError, CreateRequest, DbConnection, DbError, DbPool};
+use concepts::{
+    ComponentConfigHash, ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn,
+    FunctionRegistry, Params, StrVariant,
+};
 use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::path::Path;
+use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, instrument, trace};
@@ -21,7 +25,7 @@ use wasmtime_wasi_http::bindings::ProxyPre;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
-use crate::workflow_ctx::FunctionError;
+use crate::workflow_ctx::SUFFIX_PKG_EXT;
 use crate::workflow_worker::HOST_ACTIVITY_IFC_STRING;
 use crate::WasmFileError;
 
@@ -47,6 +51,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
     db_pool: P,
     clock_fn: C,
     fn_registry: Arc<dyn FunctionRegistry>,
+    retry_config: RetryConfig,
 ) -> Result<(), WebhookInstallationError> {
     let wasm_path = wasm_path.as_ref();
 
@@ -134,6 +139,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
             .map_err(WebhookInstallationError::SocketError)?;
         let io = TokioIo::new(stream);
         // Spawn a tokio task for each connection
+        // TODO: cancel on connection drop
         tokio::task::spawn({
             let instance = instance.clone();
             let engine = engine.clone();
@@ -153,6 +159,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                                     clock_fn.clone(),
                                     db_pool.clone(),
                                     fn_registry.clone(),
+                                    retry_config,
                                 ),
                             )
                         }),
@@ -166,6 +173,36 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct RetryConfig {
+    activity_max_retries_override: Option<u32>,
+    activity_retry_exp_backoff_override: Option<Duration>,
+}
+
+impl RetryConfig {
+    fn max_retries(&self, component_type: ComponentType, component_default: u32) -> u32 {
+        match component_type {
+            ComponentType::WasmActivity => self
+                .activity_max_retries_override
+                .unwrap_or(component_default),
+            ComponentType::WasmWorkflow => 0,
+        }
+    }
+
+    fn retry_exp_backoff(
+        &self,
+        component_type: ComponentType,
+        component_default: Duration,
+    ) -> Duration {
+        match component_type {
+            ComponentType::WasmActivity => self
+                .activity_retry_exp_backoff_override
+                .unwrap_or(component_default),
+            ComponentType::WasmWorkflow => Duration::ZERO,
+        }
+    }
+}
+
 struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     clock_fn: C,
     db_pool: P,
@@ -173,7 +210,20 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
+    retry_config: RetryConfig,
     phantom_data: PhantomData<DB>,
+}
+
+#[derive(thiserror::Error, Debug, Clone)]
+pub(crate) enum WebhookFunctionError {
+    #[error("sumbitting failed, metadata for {ffqn} not found")]
+    FunctionMetadataNotFound { ffqn: FunctionFqn },
+    #[error(transparent)]
+    DbError(#[from] DbError),
+    #[error(transparent)]
+    FinishedExecutionError(#[from] FinishedExecutionError),
+    #[error("uncategorized error: {0}")]
+    UncategorizedError(&'static str),
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
@@ -183,28 +233,56 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         ffqn: FunctionFqn,
         params: &[Val],
         results: &mut [Val],
-    ) -> Result<(), FunctionError> {
+    ) -> Result<(), WebhookFunctionError> {
         debug!(?params, "call_imported_fn start");
-        // let event_call = self.imported_fn_to_event_call(ffqn, params)?;
-        // let res = self
-        //     .event_history
-        //     .replay_or_interrupt(
-        //         event_call,
-        //         &self.db_pool.connection(),
-        //         &mut self.version,
-        //         self.fn_registry.as_ref(),
-        //     )
-        //     .await?;
-        // if results.len() != res.len() {
-        //     error!("Unexpected results length");
-        //     return Err(FunctionError::UncategorizedError(
-        //         "Unexpected results length",
-        //     ));
-        // }
-        // for (idx, item) in res.value().into_iter().enumerate() {
-        //     results[idx] = item.as_val();
-        // }
-        results[0] = Val::U64(2); //TODO start a child execution, wait for its result
+        if let Some(_package_name) = ffqn.ifc_fqn.package_name().strip_suffix(SUFFIX_PKG_EXT) {
+            unimplemented!("extensions are not implemented yet")
+        }
+
+        let execution_id = ExecutionId::generate();
+        let created_at = (self.clock_fn)();
+        let Some((function_metadata, config_id, default_retry_config)) =
+            self.fn_registry.get_by_exported_function(&ffqn).await
+        else {
+            return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
+        };
+        let create_request = CreateRequest {
+            created_at,
+            execution_id,
+            ffqn,
+            params: Params::from_wasmtime(Arc::from(params)),
+            parent: None,
+            topmost_parent_id: None,
+            scheduled_at: created_at,
+            max_retries: self
+                .retry_config
+                .max_retries(config_id.component_type, default_retry_config.max_retries),
+            retry_exp_backoff: self.retry_config.retry_exp_backoff(
+                config_id.component_type,
+                default_retry_config.retry_exp_backoff,
+            ),
+            config_id,
+            return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
+        };
+        let conn = self.db_pool.connection();
+        conn.create(create_request).await?;
+        let res = match conn
+            .wait_for_finished_result(execution_id, None /* TODO */)
+            .await
+        {
+            Ok(res) => res.inspect_err(|err| error!("Got execution error: {err:?}"))?,
+            Err(ClientError::DbError(err)) => return Err(WebhookFunctionError::DbError(err)),
+            Err(ClientError::Timeout) => unreachable!("timeout was not set"),
+        };
+        if results.len() != res.len() {
+            error!("Unexpected results length");
+            return Err(WebhookFunctionError::UncategorizedError(
+                "Unexpected results length",
+            ));
+        }
+        for (idx, item) in res.value().into_iter().enumerate() {
+            results[idx] = item.as_val();
+        }
         trace!(?params, ?results, "call_imported_fn finish");
         Ok(())
     }
@@ -216,6 +294,7 @@ fn store<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
     clock_fn: C,
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
+    retry_config: RetryConfig,
 ) -> Store<WebhookCtx<C, DB, P>> {
     let mut builder = WasiCtxBuilder::new();
     let ctx = WebhookCtx {
@@ -225,6 +304,7 @@ fn store<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
         table: ResourceTable::new(),
         wasi_ctx: builder.build(),
         http_ctx: WasiHttpCtx::new(),
+        retry_config,
         phantom_data: PhantomData::default(),
     };
     Store::new(engine, ctx)
@@ -329,7 +409,11 @@ async fn handle_request<
 
 #[cfg(test)]
 mod tests {
-    use crate::tests::fn_registry_dummy;
+    use crate::{
+        activity_worker::tests::spawn_activity_fibo,
+        tests::fn_registry_dummy,
+        workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
+    };
     use concepts::FunctionFqn;
     use db_tests::Database;
     use std::net::SocketAddr;
@@ -348,15 +432,29 @@ mod tests {
         test_utils::set_up();
         let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
         let sim_clock = SimClock::default();
-        use test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA;
         let (_guard, db_pool) = Database::Memory.set_up().await;
+        use test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO;
+        use test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA;
+        let activity_exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn());
+        let fn_registry = fn_registry_dummy(&[
+            FunctionFqn::new_static(FIBOA.0, FIBOA.1),
+            FunctionFqn::new_static(FIBO.0, FIBO.1),
+        ]);
+        let workflow_exec_task = spawn_workflow_fibo(
+            db_pool.clone(),
+            sim_clock.get_clock_fn(),
+            JoinNextBlockingStrategy::Await,
+            0,
+            fn_registry.clone(),
+        );
         //let server = AbortOnDrop(tokio::spawn(async move {
         super::server(
             test_programs_webhook_trigger_fibo_builder::TEST_PROGRAMS_WEBHOOK_TRIGGER_FIBO,
             addr,
             db_pool,
             sim_clock.get_clock_fn(),
-            fn_registry_dummy(&[FunctionFqn::new_static(FIBOA.0, FIBOA.1)]),
+            fn_registry,
+            crate::webhook_trigger::RetryConfig::default(),
         )
         .await
         .unwrap();

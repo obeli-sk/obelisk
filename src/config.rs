@@ -84,26 +84,22 @@ impl ConfigStore {
     }
 
     pub(crate) fn default_max_retries(&self) -> u32 {
-        if let Self::WasmActivityV1 {
-            default_max_retries,
-            ..
-        } = self
-        {
-            *default_max_retries
-        } else {
-            0
+        match self {
+            Self::WasmActivityV1 {
+                default_max_retries,
+                ..
+            } => *default_max_retries,
+            Self::WasmWorkflowV1 { .. } => 0,
         }
     }
 
     pub(crate) fn default_retry_exp_backoff(&self) -> Duration {
-        if let Self::WasmActivityV1 {
-            default_retry_exp_backoff,
-            ..
-        } = self
-        {
-            *default_retry_exp_backoff
-        } else {
-            Duration::ZERO
+        match self {
+            Self::WasmActivityV1 {
+                default_retry_exp_backoff,
+                ..
+            } => *default_retry_exp_backoff,
+            Self::WasmWorkflowV1 { .. } => Duration::ZERO,
         }
     }
 

@@ -26,7 +26,7 @@ use val_json::wast_val::{WastVal, WastValWithType};
 use wasmtime::component::{Linker, Val};
 
 #[derive(thiserror::Error, Debug, Clone)]
-pub(crate) enum FunctionError {
+pub(crate) enum WorkflowFunctionError {
     #[error("non deterministic execution: {0}")]
     NonDeterminismDetected(StrVariant),
     #[error("child request")]
@@ -43,7 +43,7 @@ pub(crate) enum FunctionError {
     UncategorizedError(&'static str),
 }
 
-impl FunctionError {
+impl WorkflowFunctionError {
     pub(crate) fn into_worker_result(self, version: Version) -> WorkerResult {
         match self {
             Self::NonDeterminismDetected(reason) => WorkerResult::Err(WorkerError::FatalError(
@@ -145,7 +145,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         ffqn: FunctionFqn,
         params: &[Val],
         results: &mut [Val],
-    ) -> Result<(), FunctionError> {
+    ) -> Result<(), WorkflowFunctionError> {
         trace!(?params, "call_imported_fn start");
         let event_call = self.imported_fn_to_event_call(ffqn, params)?;
         let res = self
@@ -159,7 +159,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             .await?;
         if results.len() != res.len() {
             error!("Unexpected results length");
-            return Err(FunctionError::UncategorizedError(
+            return Err(WorkflowFunctionError::UncategorizedError(
                 "Unexpected results length",
             ));
         }
@@ -170,7 +170,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         Ok(())
     }
 
-    async fn call_sleep(&mut self, millis: u32) -> Result<(), FunctionError> {
+    async fn call_sleep(&mut self, millis: u32) -> Result<(), WorkflowFunctionError> {
         let join_set_id =
             JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
         let delay_id = DelayId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
@@ -256,7 +256,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         &mut self,
         ffqn: FunctionFqn,
         params: &[Val],
-    ) -> Result<EventCall, FunctionError> {
+    ) -> Result<EventCall, WorkflowFunctionError> {
         if let Some(package_name) = ffqn.ifc_fqn.package_name().strip_suffix(SUFFIX_PKG_EXT) {
             let ifc_fqn = IfcFqnName::from_parts(
                 ffqn.ifc_fqn.namespace(),
@@ -270,7 +270,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 if params.is_empty() {
                     error!("Got empty params, expected JoinSetId");
-                    return Err(FunctionError::UncategorizedError(
+                    return Err(WorkflowFunctionError::UncategorizedError(
                         "error running `-future` extension function: exepcted at least one parameter with JoinSetId, got empty parameter list",
                     ));
                     // TODO Replace with `split_at_checked` once stable
@@ -280,13 +280,13 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 let join_set_id = join_set_id.first().expect("split so that the size is 1");
                 let Val::String(join_set_id) = join_set_id else {
                     error!("Wrong type for JoinSetId, expected string, got `{join_set_id:?}`");
-                    return Err(FunctionError::UncategorizedError(
+                    return Err(WorkflowFunctionError::UncategorizedError(
                         "error running `-future` extension function: wrong first parameter type, string parameter containing JoinSetId`"
                     ));
                 };
                 let join_set_id = join_set_id.parse().map_err(|parse_err| {
                     error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
-                    FunctionError::UncategorizedError("cannot parse JoinSetId")
+                    WorkflowFunctionError::UncategorizedError("cannot parse JoinSetId")
                 })?;
                 let execution_id =
                     ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
@@ -302,25 +302,25 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 debug!("Got await-next extension for function `{function_name}`"); // FIXME: handle multiple functions in the same join set
                 if params.len() != 1 {
                     error!("Expected single parameter with JoinSetId got {params:?}");
-                    return Err(FunctionError::UncategorizedError(
+                    return Err(WorkflowFunctionError::UncategorizedError(
                         "error running `-await-next` extension function: wrong parameter length, expected single string parameter containing JoinSetId`"
                     ));
                 }
                 let join_set_id = params.first().expect("checked that the size is 1");
                 let Val::String(join_set_id) = join_set_id else {
                     error!("Wrong type for JoinSetId, expected string, got `{join_set_id:?}`");
-                    return Err(FunctionError::UncategorizedError(
+                    return Err(WorkflowFunctionError::UncategorizedError(
                         "error running `-await-next` extension function: wrong parameter type, expected single string parameter containing JoinSetId`"
                     ));
                 };
                 let join_set_id = join_set_id.parse().map_err(|parse_err| {
                     error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
-                    FunctionError::UncategorizedError("cannot parse JoinSetId")
+                    WorkflowFunctionError::UncategorizedError("cannot parse JoinSetId")
                 })?;
                 Ok(EventCall::BlockingChildJoinNext { join_set_id })
             } else {
                 error!("unrecognized extension function {ffqn}");
-                return Err(FunctionError::UncategorizedError(
+                return Err(WorkflowFunctionError::UncategorizedError(
                     "unrecognized extension function",
                 ));
             }
@@ -382,9 +382,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
     }
 }
 
-const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
-const SUFFIX_FN_START_ASYNC: &str = "-future";
-const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
+pub(crate) const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
+pub(crate) const SUFFIX_FN_START_ASYNC: &str = "-future";
+pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 
 #[cfg(madsim)]
 #[cfg(test)]

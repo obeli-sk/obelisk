@@ -1,4 +1,4 @@
-use crate::workflow_ctx::{FunctionError, WorkflowCtx};
+use crate::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::WasmFileError;
 use async_trait::async_trait;
 use concepts::storage::{DbConnection, DbPool};
@@ -289,7 +289,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         let version = workflow_ctx.version;
                         if let Some(err) =  err
                             .source()
-                            .and_then(|source| source.downcast_ref::<FunctionError>())
+                            .and_then(|source| source.downcast_ref::<WorkflowFunctionError>())
                         {
                             let worker_result = err.clone().into_worker_result(version);
                             if let WorkerResult::Err(err) = &worker_result {
@@ -330,7 +330,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     // TODO: test timeouts
     use super::*;
     use crate::{
@@ -586,14 +586,10 @@ mod tests {
             .await
             .unwrap();
         info!("Should end as Failed");
-        let finished_result = wait_for_pending_state_fn(
-            &db_connection,
-            execution_id,
-            |exe_history| exe_history.finished_result().cloned(),
-            None,
-        )
-        .await
-        .unwrap();
+        let finished_result = db_connection
+            .wait_for_finished_result(execution_id, None)
+            .await
+            .unwrap();
         let finished_result = finished_result.unwrap_err();
         let finished_result = assert_matches!(
             finished_result,
@@ -1010,7 +1006,7 @@ mod tests {
         );
         let res = db_pool.connection().get(execution_id).await.unwrap();
         assert_matches!(
-            res.finished_result().unwrap(),
+            res.into_finished_result().unwrap(),
             Ok(SupportedFunctionReturnValue::None)
         );
         // New execution should be pending in SLEEP_MILLIS.

@@ -86,11 +86,11 @@ impl ExecutionLog {
     }
 
     #[must_use]
-    pub fn finished_result(&self) -> Option<&FinishedExecutionResult> {
+    pub fn into_finished_result(mut self) -> Option<FinishedExecutionResult> {
         if let ExecutionEvent {
             event: ExecutionEventInner::Finished { result },
             ..
-        } = self.last_event()
+        } = self.events.pop().expect("must contain at least one event")
         {
             Some(result)
         } else {
@@ -613,9 +613,8 @@ pub trait DbConnection: Send + Sync {
             .wait_for_pending_state(execution_id, PendingState::Finished, timeout)
             .await?;
         Ok(execution_log
-            .finished_result()
-            .expect("pending state was checked")
-            .clone())
+            .into_finished_result()
+            .expect("pending state was checked"))
     }
 
     /// Best effort for subscribe to pending executions.

@@ -2,11 +2,11 @@ use concepts::StrVariant;
 use std::{error::Error, fmt::Debug};
 use utils::wasm_tools::{self};
 
+mod activity_ctx;
 pub mod activity_worker;
 pub mod engines;
 pub mod epoch_ticker;
 mod event_history;
-mod activity_ctx;
 pub mod webhook_trigger;
 mod workflow_ctx;
 pub mod workflow_worker;
@@ -28,12 +28,16 @@ pub enum WasmFileError {
 pub(crate) mod tests {
     use async_trait::async_trait;
     use concepts::{
-        ComponentConfigHash, FunctionFqn, FunctionMetadata, FunctionRegistry, ParameterTypes,
+        ComponentConfigHash, ComponentRetryConfig, FunctionFqn, FunctionMetadata, FunctionRegistry,
+        ParameterTypes,
     };
     use std::sync::Arc;
 
     pub(crate) struct TestingFnRegistry(
-        hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ComponentConfigHash)>,
+        hashbrown::HashMap<
+            FunctionFqn,
+            (FunctionMetadata, ComponentConfigHash, ComponentRetryConfig),
+        >,
     );
 
     #[async_trait]
@@ -41,7 +45,7 @@ pub(crate) mod tests {
         async fn get_by_exported_function(
             &self,
             ffqn: &FunctionFqn,
-        ) -> Option<(FunctionMetadata, ComponentConfigHash)> {
+        ) -> Option<(FunctionMetadata, ComponentConfigHash, ComponentRetryConfig)> {
             self.0.get(ffqn).cloned()
         }
     }
@@ -59,6 +63,7 @@ pub(crate) mod tests {
                         return_type: None,
                     },
                     component_id.clone(),
+                    ComponentRetryConfig::default(),
                 ),
             );
         }
