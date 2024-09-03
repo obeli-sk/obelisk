@@ -126,11 +126,10 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] External activities - running external processes
 - [ ] HTML based UI for showing executions, event history and relations
 - [ ] Add examples with C#, Go, JS, Python
-- [ ] Add jitter to retries
 - [ ] WASM to WIT exporter with extensions
 - [ ] Print the component's WIT, filter by export/import.
 
-## Milestone 4
+## Planned features
 - [ ] Interactive CLI for execution management
 - [ ] OpenAPI activity generator
 - [ ] Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
@@ -140,14 +139,15 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] [Deadline propagation](https://sre.google/sre-book/addressing-cascading-failures)
 - [ ] [Cancellation propagation](https://sre.google/sre-book/addressing-cascading-failures)
 - [ ] Queue capacity setting, adding backpressure to execution submission
-- [ ] Retry budget, disabling retries when the activity is failing certain % of requests
 - [ ] Ability to simulate behaviour of the system with injected failures
 - [ ] Notify activities. When called, thir return value must be supplied via an API endpoint.
 - [ ] An API for listing executions with their open notify activities.
 - [ ] Read only query function that can be called during an await point or after execution finishes.
 - [ ] Workflow snapshots for faster replay
 - [ ] Optional stdout,stderr persistence / forwarding
-- [ ] Dependency routing from a caller via an interface import to one of many components that export it.
+- [ ] Smart dependency routing from a caller via an interface import to one of many components that export it.
+- [ ] Smart retries - Retry budget, disabling retries when the activity is failing certain % of requests
+- [ ] Add jitter to retries
 
 # Building from source
 Set up the development dependencies using nix flakes:
