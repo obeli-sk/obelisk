@@ -12,13 +12,20 @@ struct Component;
 bindings::export!(Component with_types_in bindings);
 
 impl Guest for Component {
-    fn handle(_request: IncomingRequest, outparam: ResponseOutparam) {
+    fn handle(request: IncomingRequest, outparam: ResponseOutparam) {
+        let req_path = request.path_with_query().unwrap();
+        let n: u8 = req_path
+            .strip_prefix("/")
+            .unwrap()
+            .parse()
+            .expect("should be a number");
         let resp_headers = Fields::new();
         let resp = OutgoingResponse::new(resp_headers);
         let body = resp.body().expect("outgoing response");
         ResponseOutparam::set(outparam, Ok(resp));
         let out = body.write().expect("outgoing stream");
-        out.blocking_write_and_flush(b"Hello, wasi:http/proxy world!\n")
+        let fibo_res = bindings::testing::fibo_workflow::workflow::fiboa(n, 1);
+        out.blocking_write_and_flush(format!("fibonacci({n}) = {fibo_res}").as_bytes())
             .expect("writing response");
         drop(out);
         OutgoingBody::finish(body, None).unwrap();

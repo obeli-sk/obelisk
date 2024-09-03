@@ -1,5 +1,5 @@
 [package]
-name = "trigger-http-simple"
+name = "test-programs-trigger-http-simple"
 version.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -18,13 +18,15 @@ package = "component:trigger-http-hello"
 proxy = true
 
 [package.metadata.component.target.dependencies]
-"wasi:http" = { path = "wit/deps/http/" }
-"wasi:random" = { path = "wit/deps/random/" }
-"wasi:cli" = { path = "wit/deps/cli" }
-"wasi:io" = { path = "wit/deps/io" }
-"wasi:clocks" = { path = "wit/deps/clocks" }
-"wasi:filesystem" = { path = "wit/deps/filesystem" }
-"wasi:sockets" = { path = "wit/deps/sockets" }
+"wasi:http".path = "wit/deps/http/"
+"wasi:random".path = "wit/deps/random/"
+"wasi:cli".path = "wit/deps/cli"
+"wasi:io".path = "wit/deps/io"
+"wasi:clocks".path = "wit/deps/clocks"
+"wasi:filesystem".path = "wit/deps/filesystem"
+"wasi:sockets".path = "wit/deps/sockets"
+"testing:fibo-workflow".path = "../fibo/workflow/wit/ifc"
+"testing:fibo-workflow-obelisk-ext".path = "../fibo/workflow/wit/ifc-ext"
 
 [lints]
 rust.unused_imports = "allow"
