@@ -1,5 +1,0 @@
-package testing:patch;
-
-interface patch {
-    noop: func(i: u32);
-}

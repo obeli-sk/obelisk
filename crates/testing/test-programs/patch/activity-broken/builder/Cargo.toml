@@ -1,9 +1,0 @@
-[package]
-name = "test-programs-patch-activity-broken-builder"
-version.workspace = true
-authors.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-
-[build-dependencies]
-cargo-component-builder.workspace = true
