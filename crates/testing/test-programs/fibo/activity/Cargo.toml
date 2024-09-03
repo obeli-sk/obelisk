@@ -17,7 +17,7 @@ crate-type = ["cdylib"]
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]
-"testing:fibo" = { path = "../wit" }
+"testing:fibo".path = "wit/ifc"
 
 [lints]
 rust.unused_imports = "allow"

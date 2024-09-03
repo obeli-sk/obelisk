@@ -128,6 +128,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] Add examples with C#, Go, JS, Python
 - [ ] Add jitter to retries
 - [ ] WASM to WIT exporter with extensions
+- [ ] Print the component's WIT, filter by export/import.
 
 ## Milestone 4
 - [ ] Interactive CLI for execution management
@@ -146,6 +147,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] Read only query function that can be called during an await point or after execution finishes.
 - [ ] Workflow snapshots for faster replay
 - [ ] Optional stdout,stderr persistence / forwarding
+- [ ] Dependency routing from a caller via an interface import to one of many components that export it.
 
 # Building from source
 Set up the development dependencies using nix flakes:

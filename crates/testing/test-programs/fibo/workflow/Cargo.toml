@@ -17,10 +17,11 @@ crate-type = ["cdylib"]
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]
-"testing:fibo" = { path = "../wit" }
-"testing:fibo-obelisk-ext" = { path = "../wit-obelisk-ext" }
-"testing:fibo-workflow-obelisk-ext" = { path = "wit-obelisk-ext" }
 "obelisk:workflow".path = "../../../../wasm-workers/host-wit/"
+"testing:fibo-obelisk-ext".path = "wit/activity-ext"
+"testing:fibo-workflow-obelisk-ext".path = "wit/ifc-ext"
+"testing:fibo-workflow".path = "wit/ifc"
+"testing:fibo".path = "../activity/wit/ifc"
 "wasi:clocks".path = "../../../../wasm-workers/host-wit/deps/clocks"
 
 [lints]
