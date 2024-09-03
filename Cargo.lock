@@ -2555,6 +2555,7 @@ dependencies = [
  "test-programs-http-get-workflow-builder",
  "test-programs-sleep-activity-builder",
  "test-programs-sleep-workflow-builder",
+ "test-programs-webhook-trigger-fibo-builder",
  "test-utils",
  "thiserror",
  "tracing",
@@ -3896,14 +3897,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "test-programs-trigger-http-simple"
+name = "test-programs-webhook-trigger-fibo"
 version = "0.2.2"
 dependencies = [
  "wit-bindgen-rt 0.25.0",
 ]
 
 [[package]]
-name = "test-programs-trigger-http-simple-builder"
+name = "test-programs-webhook-trigger-fibo-builder"
 version = "0.2.2"
 dependencies = [
  "cargo-component-builder",

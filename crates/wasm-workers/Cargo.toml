@@ -47,10 +47,11 @@ db-tests.workspace = true
 serde_json.workspace = true
 test-programs-fibo-activity-builder.workspace = true
 test-programs-fibo-workflow-builder.workspace = true
-test-programs-sleep-activity-builder.workspace = true
-test-programs-sleep-workflow-builder.workspace = true
 test-programs-http-get-activity-builder.workspace = true
 test-programs-http-get-workflow-builder.workspace = true
+test-programs-sleep-activity-builder.workspace = true
+test-programs-sleep-workflow-builder.workspace = true
+test-programs-webhook-trigger-fibo-builder.workspace = true
 test-utils.workspace = true
 executor = { workspace = true, features = ["test"] }
 

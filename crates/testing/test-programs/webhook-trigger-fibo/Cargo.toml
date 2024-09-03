@@ -1,5 +1,5 @@
 [package]
-name = "test-programs-trigger-http-simple"
+name = "test-programs-webhook-trigger-fibo"
 version.workspace = true
 license.workspace = true
 repository.workspace = true

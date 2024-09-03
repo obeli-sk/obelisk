@@ -2,6 +2,7 @@ use concepts::ComponentConfigHash;
 use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{error, info};
@@ -23,13 +24,8 @@ type StdError = Box<dyn std::error::Error + Send + Sync>;
 
 type Request = hyper::Request<hyper::body::Incoming>;
 
-pub async fn server() -> Result<(), StdError> {
-    let wasm_path = "target/wasm32-wasip1/release/trigger_http_simple.wasm";
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-
-    // We create a TcpListener and bind it to 127.0.0.1:3000
+pub async fn server<P: AsRef<Path>>(wasm_path: P, addr: SocketAddr) -> Result<(), StdError> {
     let listener = TcpListener::bind(addr).await?;
-
     let engine = {
         let mut wasmtime_config = wasmtime::Config::new();
         wasmtime_config.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(
@@ -121,3 +117,19 @@ async fn handle_request(
         }
     }
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use std::net::SocketAddr;
+
+//     #[tokio::test]
+//     async fn webhook_trigger_fibo() {
+//         let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+//         super::server(
+//             test_programs_webhook_trigger_fibo_builder::TEST_PROGRAMS_WEBHOOK_TRIGGER_FIBO,
+//             addr,
+//         )
+//         .await
+//         .unwrap();
+//     }
+// }
