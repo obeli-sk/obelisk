@@ -266,10 +266,10 @@ pub(crate) struct Workflow {
     pub(crate) common: ComponentCommon,
     #[serde(default = "default_strategy")]
     pub(crate) join_next_blocking_strategy: JoinNextBlockingStrategy,
-    #[serde(default = "default_child_retry_exp_backoff")]
-    pub(crate) child_retry_exp_backoff: DurationConfig,
-    #[serde(default = "default_child_max_retries")]
-    pub(crate) child_max_retries: u32,
+    #[serde(default)]
+    pub(crate) child_retry_exp_backoff_override: Option<DurationConfig>,
+    #[serde(default)]
+    pub(crate) child_max_retries_override: Option<u32>,
     #[serde(default = "default_non_blocking_event_batching")]
     pub(crate) non_blocking_event_batching: u32,
 }
@@ -294,11 +294,15 @@ impl Workflow {
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
         let exec_config = common.exec.clone();
+        let child_retry_exp_backoff = self
+            .child_retry_exp_backoff_override
+            .clone()
+            .map(Duration::from);
         let config_store = ConfigStore::WasmWorkflowV1 {
             common,
             join_next_blocking_strategy: self.join_next_blocking_strategy,
-            child_retry_exp_backoff: self.child_retry_exp_backoff.clone().into(),
-            child_max_retries: self.child_max_retries,
+            child_retry_exp_backoff,
+            child_max_retries: self.child_max_retries_override,
             non_blocking_event_batching: self.non_blocking_event_batching,
         };
         let config_id = config_store.as_hash();
@@ -306,8 +310,8 @@ impl Workflow {
         let workflow_config = WorkflowConfig {
             config_id: config_id.clone(),
             join_next_blocking_strategy: self.join_next_blocking_strategy,
-            child_retry_exp_backoff: self.child_retry_exp_backoff.into(),
-            child_max_retries: self.child_max_retries,
+            child_retry_exp_backoff,
+            child_max_retries: self.child_max_retries_override,
             non_blocking_event_batching: self.non_blocking_event_batching,
         };
         let exec_config = exec_config.into_exec_exec_config(config_id);
@@ -587,14 +591,6 @@ const fn default_retry_exp_backoff() -> DurationConfig {
 
 const fn default_strategy() -> JoinNextBlockingStrategy {
     JoinNextBlockingStrategy::Await
-}
-
-const fn default_child_retry_exp_backoff() -> DurationConfig {
-    DurationConfig::Millis(100)
-}
-
-const fn default_child_max_retries() -> u32 {
-    5
 }
 
 const fn default_batch_size() -> u32 {

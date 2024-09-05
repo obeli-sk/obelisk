@@ -59,8 +59,8 @@ pub(crate) enum ConfigStore {
     WasmWorkflowV1 {
         common: ConfigStoreCommon,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
-        child_retry_exp_backoff: Duration,
-        child_max_retries: u32,
+        child_retry_exp_backoff: Option<Duration>,
+        child_max_retries: Option<u32>,
         non_blocking_event_batching: u32,
     },
 }

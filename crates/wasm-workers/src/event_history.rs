@@ -68,8 +68,8 @@ impl<C: ClockFn> EventHistory<C> {
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         execution_deadline: DateTime<Utc>,
-        child_activity_retry_exp_backoff: Duration,
-        child_activity_max_retries: u32,
+        child_activity_retry_exp_backoff: Option<Duration>,
+        child_activity_max_retries: Option<u32>,
         non_blocking_event_batching: u32,
         clock_fn: C,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
@@ -542,7 +542,7 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type,
                     },
                     config_id,
-                    component_retry_config,
+                    child_retry_config,
                 ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child_req = CreateRequest {
                     created_at,
@@ -554,10 +554,10 @@ impl<C: ClockFn> EventHistory<C> {
                     scheduled_at: created_at,
                     retry_exp_backoff: self
                         .retry_config
-                        .child_retry_exp_backoff(config_id.component_type),
+                        .child_retry_exp_backoff(config_id.component_type, child_retry_config),
                     max_retries: self
                         .retry_config
-                        .child_max_retries(config_id.component_type),
+                        .child_max_retries(config_id.component_type, child_retry_config),
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
                 };
@@ -606,7 +606,7 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type,
                     },
                     config_id,
-                    component_retry_config,
+                    child_retry_config,
                 ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child_req = CreateRequest {
                     created_at,
@@ -618,10 +618,10 @@ impl<C: ClockFn> EventHistory<C> {
                     scheduled_at: at,
                     retry_exp_backoff: self
                         .retry_config
-                        .child_retry_exp_backoff(config_id.component_type),
+                        .child_retry_exp_backoff(config_id.component_type, child_retry_config),
                     max_retries: self
                         .retry_config
-                        .child_max_retries(config_id.component_type),
+                        .child_max_retries(config_id.component_type, child_retry_config),
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
                 };
@@ -700,7 +700,7 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type,
                     },
                     config_id,
-                    component_retry_config,
+                    child_retry_config,
                 ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child = CreateRequest {
                     created_at,
@@ -712,10 +712,10 @@ impl<C: ClockFn> EventHistory<C> {
                     scheduled_at: created_at,
                     retry_exp_backoff: self
                         .retry_config
-                        .child_retry_exp_backoff(config_id.component_type),
+                        .child_retry_exp_backoff(config_id.component_type, child_retry_config),
                     max_retries: self
                         .retry_config
-                        .child_max_retries(config_id.component_type),
+                        .child_max_retries(config_id.component_type, child_retry_config),
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
                 };
@@ -774,21 +774,33 @@ impl<C: ClockFn> EventHistory<C> {
 
 #[derive(Clone)]
 struct RetryConfig {
-    child_activity_max_retries: u32,
-    child_activity_retry_exp_backoff: Duration,
+    child_activity_max_retries: Option<u32>,
+    child_activity_retry_exp_backoff: Option<Duration>,
 }
 
 impl RetryConfig {
-    fn child_max_retries(&self, component_type: ComponentType) -> u32 {
+    fn child_max_retries(
+        &self,
+        component_type: ComponentType,
+        child_config: ComponentRetryConfig,
+    ) -> u32 {
         match component_type {
-            ComponentType::WasmActivity => self.child_activity_max_retries,
+            ComponentType::WasmActivity => self
+                .child_activity_max_retries
+                .unwrap_or(child_config.max_retries),
             ComponentType::WasmWorkflow => 0,
         }
     }
 
-    fn child_retry_exp_backoff(&self, component_type: ComponentType) -> Duration {
+    fn child_retry_exp_backoff(
+        &self,
+        component_type: ComponentType,
+        child_config: ComponentRetryConfig,
+    ) -> Duration {
         match component_type {
-            ComponentType::WasmActivity => self.child_activity_retry_exp_backoff,
+            ComponentType::WasmActivity => self
+                .child_activity_retry_exp_backoff
+                .unwrap_or(child_config.retry_exp_backoff),
             ComponentType::WasmWorkflow => Duration::ZERO,
         }
     }
@@ -1020,8 +1032,8 @@ mod tests {
                 .collect(),
             join_next_blocking_strategy,
             execution_deadline,
-            Duration::ZERO,
-            0,
+            None,
+            None,
             non_blocking_event_batching,
             clock_fn,
             Arc::new(std::sync::Mutex::new(WorkerResult::Err(

@@ -35,8 +35,8 @@ pub enum JoinNextBlockingStrategy {
 pub struct WorkflowConfig {
     pub config_id: ComponentConfigHash,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
-    pub child_retry_exp_backoff: Duration,
-    pub child_max_retries: u32,
+    pub child_retry_exp_backoff: Option<Duration>,
+    pub child_max_retries: Option<u32>,
     pub non_blocking_event_batching: u32,
 }
 
@@ -385,8 +385,8 @@ pub(crate) mod tests {
                 WorkflowConfig {
                     config_id: ComponentConfigHash::dummy(),
                     join_next_blocking_strategy,
-                    child_retry_exp_backoff: Duration::ZERO,
-                    child_max_retries: 0,
+                    child_retry_exp_backoff: None,
+                    child_max_retries: None,
                     non_blocking_event_batching,
                 },
                 workflow_engine,
@@ -619,8 +619,8 @@ pub(crate) mod tests {
                 WorkflowConfig {
                     config_id: ComponentConfigHash::dummy(),
                     join_next_blocking_strategy,
-                    child_retry_exp_backoff: Duration::ZERO,
-                    child_max_retries: 0,
+                    child_retry_exp_backoff: None,
+                    child_max_retries: None,
                     non_blocking_event_batching,
                 },
                 Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap(),

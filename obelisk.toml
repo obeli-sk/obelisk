@@ -39,8 +39,8 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## Joining strategy: When workflow requests a child execution result, it can either be interrupted, or kept in the memory.
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.
 # join_next_blocking_strategy = "await" # Default strategy is "await"/
-# child_max_retries = 100 # When calling an activity, overrides its default `default_max_retries`
-# child_retry_exp_backoff.millis = 100 # When calling an activity, overrides its default `default_retry_exp_backoff`
+# child_max_retries_override = 10 # When calling an activity, overrides its default `default_max_retries`
+# child_retry_exp_backoff_override.millis = 200 # When calling an activity, overrides its default `default_retry_exp_backoff`
 # non_blocking_event_batching = 100 # Number of non-blocking events that can be cached and written in a batch.
 
 [[wasm_activity]]
@@ -64,7 +64,6 @@ exec.lock_expiry.secs = 5
 name = "http_get_workflow"
 location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-08-12-1@sha256:d591785af59e5b0809b87a6e32bae7f590f0ea459a53d4bbcb8dc3e4322ddce3"
 exec.lock_expiry.secs = 10
-child_retry_exp_backoff.secs = 1
 
 # [[http_server]]
 # name = "external"
