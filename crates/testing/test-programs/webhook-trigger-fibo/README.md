@@ -1,7 +1,7 @@
 # Notes from creating this project
 I started with generating a new project using [cargo comopnent](https://github.com/bytecodealliance/cargo-component):
 ```sh
-cargo component new --proxy --lib trigger-http-hello
+cargo component new --lib trigger-http-hello
 cd trigger-http-hello/
 ```
 Then I copied the `wasi:http` package and its dependencies from

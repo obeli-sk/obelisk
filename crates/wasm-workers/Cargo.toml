@@ -29,6 +29,7 @@ hyper.workspace = true
 indexmap.workspace = true
 itertools.workspace = true
 rand.workspace = true
+route-recognizer.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 tempfile.workspace = true
@@ -58,6 +59,7 @@ executor = { workspace = true, features = ["test"] }
 async-trait.workspace = true
 futures-util.workspace = true
 madsim.workspace = true
+reqwest.workspace = true
 rstest.workspace = true
 wiremock.workspace = true
 

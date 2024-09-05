@@ -13,10 +13,6 @@ wit-bindgen-rt = { workspace = true, features = ["bitflags"] }
 [lib]
 crate-type = ["cdylib"]
 
-[package.metadata.component]
-package = "component:trigger-http-hello"
-proxy = true
-
 [package.metadata.component.target.dependencies]
 "wasi:http".path = "wit/deps/http/"
 "wasi:random".path = "wit/deps/random/"

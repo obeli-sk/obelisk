@@ -1,14 +1,19 @@
+use crate::workflow_ctx::SUFFIX_PKG_EXT;
+use crate::workflow_worker::HOST_ACTIVITY_IFC_STRING;
+use crate::WasmFileError;
 use concepts::storage::{ClientError, CreateRequest, DbConnection, DbError, DbPool};
 use concepts::{
     ComponentConfigHash, ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn,
     FunctionRegistry, Params, StrVariant,
 };
+use http_body_util::combinators::BoxBody;
+use hyper::body::Bytes;
 use hyper::server::conn::http1;
+use hyper::{Method, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
+use route_recognizer::{Match, Router};
 use std::marker::PhantomData;
-use std::net::SocketAddr;
 use std::ops::Deref;
-use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
@@ -25,10 +30,6 @@ use wasmtime_wasi_http::bindings::ProxyPre;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
-use crate::workflow_ctx::SUFFIX_PKG_EXT;
-use crate::workflow_worker::HOST_ACTIVITY_IFC_STRING;
-use crate::WasmFileError;
-
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HttpTriggerConfig {
     pub config_id: ComponentConfigHash,
@@ -36,50 +37,107 @@ pub struct HttpTriggerConfig {
 type StdError = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Debug, thiserror::Error)]
-pub enum WebhookInstallationError {
-    #[error("socket error: {0}")]
-    SocketError(std::io::Error),
+pub enum WebhookComponentInstantiationError {
     #[error(transparent)]
     WasmFileError(#[from] WasmFileError),
     #[error("instantiation error: {0}")]
     InstantiationError(wasmtime::Error),
 }
 
-pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    wasm_path: impl AsRef<Path>,
-    addr: SocketAddr,
-    db_pool: P,
-    clock_fn: C,
-    fn_registry: Arc<dyn FunctionRegistry>,
-    retry_config: RetryConfig,
-) -> Result<(), WebhookInstallationError> {
-    let wasm_path = wasm_path.as_ref();
+#[derive(Debug, thiserror::Error)]
+pub enum WebhookServerError {
+    #[error("socket error: {0}")]
+    SocketError(std::io::Error),
+}
 
-    let listener = TcpListener::bind(addr)
-        .await
-        .map_err(WebhookInstallationError::SocketError)?;
-    let engine = {
-        let mut wasmtime_config = wasmtime::Config::new();
-        wasmtime_config.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(
-            PoolingAllocationConfig::default(),
-        ));
-        wasmtime_config.wasm_component_model(true);
-        // TODO epoch_interruption
-        wasmtime_config.async_support(true);
-        Arc::new(Engine::new(&wasmtime_config).unwrap())
-    };
-    let wasm_component =
-        WasmComponent::new(wasm_path, &engine).map_err(|err| WasmFileError::DecodeError(err))?;
+pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
+    Arc<ProxyPre<WebhookCtx<C, DB, P>>>,
+);
+
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> Clone for WebhookInstance<C, DB, P> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+pub struct MethodAwareRouter<T> {
+    method_map: hashbrown::HashMap<Method, Router<T>>,
+    fallback: Router<T>,
+}
+
+impl<T: Clone> MethodAwareRouter<T> {
+    pub fn add(&mut self, method: Option<Method>, route: &str, dest: T) {
+        if route.is_empty() {
+            // When the route is empty, interpret it as matching all paths:
+            self.add(method.clone(), "/", dest.clone());
+            self.add(method, "/*", dest);
+        } else {
+            if let Some(method) = method {
+                self.method_map.entry(method).or_default().add(route, dest);
+            } else {
+                self.fallback.add(route, dest);
+            }
+        }
+    }
+
+    fn find(&self, method: &Method, path: &Uri) -> Option<Match<&T>> {
+        let path = path.path();
+        self.method_map
+            .get(method)
+            .and_then(|router| router.recognize(path).ok())
+            .or_else(|| {
+                let fallback = self.fallback.recognize(path).ok();
+                fallback
+            })
+    }
+}
+
+impl<T> Default for MethodAwareRouter<T> {
+    fn default() -> Self {
+        Self {
+            method_map: hashbrown::HashMap::default(),
+            fallback: Router::default(),
+        }
+    }
+}
+
+pub fn new_engine() -> Arc<Engine> {
+    let mut wasmtime_config = wasmtime::Config::new();
+    wasmtime_config.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(
+        PoolingAllocationConfig::default(),
+    ));
+    wasmtime_config.wasm_component_model(true);
+    // TODO epoch_interruption
+    wasmtime_config.async_support(true);
+    Arc::new(Engine::new(&wasmtime_config).unwrap())
+}
+
+pub fn component_to_instance<
+    C: ClockFn + 'static,
+    DB: DbConnection + 'static,
+    P: DbPool<DB> + 'static,
+>(
+    wasm_component: WasmComponent,
+    engine: &Engine,
+) -> Result<WebhookInstance<C, DB, P>, WebhookComponentInstantiationError> {
     let mut linker = Linker::new(&engine);
-    wasmtime_wasi_http::add_to_linker_async(&mut linker).map_err(|err| {
+    wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| WasmFileError::LinkingError {
+        context: StrVariant::Static("linking `wasmtime_wasi`"),
+        err: err.into(),
+    })?; // For env vars to work
+    wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(|err| {
         WasmFileError::LinkingError {
             context: StrVariant::Static("linking `wasmtime_wasi_http`"),
             err: err.into(),
         }
     })?;
-
+    // wasmtime_wasi_http::add_to_linker_async(&mut linker).map_err(|err| {
+    //     WasmFileError::LinkingError {
+    //         context: StrVariant::Static("linking `wasmtime_wasi_http`"),
+    //         err: err.into(),
+    //     }
+    // })?;
     // Mock imported functions
-
     for import in &wasm_component.exim.imports_hierarchy {
         if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
             // Skip host-implemented functions
@@ -114,13 +172,14 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                     if err.to_string() == format!("import `{function_name}` not found") {
                         debug!("Skipping mocking of {ffqn}");
                     } else {
-                        return Err(WasmFileError::LinkingError {
-                            context: StrVariant::Arc(Arc::from(format!(
-                                "cannot add mock for imported function {ffqn}"
-                            ))),
-                            err: err.into(),
-                        }
-                        .into());
+                        return Err(WebhookComponentInstantiationError::WasmFileError(
+                            WasmFileError::LinkingError {
+                                context: StrVariant::Arc(Arc::from(format!(
+                                    "cannot add mock for imported function {ffqn}"
+                                ))),
+                                err: err.into(),
+                            },
+                        ));
                     }
                 }
             }
@@ -130,18 +189,32 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
     }
     let instance = linker
         .instantiate_pre(&wasm_component.component)
-        .map_err(WebhookInstallationError::InstantiationError)?;
-    let instance = ProxyPre::new(instance).map_err(WebhookInstallationError::InstantiationError)?;
+        .map_err(WebhookComponentInstantiationError::InstantiationError)?;
+    let instance =
+        ProxyPre::new(instance).map_err(WebhookComponentInstantiationError::InstantiationError)?;
+    Ok(WebhookInstance(Arc::new(instance)))
+}
+
+pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    listener: TcpListener,
+    engine: Arc<Engine>,
+    router: MethodAwareRouter<WebhookInstance<C, DB, P>>,
+    db_pool: P,
+    clock_fn: C,
+    fn_registry: Arc<dyn FunctionRegistry>,
+    retry_config: RetryConfig,
+) -> Result<(), WebhookServerError> {
+    let router = Arc::new(router);
     loop {
         let (stream, _) = listener
             .accept()
             .await
-            .map_err(WebhookInstallationError::SocketError)?;
+            .map_err(WebhookServerError::SocketError)?;
         let io = TokioIo::new(stream);
         // Spawn a tokio task for each connection
-        // TODO: cancel on connection drop
+        // TODO: cancel on connection drop and on server exit
         tokio::task::spawn({
-            let instance = instance.clone();
+            let router = router.clone();
             let engine = engine.clone();
             let clock_fn = clock_fn.clone();
             let db_pool = db_pool.clone();
@@ -151,16 +224,16 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                     .serve_connection(
                         io,
                         hyper::service::service_fn(move |req| {
+                            info!("method: {}", req.method());
+                            info!("uri: {}", req.uri());
                             handle_request(
                                 req,
-                                instance.clone(),
-                                store(
-                                    &engine,
-                                    clock_fn.clone(),
-                                    db_pool.clone(),
-                                    fn_registry.clone(),
-                                    retry_config,
-                                ),
+                                router.clone(),
+                                engine.clone(),
+                                clock_fn.clone(),
+                                db_pool.clone(),
+                                fn_registry.clone(),
+                                retry_config,
                             )
                         }),
                     )
@@ -174,7 +247,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
 }
 
 #[derive(Clone, Copy, Default)]
-struct RetryConfig {
+pub struct RetryConfig {
     activity_max_retries_override: Option<u32>,
     activity_retry_exp_backoff_override: Option<Duration>,
 }
@@ -288,28 +361,34 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
     }
 }
 
-#[must_use]
-fn store<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
-    engine: &Engine,
-    clock_fn: C,
-    db_pool: P,
-    fn_registry: Arc<dyn FunctionRegistry>,
-    retry_config: RetryConfig,
-) -> Store<WebhookCtx<C, DB, P>> {
-    let mut builder = WasiCtxBuilder::new();
-    let ctx = WebhookCtx {
-        clock_fn,
-        db_pool,
-        fn_registry,
-        table: ResourceTable::new(),
-        wasi_ctx: builder.build(),
-        http_ctx: WasiHttpCtx::new(),
-        retry_config,
-        phantom_data: PhantomData::default(),
-    };
-    Store::new(engine, ctx)
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
+    #[must_use]
+    fn new<'a>(
+        engine: &Engine,
+        clock_fn: C,
+        db_pool: P,
+        fn_registry: Arc<dyn FunctionRegistry>,
+        retry_config: RetryConfig,
+        params: impl Iterator<Item = (&'a str, &'a str)>,
+    ) -> Store<WebhookCtx<C, DB, P>> {
+        let mut wasi_ctx = WasiCtxBuilder::new();
+        for (key, val) in params {
+            wasi_ctx.env(key, val);
+        }
+        let wasi_ctx = wasi_ctx.build();
+        let ctx = WebhookCtx {
+            clock_fn,
+            db_pool,
+            fn_registry,
+            table: ResourceTable::new(),
+            wasi_ctx,
+            http_ctx: WasiHttpCtx::new(),
+            retry_config,
+            phantom_data: PhantomData::default(),
+        };
+        Store::new(engine, ctx)
+    }
 }
-
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiView for WebhookCtx<C, DB, P> {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
@@ -329,6 +408,65 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiHttpView for WebhookCtx<C,
     }
 }
 
+async fn handle_request<
+    C: ClockFn + 'static,
+    DB: DbConnection + 'static,
+    P: DbPool<DB> + 'static,
+>(
+    req: hyper::Request<hyper::body::Incoming>,
+    router: Arc<MethodAwareRouter<WebhookInstance<C, DB, P>>>,
+    engine: Arc<Engine>,
+    clock_fn: C,
+    db_pool: P,
+    fn_registry: Arc<dyn FunctionRegistry>,
+    retry_config: RetryConfig,
+) -> Result<hyper::Response<HyperOutgoingBody>, hyper::Error> {
+    handle_request_inner(
+        req,
+        router,
+        engine,
+        clock_fn,
+        db_pool,
+        fn_registry,
+        retry_config,
+    )
+    .await
+    .or_else(|err| {
+        fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
+            let body = BoxBody::new(http_body_util::BodyExt::map_err(
+                http_body_util::Full::new(Bytes::copy_from_slice(body.as_bytes())),
+                |_| unreachable!(),
+            ));
+            hyper::Response::builder()
+                .status(status_code)
+                .body(body)
+                .unwrap()
+        }
+        Ok(match err {
+            HandleRequestError::IncomingRequestError(err) => resp(
+                &format!("Incoming request error: {err}"),
+                StatusCode::BAD_REQUEST,
+            ),
+            HandleRequestError::ResponseCreationError(err) => resp(
+                &format!("Cannot create response: {err}"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            HandleRequestError::InstantiationError(err) => resp(
+                &format!("Cannot instantiate: {err}"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            HandleRequestError::ErrorCode(code) => resp(
+                &format!("Error code: {code}"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            HandleRequestError::ExecutionError(_) => {
+                resp("Component Error", StatusCode::INTERNAL_SERVER_ERROR)
+            }
+            HandleRequestError::RouteNotFound => resp("Route not found", StatusCode::NOT_FOUND),
+        })
+    })
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum HandleRequestError {
     #[error("incoming request error: {0}")]
@@ -337,87 +475,108 @@ pub enum HandleRequestError {
     ResponseCreationError(StdError),
     #[error("instantiation error: {0}")]
     InstantiationError(StdError),
+    #[error("error code: {0}")]
+    ErrorCode(wasmtime_wasi_http::bindings::http::types::ErrorCode),
     #[error("execution error: {0}")]
     ExecutionError(StdError),
+    #[error("route not found")]
+    RouteNotFound,
 }
 
-async fn handle_request<
+async fn handle_request_inner<
     C: ClockFn + 'static,
     DB: DbConnection + 'static,
     P: DbPool<DB> + 'static,
 >(
     req: hyper::Request<hyper::body::Incoming>,
-    instance: ProxyPre<WebhookCtx<C, DB, P>>,
-    mut store: Store<WebhookCtx<C, DB, P>>,
+    router: Arc<MethodAwareRouter<WebhookInstance<C, DB, P>>>,
+    engine: Arc<Engine>,
+    clock_fn: C,
+    db_pool: P,
+    fn_registry: Arc<dyn FunctionRegistry>,
+    retry_config: RetryConfig,
 ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-
-    info!("Request {} to {}", req.method(), req.uri());
-
-    // if self.run.common.wasm.timeout.is_some() {
-    //     store.set_epoch_deadline(u64::from(EPOCH_PRECISION) + 1);
-    // }
-
-    let req = store
-        .data_mut()
-        .new_incoming_request(Scheme::Http, req)
-        .map_err(|err| HandleRequestError::IncomingRequestError(err.into()))?;
-    let out = store
-        .data_mut()
-        .new_response_outparam(sender)
-        .map_err(|err| HandleRequestError::ResponseCreationError(err.into()))?;
-    let proxy = instance
-        .instantiate_async(&mut store)
-        .await
-        .map_err(|err| HandleRequestError::InstantiationError(err.into()))?;
-
-    let task = tokio::task::spawn(async move {
-        if let Err(e) = proxy
-            .wasi_http_incoming_handler()
-            .call_handle(store, req, out)
+    if let Some(matched) = router.find(req.method(), req.uri()) {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        // if self.run.common.wasm.timeout.is_some() {
+        //     store.set_epoch_deadline(u64::from(EPOCH_PRECISION) + 1);
+        // }
+        let mut store = WebhookCtx::new(
+            &engine,
+            clock_fn,
+            db_pool,
+            fn_registry,
+            retry_config,
+            matched.params().iter(),
+        );
+        let req = store
+            .data_mut()
+            .new_incoming_request(Scheme::Http, req)
+            .map_err(|err| HandleRequestError::IncomingRequestError(err.into()))?;
+        let out = store
+            .data_mut()
+            .new_response_outparam(sender)
+            .map_err(|err| HandleRequestError::ResponseCreationError(err.into()))?;
+        let proxy = matched
+            .handler()
+            .0
+            .instantiate_async(&mut store)
             .await
-        {
-            error!("{e:?}");
-            return Err(e);
-        }
+            .map_err(|err| HandleRequestError::InstantiationError(err.into()))?;
 
-        Ok(())
-    });
-    match receiver.await {
-        Ok(Ok(resp)) => Ok(resp),
-        Ok(Err(err)) => {
-            error!("Webhook sent error {err:?}");
-            Err(HandleRequestError::ExecutionError(err.into()))
+        let task = tokio::task::spawn(async move {
+            proxy
+                .wasi_http_incoming_handler()
+                .call_handle(store, req, out)
+                .await
+                .inspect_err(|err| error!("Webhook instance returned error: {err:?}"))
+        });
+        match receiver.await {
+            Ok(Ok(resp)) => Ok(resp),
+            Ok(Err(err)) => {
+                error!("Webhook instance sent error code {err:?}");
+                Err(HandleRequestError::ErrorCode(err))
+            }
+            Err(_recv_err) => {
+                // An error in the receiver (`RecvError`) only indicates that the
+                // task exited before a response was sent (i.e., the sender was
+                // dropped); it does not describe the underlying cause of failure.
+                // Instead we retrieve and propagate the error from inside the task
+                // which should more clearly tell the user what went wrong. Note
+                // that we assume the task has already exited at this point so the
+                // `await` should resolve immediately.
+                let err = match task.await {
+                    Ok(r) => {
+                        r.expect_err("if the receiver has an error, the task must have failed")
+                    } //
+                    Err(e) => e.into(), // e.g. Panic
+                };
+                error!("Extracted error from webhook instance task: {err:?}");
+                Err(HandleRequestError::ExecutionError(err.into()))
+            }
         }
-        Err(_recv_err) => {
-            // An error in the receiver (`RecvError`) only indicates that the
-            // task exited before a response was sent (i.e., the sender was
-            // dropped); it does not describe the underlying cause of failure.
-            // Instead we retrieve and propagate the error from inside the task
-            // which should more clearly tell the user what went wrong. Note
-            // that we assume the task has already exited at this point so the
-            // `await` should resolve immediately.
-            let err = match task.await {
-                Ok(r) => r.expect_err("if the receiver has an error, the task must have failed"), //
-                Err(e) => e.into(), // e.g. Panic
-            };
-            error!("Webhook instance error: {err:?}");
-            Err(HandleRequestError::ExecutionError(err.into()))
-        }
+    } else {
+        Err(HandleRequestError::RouteNotFound)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::MethodAwareRouter;
     use crate::{
         activity_worker::tests::spawn_activity_fibo,
         tests::fn_registry_dummy,
         workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
     };
+    use concepts::storage::DbPool as _;
     use concepts::FunctionFqn;
     use db_tests::Database;
+    use hyper::{Method, Uri};
     use std::net::SocketAddr;
     use test_utils::sim_clock::SimClock;
+    use tokio::net::TcpListener;
+    use tracing::info;
+    use utils::wasm_tools::WasmComponent;
 
     struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
     impl<T> Drop for AbortOnDrop<T> {
@@ -426,11 +585,11 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    #[ignore = "server never exits"]
+    #[tokio::test(flavor = "multi_thread")]
+    // #[ignore = "server never exits"]
     async fn webhook_trigger_fibo() {
         test_utils::set_up();
-        let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
         use test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO;
@@ -447,17 +606,152 @@ mod tests {
             0,
             fn_registry.clone(),
         );
-        //let server = AbortOnDrop(tokio::spawn(async move {
-        super::server(
-            test_programs_webhook_trigger_fibo_builder::TEST_PROGRAMS_WEBHOOK_TRIGGER_FIBO,
-            addr,
+        let engine = super::new_engine();
+        let instance = super::component_to_instance(
+            WasmComponent::new(
+                test_programs_webhook_trigger_fibo_builder::TEST_PROGRAMS_WEBHOOK_TRIGGER_FIBO,
+                &engine,
+            )
+            .unwrap(),
+            &engine,
+        )
+        .unwrap();
+
+        let mut router = MethodAwareRouter::default();
+        router.add(Some(Method::GET), "/fibo/*N/*ITERATIONS", instance);
+        let tcp_listener = TcpListener::bind(addr).await.unwrap();
+        let server_addr = tcp_listener.local_addr().unwrap();
+        info!("Listening on port {}", server_addr.port());
+
+        let _server = AbortOnDrop(tokio::spawn(super::server(
+            tcp_listener,
+            engine,
+            router,
             db_pool,
             sim_clock.get_clock_fn(),
             fn_registry,
             crate::webhook_trigger::RetryConfig::default(),
-        )
-        .await
-        .unwrap();
-        // }));
+        )));
+        // Check the happy path
+        let resp = reqwest::get(format!("http://{}/fibo/1/1", &server_addr))
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!("fiboa(1, 1) = 1", resp.text().await.unwrap());
+        // Check wrong URL
+        let resp = reqwest::get(format!("http://{}/unknown", &server_addr))
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 404);
+        assert_eq!("Route not found", resp.text().await.unwrap());
+        // Check panicking inside WASM before response is streamed
+        let resp = reqwest::get(format!("http://{}/fibo/1a/1", &server_addr))
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 500);
+        assert_eq!("Component Error", resp.text().await.unwrap());
+        // Check panicking inside WASM - AFTER response is streamed
+        let resp = reqwest::get(format!("http://{}/fibo/1/1a", &server_addr))
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!("", resp.text().await.unwrap());
+        activity_exec_task.close().await;
+        workflow_exec_task.close().await;
+    }
+
+    #[test]
+    fn routes() {
+        let mut router = MethodAwareRouter::default();
+        router.add(Some(Method::GET), "/foo", 1);
+        router.add(Some(Method::GET), "/foo/*", 2);
+        router.add(None, "/foo", 3);
+        router.add(None, "/*", 4);
+        router.add(None, "/", 5);
+        router.add(Some(Method::GET), "/path/*param1/*param2", 6);
+
+        assert_eq!(
+            1,
+            **router
+                .find(&Method::GET, &Uri::from_static("/foo"))
+                .unwrap()
+                .handler()
+        );
+        assert_eq!(
+            2,
+            **router
+                .find(&Method::GET, &Uri::from_static("/foo/foo/"))
+                .unwrap()
+                .handler()
+        );
+        assert_eq!(
+            2,
+            **router
+                .find(&Method::GET, &Uri::from_static("/foo/foo/bar"))
+                .unwrap()
+                .handler()
+        );
+        assert_eq!(
+            3,
+            **router
+                .find(&Method::POST, &Uri::from_static("/foo"))
+                .unwrap()
+                .handler()
+        );
+        assert_eq!(
+            5,
+            **router
+                .find(&Method::GET, &Uri::from_static("/"))
+                .unwrap()
+                .handler()
+        );
+
+        let found = router
+            .find(&Method::GET, &Uri::from_static("/path/p1/p2"))
+            .unwrap();
+        assert_eq!(6, **found.handler());
+        assert_eq!(
+            hashbrown::HashMap::from([("param1", "p1"), ("param2", "p2")]),
+            found
+                .params()
+                .into_iter()
+                .collect::<hashbrown::HashMap<_, _>>()
+        );
+    }
+
+    #[test]
+    fn routes_empty_fallback() {
+        let mut router = MethodAwareRouter::default();
+        router.add(Some(Method::GET), "/foo", 1);
+        router.add(None, "", 9);
+
+        assert_eq!(
+            1,
+            **router
+                .find(&Method::GET, &Uri::from_static("/foo"))
+                .unwrap()
+                .handler()
+        );
+        assert_eq!(
+            9,
+            **router
+                .find(&Method::GET, &Uri::from_static("/"))
+                .unwrap()
+                .handler()
+        );
+        assert_eq!(
+            9,
+            **router
+                .find(&Method::GET, &Uri::from_static("/x"))
+                .unwrap()
+                .handler()
+        );
+        assert_eq!(
+            9,
+            **router
+                .find(&Method::GET, &Uri::from_static("/x/"))
+                .unwrap()
+                .handler()
+        );
     }
 }
