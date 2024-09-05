@@ -71,12 +71,10 @@ impl<T: Clone> MethodAwareRouter<T> {
             // When the route is empty, interpret it as matching all paths:
             self.add(method.clone(), "/", dest.clone());
             self.add(method, "/*", dest);
+        } else if let Some(method) = method {
+            self.method_map.entry(method).or_default().add(route, dest);
         } else {
-            if let Some(method) = method {
-                self.method_map.entry(method).or_default().add(route, dest);
-            } else {
-                self.fallback.add(route, dest);
-            }
+            self.fallback.add(route, dest);
         }
     }
 
@@ -101,6 +99,7 @@ impl<T> Default for MethodAwareRouter<T> {
     }
 }
 
+#[must_use]
 pub fn new_engine() -> Arc<Engine> {
     let mut wasmtime_config = wasmtime::Config::new();
     wasmtime_config.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(
@@ -117,10 +116,10 @@ pub fn component_to_instance<
     DB: DbConnection + 'static,
     P: DbPool<DB> + 'static,
 >(
-    wasm_component: WasmComponent,
+    wasm_component: &WasmComponent,
     engine: &Engine,
 ) -> Result<WebhookInstance<C, DB, P>, WebhookComponentInstantiationError> {
-    let mut linker = Linker::new(&engine);
+    let mut linker = Linker::new(engine);
     wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| WasmFileError::LinkingError {
         context: StrVariant::Static("linking `wasmtime_wasi`"),
         err: err.into(),
@@ -384,7 +383,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             wasi_ctx,
             http_ctx: WasiHttpCtx::new(),
             retry_config,
-            phantom_data: PhantomData::default(),
+            phantom_data: PhantomData,
         };
         Store::new(engine, ctx)
     }
@@ -568,11 +567,12 @@ mod tests {
         tests::fn_registry_dummy,
         workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
     };
-    use concepts::storage::DbPool as _;
     use concepts::FunctionFqn;
     use db_tests::Database;
     use hyper::{Method, Uri};
     use std::net::SocketAddr;
+    use test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO;
+    use test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA;
     use test_utils::sim_clock::SimClock;
     use tokio::net::TcpListener;
     use tracing::info;
@@ -585,15 +585,13 @@ mod tests {
         }
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    // #[ignore = "server never exits"]
+    #[cfg(not(madsim))] // Due to TCP server/client
+    #[tokio::test]
     async fn webhook_trigger_fibo() {
         test_utils::set_up();
         let addr = SocketAddr::from(([127, 0, 0, 1], 0));
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
-        use test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO;
-        use test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA;
         let activity_exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn());
         let fn_registry = fn_registry_dummy(&[
             FunctionFqn::new_static(FIBOA.0, FIBOA.1),
@@ -608,7 +606,7 @@ mod tests {
         );
         let engine = super::new_engine();
         let instance = super::component_to_instance(
-            WasmComponent::new(
+            &WasmComponent::new(
                 test_programs_webhook_trigger_fibo_builder::TEST_PROGRAMS_WEBHOOK_TRIGGER_FIBO,
                 &engine,
             )

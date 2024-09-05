@@ -68,8 +68,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         let wasm_path = wasm_path.as_ref();
         let mut linker = wasmtime::component::Linker::new(&engine);
 
-        let wasm_component = WasmComponent::new(wasm_path, &engine)
-            .map_err(|err| WasmFileError::DecodeError(err))?;
+        let wasm_component =
+            WasmComponent::new(wasm_path, &engine).map_err(WasmFileError::DecodeError)?;
         // Mock imported functions
         for import in &wasm_component.exim.imports_hierarchy {
             if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
@@ -124,7 +124,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         WorkflowCtx::add_to_linker(&mut linker)?;
         let exported_ffqn_to_index = wasm_component
             .index_exported_functions()
-            .map_err(|err| WasmFileError::DecodeError(err))?;
+            .map_err(WasmFileError::DecodeError)?;
         Ok(Self {
             config,
             engine,

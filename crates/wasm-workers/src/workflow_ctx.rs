@@ -698,8 +698,7 @@ pub(crate) mod tests {
                     assert_eq!(child_exec_tick.wait_for_tasks().await.unwrap(), 1);
                     child_execution_count -= 1;
                     let child_log = db_connection.get(*child_execution_id).await.unwrap();
-                    let child_res = child_log.finished_result().unwrap();
-                    println!("***{child_res:?}");
+                    let child_res = child_log.into_finished_result().unwrap();
                     assert_matches!(child_res, Ok(SupportedFunctionReturnValue::None));
                 }
             }
@@ -716,7 +715,7 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
         (
             execution_log.event_history().collect(),
-            execution_log.finished_result().unwrap().clone(),
+            execution_log.into_finished_result().unwrap(),
         )
     }
 }

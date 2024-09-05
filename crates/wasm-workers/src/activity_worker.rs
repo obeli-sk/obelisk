@@ -83,8 +83,8 @@ impl<C: ClockFn> ActivityWorker<C> {
         let closure = type_annotate_http::<StoreCtx, _>(|t| WasiHttpImpl(t));
 
         let wasm_path = wasm_path.as_ref();
-        let wasm_component = WasmComponent::new(wasm_path, &engine)
-            .map_err(|err| WasmFileError::DecodeError(err))?;
+        let wasm_component =
+            WasmComponent::new(wasm_path, &engine).map_err(WasmFileError::DecodeError)?;
         let map_err = |err: wasmtime::Error| WasmFileError::LinkingError {
             context: StrVariant::Static("linking error"),
             err: err.into(),
@@ -106,7 +106,7 @@ impl<C: ClockFn> ActivityWorker<C> {
         let recycled_instances = config.recycle_instances.instantiate();
         let exported_ffqn_to_index = wasm_component
             .index_exported_functions()
-            .map_err(|err| WasmFileError::DecodeError(err))?;
+            .map_err(WasmFileError::DecodeError)?;
         Ok(Self {
             engine,
             linker,
