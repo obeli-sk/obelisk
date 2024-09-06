@@ -616,7 +616,7 @@ mod tests {
         .unwrap();
 
         let mut router = MethodAwareRouter::default();
-        router.add(Some(Method::GET), "/fibo/*N/*ITERATIONS", instance);
+        router.add(Some(Method::GET), "/fibo/:N/:ITERATIONS", instance);
         let tcp_listener = TcpListener::bind(addr).await.unwrap();
         let server_addr = tcp_listener.local_addr().unwrap();
         info!("Listening on port {}", server_addr.port());
@@ -666,7 +666,7 @@ mod tests {
         router.add(None, "/foo", 3);
         router.add(None, "/*", 4);
         router.add(None, "/", 5);
-        router.add(Some(Method::GET), "/path/*param1/*param2", 6);
+        router.add(Some(Method::GET), "/path/:param1/:param2", 6);
 
         assert_eq!(
             1,
@@ -715,6 +715,10 @@ mod tests {
                 .into_iter()
                 .collect::<hashbrown::HashMap<_, _>>()
         );
+        let found = router
+            .find(&Method::GET, &Uri::from_static("/path/p1/p2/p3"))
+            .unwrap();
+        assert_eq!(4, **found.handler());
     }
 
     #[test]
