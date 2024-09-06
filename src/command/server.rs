@@ -542,6 +542,7 @@ async fn run_internal(
     res
 }
 
+#[allow(clippy::too_many_lines)]
 async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     engines: &Engines,
     http_servers: Vec<crate::config::toml::webhook::HttpServer>,
@@ -605,9 +606,9 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             let instance = webhook_trigger::component_to_instance(
                 &WasmComponent::new(
                     assert_matches!(webhook.location, ComponentLocation::Path(path) => path), // FIXME - fetch from OCI registry
-                    &engine,
+                    engine,
                 )?,
-                &engine,
+                engine,
             )?;
             for route in webhook.routes {
                 let (methods, route) = match route {
@@ -710,7 +711,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     let (activities, workflows) =
         fetch_and_verify_all(wasm_activities, workflows, wasm_cache_dir, metadata_dir).await?;
 
-    let pre_spawns = prespawn_all(activities, workflows, component_registry, &engines, db_pool);
+    let pre_spawns = prespawn_all(activities, workflows, component_registry, engines, db_pool);
 
     // Abort/cancel safety:
     // If an error happens or Ctrl-C is pressed the whole process will shut down.

@@ -3,6 +3,8 @@
 // Add _submit + _await functions
 // Test outbound HTTP, IO?
 // Timeouts
+// Panic - propagate reason
+// stdout and stderr
 
 use crate::workflow_ctx::SUFFIX_PKG_EXT;
 use crate::workflow_worker::HOST_ACTIVITY_IFC_STRING;
@@ -555,102 +557,107 @@ async fn handle_request_inner<
 #[cfg(test)]
 mod tests {
     use super::MethodAwareRouter;
-    use crate::{
-        activity_worker::tests::spawn_activity_fibo,
-        tests::fn_registry_dummy,
-        workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
-    };
-    use concepts::FunctionFqn;
-    use db_tests::Database;
     use hyper::{Method, Uri};
-    use std::net::SocketAddr;
-    use test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO;
-    use test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA;
-    use test_utils::sim_clock::SimClock;
-    use tokio::net::TcpListener;
-    use tracing::info;
-    use utils::wasm_tools::WasmComponent;
-
-    struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
-    impl<T> Drop for AbortOnDrop<T> {
-        fn drop(&mut self) {
-            self.0.abort();
-        }
-    }
 
     #[cfg(not(madsim))] // Due to TCP server/client
-    #[tokio::test]
-    async fn webhook_trigger_fibo() {
-        use crate::engines::{EngineConfig, Engines};
+    mod nosim {
+        use super::*;
+        use crate::{
+            activity_worker::tests::spawn_activity_fibo,
+            tests::fn_registry_dummy,
+            webhook_trigger,
+            workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
+        };
+        use concepts::FunctionFqn;
+        use db_tests::Database;
+        use std::net::SocketAddr;
+        use test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO;
+        use test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA;
+        use test_utils::sim_clock::SimClock;
+        use tokio::net::TcpListener;
+        use tracing::info;
+        use utils::wasm_tools::WasmComponent;
 
-        test_utils::set_up();
-        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
-        let sim_clock = SimClock::default();
-        let (_guard, db_pool) = Database::Memory.set_up().await;
-        let activity_exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn());
-        let fn_registry = fn_registry_dummy(&[
-            FunctionFqn::new_static(FIBOA.0, FIBOA.1),
-            FunctionFqn::new_static(FIBO.0, FIBO.1),
-        ]);
-        let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
-        let workflow_exec_task = spawn_workflow_fibo(
-            db_pool.clone(),
-            sim_clock.get_clock_fn(),
-            JoinNextBlockingStrategy::Await,
-            0,
-            fn_registry.clone(),
-        );
-        let instance = super::component_to_instance(
-            &WasmComponent::new(
-                test_programs_webhook_trigger_fibo_builder::TEST_PROGRAMS_WEBHOOK_TRIGGER_FIBO,
+        struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+        impl<T> Drop for AbortOnDrop<T> {
+            fn drop(&mut self) {
+                self.0.abort();
+            }
+        }
+
+        #[tokio::test]
+        async fn webhook_trigger_fibo() {
+            use crate::engines::{EngineConfig, Engines};
+
+            test_utils::set_up();
+            let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+            let sim_clock = SimClock::default();
+            let (_guard, db_pool) = Database::Memory.set_up().await;
+            let activity_exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn());
+            let fn_registry = fn_registry_dummy(&[
+                FunctionFqn::new_static(FIBOA.0, FIBOA.1),
+                FunctionFqn::new_static(FIBO.0, FIBO.1),
+            ]);
+            let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
+            let workflow_exec_task = spawn_workflow_fibo(
+                db_pool.clone(),
+                sim_clock.get_clock_fn(),
+                JoinNextBlockingStrategy::Await,
+                0,
+                fn_registry.clone(),
+            );
+            let instance = webhook_trigger::component_to_instance(
+                &WasmComponent::new(
+                    test_programs_webhook_trigger_fibo_builder::TEST_PROGRAMS_WEBHOOK_TRIGGER_FIBO,
+                    &engine,
+                )
+                .unwrap(),
                 &engine,
             )
-            .unwrap(),
-            &engine,
-        )
-        .unwrap();
+            .unwrap();
 
-        let mut router = MethodAwareRouter::default();
-        router.add(Some(Method::GET), "/fibo/:N/:ITERATIONS", instance);
-        let tcp_listener = TcpListener::bind(addr).await.unwrap();
-        let server_addr = tcp_listener.local_addr().unwrap();
-        info!("Listening on port {}", server_addr.port());
+            let mut router = MethodAwareRouter::default();
+            router.add(Some(Method::GET), "/fibo/:N/:ITERATIONS", instance);
+            let tcp_listener = TcpListener::bind(addr).await.unwrap();
+            let server_addr = tcp_listener.local_addr().unwrap();
+            info!("Listening on port {}", server_addr.port());
 
-        let _server = AbortOnDrop(tokio::spawn(super::server(
-            tcp_listener,
-            engine,
-            router,
-            db_pool,
-            sim_clock.get_clock_fn(),
-            fn_registry,
-            crate::webhook_trigger::RetryConfig::default(),
-        )));
-        // Check the happy path
-        let resp = reqwest::get(format!("http://{}/fibo/1/1", &server_addr))
-            .await
-            .unwrap();
-        assert_eq!(resp.status().as_u16(), 200);
-        assert_eq!("fiboa(1, 1) = 1", resp.text().await.unwrap());
-        // Check wrong URL
-        let resp = reqwest::get(format!("http://{}/unknown", &server_addr))
-            .await
-            .unwrap();
-        assert_eq!(resp.status().as_u16(), 404);
-        assert_eq!("Route not found", resp.text().await.unwrap());
-        // Check panicking inside WASM before response is streamed
-        let resp = reqwest::get(format!("http://{}/fibo/1a/1", &server_addr))
-            .await
-            .unwrap();
-        assert_eq!(resp.status().as_u16(), 500);
-        assert_eq!("Component Error", resp.text().await.unwrap());
-        // Check panicking inside WASM - AFTER response is streamed
-        let resp = reqwest::get(format!("http://{}/fibo/1/1a", &server_addr))
-            .await
-            .unwrap();
-        assert_eq!(resp.status().as_u16(), 200);
-        assert_eq!("", resp.text().await.unwrap());
-        activity_exec_task.close().await;
-        workflow_exec_task.close().await;
+            let _server = AbortOnDrop(tokio::spawn(webhook_trigger::server(
+                tcp_listener,
+                engine,
+                router,
+                db_pool,
+                sim_clock.get_clock_fn(),
+                fn_registry,
+                crate::webhook_trigger::RetryConfig::default(),
+            )));
+            // Check the happy path
+            let resp = reqwest::get(format!("http://{}/fibo/1/1", &server_addr))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!("fiboa(1, 1) = 1", resp.text().await.unwrap());
+            // Check wrong URL
+            let resp = reqwest::get(format!("http://{}/unknown", &server_addr))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 404);
+            assert_eq!("Route not found", resp.text().await.unwrap());
+            // Check panicking inside WASM before response is streamed
+            let resp = reqwest::get(format!("http://{}/fibo/1a/1", &server_addr))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 500);
+            assert_eq!("Component Error", resp.text().await.unwrap());
+            // Check panicking inside WASM - AFTER response is streamed
+            let resp = reqwest::get(format!("http://{}/fibo/1/1a", &server_addr))
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!("", resp.text().await.unwrap());
+            activity_exec_task.close().await;
+            workflow_exec_task.close().await;
+        }
     }
 
     #[test]
