@@ -1,3 +1,9 @@
+// TODO: Execution ID/Request ID, Component ID?, Config ID, tracing. Persisted with first DB write.
+// Add Host Activities
+// Add _submit + _await functions
+// Test outbound HTTP, IO?
+// Timeouts
+
 use crate::workflow_ctx::SUFFIX_PKG_EXT;
 use crate::workflow_worker::HOST_ACTIVITY_IFC_STRING;
 use crate::WasmFileError;
@@ -17,7 +23,7 @@ use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, instrument, trace};
+use tracing::{debug, error, instrument, trace};
 use utils::time::ClockFn;
 use utils::wasm_tools::WasmComponent;
 use wasmtime::component::ResourceTable;
@@ -123,7 +129,7 @@ pub fn component_to_instance<
     wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| WasmFileError::LinkingError {
         context: StrVariant::Static("linking `wasmtime_wasi`"),
         err: err.into(),
-    })?; // For env vars to work
+    })?;
     wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(|err| {
         WasmFileError::LinkingError {
             context: StrVariant::Static("linking `wasmtime_wasi_http`"),
@@ -223,8 +229,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                     .serve_connection(
                         io,
                         hyper::service::service_fn(move |req| {
-                            info!("method: {}", req.method());
-                            info!("uri: {}", req.uri());
+                            debug!("method: {}, uri: {}", req.method(), req.uri());
                             handle_request(
                                 req,
                                 router.clone(),
@@ -441,6 +446,7 @@ async fn handle_request<
                 .body(body)
                 .unwrap()
         }
+        debug!("{err:?}");
         Ok(match err {
             HandleRequestError::IncomingRequestError(err) => resp(
                 &format!("Incoming request error: {err}"),
@@ -452,7 +458,7 @@ async fn handle_request<
             ),
             HandleRequestError::InstantiationError(err) => resp(
                 &format!("Cannot instantiate: {err}"),
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::SERVICE_UNAVAILABLE,
             ),
             HandleRequestError::ErrorCode(code) => resp(
                 &format!("Error code: {code}"),
