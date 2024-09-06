@@ -23,12 +23,11 @@ use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, instrument, trace};
+use tracing::{debug, error, info, instrument, trace};
 use utils::time::ClockFn;
 use utils::wasm_tools::WasmComponent;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
-use wasmtime::PoolingAllocationConfig;
 use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::bindings::http::types::Scheme;
@@ -103,18 +102,6 @@ impl<T> Default for MethodAwareRouter<T> {
             fallback: Router::default(),
         }
     }
-}
-
-#[must_use]
-pub fn new_engine() -> Arc<Engine> {
-    let mut wasmtime_config = wasmtime::Config::new();
-    wasmtime_config.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(
-        PoolingAllocationConfig::default(),
-    ));
-    wasmtime_config.wasm_component_model(true);
-    // TODO epoch_interruption
-    wasmtime_config.async_support(true);
-    Arc::new(Engine::new(&wasmtime_config).unwrap())
 }
 
 pub fn component_to_instance<
@@ -556,7 +543,7 @@ async fn handle_request_inner<
                     } //
                     Err(e) => e.into(), // e.g. Panic
                 };
-                error!("Extracted error from webhook instance task: {err:?}");
+                info!("Setting response to ExecutionError");
                 Err(HandleRequestError::ExecutionError(err.into()))
             }
         }
@@ -594,6 +581,8 @@ mod tests {
     #[cfg(not(madsim))] // Due to TCP server/client
     #[tokio::test]
     async fn webhook_trigger_fibo() {
+        use crate::engines::{EngineConfig, Engines};
+
         test_utils::set_up();
         let addr = SocketAddr::from(([127, 0, 0, 1], 0));
         let sim_clock = SimClock::default();
@@ -603,6 +592,7 @@ mod tests {
             FunctionFqn::new_static(FIBOA.0, FIBOA.1),
             FunctionFqn::new_static(FIBO.0, FIBO.1),
         ]);
+        let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
             sim_clock.get_clock_fn(),
@@ -610,7 +600,6 @@ mod tests {
             0,
             fn_registry.clone(),
         );
-        let engine = super::new_engine();
         let instance = super::component_to_instance(
             &WasmComponent::new(
                 test_programs_webhook_trigger_fibo_builder::TEST_PROGRAMS_WEBHOOK_TRIGGER_FIBO,

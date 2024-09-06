@@ -15,6 +15,7 @@ use wasm_workers::{
     activity_worker::ActivityConfig,
     workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig},
 };
+use webhook::{HttpServer, Webhook};
 
 const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
 const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
@@ -40,9 +41,9 @@ pub(crate) struct ObeliskConfig {
     #[serde(default)]
     pub(crate) codegen_cache: Option<CodegenCache>,
     #[serde(default)]
-    pub(crate) wasm_activity: Vec<WasmActivity>,
+    pub(crate) wasm_activity: Vec<WasmActivity>, // TOOD: change to plural
     #[serde(default)]
-    pub(crate) workflow: Vec<Workflow>,
+    pub(crate) workflow: Vec<Workflow>, // TODO: change to plural
     #[serde(default)]
     pub(crate) wasmtime_pooling_config: WasmtimePoolingConfig,
     #[cfg(feature = "otlp")]
@@ -50,6 +51,10 @@ pub(crate) struct ObeliskConfig {
     pub(crate) otlp: Option<otlp::OtlpConfig>,
     #[serde(default)]
     pub(crate) log: LoggingConfig,
+    #[serde(default, rename = "http_server")]
+    pub(crate) http_servers: Vec<HttpServer>,
+    #[serde(default, rename = "webhook")]
+    pub(crate) webhooks: Vec<Webhook>,
 }
 
 async fn replace_path_prefix_mkdir(
@@ -324,7 +329,7 @@ impl Workflow {
     }
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WasmtimePoolingConfig {
     /// How many bytes to keep resident between instantiations for the
@@ -573,6 +578,45 @@ pub(crate) mod log {
                 Rotation::Never => Self::NEVER,
             }
         }
+    }
+}
+
+pub(crate) mod webhook {
+    use serde::Deserialize;
+    use std::net::SocketAddr;
+
+    use crate::config::ComponentLocation;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct HttpServer {
+        pub(crate) name: String,
+        pub(crate) listening_addr: SocketAddr,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct Webhook {
+        pub(crate) name: String,
+        pub(crate) http_server: String,
+        pub(crate) location: ComponentLocation,
+        pub(crate) routes: Vec<WebhookRoute>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(untagged)]
+    pub(crate) enum WebhookRoute {
+        String(String),
+        WebhookRouteDetail(WebhookRouteDetail),
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct WebhookRouteDetail {
+        // Empty means all methods.
+        #[serde(default)]
+        pub(crate) methods: Vec<String>,
+        pub(crate) route: String,
     }
 }
 

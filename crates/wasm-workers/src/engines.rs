@@ -93,6 +93,7 @@ impl EngineConfig {
 #[derive(Clone)]
 pub struct Engines {
     pub activity_engine: Arc<Engine>,
+    pub webhook_engine: Arc<Engine>,
     pub workflow_engine: Arc<Engine>,
 }
 
@@ -118,6 +119,10 @@ impl Engines {
             .map_err(|err| EngineError::Uncategorized(err.into()))
     }
 
+    pub(crate) fn get_webhook_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
+        Self::get_activity_engine(config)
+    }
+
     pub(crate) fn get_activity_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         let mut wasmtime_config = wasmtime::Config::new();
         wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
@@ -139,6 +144,7 @@ impl Engines {
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
+            webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
             workflow_engine: Self::get_workflow_engine(engine_config)?,
         })
     }
@@ -184,6 +190,7 @@ impl Engines {
         };
         Ok(Engines {
             activity_engine: Self::get_activity_engine(engine_config.clone())?,
+            webhook_engine: Self::get_webhook_engine(engine_config.clone())?,
             workflow_engine: Self::get_workflow_engine(engine_config)?,
         })
     }

@@ -1,11 +1,14 @@
 use super::grpc;
 use crate::config::config_holder::ConfigHolder;
+use crate::config::toml::webhook::Webhook;
+use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::ObeliskConfig;
 use crate::config::toml::VerifiedActivityConfig;
 use crate::config::toml::VerifiedWorkflowConfig;
 use crate::config::toml::WasmActivity;
 use crate::config::toml::Workflow;
 use crate::config::Component;
+use crate::config::ComponentLocation;
 use crate::config::ConfigStore;
 use crate::grpc_util::grpc_mapping::PendingStatusExt as _;
 use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
@@ -47,7 +50,9 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use tokio::task::AbortHandle;
 use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
@@ -58,9 +63,12 @@ use tracing::warn;
 use tracing::Instrument;
 use tracing::{debug, info, trace};
 use utils::time::now;
+use utils::wasm_tools::WasmComponent;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
+use wasm_workers::webhook_trigger;
+use wasm_workers::webhook_trigger::MethodAwareRouter;
 use wasm_workers::workflow_worker::WorkflowWorker;
 
 #[derive(Debug)]
@@ -383,6 +391,7 @@ async fn run_internal(
     clean_cache: bool,
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
+    debug!("Using toml configuration {config:#?}");
     let db_file = &config
         .get_sqlite_file(config_holder.project_dirs.as_ref())
         .await?;
@@ -468,18 +477,36 @@ async fn run_internal(
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
 
     let mut component_registry = ComponentConfigRegistry::default();
+    let engines = {
+        let codegen_cache_config_file_holder =
+            Engines::write_codegen_config(codegen_cache.as_deref())
+                .context("error configuring codegen cache")?;
+        Engines::auto_detect_allocator(
+            &config.wasmtime_pooling_config.into(),
+            codegen_cache_config_file_holder,
+        )?
+    };
     let (exec_join_handles, timers_watcher) = Box::pin(
         spawn_tasks(
-            config,
+            &engines,
+            config.wasm_activity,
+            config.workflow,
             &db_pool,
             &mut component_registry,
-            codegen_cache.as_deref(),
             Arc::from(wasm_cache_dir),
             Arc::from(metadata_dir),
         )
         .instrument(init_span),
     )
     .await?;
+    let _http_servers_handles = start_webhooks(
+        &engines,
+        config.http_servers,
+        config.webhooks,
+        db_pool.clone(),
+        component_registry.get_fn_registry(),
+    )
+    .await;
     let grpc_server = Arc::new(GrpcServer::new(db_pool.clone(), component_registry));
     let res = tonic::transport::Server::builder()
         .add_service(
@@ -515,12 +542,132 @@ async fn run_internal(
     res
 }
 
+async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    engines: &Engines,
+    http_servers: Vec<crate::config::toml::webhook::HttpServer>,
+    webhooks: Vec<crate::config::toml::webhook::Webhook>,
+    db_pool: P,
+    fn_registry: Arc<dyn FunctionRegistry>,
+) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
+    // check uniqueness of names
+    {
+        if http_servers.len()
+            > http_servers
+                .iter()
+                .map(|it| &it.name)
+                .collect::<hashbrown::HashSet<_>>()
+                .len()
+        {
+            bail!("Each `http_server` must have a unique name");
+        }
+        if webhooks.len()
+            > webhooks
+                .iter()
+                .map(|it| &it.name)
+                .collect::<hashbrown::HashSet<_>>()
+                .len()
+        {
+            bail!("Each `webhook` must have a unique name");
+        }
+    }
+    let mut webhooks_by_server_name = {
+        let mut map: hashbrown::HashMap<std::string::String, Vec<Webhook>> =
+            hashbrown::HashMap::default();
+        for webhook in webhooks {
+            map.entry(webhook.http_server.clone())
+                .or_default()
+                .push(webhook);
+        }
+        map
+    };
+    let http_servers = {
+        let mut vec = Vec::new();
+        for http_server in http_servers {
+            let webhooks = webhooks_by_server_name
+                .remove(&http_server.name)
+                .unwrap_or_default();
+            vec.push((http_server, webhooks));
+        }
+        vec
+    };
+    // Each webhook must be associated with an `http_server`.
+    if !webhooks_by_server_name.is_empty() {
+        bail!(
+            "No matching `http_server` found for some `webhook` configurations: {:?}",
+            webhooks_by_server_name.keys().collect::<Vec<_>>()
+        );
+    }
+    let mut abort_handles = Vec::with_capacity(http_servers.len());
+    let engine = &engines.webhook_engine;
+    for (http_server, webhooks) in http_servers {
+        let mut router = MethodAwareRouter::default();
+        for webhook in webhooks {
+            let instance = webhook_trigger::component_to_instance(
+                &WasmComponent::new(
+                    assert_matches!(webhook.location, ComponentLocation::Path(path) => path), // FIXME - fetch from OCI registry
+                    &engine,
+                )?,
+                &engine,
+            )?;
+            for route in webhook.routes {
+                let (methods, route) = match route {
+                    WebhookRoute::String(route) => (Vec::new(), route),
+                    WebhookRoute::WebhookRouteDetail(detail) => (detail.methods, detail.route),
+                };
+                if methods.is_empty() {
+                    router.add(None, &route, instance.clone());
+                } else {
+                    for method in methods {
+                        let method =
+                            http::Method::from_bytes(method.as_bytes()).with_context(|| {
+                                format!(
+                                    "cannot parse route method `{method}` of webhook `{}`",
+                                    webhook.name
+                                )
+                            })?;
+                        router.add(Some(method), &route, instance.clone());
+                    }
+                }
+            }
+        }
+        let tcp_listener = TcpListener::bind(&http_server.listening_addr)
+            .await
+            .with_context(|| {
+                format!(
+                    "cannot bind socket {} for `http_server` named `{}`",
+                    http_server.listening_addr, http_server.name
+                )
+            })?;
+        let server_addr = tcp_listener.local_addr()?;
+        info!(
+            "HTTP server `{}` is iistening on {server_addr}",
+            http_server.name,
+        );
+
+        let server = AbortOnDropHandle(
+            tokio::spawn(webhook_trigger::server(
+                tcp_listener,
+                engine.clone(),
+                router,
+                db_pool.clone(),
+                now,
+                fn_registry.clone(),
+                webhook_trigger::RetryConfig::default(), // TODO
+            ))
+            .abort_handle(),
+        );
+        abort_handles.push(server);
+    }
+    Ok(abort_handles)
+}
+
 #[instrument(skip_all)]
 async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    config: ObeliskConfig,
+    engines: &Engines,
+    wasm_activities: Vec<WasmActivity>,
+    workflows: Vec<Workflow>,
     db_pool: &P,
     component_registry: &mut ComponentConfigRegistry,
-    codegen_cache: Option<&Path>,
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
 ) -> Result<
@@ -530,14 +677,6 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     ),
     anyhow::Error,
 > {
-    debug!(?config, "Using toml configuration");
-    let codegen_cache_config_file_holder =
-        Engines::write_codegen_config(codegen_cache).context("error configuring codegen cache")?;
-    let engines = Engines::auto_detect_allocator(
-        &config.wasmtime_pooling_config.into(),
-        codegen_cache_config_file_holder,
-    )?;
-
     let _epoch_ticker = EpochTicker::spawn_new(
         vec![
             engines.activity_engine.weak(),
@@ -557,11 +696,10 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     {
         // Check for name clashes which might make for confusing traces.
         let mut seen = HashSet::new();
-        for name in config
-            .wasm_activity
+        for name in wasm_activities
             .iter()
             .map(|a| &a.common.name)
-            .chain(config.workflow.iter().map(|w| &w.common.name))
+            .chain(workflows.iter().map(|w| &w.common.name))
         {
             if !seen.insert(name) {
                 warn!("Component with the same name already exists - {name}");
@@ -569,13 +707,8 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         }
     }
 
-    let (activities, workflows) = fetch_and_verify_all(
-        config.wasm_activity,
-        config.workflow,
-        wasm_cache_dir,
-        metadata_dir,
-    )
-    .await?;
+    let (activities, workflows) =
+        fetch_and_verify_all(wasm_activities, workflows, wasm_cache_dir, metadata_dir).await?;
 
     let pre_spawns = prespawn_all(activities, workflows, component_registry, &engines, db_pool);
 
@@ -903,5 +1036,12 @@ impl FunctionRegistry for ComponentConfigRegistry {
             .exported_ffqns
             .get(ffqn)
             .map(|(id, metadata, retry)| (metadata.clone(), id.clone(), *retry))
+    }
+}
+
+struct AbortOnDropHandle(AbortHandle);
+impl Drop for AbortOnDropHandle {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }

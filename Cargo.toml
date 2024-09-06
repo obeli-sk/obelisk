@@ -62,6 +62,7 @@ tracing-opentelemetry = { workspace = true, optional = true }
 console-subscriber = { workspace = true, optional = true }
 # tracing-chrome
 tracing-chrome = { workspace = true, optional = true }
+http = "1.1.0"
 
 
 [[bin]]
@@ -275,9 +276,6 @@ clippy.module_name_repetitions = "allow"
 [workspace.lints.rust]
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(madsim)'] }
 unknown_lints = "deny"
-
-[profile.dev]
-debug = 0
 
 [profile.release]
 overflow-checks = true

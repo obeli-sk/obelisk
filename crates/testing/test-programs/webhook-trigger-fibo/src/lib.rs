@@ -16,10 +16,16 @@ impl Guest for Component {
         let resp_headers = Fields::new();
         let resp = OutgoingResponse::new(resp_headers);
         let body = resp.body().expect("outgoing response");
-        let n = std::env::var("N").unwrap().parse().unwrap();
+        let n = std::env::var("N")
+            .expect("env var `N` must be set")
+            .parse()
+            .expect("parameter `N` must be of type u8");
         // Start sending the 200 OK response
         ResponseOutparam::set(outparam, Ok(resp));
-        let iterations = std::env::var("ITERATIONS").unwrap().parse().unwrap(); // Panic here means we send 200 anyway.
+        let iterations = std::env::var("ITERATIONS")
+            .expect("env var `ITERATIONS` must be set")
+            .parse()
+            .expect("parameter `ITERATIONS` must be of type u32"); // Panic here means we send 200 anyway.
         let out = body.write().expect("outgoing stream");
         let fibo_res = if n > 0 {
             bindings::testing::fibo_workflow::workflow::fiboa(n, iterations)
