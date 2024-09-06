@@ -40,7 +40,7 @@ pub mod time {
 
 pub fn tracing_panic_hook(panic_info: &std::panic::PanicInfo) {
     let payload = panic_info.payload();
-    #[allow(clippy::manual_map)]
+    #[expect(clippy::manual_map)]
     let payload = if let Some(s) = payload.downcast_ref::<&str>() {
         Some(&**s)
     } else if let Some(s) = payload.downcast_ref::<String>() {

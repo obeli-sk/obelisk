@@ -125,7 +125,7 @@ struct WastValDeserialize<'a>(&'a TypeWrapper);
 impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
     type Value = WastVal;
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
@@ -310,7 +310,7 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                     Ok(WastVal::F64(val))
                 } else if *self.0 == TypeWrapper::F32 {
                     // Warining: This might truncate the value.
-                    #[allow(clippy::cast_possible_truncation)]
+                    #[expect(clippy::cast_possible_truncation)]
                     let f32 = val as f32;
                     // Fail on overflow.
                     if val.is_finite() == f32.is_finite() {

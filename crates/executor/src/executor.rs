@@ -317,7 +317,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
     // FIXME: On a slow execution: race between `expired_timers_watcher` this if retry_exp_backoff is 0.
     /// Map the `WorkerError` to an intermittent or a permanent failure.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn worker_result_to_execution_event(
         execution_id: ExecutionId,
         worker_result: WorkerResult,
@@ -799,7 +799,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::too_many_lines)]
     async fn worker_error_should_trigger_an_execution_retry() {
         set_up();
         let sim_clock = SimClock::default();
@@ -954,7 +953,6 @@ mod tests {
         db_pool.close().await.unwrap();
     }
 
-    #[allow(clippy::too_many_lines)]
     #[rstest::rstest(
         worker_error => [
             WorkerError::IntermittentError {
@@ -1150,7 +1148,7 @@ mod tests {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     #[tokio::test]
     async fn hanging_lock_should_be_cleaned_and_execution_retried() {
         set_up();

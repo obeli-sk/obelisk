@@ -384,7 +384,7 @@ pub(crate) async fn run(
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 async fn run_internal(
     config: ObeliskConfig,
     clean_db: bool,
@@ -542,7 +542,7 @@ async fn run_internal(
     res
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     engines: &Engines,
     http_servers: Vec<crate::config::toml::webhook::HttpServer>,

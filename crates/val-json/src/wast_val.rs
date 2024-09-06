@@ -128,7 +128,7 @@ impl TryFrom<Val> for WastVal {
 }
 
 impl PartialEq for WastVal {
-    #[allow(clippy::match_same_arms)]
+    #[expect(clippy::match_same_arms)]
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             // IEEE 754 equality considers NaN inequal to NaN and negative zero

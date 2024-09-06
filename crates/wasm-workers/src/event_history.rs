@@ -33,7 +33,7 @@ enum ProcessingStatus {
     Processed,
 }
 
-#[allow(clippy::struct_field_names)]
+#[expect(clippy::struct_field_names)]
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct EventHistory<C: ClockFn> {
     execution_id: ExecutionId,
@@ -60,7 +60,7 @@ enum NonBlockingCache {
 }
 
 impl<C: ClockFn> EventHistory<C> {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
         topmost_parent_id: Option<ExecutionId>,
@@ -103,7 +103,6 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
     /// Apply the event and wait if new, replay if already in the event history, or
     /// apply with an interrupt.
     pub(crate) async fn apply<DB: DbConnection>(
@@ -260,7 +259,7 @@ impl<C: ClockFn> EventHistory<C> {
     }
 
     // TODO: Check params, scheduled_at etc to catch non-deterministic errors.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     fn process_event_by_key(
         &mut self,
         key: EventHistoryKey,
@@ -480,7 +479,6 @@ impl<C: ClockFn> EventHistory<C> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     #[instrument(skip_all, fields(%version))]
     async fn append_to_db<DB: DbConnection>(
         &mut self,
@@ -1172,7 +1170,6 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    #[allow(clippy::too_many_lines)]
     async fn start_async_respond_then_join_next(
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -1320,7 +1317,6 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    #[allow(clippy::too_many_lines)]
     async fn create_two_non_blocking_childs_then_two_join_nexts(
         #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
         second_run_strategy: JoinNextBlockingStrategy,

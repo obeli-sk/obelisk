@@ -68,7 +68,7 @@ where
     }
 }
 #[cfg(not(feature = "otlp"))]
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
 fn tokio_tracing_otlp(_config: &mut ObeliskConfig) -> Option<tracing::level_filters::LevelFilter> {
     None
 }

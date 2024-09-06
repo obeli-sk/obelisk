@@ -857,7 +857,6 @@ impl SqlitePool {
             .map_err(async_sqlite::Error::Rusqlite)?)
     }
 
-    #[allow(clippy::too_many_lines)]
     #[instrument(skip_all)]
     fn append(
         tx: &Transaction,

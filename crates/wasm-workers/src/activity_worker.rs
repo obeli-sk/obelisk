@@ -129,7 +129,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         &self.exim.imports_flat
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Params: {params:?}", params = ctx.params);
         assert!(ctx.event_history.is_empty());

@@ -20,7 +20,6 @@ use tonic::{codec::CompressionEncoding, transport::Channel};
 pub type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[tokio::main]
-#[allow(clippy::too_many_lines)]
 async fn main() -> Result<(), anyhow::Error> {
     let config_holder = ConfigHolder::new(ProjectDirs::from("com", "obelisk", "obelisk"));
     let config = config_holder.load_config().await?;

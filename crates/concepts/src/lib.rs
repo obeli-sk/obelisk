@@ -646,7 +646,7 @@ pub mod prefixed_ulid {
         }
 
         #[must_use]
-        #[allow(clippy::cast_possible_truncation)]
+        #[expect(clippy::cast_possible_truncation)]
         pub fn random_part(&self) -> u64 {
             self.ulid.random() as u64
         }

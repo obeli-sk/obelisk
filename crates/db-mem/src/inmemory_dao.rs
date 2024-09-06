@@ -230,7 +230,7 @@ mod index {
     pub(super) struct JournalsIndex {
         pending_scheduled: BTreeMap<DateTime<Utc>, HashSet<ExecutionId>>,
         pending_scheduled_rev: HashMap<ExecutionId, DateTime<Utc>>,
-        #[allow(clippy::type_complexity)]
+        #[expect(clippy::type_complexity)]
         // All open JoinSet Delays and Locks
         timers: BTreeMap<DateTime<Utc>, HashMap<ExecutionId, Option<(JoinSetId, DelayId)>>>,
         timers_rev: HashMap<ExecutionId, Vec<DateTime<Utc>>>,
@@ -389,7 +389,6 @@ struct DbHolder {
 }
 
 impl DbHolder {
-    #[allow(clippy::too_many_arguments)]
     fn lock_pending(
         &mut self,
         batch_size: usize,

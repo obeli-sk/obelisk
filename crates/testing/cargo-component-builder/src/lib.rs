@@ -20,7 +20,7 @@ pub fn build_workflow() {
     build_internal("wasm32-unknown-unknown");
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 fn build_internal(tripple: &str) {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();

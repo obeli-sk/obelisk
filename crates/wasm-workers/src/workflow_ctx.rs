@@ -93,7 +93,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
         topmost_parent_id: Option<ExecutionId>,
@@ -547,7 +547,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     async fn execute_steps() -> (Vec<HistoryEvent>, FinishedExecutionResult) {
         let unstructured_holder = UnstructuredHolder::new();
         let mut unstructured = unstructured_holder.unstructured();
