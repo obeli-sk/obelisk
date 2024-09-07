@@ -251,7 +251,7 @@ impl RetryConfig {
             ComponentType::WasmActivity => self
                 .activity_max_retries_override
                 .unwrap_or(component_default),
-            ComponentType::WasmWorkflow => 0,
+            ComponentType::Workflow => 0,
         }
     }
 
@@ -264,7 +264,7 @@ impl RetryConfig {
             ComponentType::WasmActivity => self
                 .activity_retry_exp_backoff_override
                 .unwrap_or(component_default),
-            ComponentType::WasmWorkflow => Duration::ZERO,
+            ComponentType::Workflow => Duration::ZERO,
         }
     }
 }

@@ -69,7 +69,7 @@ impl ConfigStore {
     fn as_component_type(&self) -> ComponentType {
         match self {
             Self::WasmActivityV1 { .. } => ComponentType::WasmActivity,
-            Self::WasmWorkflowV1 { .. } => ComponentType::WasmWorkflow,
+            Self::WasmWorkflowV1 { .. } => ComponentType::Workflow,
         }
     }
 

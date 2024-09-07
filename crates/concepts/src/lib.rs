@@ -930,7 +930,7 @@ impl FromStr for Digest {
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentType {
     WasmActivity,
-    WasmWorkflow, // TODO: Rename to Workflow
+    Workflow,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
