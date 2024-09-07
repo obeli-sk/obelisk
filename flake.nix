@@ -88,6 +88,7 @@
                 cargo-insta
                 cargo-nextest
                 dive
+                git-cliff
                 litecli
                 lldb
                 nixpkgs-fmt
