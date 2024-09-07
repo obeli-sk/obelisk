@@ -500,7 +500,11 @@ async fn run_internal(
             clock_fn: now,
         },
     );
-    let (wasm_activities, workflows, http_servers_to_webhooks) = fetch_and_verify_all(
+    let VerifiedConfig {
+        wasm_activities,
+        workflows,
+        http_servers_to_webhooks,
+    } = fetch_and_verify_all(
         config.wasm_activity,
         config.workflow,
         config.http_servers,
@@ -560,7 +564,6 @@ async fn run_internal(
     grpc_server_res
 }
 
-#[expect(clippy::too_many_lines)]
 async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::Webhook>)>,
     engines: &Engines,
@@ -631,6 +634,12 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     Ok(abort_handles)
 }
 
+struct VerifiedConfig {
+    wasm_activities: Vec<VerifiedActivityConfig>,
+    workflows: Vec<VerifiedWorkflowConfig>,
+    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::Webhook>)>,
+}
+
 #[instrument(skip_all)]
 async fn fetch_and_verify_all(
     wasm_activities: Vec<WasmActivity>,
@@ -639,14 +648,7 @@ async fn fetch_and_verify_all(
     webhooks: Vec<webhook::Webhook>,
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
-) -> Result<
-    (
-        Vec<VerifiedActivityConfig>,
-        Vec<VerifiedWorkflowConfig>,
-        Vec<(webhook::HttpServer, Vec<webhook::Webhook>)>,
-    ),
-    anyhow::Error,
-> {
+) -> Result<VerifiedConfig, anyhow::Error> {
     // Check for name clashes which might make for confusing traces.
     {
         let mut seen = HashSet::new();
@@ -681,7 +683,7 @@ async fn fetch_and_verify_all(
             bail!("Each `webhook` must have a unique name");
         }
     }
-    let http_servers = {
+    let http_servers_to_webhooks = {
         let mut webhooks_by_server_name = {
             let mut map: hashbrown::HashMap<std::string::String, Vec<Webhook>> =
                 hashbrown::HashMap::default();
@@ -749,15 +751,15 @@ async fn fetch_and_verify_all(
     );
     tokio::select! {
         (activity_results, workflow_results) = all => {
-            let mut activities = Vec::with_capacity(activity_results.len());
+            let mut wasm_activities = Vec::with_capacity(activity_results.len());
             for a in activity_results {
-                activities.push(a??);
+                wasm_activities.push(a??);
             }
             let mut workflows = Vec::with_capacity(workflow_results.len());
             for w in workflow_results {
                 workflows.push(w??);
             }
-            Ok((activities, workflows, http_servers))
+            Ok(VerifiedConfig {wasm_activities, workflows, http_servers_to_webhooks})
         },
         _ = tokio::signal::ctrl_c() => {
             anyhow::bail!("cancelled downloading images from OCI registries")
