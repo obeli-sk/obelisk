@@ -1,5 +1,6 @@
 use super::grpc;
 use crate::config::config_holder::ConfigHolder;
+use crate::config::toml::webhook;
 use crate::config::toml::webhook::Webhook;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::ObeliskConfig;
@@ -486,17 +487,6 @@ async fn run_internal(
             codegen_cache_config_file_holder,
         )?
     };
-    let (exec_join_handles, timers_watcher) = Box::pin(
-        spawn_tasks(
-            &engines,
-            config.wasm_activity,
-            config.workflow,
-            &db_pool,
-            &mut component_registry,
-            Arc::from(wasm_cache_dir),
-            Arc::from(metadata_dir),
-        )
-        .instrument(init_span),
     let _epoch_ticker = EpochTicker::spawn_new(
         vec![
             engines.activity_engine.weak(),
@@ -504,18 +494,40 @@ async fn run_internal(
         ],
         Duration::from_millis(10),
     );
-    )
-    .await?;
-    let _http_servers_handles = start_webhooks(
-        &engines,
+    let timers_watcher = TimersWatcherTask::spawn_new(
+        db_pool.connection(),
+        TimersWatcherConfig {
+            tick_sleep: Duration::from_millis(100),
+            clock_fn: now,
+        },
+    );
+    let (wasm_activities, workflows, http_servers_to_webhooks) = fetch_and_verify_all(
+        config.wasm_activity,
+        config.workflow,
         config.http_servers,
         config.webhooks,
+        Arc::from(wasm_cache_dir),
+        Arc::from(metadata_dir),
+    )
+    .await?;
+    let exec_join_handles = spawn_tasks(
+        &engines,
+        wasm_activities,
+        workflows,
+        &db_pool,
+        &mut component_registry,
+    )
+    .instrument(init_span)
+    .await?;
+    let _http_servers_handles = start_webhooks(
+        http_servers_to_webhooks,
+        &engines,
         db_pool.clone(),
         component_registry.get_fn_registry(),
     )
     .await;
     let grpc_server = Arc::new(GrpcServer::new(db_pool.clone(), component_registry));
-    let res = tonic::transport::Server::builder()
+    let grpc_server_res = tonic::transport::Server::builder()
         .add_service(
             grpc::scheduler_server::SchedulerServer::from_arc(grpc_server.clone())
                 .send_compressed(CompressionEncoding::Zstd)
@@ -546,68 +558,19 @@ async fn run_internal(
         exec_join_handle.close().await;
     }
     db_pool.close().await.context("cannot close database")?;
-    res
+    grpc_server_res
 }
 
 #[expect(clippy::too_many_lines)]
 async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::Webhook>)>,
     engines: &Engines,
-    http_servers: Vec<crate::config::toml::webhook::HttpServer>,
-    webhooks: Vec<crate::config::toml::webhook::Webhook>,
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
-    // check uniqueness of names
-    {
-        if http_servers.len()
-            > http_servers
-                .iter()
-                .map(|it| &it.name)
-                .collect::<hashbrown::HashSet<_>>()
-                .len()
-        {
-            bail!("Each `http_server` must have a unique name");
-        }
-        if webhooks.len()
-            > webhooks
-                .iter()
-                .map(|it| &it.name)
-                .collect::<hashbrown::HashSet<_>>()
-                .len()
-        {
-            bail!("Each `webhook` must have a unique name");
-        }
-    }
-    let mut webhooks_by_server_name = {
-        let mut map: hashbrown::HashMap<std::string::String, Vec<Webhook>> =
-            hashbrown::HashMap::default();
-        for webhook in webhooks {
-            map.entry(webhook.http_server.clone())
-                .or_default()
-                .push(webhook);
-        }
-        map
-    };
-    let http_servers = {
-        let mut vec = Vec::new();
-        for http_server in http_servers {
-            let webhooks = webhooks_by_server_name
-                .remove(&http_server.name)
-                .unwrap_or_default();
-            vec.push((http_server, webhooks));
-        }
-        vec
-    };
-    // Each webhook must be associated with an `http_server`.
-    if !webhooks_by_server_name.is_empty() {
-        bail!(
-            "No matching `http_server` found for some `webhook` configurations: {:?}",
-            webhooks_by_server_name.keys().collect::<Vec<_>>()
-        );
-    }
-    let mut abort_handles = Vec::with_capacity(http_servers.len());
+    let mut abort_handles = Vec::with_capacity(http_servers_to_webhooks.len());
     let engine = &engines.webhook_engine;
-    for (http_server, webhooks) in http_servers {
+    for (http_server, webhooks) in http_servers_to_webhooks {
         let mut router = MethodAwareRouter::default();
         for webhook in webhooks {
             let instance = webhook_trigger::component_to_instance(
@@ -670,32 +633,23 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 }
 
 #[instrument(skip_all)]
-async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    engines: &Engines,
+async fn fetch_and_verify_all(
     wasm_activities: Vec<WasmActivity>,
     workflows: Vec<Workflow>,
-    db_pool: &P,
-    component_registry: &mut ComponentConfigRegistry,
+    http_servers: Vec<webhook::HttpServer>,
+    webhooks: Vec<webhook::Webhook>,
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
 ) -> Result<
     (
-        Vec<ExecutorTaskHandle>,
-        executor::expired_timers_watcher::TaskHandle,
+        Vec<VerifiedActivityConfig>,
+        Vec<VerifiedWorkflowConfig>,
+        Vec<(webhook::HttpServer, Vec<webhook::Webhook>)>,
     ),
     anyhow::Error,
 > {
-
-    let timers_watcher = TimersWatcherTask::spawn_new(
-        db_pool.connection(),
-        TimersWatcherConfig {
-            tick_sleep: Duration::from_millis(100),
-            clock_fn: now,
-        },
-    );
-
+    // Check for name clashes which might make for confusing traces.
     {
-        // Check for name clashes which might make for confusing traces.
         let mut seen = HashSet::new();
         for name in wasm_activities
             .iter()
@@ -707,56 +661,60 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             }
         }
     }
-
-    let (activities, workflows) =
-        fetch_and_verify_all(wasm_activities, workflows, wasm_cache_dir, metadata_dir).await?;
-
-    let pre_spawns = prespawn_all(activities, workflows, component_registry, engines, db_pool);
-
-    // Abort/cancel safety:
-    // If an error happens or Ctrl-C is pressed the whole process will shut down.
-    let pre_spawns = futures_util::future::join_all(pre_spawns);
-    let pre_spawns = tokio::select! {
-        results_of_results = pre_spawns => {
-            let mut pre_spawns = Vec::with_capacity(results_of_results.len());
-            for handle in results_of_results {
-                pre_spawns.push(handle??);
-            }
-            pre_spawns
-        },
-        _ = tokio::signal::ctrl_c() => {
-            anyhow::bail!("cancelled downloading images from OCI registries")
+    // check uniqueness of server and webhook names
+    {
+        if http_servers.len()
+            > http_servers
+                .iter()
+                .map(|it| &it.name)
+                .collect::<hashbrown::HashSet<_>>()
+                .len()
+        {
+            bail!("Each `http_server` must have a unique name");
         }
+        if webhooks.len()
+            > webhooks
+                .iter()
+                .map(|it| &it.name)
+                .collect::<hashbrown::HashSet<_>>()
+                .len()
+        {
+            bail!("Each `webhook` must have a unique name");
+        }
+    }
+    let http_servers = {
+        let mut webhooks_by_server_name = {
+            let mut map: hashbrown::HashMap<std::string::String, Vec<Webhook>> =
+                hashbrown::HashMap::default();
+            for webhook in webhooks {
+                map.entry(webhook.http_server.clone())
+                    .or_default()
+                    .push(webhook);
+            }
+            map
+        };
+        let http_servers = {
+            let mut vec = Vec::new();
+            for http_server in http_servers {
+                let webhooks = webhooks_by_server_name
+                    .remove(&http_server.name)
+                    .unwrap_or_default();
+                vec.push((http_server, webhooks));
+            }
+            vec
+        };
+        // Each webhook must be associated with an `http_server`.
+        if !webhooks_by_server_name.is_empty() {
+            bail!(
+                "No matching `http_server` found for some `webhook` configurations: {:?}",
+                webhooks_by_server_name.keys().collect::<Vec<_>>()
+            );
+        }
+        http_servers
     };
-    // Start all executors
-    Ok((
-        pre_spawns
-            .into_iter()
-            .map(|pre_spawn| {
-                ExecTask::spawn_new(
-                    pre_spawn.worker,
-                    pre_spawn.exec_config,
-                    now,
-                    db_pool.clone(),
-                    pre_spawn.task_limiter,
-                    pre_spawn.executor_id,
-                    pre_spawn.component_name,
-                )
-            })
-            .collect(),
-        timers_watcher,
-    ))
-}
-
-#[instrument(skip_all)]
-async fn fetch_and_verify_all(
-    activities: Vec<WasmActivity>,
-    workflows: Vec<Workflow>,
-    wasm_cache_dir: Arc<Path>,
-    metadata_dir: Arc<Path>,
-) -> Result<(Vec<VerifiedActivityConfig>, Vec<VerifiedWorkflowConfig>), anyhow::Error> {
+    // Download WASM files from OCI registries if needed.
     // TODO: Switch to `JoinSet` when madsim supports it.
-    let activities = activities
+    let activities = wasm_activities
         .into_iter()
         .map(|activity| {
             tokio::spawn({
@@ -800,12 +758,60 @@ async fn fetch_and_verify_all(
             for w in workflow_results {
                 workflows.push(w??);
             }
-            Ok((activities, workflows))
+            Ok((activities, workflows, http_servers))
         },
         _ = tokio::signal::ctrl_c() => {
             anyhow::bail!("cancelled downloading images from OCI registries")
         }
     }
+}
+
+#[instrument(skip_all)]
+async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    engines: &Engines,
+    wasm_activities: Vec<VerifiedActivityConfig>,
+    workflows: Vec<VerifiedWorkflowConfig>,
+    db_pool: &P,
+    component_registry: &mut ComponentConfigRegistry,
+) -> Result<Vec<ExecutorTaskHandle>, anyhow::Error> {
+    let pre_spawns = prespawn_all(
+        wasm_activities,
+        workflows,
+        component_registry,
+        engines,
+        db_pool,
+    );
+
+    // Abort/cancel safety:
+    // If an error happens or Ctrl-C is pressed the whole process will shut down.
+    let pre_spawns = futures_util::future::join_all(pre_spawns);
+    let pre_spawns = tokio::select! {
+        results_of_results = pre_spawns => {
+            let mut pre_spawns = Vec::with_capacity(results_of_results.len());
+            for handle in results_of_results {
+                pre_spawns.push(handle??);
+            }
+            pre_spawns
+        },
+        _ = tokio::signal::ctrl_c() => {
+            anyhow::bail!("cancelled downloading images from OCI registries")
+        }
+    };
+    // Start all executors
+    Ok(pre_spawns
+        .into_iter()
+        .map(|pre_spawn| {
+            ExecTask::spawn_new(
+                pre_spawn.worker,
+                pre_spawn.exec_config,
+                now,
+                db_pool.clone(),
+                pre_spawn.task_limiter,
+                pre_spawn.executor_id,
+                pre_spawn.component_name,
+            )
+        })
+        .collect())
 }
 
 /// Compile WASM components in parallel.
