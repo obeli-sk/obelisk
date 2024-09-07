@@ -29,7 +29,7 @@ message Component {
     string digest = 2;
     string name = 3;
     string type = 4;
-    optional string file_path = 5;
+    reserved 5;
     repeated FunctionDetails exports = 6;
     repeated FunctionDetails imports = 7;
 }

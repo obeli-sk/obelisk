@@ -256,7 +256,6 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 r#type: component.config_id.component_type.to_string(),
                 config_id: Some(component.config_id.into()),
                 digest: component.config_store.common().content_digest.to_string(),
-                file_path: Some("TODO - location?".to_string()),
                 exports: inspect_fns(component.exports, true),
                 imports: inspect_fns(component.imports, true),
             };
