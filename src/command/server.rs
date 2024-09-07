@@ -497,6 +497,13 @@ async fn run_internal(
             Arc::from(metadata_dir),
         )
         .instrument(init_span),
+    let _epoch_ticker = EpochTicker::spawn_new(
+        vec![
+            engines.activity_engine.weak(),
+            engines.workflow_engine.weak(),
+        ],
+        Duration::from_millis(10),
+    );
     )
     .await?;
     let _http_servers_handles = start_webhooks(
@@ -678,13 +685,6 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     ),
     anyhow::Error,
 > {
-    let _epoch_ticker = EpochTicker::spawn_new(
-        vec![
-            engines.activity_engine.weak(),
-            engines.workflow_engine.weak(),
-        ],
-        Duration::from_millis(10),
-    );
 
     let timers_watcher = TimersWatcherTask::spawn_new(
         db_pool.connection(),
