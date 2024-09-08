@@ -28,16 +28,13 @@ pub enum WasmFileError {
 pub(crate) mod tests {
     use async_trait::async_trait;
     use concepts::{
-        ConfigId, ComponentRetryConfig, FunctionFqn, FunctionMetadata, FunctionRegistry,
+        ComponentRetryConfig, ConfigId, FunctionFqn, FunctionMetadata, FunctionRegistry,
         ParameterTypes,
     };
     use std::sync::Arc;
 
     pub(crate) struct TestingFnRegistry(
-        hashbrown::HashMap<
-            FunctionFqn,
-            (FunctionMetadata, ConfigId, ComponentRetryConfig),
-        >,
+        hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ConfigId, ComponentRetryConfig)>,
     );
 
     #[async_trait]

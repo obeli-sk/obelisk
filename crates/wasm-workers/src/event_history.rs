@@ -10,9 +10,9 @@ use concepts::storage::{
     JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
-use concepts::ConfigId;
 use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
+use concepts::ConfigId;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::{ExecutionId, StrVariant};
@@ -492,10 +492,8 @@ impl<C: ClockFn> EventHistory<C> {
         async fn component_active_get_exported_function(
             fn_registry: &dyn FunctionRegistry,
             ffqn: &FunctionFqn,
-        ) -> Result<
-            (FunctionMetadata, ConfigId, ComponentRetryConfig),
-            WorkflowFunctionError,
-        > {
+        ) -> Result<(FunctionMetadata, ConfigId, ComponentRetryConfig), WorkflowFunctionError>
+        {
             fn_registry
                 .get_by_exported_function(ffqn)
                 .await
@@ -996,8 +994,7 @@ mod tests {
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::{
-        ConfigId, ExecutionId, FunctionFqn, FunctionRegistry, Params,
-        SupportedFunctionReturnValue,
+        ConfigId, ExecutionId, FunctionFqn, FunctionRegistry, Params, SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::worker::{WorkerError, WorkerResult};

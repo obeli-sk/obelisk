@@ -11,8 +11,8 @@ use crate::workflow_worker::HOST_ACTIVITY_IFC_STRING;
 use crate::WasmFileError;
 use concepts::storage::{ClientError, CreateRequest, DbConnection, DbError, DbPool};
 use concepts::{
-    ConfigId, ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn,
-    FunctionRegistry, Params, StrVariant,
+    ComponentType, ConfigId, ExecutionId, FinishedExecutionError, FunctionFqn, FunctionRegistry,
+    Params, StrVariant,
 };
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
