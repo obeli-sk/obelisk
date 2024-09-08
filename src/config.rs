@@ -66,6 +66,9 @@ pub(crate) enum ConfigStore {
         child_max_retries: Option<u32>,
         non_blocking_event_batching: u32,
     },
+    WebhookV1 {
+        common: ConfigStoreCommon,
+    },
 }
 
 impl ConfigStore {
@@ -73,12 +76,15 @@ impl ConfigStore {
         match self {
             Self::WasmActivityV1 { .. } => ComponentType::WasmActivity,
             Self::WasmWorkflowV1 { .. } => ComponentType::Workflow,
+            Self::WebhookV1 { .. } => ComponentType::Webhook,
         }
     }
 
     pub(crate) fn common(&self) -> &ConfigStoreCommon {
         match self {
-            Self::WasmActivityV1 { common, .. } | Self::WasmWorkflowV1 { common, .. } => common,
+            Self::WasmActivityV1 { common, .. }
+            | Self::WasmWorkflowV1 { common, .. }
+            | Self::WebhookV1 { common } => common,
         }
     }
 
@@ -93,6 +99,7 @@ impl ConfigStore {
                 ..
             } => *default_max_retries,
             Self::WasmWorkflowV1 { .. } => 0,
+            Self::WebhookV1 { .. } => unreachable!("webhooks have no retries"),
         }
     }
 
@@ -103,6 +110,7 @@ impl ConfigStore {
                 ..
             } => *default_retry_exp_backoff,
             Self::WasmWorkflowV1 { .. } => Duration::ZERO,
+            Self::WebhookV1 { .. } => unreachable!("webhooks have no retries"),
         }
     }
 
