@@ -17,7 +17,7 @@ crate-type = ["cdylib"]
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]
-"testing:sleep".path = "../wit"
+"testing:sleep".path = "../activity/wit/ifc"
 "obelisk:workflow".path = "../../../../wasm-workers/host-wit/"
 "wasi:clocks".path = "../../../../wasm-workers/host-wit/deps/clocks"
 
