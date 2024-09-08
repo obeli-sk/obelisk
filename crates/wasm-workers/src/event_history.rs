@@ -787,6 +787,7 @@ impl RetryConfig {
                 .child_activity_max_retries
                 .unwrap_or(child_config.max_retries),
             ComponentType::Workflow => 0,
+            ComponentType::Webhook => unreachable!("webhook can only be invoked via HTTP"),
         }
     }
 
@@ -800,6 +801,7 @@ impl RetryConfig {
                 .child_activity_retry_exp_backoff
                 .unwrap_or(child_config.retry_exp_backoff),
             ComponentType::Workflow => Duration::ZERO,
+            ComponentType::Webhook => unreachable!("webhook can only be invoked via HTTP"),
         }
     }
 }
