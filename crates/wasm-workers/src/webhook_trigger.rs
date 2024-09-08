@@ -196,7 +196,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
     db_pool: P,
     clock_fn: C,
     fn_registry: Arc<dyn FunctionRegistry>,
-    retry_config: RetryConfig,
+    retry_config: RetryConfigOverride,
 ) -> Result<(), WebhookServerError> {
     let router = Arc::new(router);
     loop {
@@ -240,12 +240,12 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct RetryConfig {
+pub struct RetryConfigOverride {
     activity_max_retries_override: Option<u32>,
     activity_retry_exp_backoff_override: Option<Duration>,
 }
 
-impl RetryConfig {
+impl RetryConfigOverride {
     fn max_retries(&self, component_type: ComponentType, component_default: u32) -> u32 {
         match component_type {
             ComponentType::WasmActivity => self
@@ -278,7 +278,7 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
-    retry_config: RetryConfig,
+    retry_config: RetryConfigOverride,
     phantom_data: PhantomData<DB>,
 }
 
@@ -363,7 +363,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         clock_fn: C,
         db_pool: P,
         fn_registry: Arc<dyn FunctionRegistry>,
-        retry_config: RetryConfig,
+        retry_config: RetryConfigOverride,
         params: impl Iterator<Item = (&'a str, &'a str)>,
     ) -> Store<WebhookCtx<C, DB, P>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
@@ -414,7 +414,7 @@ async fn handle_request<
     clock_fn: C,
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
-    retry_config: RetryConfig,
+    retry_config: RetryConfigOverride,
 ) -> Result<hyper::Response<HyperOutgoingBody>, hyper::Error> {
     handle_request_inner(
         req,
@@ -490,7 +490,7 @@ async fn handle_request_inner<
     clock_fn: C,
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
-    retry_config: RetryConfig,
+    retry_config: RetryConfigOverride,
 ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
     if let Some(matched) = router.find(req.method(), req.uri()) {
         let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -631,7 +631,7 @@ mod tests {
                 db_pool,
                 sim_clock.get_clock_fn(),
                 fn_registry,
-                crate::webhook_trigger::RetryConfig::default(),
+                crate::webhook_trigger::RetryConfigOverride::default(),
             )));
             // Check the happy path
             let resp = reqwest::get(format!("http://{}/fibo/1/1", &server_addr))

@@ -628,7 +628,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                 db_pool.clone(),
                 now,
                 fn_registry.clone(),
-                webhook_trigger::RetryConfig::default(), // TODO
+                webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
             ))
             .abort_handle(),
         );
@@ -957,7 +957,6 @@ struct ExecutorPreSpawn {
     component_name: String,
 }
 
-// TODO: If dynamic executor is not needed, split registry into Writer that is turned into a Reader. Reader is passed to the Executor when spawing.
 #[derive(Default, Debug, Clone)]
 struct ComponentConfigRegistry {
     inner: Arc<std::sync::RwLock<ComponentConfigRegistryInner>>,
