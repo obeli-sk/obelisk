@@ -71,6 +71,9 @@ message JoinSetId {
     string id = 1;
 }
 
+// Identifier for given configuration.
+// Uniqueness is not guaranteed.
+// The id is not persisted, only appears in logs and traces and gRPC responses.
 message ConfigId {
     string id = 1;
 }

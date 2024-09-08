@@ -768,11 +768,11 @@ pub mod prefixed_ulid {
     Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, derive_more::Display,
 )]
 #[display("{component_type}:{hash}")]
-pub struct ComponentConfigHash {
+pub struct ConfigId {
     pub component_type: ComponentType,
     pub hash: String,
 }
-impl ComponentConfigHash {
+impl ConfigId {
     #[must_use]
     pub const fn dummy() -> Self {
         Self {
@@ -792,7 +792,7 @@ pub enum ComponentConfigHashParseErrror {
     ContentDigestParseErrror(#[from] DigestParseErrror),
 }
 
-impl FromStr for ComponentConfigHash {
+impl FromStr for ConfigId {
     type Err = ComponentConfigHashParseErrror;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
@@ -1012,7 +1012,7 @@ pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ComponentConfigHash, ComponentRetryConfig)>;
+    ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)>;
 }
 
 #[cfg(test)]

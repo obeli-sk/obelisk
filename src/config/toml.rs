@@ -248,7 +248,7 @@ impl WasmActivity {
             default_retry_exp_backoff: self.default_retry_exp_backoff.into(),
             recycle_instances: self.recycle_instances,
         };
-        let config_id = config_store.as_hash();
+        let config_id = config_store.config_id();
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
         let exec_config = exec_config.into_exec_exec_config(config_id.clone());
         let activity_config = ActivityConfig {
@@ -310,7 +310,7 @@ impl Workflow {
             child_max_retries: self.child_max_retries_override,
             non_blocking_event_batching: self.non_blocking_event_batching,
         };
-        let config_id = config_store.as_hash();
+        let config_id = config_store.config_id();
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
         let workflow_config = WorkflowConfig {
             config_id: config_id.clone(),

@@ -10,7 +10,7 @@ use concepts::storage::{
     JoinSetResponseEvent, Version,
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
-use concepts::ComponentConfigHash;
+use concepts::ConfigId;
 use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
 use concepts::FunctionMetadata;
@@ -493,7 +493,7 @@ impl<C: ClockFn> EventHistory<C> {
             fn_registry: &dyn FunctionRegistry,
             ffqn: &FunctionFqn,
         ) -> Result<
-            (FunctionMetadata, ComponentConfigHash, ComponentRetryConfig),
+            (FunctionMetadata, ConfigId, ComponentRetryConfig),
             WorkflowFunctionError,
         > {
             fn_registry
@@ -994,7 +994,7 @@ mod tests {
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::{
-        ComponentConfigHash, ExecutionId, FunctionFqn, FunctionRegistry, Params,
+        ConfigId, ExecutionId, FunctionFqn, FunctionRegistry, Params,
         SupportedFunctionReturnValue,
     };
     use db_tests::Database;
@@ -1068,7 +1068,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -1233,7 +1233,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -1409,7 +1409,7 @@ mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await

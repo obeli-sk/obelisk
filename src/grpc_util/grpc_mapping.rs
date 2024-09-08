@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use concepts::{
     prefixed_ulid::{JoinSetId, RunId},
     storage::{DbError, SpecificError},
-    ComponentConfigHash, ExecutionId, FunctionFqn,
+    ConfigId, ExecutionId, FunctionFqn,
 };
 use std::{borrow::Borrow, sync::Arc};
 use tracing::error;
@@ -32,8 +32,8 @@ impl From<RunId> for grpc::RunId {
     }
 }
 
-impl From<ComponentConfigHash> for grpc::ConfigId {
-    fn from(value: ComponentConfigHash) -> Self {
+impl From<ConfigId> for grpc::ConfigId {
+    fn from(value: ConfigId) -> Self {
         Self {
             id: value.to_string(),
         }

@@ -28,8 +28,8 @@ use concepts::storage::ExecutionEvent;
 use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
 use concepts::storage::PendingState;
-use concepts::ComponentConfigHash;
 use concepts::ComponentRetryConfig;
+use concepts::ConfigId;
 use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
@@ -930,7 +930,7 @@ fn register_and_prespawn(
 ) -> Result<ExecutorPreSpawn, anyhow::Error> {
     let component_name = config_store.name().to_string();
     let component = Component {
-        config_id: config_store.as_hash(),
+        config_id: config_store.config_id(),
         config_store,
         exports: worker.exported_functions().to_vec(),
         imports: worker.imported_functions().to_vec(),
@@ -961,11 +961,9 @@ struct ComponentConfigRegistry {
 
 #[derive(Default, Debug)]
 struct ComponentConfigRegistryInner {
-    exported_ffqns: hashbrown::HashMap<
-        FunctionFqn,
-        (ComponentConfigHash, FunctionMetadata, ComponentRetryConfig),
-    >,
-    ids_to_components: hashbrown::HashMap<ComponentConfigHash, Component>,
+    exported_ffqns:
+        hashbrown::HashMap<FunctionFqn, (ConfigId, FunctionMetadata, ComponentRetryConfig)>,
+    ids_to_components: hashbrown::HashMap<ConfigId, Component>,
 }
 
 impl ComponentConfigRegistry {
@@ -1037,7 +1035,7 @@ impl FunctionRegistry for ComponentConfigRegistry {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ComponentConfigHash, ComponentRetryConfig)> {
+    ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)> {
         self.inner
             .read()
             .unwrap()

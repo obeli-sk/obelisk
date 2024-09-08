@@ -28,7 +28,7 @@ pub enum WasmFileError {
 pub(crate) mod tests {
     use async_trait::async_trait;
     use concepts::{
-        ComponentConfigHash, ComponentRetryConfig, FunctionFqn, FunctionMetadata, FunctionRegistry,
+        ConfigId, ComponentRetryConfig, FunctionFqn, FunctionMetadata, FunctionRegistry,
         ParameterTypes,
     };
     use std::sync::Arc;
@@ -36,7 +36,7 @@ pub(crate) mod tests {
     pub(crate) struct TestingFnRegistry(
         hashbrown::HashMap<
             FunctionFqn,
-            (FunctionMetadata, ComponentConfigHash, ComponentRetryConfig),
+            (FunctionMetadata, ConfigId, ComponentRetryConfig),
         >,
     );
 
@@ -45,13 +45,13 @@ pub(crate) mod tests {
         async fn get_by_exported_function(
             &self,
             ffqn: &FunctionFqn,
-        ) -> Option<(FunctionMetadata, ComponentConfigHash, ComponentRetryConfig)> {
+        ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)> {
             self.0.get(ffqn).cloned()
         }
     }
 
     pub(crate) fn fn_registry_dummy(ffqns: &[FunctionFqn]) -> Arc<dyn FunctionRegistry> {
-        let component_id = ComponentConfigHash::dummy();
+        let component_id = ConfigId::dummy();
         let mut map = hashbrown::HashMap::new();
         for ffqn in ffqns {
             map.insert(

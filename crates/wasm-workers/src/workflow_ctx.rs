@@ -402,7 +402,7 @@ pub(crate) mod tests {
         },
         FinishedExecutionResult,
     };
-    use concepts::{ComponentConfigHash, FunctionRegistry};
+    use concepts::{ConfigId, FunctionRegistry};
     use concepts::{ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue};
     use concepts::{FunctionMetadata, ParameterTypes};
     use db_tests::Database;

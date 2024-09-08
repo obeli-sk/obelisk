@@ -2,7 +2,7 @@ use crate::prefixed_ulid::DelayId;
 use crate::prefixed_ulid::ExecutorId;
 use crate::prefixed_ulid::JoinSetId;
 use crate::prefixed_ulid::RunId;
-use crate::ComponentConfigHash;
+use crate::ConfigId;
 use crate::ExecutionId;
 use crate::FinishedExecutionResult;
 use crate::FunctionFqn;
@@ -207,7 +207,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     scheduled_at: DateTime::from_timestamp_nanos(0),
     retry_exp_backoff: Duration::ZERO,
     max_retries: 0,
-    config_id: ComponentConfigHash::dummy(),
+    config_id: ConfigId::dummy(),
     return_type: None,
 };
 pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
@@ -251,8 +251,8 @@ pub enum ExecutionEventInner {
         scheduled_at: DateTime<Utc>,
         retry_exp_backoff: Duration,
         max_retries: u32,
-        #[arbitrary(value = ComponentConfigHash::dummy())]
-        config_id: ComponentConfigHash,
+        #[arbitrary(value = ConfigId::dummy())]
+        config_id: ConfigId,
         #[arbitrary(default)]
         return_type: Option<TypeWrapper>,
     },
@@ -486,7 +486,7 @@ pub struct CreateRequest {
     pub scheduled_at: DateTime<Utc>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
-    pub config_id: ComponentConfigHash,
+    pub config_id: ConfigId,
     pub return_type: Option<TypeWrapper>,
 }
 

@@ -11,7 +11,7 @@ use crate::workflow_worker::HOST_ACTIVITY_IFC_STRING;
 use crate::WasmFileError;
 use concepts::storage::{ClientError, CreateRequest, DbConnection, DbError, DbPool};
 use concepts::{
-    ComponentConfigHash, ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn,
+    ConfigId, ComponentType, ExecutionId, FinishedExecutionError, FunctionFqn,
     FunctionRegistry, Params, StrVariant,
 };
 use http_body_util::combinators::BoxBody;
@@ -39,7 +39,7 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HttpTriggerConfig {
-    pub config_id: ComponentConfigHash,
+    pub config_id: ConfigId,
 }
 type StdError = Box<dyn std::error::Error + Send + Sync>;
 

@@ -1,6 +1,6 @@
 use crate::WasmFileError;
 use async_trait::async_trait;
-use concepts::{ComponentConfigHash, FunctionFqn, SupportedFunctionReturnValue};
+use concepts::{ConfigId, FunctionFqn, SupportedFunctionReturnValue};
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
@@ -48,7 +48,7 @@ impl RecycleInstancesSetting {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ActivityConfig {
-    pub config_id: ComponentConfigHash,
+    pub config_id: ConfigId,
     pub recycle_instances: RecycleInstancesSetting,
 }
 
@@ -297,7 +297,7 @@ pub(crate) mod tests {
             ActivityWorker::new_with_config(
                 wasm_path,
                 ActivityConfig {
-                    config_id: ComponentConfigHash::dummy(),
+                    config_id: ConfigId::dummy(),
                     recycle_instances: RecycleInstancesSetting::Disabled,
                 },
                 engine,
@@ -309,7 +309,7 @@ pub(crate) mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
         };
         ExecTask::spawn_new(
             worker,
@@ -355,7 +355,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -400,7 +400,7 @@ pub(crate) mod tests {
         let fibo_worker = ActivityWorker::new_with_config(
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             ActivityConfig {
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 recycle_instances,
             },
             engine,
@@ -489,7 +489,7 @@ pub(crate) mod tests {
                 ActivityWorker::new_with_config(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                     ActivityConfig {
-                        config_id: ComponentConfigHash::dummy(),
+                        config_id: ConfigId::dummy(),
                         recycle_instances,
                     },
                     engine,
@@ -502,7 +502,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: TICK_SLEEP,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
             };
             let exec_task = ExecTask::spawn_new(
                 worker,
@@ -532,7 +532,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: Duration::ZERO,
                     max_retries: 0,
-                    config_id: ComponentConfigHash::dummy(),
+                    config_id: ConfigId::dummy(),
                     return_type: None,
                 })
                 .await
@@ -579,7 +579,7 @@ pub(crate) mod tests {
                 ActivityWorker::new_with_config(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                     ActivityConfig {
-                        config_id: ComponentConfigHash::dummy(),
+                        config_id: ConfigId::dummy(),
                         recycle_instances: RecycleInstancesSetting::Disabled,
                     },
                     engine,
@@ -624,7 +624,7 @@ pub(crate) mod tests {
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                     ActivityConfig {
-                        config_id: ComponentConfigHash::dummy(),
+                        config_id: ConfigId::dummy(),
                         recycle_instances: RecycleInstancesSetting::Disabled,
                     },
                     engine,
@@ -636,7 +636,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task = ExecTask::new(
@@ -673,7 +673,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
-                    config_id: ComponentConfigHash::dummy(),
+                    config_id: ConfigId::dummy(),
                     return_type: None,
                 })
                 .await
@@ -735,7 +735,7 @@ pub(crate) mod tests {
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                     ActivityConfig {
-                        config_id: ComponentConfigHash::dummy(),
+                        config_id: ConfigId::dummy(),
                         recycle_instances: RecycleInstancesSetting::Disabled,
                     },
                     engine,
@@ -747,7 +747,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task = ExecTask::new(
@@ -782,7 +782,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
-                    config_id: ComponentConfigHash::dummy(),
+                    config_id: ConfigId::dummy(),
                     return_type: None,
                 })
                 .await

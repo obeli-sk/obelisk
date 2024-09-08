@@ -2,7 +2,7 @@ use crate::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::WasmFileError;
 use async_trait::async_trait;
 use concepts::storage::{DbConnection, DbPool};
-use concepts::{ComponentConfigHash, FunctionFqn, FunctionMetadata, StrVariant};
+use concepts::{ConfigId, FunctionFqn, FunctionMetadata, StrVariant};
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
@@ -33,7 +33,7 @@ pub enum JoinNextBlockingStrategy {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WorkflowConfig {
-    pub config_id: ComponentConfigHash,
+    pub config_id: ConfigId,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub child_retry_exp_backoff: Option<Duration>,
     pub child_max_retries: Option<u32>,
@@ -383,7 +383,7 @@ pub(crate) mod tests {
             WorkflowWorker::new_with_config(
                 wasm_path,
                 WorkflowConfig {
-                    config_id: ComponentConfigHash::dummy(),
+                    config_id: ConfigId::dummy(),
                     join_next_blocking_strategy,
                     child_retry_exp_backoff: None,
                     child_max_retries: None,
@@ -401,7 +401,7 @@ pub(crate) mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
         };
         ExecTask::spawn_new(
             worker,
@@ -506,7 +506,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -580,7 +580,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -617,7 +617,7 @@ pub(crate) mod tests {
             WorkflowWorker::new_with_config(
                 test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
                 WorkflowConfig {
-                    config_id: ComponentConfigHash::dummy(),
+                    config_id: ConfigId::dummy(),
                     join_next_blocking_strategy,
                     child_retry_exp_backoff: None,
                     child_max_retries: None,
@@ -650,7 +650,7 @@ pub(crate) mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
         };
         ExecTask::spawn_new(
             worker,
@@ -705,7 +705,7 @@ pub(crate) mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -814,7 +814,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -909,7 +909,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::from_millis(0),
                 max_retries: concurrency - 1, // response can conflict with next ChildExecutionRequest
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -976,7 +976,7 @@ pub(crate) mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -988,7 +988,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
             },
             sim_clock.get_clock_fn(),
             db_pool.clone(),

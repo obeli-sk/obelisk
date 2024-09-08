@@ -7,7 +7,7 @@ use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
     FinishedExecutionError,
 };
-use concepts::{ComponentConfigHash, FinishedExecutionResult, FunctionMetadata};
+use concepts::{ConfigId, FinishedExecutionResult, FunctionMetadata};
 use derivative::Derivative;
 use std::marker::PhantomData;
 use std::{
@@ -26,7 +26,7 @@ pub struct ExecConfig {
     pub lock_expiry: Duration,
     pub tick_sleep: Duration,
     pub batch_size: u32,
-    pub config_id: ComponentConfigHash,
+    pub config_id: ConfigId,
 }
 
 pub struct ExecTask<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
@@ -639,7 +639,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
         };
 
         let execution_log = create_and_tick(
@@ -681,7 +681,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
@@ -765,7 +765,7 @@ mod tests {
                 scheduled_at: config.created_at,
                 retry_exp_backoff: config.retry_exp_backoff,
                 max_retries: config.max_retries,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -807,7 +807,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -914,7 +914,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -988,7 +988,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -998,7 +998,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
             },
             sim_clock.get_clock_fn(),
             db_pool.clone(),
@@ -1021,7 +1021,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             };
             let join_set = ExecutionEventInner::HistoryEvent {
@@ -1071,7 +1071,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
             },
             sim_clock.get_clock_fn(),
             db_pool.clone(),
@@ -1159,7 +1159,7 @@ mod tests {
             batch_size: 1,
             lock_expiry,
             tick_sleep: Duration::ZERO,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
         };
 
         let timers_watcher = expired_timers_watcher::TimersWatcherTask {
@@ -1190,7 +1190,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: timeout_duration,
                 max_retries: 1,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await

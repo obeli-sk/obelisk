@@ -2,7 +2,7 @@ use super::grpc::{self, function_repository_client::FunctionRepositoryClient};
 use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use crate::FunctionMetadataVerbosity;
 use anyhow::Context;
-use concepts::{ComponentConfigHash, FunctionFqn, FunctionMetadata};
+use concepts::{ConfigId, FunctionFqn, FunctionMetadata};
 use std::path::Path;
 use tonic::transport::Channel;
 use utils::wasm_tools::WasmComponent;
@@ -48,7 +48,7 @@ fn inspect_fns(functions: &[FunctionMetadata], show_params: bool) {
 
 pub(crate) async fn find_components(
     mut client: FunctionRepositoryClient<Channel>,
-    config_id: Option<&ComponentConfigHash>,
+    config_id: Option<&ConfigId>,
     ffqn: Option<&FunctionFqn>,
     verbosity: FunctionMetadataVerbosity,
 ) -> anyhow::Result<()> {

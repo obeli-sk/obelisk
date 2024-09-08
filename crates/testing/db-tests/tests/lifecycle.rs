@@ -8,7 +8,7 @@ use concepts::storage::{
 use concepts::storage::{DbPool, JoinSetResponseEvent};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId};
 use concepts::{storage::HistoryEvent, FinishedExecutionResult};
-use concepts::{ComponentConfigHash, Params, StrVariant};
+use concepts::{ConfigId, Params, StrVariant};
 use db_tests::Database;
 use db_tests::SOME_FFQN;
 use std::sync::Arc;
@@ -214,7 +214,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
             return_type: None,
         })
         .await
@@ -232,7 +232,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
             return_type: None,
         })
         .await
@@ -504,7 +504,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: RETRY_EXP_BACKOFF,
                 max_retries: MAX_RETRIES,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -577,7 +577,7 @@ pub async fn append_batch_respond_to_parent(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
             return_type: None,
         })
         .await
@@ -619,7 +619,7 @@ pub async fn append_batch_respond_to_parent(
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -689,7 +689,7 @@ pub async fn append_batch_respond_to_parent(
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ComponentConfigHash::dummy(),
+                config_id: ConfigId::dummy(),
                 return_type: None,
             })
             .await
@@ -786,7 +786,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
             return_type: None,
         })
         .await
@@ -805,7 +805,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
             return_type: None,
         })
         .await
@@ -824,7 +824,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
             return_type: None,
         })
         .await
@@ -863,7 +863,7 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
             return_type: None,
         })
         .await
@@ -917,7 +917,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
             return_type: Some(TypeWrapper::U8),
         })
         .await
@@ -976,7 +976,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ComponentConfigHash::dummy(),
+            config_id: ConfigId::dummy(),
             return_type: None,
         })
         .await

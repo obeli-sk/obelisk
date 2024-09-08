@@ -3,7 +3,7 @@ pub(crate) mod toml;
 
 use crate::oci;
 use anyhow::Context;
-use concepts::ComponentConfigHash;
+use concepts::ConfigId;
 use concepts::ContentDigest;
 use concepts::{ComponentType, FunctionMetadata};
 use serde_with::serde_as;
@@ -14,7 +14,10 @@ use wasm_workers::workflow_worker::JoinNextBlockingStrategy;
 
 #[derive(Debug, Clone)]
 pub struct Component {
-    pub config_id: ComponentConfigHash, // Unique identifier computed from `config` field.
+    // Identifier for given configuration.
+    // Uniqueness is not guaranteed.
+    // The id is not persisted, only appears in logs and traces and gRPC responses.
+    pub config_id: ConfigId,
     pub config_store: ConfigStore,
     pub exports: Vec<FunctionMetadata>,
     pub imports: Vec<FunctionMetadata>,
@@ -29,7 +32,7 @@ pub(crate) struct ExecConfig {
 impl ExecConfig {
     pub(crate) fn into_exec_exec_config(
         self,
-        config_id: ComponentConfigHash,
+        config_id: ConfigId,
     ) -> executor::executor::ExecConfig {
         executor::executor::ExecConfig {
             lock_expiry: self.lock_expiry,
@@ -103,7 +106,7 @@ impl ConfigStore {
         }
     }
 
-    pub(crate) fn as_hash(&self) -> ComponentConfigHash {
+    pub(crate) fn config_id(&self) -> ConfigId {
         let hash = {
             use std::hash::Hash as _;
             use std::hash::Hasher as _;
@@ -111,7 +114,7 @@ impl ConfigStore {
             self.hash(&mut hasher);
             format!("{:x}", hasher.finish())
         };
-        ComponentConfigHash {
+        ConfigId {
             component_type: self.as_component_type(),
             hash,
         }
