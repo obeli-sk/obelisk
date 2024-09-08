@@ -5,9 +5,9 @@ use crate::config::toml::webhook::Webhook;
 use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::ObeliskConfig;
 use crate::config::toml::VerifiedActivityConfig;
-use crate::config::toml::VerifiedWorkflowConfig;
 use crate::config::toml::WasmActivity;
 use crate::config::toml::Workflow;
+use crate::config::toml::WorkflowConfigVerified;
 use crate::config::Component;
 use crate::config::ComponentLocation;
 use crate::config::ConfigStore;
@@ -639,7 +639,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 
 struct VerifiedConfig {
     wasm_activities: Vec<VerifiedActivityConfig>,
-    workflows: Vec<VerifiedWorkflowConfig>,
+    workflows: Vec<WorkflowConfigVerified>,
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::Webhook>)>,
 }
 
@@ -774,7 +774,7 @@ async fn fetch_and_verify_all(
 async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     engines: &Engines,
     wasm_activities: Vec<VerifiedActivityConfig>,
-    workflows: Vec<VerifiedWorkflowConfig>,
+    workflows: Vec<WorkflowConfigVerified>,
     db_pool: &P,
     component_registry: &mut ComponentConfigRegistry,
 ) -> Result<Vec<ExecutorTaskHandle>, anyhow::Error> {
@@ -822,7 +822,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 #[instrument(skip_all)]
 fn prespawn_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     activities: Vec<VerifiedActivityConfig>,
-    workflows: Vec<VerifiedWorkflowConfig>,
+    workflows: Vec<WorkflowConfigVerified>,
     component_registry: &mut ComponentConfigRegistry,
     engines: &Engines,
     db_pool: &P,
@@ -899,7 +899,7 @@ fn prespawn_activity(
     wasm_path = ?workflow.wasm_path,
 ))]
 fn prespawn_workflow<DB: DbConnection + 'static>(
-    workflow: VerifiedWorkflowConfig,
+    workflow: WorkflowConfigVerified,
     db_pool: impl DbPool<DB> + 'static,
     component_registry: &mut ComponentConfigRegistry,
     engines: &Engines,

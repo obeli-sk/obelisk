@@ -291,7 +291,7 @@ pub(crate) struct Workflow {
 }
 
 #[derive(Debug)]
-pub(crate) struct VerifiedWorkflowConfig {
+pub(crate) struct WorkflowConfigVerified {
     pub(crate) config_store: ConfigStore,
     pub(crate) wasm_path: PathBuf,
     pub(crate) workflow_config: WorkflowConfig,
@@ -304,7 +304,7 @@ impl Workflow {
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-    ) -> Result<VerifiedWorkflowConfig, anyhow::Error> {
+    ) -> Result<WorkflowConfigVerified, anyhow::Error> {
         let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
@@ -330,7 +330,7 @@ impl Workflow {
             non_blocking_event_batching: self.non_blocking_event_batching,
         };
         let exec_config = self.exec.into_exec_exec_config(config_id);
-        Ok(VerifiedWorkflowConfig {
+        Ok(WorkflowConfigVerified {
             config_store,
             wasm_path,
             workflow_config,
