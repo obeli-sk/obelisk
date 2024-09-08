@@ -23,32 +23,11 @@ pub struct Component {
     pub imports: Vec<FunctionMetadata>,
 }
 
-#[derive(Debug, Clone, Hash, serde::Serialize, serde::Deserialize)]
-pub(crate) struct ExecConfig {
-    pub(crate) batch_size: u32,
-    pub(crate) lock_expiry: Duration,
-    pub(crate) tick_sleep: Duration,
-}
-impl ExecConfig {
-    pub(crate) fn into_exec_exec_config(
-        self,
-        config_id: ConfigId,
-    ) -> executor::executor::ExecConfig {
-        executor::executor::ExecConfig {
-            lock_expiry: self.lock_expiry,
-            tick_sleep: self.tick_sleep,
-            batch_size: self.batch_size,
-            config_id,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Hash)]
 pub(crate) struct ConfigStoreCommon {
     pub(crate) name: String,
     pub(crate) location: ComponentLocation,
     pub(crate) content_digest: ContentDigest,
-    pub(crate) exec: ExecConfig,
 }
 
 #[derive(Debug, Clone, Hash)]

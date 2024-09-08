@@ -1,6 +1,7 @@
 use super::{
     ComponentLocation, {ConfigStore, ConfigStoreCommon},
 };
+use concepts::ConfigId;
 use directories::ProjectDirs;
 use log::{LoggingConfig, LoggingStyle};
 use serde::Deserialize;
@@ -155,8 +156,6 @@ impl CodegenCache {
 pub(crate) struct ComponentCommon {
     pub(crate) name: String,
     pub(crate) location: ComponentLocation,
-    #[serde(default)]
-    pub(crate) exec: ExecConfig,
 }
 
 impl ComponentCommon {
@@ -178,11 +177,6 @@ impl ComponentCommon {
             name: self.name,
             location: self.location,
             content_digest: actual_content_digest,
-            exec: super::ExecConfig {
-                batch_size: self.exec.batch_size,
-                lock_expiry: self.exec.lock_expiry.into(),
-                tick_sleep: self.exec.tick_sleep.into(),
-            },
         };
         Ok((verified, wasm_path))
     }
@@ -190,7 +184,7 @@ impl ComponentCommon {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ExecConfig {
+pub(crate) struct ExecConfigToml {
     #[serde(default = "default_batch_size")]
     batch_size: u32,
     #[serde(default = "default_lock_expiry")]
@@ -199,7 +193,7 @@ pub(crate) struct ExecConfig {
     tick_sleep: DurationConfig,
 }
 
-impl Default for ExecConfig {
+impl Default for ExecConfigToml {
     fn default() -> Self {
         Self {
             batch_size: default_batch_size(),
@@ -209,11 +203,27 @@ impl Default for ExecConfig {
     }
 }
 
+impl ExecConfigToml {
+    pub(crate) fn into_exec_exec_config(
+        self,
+        config_id: ConfigId,
+    ) -> executor::executor::ExecConfig {
+        executor::executor::ExecConfig {
+            lock_expiry: self.lock_expiry.into(),
+            tick_sleep: self.tick_sleep.into(),
+            batch_size: self.batch_size,
+            config_id,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WasmActivity {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
+    #[serde(default)]
+    pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
     pub(crate) default_max_retries: u32,
     #[serde(default = "default_retry_exp_backoff")]
@@ -241,7 +251,6 @@ impl WasmActivity {
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
-        let exec_config = common.exec.clone();
         let config_store = ConfigStore::WasmActivityV1 {
             common,
             default_max_retries: self.default_max_retries,
@@ -250,7 +259,7 @@ impl WasmActivity {
         };
         let config_id = config_store.config_id();
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
-        let exec_config = exec_config.into_exec_exec_config(config_id.clone());
+        let exec_config = self.exec.into_exec_exec_config(config_id.clone());
         let activity_config = ActivityConfig {
             config_id: config_id.clone(),
             recycle_instances: self.recycle_instances.into(),
@@ -269,6 +278,8 @@ impl WasmActivity {
 pub(crate) struct Workflow {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
+    #[serde(default)]
+    pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_strategy")]
     pub(crate) join_next_blocking_strategy: JoinNextBlockingStrategy,
     #[serde(default)]
@@ -298,7 +309,6 @@ impl Workflow {
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
-        let exec_config = common.exec.clone();
         let child_retry_exp_backoff = self
             .child_retry_exp_backoff_override
             .clone()
@@ -319,7 +329,7 @@ impl Workflow {
             child_max_retries: self.child_max_retries_override,
             non_blocking_event_batching: self.non_blocking_event_batching,
         };
-        let exec_config = exec_config.into_exec_exec_config(config_id);
+        let exec_config = self.exec.into_exec_exec_config(config_id);
         Ok(VerifiedWorkflowConfig {
             config_store,
             wasm_path,
