@@ -19,8 +19,8 @@ pub struct Component {
     // The id is not persisted, only appears in logs and traces and gRPC responses.
     pub config_id: ConfigId,
     pub config_store: ConfigStore,
-    pub exports: Vec<FunctionMetadata>,
     pub imports: Vec<FunctionMetadata>,
+    pub exports: Option<Vec<FunctionMetadata>>, // None for webhooks
 }
 
 #[derive(Debug, Clone, Hash)]

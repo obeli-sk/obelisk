@@ -256,7 +256,10 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 r#type: component.config_id.component_type.to_string(),
                 config_id: Some(component.config_id.into()),
                 digest: component.config_store.common().content_digest.to_string(),
-                exports: inspect_fns(component.exports, true),
+                exports: match component.exports {
+                    Some(exports) => inspect_fns(exports, true),
+                    None => Vec::new(),
+                },
                 imports: inspect_fns(component.imports, true),
             };
             res_components.push(res_component);
@@ -880,7 +883,7 @@ fn prespawn_activity(
         engines.activity_engine.clone(),
         now,
     )?);
-    register_and_prespawn(
+    register_worker_and_prespawn(
         worker,
         activity.config_store,
         activity.exec_config,
@@ -912,7 +915,7 @@ fn prespawn_workflow<DB: DbConnection + 'static>(
         now,
         component_registry.get_fn_registry(),
     )?);
-    register_and_prespawn(
+    register_worker_and_prespawn(
         worker,
         workflow.config_store,
         workflow.exec_config,
@@ -921,7 +924,8 @@ fn prespawn_workflow<DB: DbConnection + 'static>(
     )
 }
 
-fn register_and_prespawn(
+// Wrap the activity or workflow worker with type erased `ExecutorPreSpawn`.
+fn register_worker_and_prespawn(
     worker: Arc<dyn Worker>,
     config_store: ConfigStore,
     exec_config: ExecConfig,
@@ -932,7 +936,7 @@ fn register_and_prespawn(
     let component = Component {
         config_id: config_store.config_id(),
         config_store,
-        exports: worker.exported_functions().to_vec(),
+        exports: Some(worker.exported_functions().to_vec()),
         imports: worker.imported_functions().to_vec(),
     };
     component_registry.insert(component)?;
@@ -976,13 +980,13 @@ impl ComponentConfigRegistry {
         {
             bail!("component {} is already inserted", component.config_id);
         }
-        for exported_ffqn in component.exports.iter().map(|f| &f.ffqn) {
+        for exported_ffqn in component.exports.iter().flatten().map(|f| &f.ffqn) {
             if let Some((offending_id, _, _)) = write_guad.exported_ffqns.get(exported_ffqn) {
                 bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
             }
         }
         // insert
-        for exported_fn in &component.exports {
+        for exported_fn in component.exports.iter().flatten() {
             assert!(write_guad
                 .exported_ffqns
                 .insert(
