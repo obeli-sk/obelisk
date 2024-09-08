@@ -6,8 +6,8 @@ use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::ActivityConfigVerified;
 use crate::config::toml::ObeliskConfig;
 use crate::config::toml::WasmActivityToml;
-use crate::config::toml::Workflow;
 use crate::config::toml::WorkflowConfigVerified;
+use crate::config::toml::WorkflowToml;
 use crate::config::Component;
 use crate::config::ComponentLocation;
 use crate::config::ConfigStore;
@@ -646,7 +646,7 @@ struct VerifiedConfig {
 #[instrument(skip_all)]
 async fn fetch_and_verify_all(
     wasm_activities: Vec<WasmActivityToml>,
-    workflows: Vec<Workflow>,
+    workflows: Vec<WorkflowToml>,
     http_servers: Vec<webhook::HttpServer>,
     webhooks: Vec<webhook::Webhook>,
     wasm_cache_dir: Arc<Path>,

@@ -44,7 +44,7 @@ pub(crate) struct ObeliskConfig {
     #[serde(default)]
     pub(crate) wasm_activity: Vec<WasmActivityToml>, // TOOD: change to plural
     #[serde(default)]
-    pub(crate) workflow: Vec<Workflow>, // TODO: change to plural
+    pub(crate) workflow: Vec<WorkflowToml>, // TODO: change to plural
     #[serde(default)]
     pub(crate) wasmtime_pooling_config: WasmtimePoolingConfig,
     #[cfg(feature = "otlp")]
@@ -275,7 +275,7 @@ impl WasmActivityToml {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Workflow {
+pub(crate) struct WorkflowToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     #[serde(default)]
@@ -298,7 +298,7 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) exec_config: executor::executor::ExecConfig,
 }
 
-impl Workflow {
+impl WorkflowToml {
     #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
     pub(crate) async fn fetch_and_verify(
         self,
