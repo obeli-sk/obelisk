@@ -265,13 +265,13 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 ffqn.ifc_fqn.version(),
             );
             if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SUBMIT) {
-                debug!("Got -future extension for function `{function_name}`");
+                debug!("Got `-submit` extension for function `{function_name}`");
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 if params.is_empty() {
                     error!("Got empty params, expected JoinSetId");
                     return Err(WorkflowFunctionError::UncategorizedError(
-                        "error running `-future` extension function: exepcted at least one parameter with JoinSetId, got empty parameter list",
+                        "error running `-submit` extension function: exepcted at least one parameter with JoinSetId, got empty parameter list",
                     ));
                     // TODO Replace with `split_at_checked` once stable
                 }
@@ -281,7 +281,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 let Val::String(join_set_id) = join_set_id else {
                     error!("Wrong type for JoinSetId, expected string, got `{join_set_id:?}`");
                     return Err(WorkflowFunctionError::UncategorizedError(
-                        "error running `-future` extension function: wrong first parameter type, string parameter containing JoinSetId`"
+                        "error running `-submit` extension function: wrong first parameter type, string parameter containing JoinSetId`"
                     ));
                 };
                 let join_set_id = join_set_id.parse().map_err(|parse_err| {
