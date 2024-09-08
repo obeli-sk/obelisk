@@ -42,7 +42,7 @@ pub(crate) struct ObeliskConfig {
     #[serde(default)]
     pub(crate) codegen_cache: Option<CodegenCache>,
     #[serde(default)]
-    pub(crate) wasm_activity: Vec<WasmActivityConfig>, // TOOD: change to plural
+    pub(crate) wasm_activity: Vec<WasmActivityToml>, // TOOD: change to plural
     #[serde(default)]
     pub(crate) workflow: Vec<Workflow>, // TODO: change to plural
     #[serde(default)]
@@ -219,7 +219,7 @@ impl ExecConfigToml {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WasmActivityConfig {
+pub(crate) struct WasmActivityToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     #[serde(default)]
@@ -240,7 +240,7 @@ pub(crate) struct ActivityConfigVerified {
     pub(crate) exec_config: executor::executor::ExecConfig,
 }
 
-impl WasmActivityConfig {
+impl WasmActivityToml {
     #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
     pub(crate) async fn fetch_and_verify(
         self,
