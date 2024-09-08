@@ -3,9 +3,9 @@ use crate::config::config_holder::ConfigHolder;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::Webhook;
 use crate::config::toml::webhook::WebhookRoute;
+use crate::config::toml::ActivityConfigVerified;
 use crate::config::toml::ObeliskConfig;
-use crate::config::toml::VerifiedActivityConfig;
-use crate::config::toml::WasmActivity;
+use crate::config::toml::WasmActivityConfig;
 use crate::config::toml::Workflow;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::Component;
@@ -638,14 +638,14 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 }
 
 struct VerifiedConfig {
-    wasm_activities: Vec<VerifiedActivityConfig>,
+    wasm_activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::Webhook>)>,
 }
 
 #[instrument(skip_all)]
 async fn fetch_and_verify_all(
-    wasm_activities: Vec<WasmActivity>,
+    wasm_activities: Vec<WasmActivityConfig>,
     workflows: Vec<Workflow>,
     http_servers: Vec<webhook::HttpServer>,
     webhooks: Vec<webhook::Webhook>,
@@ -773,7 +773,7 @@ async fn fetch_and_verify_all(
 #[instrument(skip_all)]
 async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     engines: &Engines,
-    wasm_activities: Vec<VerifiedActivityConfig>,
+    wasm_activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     db_pool: &P,
     component_registry: &mut ComponentConfigRegistry,
@@ -821,7 +821,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 /// Compile WASM components in parallel.
 #[instrument(skip_all)]
 fn prespawn_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    activities: Vec<VerifiedActivityConfig>,
+    activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     component_registry: &mut ComponentConfigRegistry,
     engines: &Engines,
@@ -870,7 +870,7 @@ fn prespawn_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     wasm_path = ?activity.wasm_path,
 ))]
 fn prespawn_activity(
-    activity: VerifiedActivityConfig,
+    activity: ActivityConfigVerified,
     component_registry: &mut ComponentConfigRegistry,
     engines: &Engines,
     executor_id: ExecutorId,

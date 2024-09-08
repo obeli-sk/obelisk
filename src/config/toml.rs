@@ -42,7 +42,7 @@ pub(crate) struct ObeliskConfig {
     #[serde(default)]
     pub(crate) codegen_cache: Option<CodegenCache>,
     #[serde(default)]
-    pub(crate) wasm_activity: Vec<WasmActivity>, // TOOD: change to plural
+    pub(crate) wasm_activity: Vec<WasmActivityConfig>, // TOOD: change to plural
     #[serde(default)]
     pub(crate) workflow: Vec<Workflow>, // TODO: change to plural
     #[serde(default)]
@@ -219,7 +219,7 @@ impl ExecConfigToml {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WasmActivity {
+pub(crate) struct WasmActivityConfig {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     #[serde(default)]
@@ -233,20 +233,20 @@ pub(crate) struct WasmActivity {
 }
 
 #[derive(Debug)]
-pub(crate) struct VerifiedActivityConfig {
+pub(crate) struct ActivityConfigVerified {
     pub(crate) config_store: ConfigStore,
     pub(crate) wasm_path: PathBuf,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
 }
 
-impl WasmActivity {
+impl WasmActivityConfig {
     #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-    ) -> Result<VerifiedActivityConfig, anyhow::Error> {
+    ) -> Result<ActivityConfigVerified, anyhow::Error> {
         let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
@@ -264,7 +264,7 @@ impl WasmActivity {
             config_id: config_id.clone(),
             recycle_instances: self.recycle_instances.into(),
         };
-        Ok(VerifiedActivityConfig {
+        Ok(ActivityConfigVerified {
             config_store,
             wasm_path,
             activity_config,
