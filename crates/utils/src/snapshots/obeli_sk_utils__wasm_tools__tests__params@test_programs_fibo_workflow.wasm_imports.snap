@@ -54,7 +54,7 @@ expression: imports
     "testing:fibo-workflow-obelisk-ext/workflow",
     "fiboa-await-next"
   ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-future": [
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [
     {
       "params": [
         {
@@ -73,7 +73,7 @@ expression: imports
       "return_type": "string"
     },
     "testing:fibo-workflow-obelisk-ext/workflow",
-    "fiboa-future"
+    "fiboa-submit"
   ],
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     {

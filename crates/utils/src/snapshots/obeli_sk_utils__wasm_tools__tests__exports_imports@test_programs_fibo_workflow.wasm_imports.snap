@@ -54,7 +54,7 @@ expression: imports
       "wit_type": "u64"
     }
   ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-future": [
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [
     [
       {
         "name": "join-set-id",

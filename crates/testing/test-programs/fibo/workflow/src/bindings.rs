@@ -375,7 +375,7 @@ pub mod testing {
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn fiboa_future(join_set_id: &str, n: u8, iterations: u32) -> _rt::String {
+            pub fn fiboa_submit(join_set_id: &str, n: u8, iterations: u32) -> _rt::String {
                 unsafe {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
@@ -387,7 +387,7 @@ pub mod testing {
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
                     extern "C" {
-                        #[link_name = "fiboa-future"]
+                        #[link_name = "fiboa-submit"]
                         fn wit_import(_: *mut u8, _: usize, _: i32, _: i32, _: *mut u8);
                     }
 
@@ -818,7 +818,7 @@ ncurrent\x01\0\x03\x01\x1etesting:fibo-workflow/workflow\x05\x05\x01B\x04\x01@\x
 \x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14itera\
 tions-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x03\x01&testing:fibo-work\
 flow/workflow-nesting\x05\x06\x01B\x04\x01@\x03\x0bjoin-set-ids\x01n}\x0aiterati\
-onsy\0s\x04\0\x0cfiboa-future\x01\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x10fiboa-a\
+onsy\0s\x04\0\x0cfiboa-submit\x01\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x10fiboa-a\
 wait-next\x01\x01\x03\x01*testing:fibo-workflow-obelisk-ext/workflow\x05\x07\x01\
 B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\
 \x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1etesting:fibo-workflow/workflow\x05\x08\

@@ -125,12 +125,6 @@ pub fn component_to_instance<
             err: err.into(),
         }
     })?;
-    // wasmtime_wasi_http::add_to_linker_async(&mut linker).map_err(|err| {
-    //     WasmFileError::LinkingError {
-    //         context: StrVariant::Static("linking `wasmtime_wasi_http`"),
-    //         err: err.into(),
-    //     }
-    // })?;
     // Mock imported functions
     for import in &wasm_component.exim.imports_hierarchy {
         if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
