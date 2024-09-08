@@ -278,7 +278,7 @@ pub mod testing {
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn get_successful_future(join_set_id: &str, url: &str) -> _rt::String {
+            pub fn get_successful_submit(join_set_id: &str, url: &str) -> _rt::String {
                 unsafe {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
@@ -293,7 +293,7 @@ pub mod testing {
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:http-obelisk-ext/http-get")]
                     extern "C" {
-                        #[link_name = "get-successful-future"]
+                        #[link_name = "get-successful-submit"]
                         fn wit_import(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8);
                     }
 
@@ -987,7 +987,7 @@ pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 895] = *b"\
 \0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x85\x06\x01A\x02\x01\
 A\x0b\x01B\x04\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0e\
 get-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x05\x01@\x02\x0b\
-join-set-ids\x03urls\0s\x04\0\x15get-successful-future\x01\0\x01j\x01s\x01s\x01@\
+join-set-ids\x03urls\0s\x04\0\x15get-successful-submit\x01\0\x01j\x01s\x01s\x01@\
 \x01\x0bjoin-set-ids\0\x01\x04\0\x19get-successful-await-next\x01\x02\x03\x01!te\
 sting:http-obelisk-ext/http-get\x05\x01\x01B\x05\x01r\x02\x07secondsw\x0bnanosec\
 ondsy\x04\0\x08datetime\x03\0\0\x01@\0\0\x01\x04\0\x03now\x01\x02\x04\0\x0aresol\

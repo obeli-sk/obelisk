@@ -28,7 +28,7 @@ expression: imports
       "wit_type": "result<string, string>"
     }
   ],
-  "testing:http-obelisk-ext/http-get.get-successful-future": [
+  "testing:http-obelisk-ext/http-get.get-successful-submit": [
     [
       {
         "name": "join-set-id",

@@ -23,7 +23,7 @@ expression: imports
       "wit_type": "u64"
     }
   ],
-  "testing:fibo-obelisk-ext/fibo.fibo-future": [
+  "testing:fibo-obelisk-ext/fibo.fibo-submit": [
     [
       {
         "name": "join-set-id",

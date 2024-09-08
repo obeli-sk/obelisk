@@ -196,7 +196,7 @@ pub mod testing {
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn fibo_future(join_set_id: &str, n: u8) -> _rt::String {
+            pub fn fibo_submit(join_set_id: &str, n: u8) -> _rt::String {
                 unsafe {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
@@ -208,7 +208,7 @@ pub mod testing {
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:fibo-obelisk-ext/fibo")]
                     extern "C" {
-                        #[link_name = "fibo-future"]
+                        #[link_name = "fibo-submit"]
                         fn wit_import(_: *mut u8, _: usize, _: i32, _: *mut u8);
                     }
 
@@ -811,7 +811,7 @@ at\x01\x01\0\x02in\x01\x03\0\x04\0\x0cscheduled-at\x03\0\x04\x01@\x01\x06millisy
 \x01\0\x04\0\x05sleep\x01\x06\x01@\0\0s\x04\0\x0cnew-join-set\x01\x07\x01@\x03\x04\
 ffqns\x0bparams-jsons\x0cscheduled-at\x05\0s\x04\0\x08schedule\x01\x08\x03\x01\x20\
 obelisk:workflow/host-activities\x05\x03\x01B\x04\x01@\x02\x0bjoin-set-ids\x01n}\
-\0s\x04\0\x0bfibo-future\x01\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x0ffibo-await-n\
+\0s\x04\0\x0bfibo-submit\x01\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x0ffibo-await-n\
 ext\x01\x01\x03\x01\x1dtesting:fibo-obelisk-ext/fibo\x05\x04\x01B\x04\x01@\x02\x01\
 n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-co\
 ncurrent\x01\0\x03\x01\x1etesting:fibo-workflow/workflow\x05\x05\x01B\x04\x01@\x01\

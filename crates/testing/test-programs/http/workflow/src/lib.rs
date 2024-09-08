@@ -18,7 +18,7 @@ impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Compo
         let length = urls.len();
         for url in urls {
             let _execution_id =
-                crate::bindings::testing::http_obelisk_ext::http_get::get_successful_future(
+                crate::bindings::testing::http_obelisk_ext::http_get::get_successful_submit(
                     &join_set_id,
                     &url,
                 );
@@ -42,7 +42,7 @@ impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Compo
         let join_set_id = bindings::obelisk::workflow::host_activities::new_join_set();
         for _ in 0..concurrency {
             let _execution_id =
-                crate::bindings::testing::http_obelisk_ext::http_get::get_successful_future(
+                crate::bindings::testing::http_obelisk_ext::http_get::get_successful_submit(
                     &join_set_id,
                     &url,
                 );

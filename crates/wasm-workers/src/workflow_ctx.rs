@@ -264,7 +264,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 ffqn.ifc_fqn.ifc_name(),
                 ffqn.ifc_fqn.version(),
             );
-            if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_START_ASYNC) {
+            if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SUBMIT) {
                 debug!("Got -future extension for function `{function_name}`");
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
@@ -383,8 +383,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
 }
 
 pub(crate) const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
-pub(crate) const SUFFIX_FN_START_ASYNC: &str = "-future";
-pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
+const SUFFIX_FN_SUBMIT: &str = "-submit";
+const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 
 #[cfg(madsim)]
 #[cfg(test)]

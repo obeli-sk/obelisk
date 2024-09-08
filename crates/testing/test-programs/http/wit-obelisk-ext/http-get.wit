@@ -1,7 +1,7 @@
 package testing:http-obelisk-ext;
 
 interface http-get {
-    get-successful-future: func(join-set-id: string, url: string) -> string;
+    get-successful-submit: func(join-set-id: string, url: string) -> string;
 
     get-successful-await-next: func(join-set-id: string) -> result<string, string>;
 }
