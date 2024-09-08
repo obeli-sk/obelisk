@@ -508,8 +508,8 @@ async fn run_internal(
         workflows,
         http_servers_to_webhooks,
     } = fetch_and_verify_all(
-        config.wasm_activity,
-        config.workflow,
+        config.wasm_activities,
+        config.workflows,
         config.http_servers,
         config.webhooks,
         Arc::from(wasm_cache_dir),

@@ -41,10 +41,10 @@ pub(crate) struct ObeliskConfig {
     pub(crate) oci: OciConfig,
     #[serde(default)]
     pub(crate) codegen_cache: Option<CodegenCache>,
-    #[serde(default)]
-    pub(crate) wasm_activity: Vec<WasmActivityToml>, // TOOD: change to plural
-    #[serde(default)]
-    pub(crate) workflow: Vec<WorkflowToml>, // TODO: change to plural
+    #[serde(default, rename = "wasm_activity")]
+    pub(crate) wasm_activities: Vec<WasmActivityToml>,
+    #[serde(default, rename = "workflow")]
+    pub(crate) workflows: Vec<WorkflowToml>,
     #[serde(default)]
     pub(crate) wasmtime_pooling_config: WasmtimePoolingConfig,
     #[cfg(feature = "otlp")]
