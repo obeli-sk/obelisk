@@ -2553,12 +2553,12 @@ dependencies = [
  "serde_json",
  "tempfile",
  "test-programs-fibo-activity-builder",
+ "test-programs-fibo-webhook-builder",
  "test-programs-fibo-workflow-builder",
  "test-programs-http-get-activity-builder",
  "test-programs-http-get-workflow-builder",
  "test-programs-sleep-activity-builder",
  "test-programs-sleep-workflow-builder",
- "test-programs-webhook-trigger-fibo-builder",
  "test-utils",
  "thiserror",
  "tracing",
@@ -3834,6 +3834,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-programs-fibo-webhook"
+version = "0.2.2"
+dependencies = [
+ "wit-bindgen-rt 0.25.0",
+]
+
+[[package]]
+name = "test-programs-fibo-webhook-builder"
+version = "0.2.2"
+dependencies = [
+ "cargo-component-builder",
+]
+
+[[package]]
 name = "test-programs-fibo-workflow"
 version = "0.2.2"
 dependencies = [
@@ -3900,20 +3914,6 @@ dependencies = [
 
 [[package]]
 name = "test-programs-sleep-workflow-builder"
-version = "0.2.2"
-dependencies = [
- "cargo-component-builder",
-]
-
-[[package]]
-name = "test-programs-webhook-trigger-fibo"
-version = "0.2.2"
-dependencies = [
- "wit-bindgen-rt 0.25.0",
-]
-
-[[package]]
-name = "test-programs-webhook-trigger-fibo-builder"
 version = "0.2.2"
 dependencies = [
  "cargo-component-builder",

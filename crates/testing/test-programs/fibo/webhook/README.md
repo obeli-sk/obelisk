@@ -1,8 +1,8 @@
 # Notes from creating this project
 I started with generating a new project using [cargo comopnent](https://github.com/bytecodealliance/cargo-component):
 ```sh
-cargo component new --lib trigger-http-hello
-cd trigger-http-hello/
+cargo component new --lib webhook
+cd webhook/
 ```
 Then I copied the `wasi:http` package and its dependencies from
 [wasmtime](https://github.com/bytecodealliance/wasmtime/tree/v24.0.0/crates/wasi-http/wit/deps/http)
@@ -25,6 +25,6 @@ cargo component build --release
 ```
 To test, I used `wasmtime` binary:
 ```sh
-wasmtime serve trigger_http_hello.wasm
+wasmtime serve file.wasm
 curl localhost:8080
 ```

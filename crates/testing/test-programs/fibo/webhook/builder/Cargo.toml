@@ -1,5 +1,5 @@
 [package]
-name = "test-programs-webhook-trigger-fibo-builder"
+name = "test-programs-fibo-webhook-builder"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -610,7 +610,7 @@ mod tests {
             );
             let instance = webhook_trigger::component_to_instance(
                 &WasmComponent::new(
-                    test_programs_webhook_trigger_fibo_builder::TEST_PROGRAMS_WEBHOOK_TRIGGER_FIBO,
+                    test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
                     &engine,
                 )
                 .unwrap(),

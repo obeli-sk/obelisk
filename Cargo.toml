@@ -100,6 +100,8 @@ members = [
     "crates/testing/db-tests",
     "crates/testing/test-programs/fibo/activity",
     "crates/testing/test-programs/fibo/activity/builder",
+    "crates/testing/test-programs/fibo/webhook",
+    "crates/testing/test-programs/fibo/webhook/builder",
     "crates/testing/test-programs/fibo/workflow",
     "crates/testing/test-programs/fibo/workflow/builder",
     "crates/testing/test-programs/http/activity",
@@ -110,8 +112,6 @@ members = [
     "crates/testing/test-programs/sleep/activity/builder",
     "crates/testing/test-programs/sleep/workflow",
     "crates/testing/test-programs/sleep/workflow/builder",
-    "crates/testing/test-programs/webhook-trigger-fibo",
-    "crates/testing/test-programs/webhook-trigger-fibo/builder",
     "crates/testing/test-utils",
     "crates/utils",
     "crates/val-json",
@@ -130,16 +130,16 @@ rust-version = "1.77.0"
 cargo-component-builder = { path = "crates/testing/cargo-component-builder" }
 concepts = { package = "obeli-sk-concepts", path = "crates/concepts", version = "0.2.2" }
 db-mem = { path = "crates/db-mem" }
-db-tests = { path = "crates/testing/db-tests" }
 db-sqlite = { package = "obeli-sk-db-sqlite", path = "crates/db-sqlite", version = "0.2.2" }
+db-tests = { path = "crates/testing/db-tests" }
 executor = { package = "obeli-sk-executor", path = "crates/executor", version = "0.2.2" }
 test-programs-fibo-activity-builder = { path = "crates/testing/test-programs/fibo/activity/builder" }
+test-programs-fibo-webhook-builder = { path = "crates/testing/test-programs/fibo/webhook/builder" }
 test-programs-fibo-workflow-builder = { path = "crates/testing/test-programs/fibo/workflow/builder" }
 test-programs-http-get-activity-builder = { path = "crates/testing/test-programs/http/activity/builder" }
 test-programs-http-get-workflow-builder = { path = "crates/testing/test-programs/http/workflow/builder" }
 test-programs-sleep-activity-builder = { path = "crates/testing/test-programs/sleep/activity/builder" }
 test-programs-sleep-workflow-builder = { path = "crates/testing/test-programs/sleep/workflow/builder" }
-test-programs-webhook-trigger-fibo-builder = { path = "crates/testing/test-programs/webhook-trigger-fibo/builder" }
 test-utils = { path = "crates/testing/test-utils" }
 utils = { package = "obeli-sk-utils", path = "crates/utils", version = "0.2.2" }
 val-json = { package = "obeli-sk-val-json", path = "crates/val-json", version = "0.2.2" }
