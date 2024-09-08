@@ -592,10 +592,16 @@ pub(crate) mod log {
 }
 
 pub(crate) mod webhook {
+    use super::ComponentCommon;
+    use crate::config::ConfigStore;
+    use anyhow::Context;
     use serde::Deserialize;
-    use std::net::SocketAddr;
-
-    use crate::config::ComponentLocation;
+    use std::{
+        net::SocketAddr,
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
+    use tracing::instrument;
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -607,10 +613,38 @@ pub(crate) mod webhook {
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct Webhook {
-        pub(crate) name: String,
+        #[serde(flatten)]
+        pub(crate) common: ComponentCommon,
         pub(crate) http_server: String,
-        pub(crate) location: ComponentLocation,
         pub(crate) routes: Vec<WebhookRoute>,
+    }
+
+    impl Webhook {
+        #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
+        pub(crate) async fn fetch_and_verify(
+            self,
+            wasm_cache_dir: Arc<Path>,
+            metadata_dir: Arc<Path>,
+        ) -> Result<WebhookVerified, anyhow::Error> {
+            let (common, wasm_path) = self
+                .common
+                .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
+                .await?;
+            let config_store = ConfigStore::WebhookV1 { common };
+            let config_id = config_store.config_id();
+            tracing::Span::current().record("config_id", tracing::field::display(&config_id));
+
+            Ok(WebhookVerified {
+                wasm_path,
+                routes: self
+                    .routes
+                    .into_iter()
+                    .map(WebhookRouteVerified::try_from)
+                    .collect::<Result<Vec<_>, _>>()
+                    .with_context(|| format!("cannot parse webhook `{}`", config_store.name()))?,
+                config_store,
+            })
+        }
     }
 
     #[derive(Debug, Deserialize)]
@@ -627,6 +661,40 @@ pub(crate) mod webhook {
         #[serde(default)]
         pub(crate) methods: Vec<String>,
         pub(crate) route: String,
+    }
+
+    pub(crate) struct WebhookVerified {
+        pub(crate) config_store: ConfigStore,
+        pub(crate) wasm_path: PathBuf,
+        pub(crate) routes: Vec<WebhookRouteVerified>,
+    }
+
+    pub(crate) struct WebhookRouteVerified {
+        pub(crate) methods: Vec<http::Method>,
+        pub(crate) route: String,
+    }
+
+    impl TryFrom<WebhookRoute> for WebhookRouteVerified {
+        type Error = anyhow::Error;
+
+        fn try_from(value: WebhookRoute) -> Result<Self, Self::Error> {
+            Ok(match value {
+                WebhookRoute::String(route) => Self {
+                    methods: Vec::new(),
+                    route,
+                },
+                WebhookRoute::WebhookRouteDetail(WebhookRouteDetail { methods, route }) => {
+                    let methods = methods
+                        .into_iter()
+                        .map(|method| {
+                            http::Method::from_bytes(method.as_bytes())
+                                .with_context(|| format!("cannot parse route method `{method}`",))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Self { methods, route }
+                }
+            })
+        }
     }
 }
 

@@ -1,15 +1,12 @@
 use super::grpc;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::toml::webhook;
-use crate::config::toml::webhook::Webhook;
-use crate::config::toml::webhook::WebhookRoute;
 use crate::config::toml::ActivityConfigVerified;
 use crate::config::toml::ObeliskConfig;
 use crate::config::toml::WasmActivityToml;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::WorkflowToml;
 use crate::config::Component;
-use crate::config::ComponentLocation;
 use crate::config::ConfigStore;
 use crate::grpc_util::grpc_mapping::PendingStatusExt as _;
 use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
@@ -568,7 +565,7 @@ async fn run_internal(
 }
 
 async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::Webhook>)>,
+    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::WebhookVerified>)>,
     engines: &Engines,
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
@@ -579,29 +576,15 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         let mut router = MethodAwareRouter::default();
         for webhook in webhooks {
             let instance = webhook_trigger::component_to_instance(
-                &WasmComponent::new(
-                    assert_matches!(webhook.location, ComponentLocation::Path(path) => path), // FIXME - fetch from OCI registry
-                    engine,
-                )?,
+                &WasmComponent::new(webhook.wasm_path, engine)?,
                 engine,
             )?;
             for route in webhook.routes {
-                let (methods, route) = match route {
-                    WebhookRoute::String(route) => (Vec::new(), route),
-                    WebhookRoute::WebhookRouteDetail(detail) => (detail.methods, detail.route),
-                };
-                if methods.is_empty() {
-                    router.add(None, &route, instance.clone());
+                if route.methods.is_empty() {
+                    router.add(None, &route.route, instance.clone());
                 } else {
-                    for method in methods {
-                        let method =
-                            http::Method::from_bytes(method.as_bytes()).with_context(|| {
-                                format!(
-                                    "cannot parse route method `{method}` of webhook `{}`",
-                                    webhook.name
-                                )
-                            })?;
-                        router.add(Some(method), &route, instance.clone());
+                    for method in route.methods {
+                        router.add(Some(method), &route.route, instance.clone());
                     }
                 }
             }
@@ -640,7 +623,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 struct VerifiedConfig {
     wasm_activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
-    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::Webhook>)>,
+    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::WebhookVerified>)>,
 }
 
 #[instrument(skip_all)]
@@ -665,7 +648,7 @@ async fn fetch_and_verify_all(
             }
         }
     }
-    // check uniqueness of server and webhook names
+    // Check uniqueness of server and webhook names.
     {
         if http_servers.len()
             > http_servers
@@ -679,28 +662,28 @@ async fn fetch_and_verify_all(
         if webhooks.len()
             > webhooks
                 .iter()
-                .map(|it| &it.name)
+                .map(|it| &it.common.name)
                 .collect::<hashbrown::HashSet<_>>()
                 .len()
         {
             bail!("Each `webhook` must have a unique name");
         }
     }
-    let http_servers_to_webhooks = {
-        let mut webhooks_by_server_name = {
-            let mut map: hashbrown::HashMap<std::string::String, Vec<Webhook>> =
+    let http_servers_to_webhook_names = {
+        let mut server_names_to_webhook_names = {
+            let mut map: hashbrown::HashMap<std::string::String, Vec<String>> =
                 hashbrown::HashMap::default();
-            for webhook in webhooks {
+            for webhook in &webhooks {
                 map.entry(webhook.http_server.clone())
                     .or_default()
-                    .push(webhook);
+                    .push(webhook.common.name.clone());
             }
             map
         };
         let http_servers = {
             let mut vec = Vec::new();
             for http_server in http_servers {
-                let webhooks = webhooks_by_server_name
+                let webhooks = server_names_to_webhook_names
                     .remove(&http_server.name)
                     .unwrap_or_default();
                 vec.push((http_server, webhooks));
@@ -708,10 +691,10 @@ async fn fetch_and_verify_all(
             vec
         };
         // Each webhook must be associated with an `http_server`.
-        if !webhooks_by_server_name.is_empty() {
+        if !server_names_to_webhook_names.is_empty() {
             bail!(
                 "No matching `http_server` found for some `webhook` configurations: {:?}",
-                webhooks_by_server_name.keys().collect::<Vec<_>>()
+                server_names_to_webhook_names.keys().collect::<Vec<_>>()
             );
         }
         http_servers
@@ -743,17 +726,35 @@ async fn fetch_and_verify_all(
             )
         })
         .collect::<Vec<_>>();
+    let webhooks_by_names = webhooks
+        .into_iter()
+        .map(|webhook| {
+            tokio::spawn({
+                let wasm_cache_dir = wasm_cache_dir.clone();
+                let metadata_dir = metadata_dir.clone();
+                async move {
+                    let name = webhook.common.name.clone();
+                    let webhook = webhook
+                        .fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone())
+                        .in_current_span()
+                        .await?;
+                    Ok::<_, anyhow::Error>((name, webhook))
+                }
+            })
+        })
+        .collect::<Vec<_>>();
 
     // Abort/cancel safety:
     // If an error happens or Ctrl-C is pressed the whole process will shut down.
     // Downloading metadata and content must be robust enough to handle it.
     // We do not need to abort the tasks here.
-    let all = futures_util::future::join(
+    let all = futures_util::future::join3(
         futures_util::future::join_all(activities),
         futures_util::future::join_all(workflows),
+        futures_util::future::join_all(webhooks_by_names),
     );
     tokio::select! {
-        (activity_results, workflow_results) = all => {
+        (activity_results, workflow_results, webhook_results) = all => {
             let mut wasm_activities = Vec::with_capacity(activity_results.len());
             for a in activity_results {
                 wasm_activities.push(a??);
@@ -762,6 +763,18 @@ async fn fetch_and_verify_all(
             for w in workflow_results {
                 workflows.push(w??);
             }
+            let mut webhooks_by_names = hashbrown::HashMap::new();
+            for webhook in webhook_results {
+                let (k, v) = webhook??;
+                webhooks_by_names.insert(k, v);
+            }
+            let http_servers_to_webhooks = {
+                http_servers_to_webhook_names.into_iter().map(|(http_server, webhook_names) | {
+                    let verified_webhooks = webhook_names.into_iter()
+                        .map(|name| webhooks_by_names.remove(&name).expect("all webhooks must be verified")).collect::<Vec<_>>();
+                    (http_server, verified_webhooks)
+                }).collect()
+            };
             Ok(VerifiedConfig {wasm_activities, workflows, http_servers_to_webhooks})
         },
         _ = tokio::signal::ctrl_c() => {

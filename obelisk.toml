@@ -1,4 +1,4 @@
-## Supported path prefixes:
+### Supported path prefixes:
 ## | Prefix       | Default path            | Details
 ## | ${DATA_DIR}  |  ~/.local/share/obelisk | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.data_dir
 ## | ${CACHE_DIR} |  ~/.cache/obelisk       | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.cache_dir
@@ -15,7 +15,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 [codegen_cache]
 # directory = "${CACHE_DIR}/codegen" # Path to directory where generated code is cached. Supports path prefixes.
 
-## WASM Component configuration
+### WASM Component configuration
 ## Common settings for all components
 # name = "name" # Each component must be named.
 ## Location can be a file path or an OCI registry reference.
@@ -26,7 +26,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # exec_config.lock_expiry.secs = 1 # Each execution is locked for 1s by default.
 # exec_config.tick_sleep.millis = 200 # Sleep between event loop ticks.
 
-## WASM Activity components configuration
+### WASM Activity components configuration
 # [[wasm_activity]]
 ## Common settings for all components - see above
 ## Specific settings for wasm_activity:
@@ -34,7 +34,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # default_max_retries = 5 # When calling the activity directly, `default_max_retries` is applied.
 # default_retry_exp_backoff.millis = 100 # Exponential backoff setting.
 
-## WASM Workflow components configuration
+### WASM Workflow components configuration
 ## Common settings for all components - see above
 ## Joining strategy: When workflow requests a child execution result, it can either be interrupted, or kept in the memory.
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.
@@ -72,7 +72,7 @@ listening_addr = "0.0.0.0:9090"
 [[webhook]]
 name = "webhook_trigger_fibo"
 http_server = "external"
-location.path = "target/wasm32-wasip1/release/test_programs_webhook_trigger_fibo.wasm"
+location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-08@sha256:1d8eea4414d46eebec2a2bfb1501afedeb40ffd72de8a84bffd0590563683545"
 ## Routes: an array of routes that will be matched against incoming requests.
 ## Only the path portion of a URL is taken into cosideration, the query part
 ## ("?a=b") is ignored by the matcher.
