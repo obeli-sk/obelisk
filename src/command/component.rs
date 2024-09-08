@@ -65,8 +65,7 @@ pub(crate) async fn find_components(
         .components;
     for component in components {
         println!(
-            "{ty}\t{name}\t{id}",
-            ty = component.r#type,
+            "{name}\t{id}",
             name = component.name,
             id = component.config_id.map(|id| id.id).unwrap_or_default()
         );

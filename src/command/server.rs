@@ -599,7 +599,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             })?;
         let server_addr = tcp_listener.local_addr()?;
         info!(
-            "HTTP server `{}` is iistening on {server_addr}",
+            "HTTP server `{}` is listening on {server_addr}",
             http_server.name,
         );
 
