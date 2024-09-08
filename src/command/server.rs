@@ -526,7 +526,7 @@ async fn run_internal(
         http_servers_to_webhooks,
         &engines,
         db_pool.clone(),
-        component_registry.get_fn_registry(),
+        &mut component_registry,
     )
     .await;
     let grpc_server = Arc::new(GrpcServer::new(db_pool.clone(), component_registry));
@@ -568,17 +568,22 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::WebhookVerified>)>,
     engines: &Engines,
     db_pool: P,
-    fn_registry: Arc<dyn FunctionRegistry>,
+    component_registry: &mut ComponentConfigRegistry,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
     let mut abort_handles = Vec::with_capacity(http_servers_to_webhooks.len());
     let engine = &engines.webhook_engine;
     for (http_server, webhooks) in http_servers_to_webhooks {
         let mut router = MethodAwareRouter::default();
         for webhook in webhooks {
-            let instance = webhook_trigger::component_to_instance(
-                &WasmComponent::new(webhook.wasm_path, engine)?,
-                engine,
-            )?;
+            let wasm_component = WasmComponent::new(webhook.wasm_path, engine)?;
+            let imports = wasm_component.imported_functions().to_vec();
+            let instance = webhook_trigger::component_to_instance(&wasm_component, engine)?;
+            component_registry.insert(Component {
+                config_id: webhook.config_store.config_id(),
+                config_store: webhook.config_store,
+                exports: None,
+                imports,
+            })?;
             for route in webhook.routes {
                 if route.methods.is_empty() {
                     router.add(None, &route.route, instance.clone());
@@ -602,7 +607,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             "HTTP server `{}` is listening on {server_addr}",
             http_server.name,
         );
-
+        let fn_registry = component_registry.get_fn_registry();
         let server = AbortOnDropHandle(
             tokio::spawn(webhook_trigger::server(
                 tcp_listener,
