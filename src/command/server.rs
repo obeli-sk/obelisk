@@ -577,7 +577,11 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         for webhook in webhooks {
             let wasm_component = WasmComponent::new(webhook.wasm_path, engine)?;
             let imports = wasm_component.imported_functions().to_vec();
-            let instance = webhook_trigger::component_to_instance(&wasm_component, engine)?;
+            let instance = webhook_trigger::component_to_instance(
+                &wasm_component,
+                engine,
+                webhook.config_store.config_id(),
+            )?;
             component_registry.insert(Component {
                 config_id: webhook.config_store.config_id(),
                 config_store: webhook.config_store,

@@ -1,5 +1,4 @@
-// TODO: Execution ID/Request ID, Component ID?, Config ID, tracing. Persisted with first DB write.
-// fix _await function
+// TODO:
 // Test outbound HTTP, IO?
 // Timeouts
 // Panic - propagate reason
@@ -9,7 +8,10 @@ use crate::workflow_ctx::{obelisk, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SUBMIT, SUFFI
 use crate::workflow_worker::HOST_ACTIVITY_IFC_STRING;
 use crate::WasmFileError;
 use concepts::prefixed_ulid::JoinSetId;
-use concepts::storage::{ClientError, CreateRequest, DbConnection, DbError, DbPool};
+use concepts::storage::{
+    ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner, HistoryEvent,
+    JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, Version,
+};
 use concepts::{
     ComponentType, ConfigId, ExecutionId, FinishedExecutionError, FunctionFqn, FunctionRegistry,
     IfcFqnName, Params, StrVariant,
@@ -57,13 +59,17 @@ pub enum WebhookServerError {
     SocketError(std::io::Error),
 }
 
-pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
-    Arc<ProxyPre<WebhookCtx<C, DB, P>>>,
-);
+pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+    proxy_pre: Arc<ProxyPre<WebhookCtx<C, DB, P>>>,
+    config_id: ConfigId,
+}
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> Clone for WebhookInstance<C, DB, P> {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self {
+            proxy_pre: self.proxy_pre.clone(),
+            config_id: self.config_id.clone(),
+        }
     }
 }
 
@@ -113,6 +119,7 @@ pub fn component_to_instance<
 >(
     wasm_component: &WasmComponent,
     engine: &Engine,
+    config_id: ConfigId,
 ) -> Result<WebhookInstance<C, DB, P>, WebhookComponentInstantiationError> {
     let mut linker = Linker::new(engine);
     wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| WasmFileError::LinkingError {
@@ -181,7 +188,10 @@ pub fn component_to_instance<
         .map_err(WebhookComponentInstantiationError::InstantiationError)?;
     let instance =
         ProxyPre::new(instance).map_err(WebhookComponentInstantiationError::InstantiationError)?;
-    Ok(WebhookInstance(Arc::new(instance)))
+    Ok(WebhookInstance {
+        proxy_pre: Arc::new(instance),
+        config_id,
+    })
 }
 
 pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -267,6 +277,7 @@ impl RetryConfigOverride {
 }
 
 struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+    config_id: ConfigId,
     clock_fn: C,
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
@@ -274,7 +285,15 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
     retry_config: RetryConfigOverride,
+    execution_id_and_version: Option<(ExecutionId, Version)>,
+    responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     phantom_data: PhantomData<DB>,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+enum ProcessingStatus {
+    Unprocessed,
+    Processed,
 }
 
 #[derive(thiserror::Error, Debug, Clone)]
@@ -289,8 +308,81 @@ pub(crate) enum WebhookFunctionError {
     UncategorizedError(&'static str),
 }
 
+const HTTP_HANDLER_FFQN: FunctionFqn =
+    FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
+
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
-    #[instrument(skip_all, fields(%ffqn))]
+    async fn get_execution_id_and_version(&mut self) -> Result<(ExecutionId, Version), DbError> {
+        if let Some(found) = &self.execution_id_and_version {
+            return Ok(found.clone());
+        }
+        let execution_id = ExecutionId::generate();
+        let created_at = (self.clock_fn)();
+        let create_request = CreateRequest {
+            created_at,
+            execution_id,
+            ffqn: HTTP_HANDLER_FFQN,
+            params: Params::default(),
+            parent: None,
+            topmost_parent_id: None,
+            scheduled_at: created_at,
+            max_retries: 0,
+            retry_exp_backoff: Duration::ZERO,
+            config_id: self.config_id.clone(),
+            return_type: None,
+        };
+        let conn = self.db_pool.connection();
+        let version = conn.create(create_request).await?;
+        self.execution_id_and_version = Some((execution_id, version.clone()));
+        debug!(%execution_id, "Persisted execution");
+        Ok((execution_id, version))
+    }
+
+    // No support for combined delay finished / child finished yet.
+    fn find_response_child_finished(
+        &mut self,
+        join_set_id: JoinSetId,
+        results: &mut [Val],
+    ) -> Result<Option<()>, WebhookFunctionError> {
+        if let Some((response, status)) = self
+            .responses
+            .iter_mut()
+            .find(|(r, s)| *s == ProcessingStatus::Unprocessed && r.join_set_id == join_set_id)
+        {
+            *status = ProcessingStatus::Processed;
+            if let JoinSetResponseEvent {
+                event: JoinSetResponse::ChildExecutionFinished { result, .. },
+                join_set_id: _,
+            } = response
+            {
+                debug!("Found child response: {result:?}");
+                let result = match result {
+                    Ok(res) => res,
+                    Err(err) => {
+                        return Err(WebhookFunctionError::FinishedExecutionError(err.clone()))
+                    }
+                };
+                if results.len() != result.len() {
+                    error!("Unexpected results length");
+                    return Err(WebhookFunctionError::UncategorizedError(
+                        "Unexpected results length",
+                    ));
+                }
+                for (idx, item) in result.value().into_iter().enumerate() {
+                    results[idx] = item.as_val();
+                }
+                Ok(Some(()))
+            } else {
+                Err(WebhookFunctionError::UncategorizedError(
+                    "wrong join set id",
+                ))
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[instrument(skip_all, fields(%ffqn, execution_id, version), err)]
     async fn call_imported_fn(
         &mut self,
         ffqn: FunctionFqn,
@@ -329,6 +421,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
                     WebhookFunctionError::UncategorizedError("cannot parse JoinSetId")
                 })?;
+                let (execution_id, version) = self.get_execution_id_and_version().await?;
+                tracing::Span::current()
+                    .record("execution_id", tracing::field::display(execution_id))
+                    .record("version", tracing::field::display(&version));
                 let child_execution_id = ExecutionId::generate();
                 let Some((function_metadata, config_id, default_retry_config)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
@@ -337,13 +433,20 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 };
                 // Write to db
                 let created_at = (self.clock_fn)();
-                let create_request = CreateRequest {
+
+                let child_exec_req = ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id,
+                        request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                    },
+                };
+                let create_child_req = CreateRequest {
                     created_at,
                     execution_id: child_execution_id,
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
-                    parent: None,            // TODO
-                    topmost_parent_id: None, // TODO
+                    parent: Some((execution_id, join_set_id)),
+                    topmost_parent_id: Some(execution_id),
                     scheduled_at: created_at,
                     max_retries: self
                         .retry_config
@@ -355,8 +458,17 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     config_id,
                     return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
                 };
-                let conn = self.db_pool.connection();
-                conn.create(create_request).await?;
+                let db_connection = self.db_pool.connection();
+                let version = db_connection
+                    .append_batch_create_new_execution(
+                        created_at,
+                        vec![child_exec_req],
+                        execution_id,
+                        version.clone(),
+                        vec![create_child_req],
+                    )
+                    .await?;
+                self.execution_id_and_version = Some((execution_id, version));
                 if results.len() != 1 {
                     error!("Unexpected results length");
                     return Err(WebhookFunctionError::UncategorizedError(
@@ -368,6 +480,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             } else if let Some(function_name) =
                 ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
             {
+                let (execution_id, version) = self.get_execution_id_and_version().await?;
+                tracing::Span::current()
+                    .record("execution_id", tracing::field::display(execution_id))
+                    .record("version", tracing::field::display(version));
                 debug!("Got await-next extension for function `{function_name}`"); // FIXME: handle different functions in the same join set
                 if params.len() != 1 {
                     error!("Expected single parameter with JoinSetId got {params:?}");
@@ -386,7 +502,23 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
                     WebhookFunctionError::UncategorizedError("cannot parse JoinSetId")
                 })?;
-                todo!("subscribe to next joinset response")
+                let conn = self.db_pool.connection();
+                while self
+                    .find_response_child_finished(join_set_id, results)?
+                    .is_none()
+                {
+                    let next_responses = conn
+                        .subscribe_to_next_responses(execution_id, self.responses.len())
+                        .await?;
+                    debug!("Got next responses {next_responses:?}");
+                    self.responses.extend(
+                        next_responses
+                            .into_iter()
+                            .map(|outer| (outer.event, ProcessingStatus::Unprocessed)),
+                    );
+                    trace!("All responses: {:?}", self.responses);
+                }
+                Ok(())
             } else {
                 error!("unrecognized extension function {ffqn}");
                 return Err(WebhookFunctionError::UncategorizedError(
@@ -394,20 +526,31 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 ));
             }
         } else {
-            let execution_id = ExecutionId::generate();
+            let (execution_id, version) = self.get_execution_id_and_version().await?;
+            tracing::Span::current()
+                .record("execution_id", tracing::field::display(execution_id))
+                .record("version", tracing::field::display(&version));
+            let child_execution_id = ExecutionId::generate();
             let created_at = (self.clock_fn)();
             let Some((function_metadata, config_id, default_retry_config)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
             else {
                 return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
             };
-            let create_request = CreateRequest {
+            let join_set_id = JoinSetId::generate();
+            let child_exec_req = ExecutionEventInner::HistoryEvent {
+                event: HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                },
+            };
+            let create_child_req = CreateRequest {
                 created_at,
-                execution_id,
+                execution_id: child_execution_id,
                 ffqn,
                 params: Params::from_wasmtime(Arc::from(params)),
-                parent: None,            // TODO
-                topmost_parent_id: None, // TODO
+                parent: Some((execution_id, join_set_id)),
+                topmost_parent_id: Some(execution_id),
                 scheduled_at: created_at,
                 max_retries: self
                     .retry_config
@@ -419,10 +562,20 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 config_id,
                 return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
             };
-            let conn = self.db_pool.connection();
-            conn.create(create_request).await?;
-            let res = match conn
-                .wait_for_finished_result(execution_id, None /* TODO timeouts */)
+            let db_connection = self.db_pool.connection();
+            let version = db_connection
+                .append_batch_create_new_execution(
+                    created_at,
+                    vec![child_exec_req],
+                    execution_id,
+                    version.clone(),
+                    vec![create_child_req],
+                )
+                .await?;
+            self.execution_id_and_version = Some((execution_id, version));
+
+            let res = match db_connection
+                .wait_for_finished_result(child_execution_id, None /* TODO timeouts */)
                 .await
             {
                 Ok(res) => res.inspect_err(|err| error!("Got execution error: {err:?}"))?,
@@ -456,6 +609,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
     #[must_use]
     fn new<'a>(
+        config_id: ConfigId,
         engine: &Engine,
         clock_fn: C,
         db_pool: P,
@@ -476,6 +630,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             wasi_ctx,
             http_ctx: WasiHttpCtx::new(),
             retry_config,
+            execution_id_and_version: None,
+            responses: Vec::new(),
+            config_id,
             phantom_data: PhantomData,
         };
         Store::new(engine, ctx)
@@ -487,7 +644,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
     for WebhookCtx<C, DB, P>
 {
     async fn sleep(&mut self, millis: u32) -> wasmtime::Result<()> {
-        tokio::time::sleep(Duration::from_millis(millis as u64)).await;
+        tokio::time::sleep(Duration::from_millis(u64::from(millis))).await;
         Ok(())
     }
 
@@ -616,11 +773,13 @@ async fn handle_request_inner<
     retry_config: RetryConfigOverride,
 ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
     if let Some(matched) = router.find(req.method(), req.uri()) {
+        let found_instance = matched.handler();
         let (sender, receiver) = tokio::sync::oneshot::channel();
         // if self.run.common.wasm.timeout.is_some() {
         //     store.set_epoch_deadline(u64::from(EPOCH_PRECISION) + 1);
         // }
         let mut store = WebhookCtx::new(
+            found_instance.config_id.clone(),
             &engine,
             clock_fn,
             db_pool,
@@ -636,9 +795,8 @@ async fn handle_request_inner<
             .data_mut()
             .new_response_outparam(sender)
             .map_err(|err| HandleRequestError::ResponseCreationError(err.into()))?;
-        let proxy = matched
-            .handler()
-            .0
+        let proxy = found_instance
+            .proxy_pre
             .instantiate_async(&mut store)
             .await
             .map_err(|err| HandleRequestError::InstantiationError(err.into()))?;
@@ -696,11 +854,11 @@ mod tests {
             workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
         };
         use assert_matches::assert_matches;
-        use concepts::SupportedFunctionReturnValue;
         use concepts::{
             storage::{DbConnection, DbPool},
             ExecutionId, FunctionFqn,
         };
+        use concepts::{ComponentType, ConfigId, SupportedFunctionReturnValue};
         use db_tests::{Database, DbGuard, DbPoolEnum};
         use executor::executor::ExecutorTaskHandle;
         use std::net::SocketAddr;
@@ -723,7 +881,8 @@ mod tests {
 
         struct SetUpFiboWebhook {
             _server: AbortOnDrop,
-            _guard: DbGuard,
+            #[allow(dead_code)]
+            guard: DbGuard,
             db_pool: DbPoolEnum,
             server_addr: SocketAddr,
             activity_exec_task: ExecutorTaskHandle,
@@ -734,7 +893,7 @@ mod tests {
             async fn new() -> Self {
                 let addr = SocketAddr::from(([127, 0, 0, 1], 0));
                 let sim_clock = SimClock::default();
-                let (_guard, db_pool) = Database::Memory.set_up().await;
+                let (guard, db_pool) = Database::Memory.set_up().await;
                 let activity_exec_task =
                     spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn());
                 let fn_registry = fn_registry_dummy(&[
@@ -759,6 +918,11 @@ mod tests {
                         )
                         .unwrap(),
                         &engine,
+                        ConfigId {
+                            component_type: ComponentType::Webhook,
+                            hash: test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK
+                                .to_string(),
+                        },
                     )
                     .unwrap();
                     let mut router = MethodAwareRouter::default();
@@ -786,9 +950,17 @@ mod tests {
                     server_addr,
                     activity_exec_task,
                     workflow_exec_task,
-                    _guard,
+                    guard,
                     db_pool,
                 }
+            }
+
+            async fn fetch(&self, n: u8, expected_status_code: u16) -> String {
+                let resp = reqwest::get(format!("http://{}/fibo/{n}/1", &self.server_addr))
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status().as_u16(), expected_status_code);
+                resp.text().await.unwrap()
             }
 
             async fn close(self) {
@@ -798,51 +970,33 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_routing_error_handling() {
+        async fn hardcoded_result_should_work() {
             test_utils::set_up();
-            let setup = SetUpFiboWebhook::new().await;
-            // Check the happy path
-            let resp = reqwest::get(format!("http://{}/fibo/1/1", &setup.server_addr))
-                .await
-                .unwrap();
-            assert_eq!(resp.status().as_u16(), 200);
-            assert_eq!("fiboa(1, 1) = 1", resp.text().await.unwrap());
-            // Check wrong URL
-            let resp = reqwest::get(format!("http://{}/unknown", &setup.server_addr))
-                .await
-                .unwrap();
-            assert_eq!(resp.status().as_u16(), 404);
-            assert_eq!("Route not found", resp.text().await.unwrap());
-            // Check panicking inside WASM before response is streamed
-            let resp = reqwest::get(format!("http://{}/fibo/1a/1", &setup.server_addr))
-                .await
-                .unwrap();
-            assert_eq!(resp.status().as_u16(), 500);
-            assert_eq!("Component Error", resp.text().await.unwrap());
-            // Check panicking inside WASM - AFTER response is streamed
-            let resp = reqwest::get(format!("http://{}/fibo/1/1a", &setup.server_addr))
-                .await
-                .unwrap();
-            assert_eq!(resp.status().as_u16(), 200);
-            assert_eq!("", resp.text().await.unwrap());
-            setup.close().await;
+            let fibo_webhook_harness = SetUpFiboWebhook::new().await;
+            assert_eq!(
+                "fiboa(1, 1) = hardcoded: 1",
+                fibo_webhook_harness.fetch(1, 200).await
+            );
+        }
+
+        #[tokio::test]
+        async fn direct_call_should_work() {
+            test_utils::set_up();
+            let fibo_webhook_harness = SetUpFiboWebhook::new().await;
+            assert_eq!(
+                "fiboa(2, 1) = direct call: 1",
+                fibo_webhook_harness.fetch(2, 200).await
+            );
         }
 
         #[tokio::test]
         async fn submitting_and_not_waiting_should_work() {
             test_utils::set_up();
-            let setup = SetUpFiboWebhook::new().await;
-            // N=10, webhook should not wait for workflow response
-            let resp = reqwest::get(format!("http://{}/fibo/10/1", &setup.server_addr))
-                .await
-                .unwrap();
-            assert_eq!(resp.status().as_u16(), 200);
-            let resp = resp.text().await.unwrap();
-            let execution_id = resp
-                .strip_prefix("fiboa(10, 1) = calculating in the background, see ")
-                .unwrap();
+            let fibo_webhook_harness = SetUpFiboWebhook::new().await;
+            let resp = fibo_webhook_harness.fetch(10, 200).await;
+            let execution_id = resp.strip_prefix("fiboa(10, 1) = submitted: ").unwrap();
             let execution_id = ExecutionId::from_str(execution_id).unwrap();
-            let conn = setup.db_pool.connection();
+            let conn = fibo_webhook_harness.db_pool.connection();
             let res = conn
                 .wait_for_finished_result(execution_id, None)
                 .await
@@ -851,7 +1005,51 @@ mod tests {
             let res = assert_matches!(res, SupportedFunctionReturnValue::Infallible(val) => val);
             let res = assert_matches!(res, WastValWithType{ value: WastVal::U64(actual), r#type: TypeWrapper::U64} => actual);
             assert_eq!(FIBO_10_OUTPUT, res,);
-            setup.close().await;
+            fibo_webhook_harness.close().await;
+        }
+
+        #[tokio::test]
+        async fn submit_await_next_should_work() {
+            test_utils::set_up();
+            let fibo_webhook_harness = SetUpFiboWebhook::new().await;
+            assert_eq!(
+                "fiboa(5, 1) = submit/await-next: 5",
+                fibo_webhook_harness.fetch(5, 200).await
+            );
+        }
+
+        #[tokio::test]
+        async fn test_routing_error_handling() {
+            test_utils::set_up();
+            let fibo_webhook_harness = SetUpFiboWebhook::new().await;
+            // Check wrong URL
+            let resp = reqwest::get(format!(
+                "http://{}/unknown",
+                &fibo_webhook_harness.server_addr
+            ))
+            .await
+            .unwrap();
+            assert_eq!(resp.status().as_u16(), 404);
+            assert_eq!("Route not found", resp.text().await.unwrap());
+            // Check panicking inside WASM before response is streamed
+            let resp = reqwest::get(format!(
+                "http://{}/fibo/1a/1",
+                &fibo_webhook_harness.server_addr
+            ))
+            .await
+            .unwrap();
+            assert_eq!(resp.status().as_u16(), 500);
+            assert_eq!("Component Error", resp.text().await.unwrap());
+            // Check panicking inside WASM - AFTER response is streamed
+            let resp = reqwest::get(format!(
+                "http://{}/fibo/1/1a",
+                &fibo_webhook_harness.server_addr
+            ))
+            .await
+            .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!("", resp.text().await.unwrap());
+            fibo_webhook_harness.close().await;
         }
     }
 
