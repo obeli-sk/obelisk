@@ -1,11 +1,10 @@
 #[allow(warnings)]
 mod bindings;
 
+use crate::bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
-
-use crate::bindings::exports::wasi::http::incoming_handler::Guest;
 
 struct Component;
 
@@ -28,19 +27,32 @@ impl Guest for Component {
             .expect("parameter `ITERATIONS` must be of type u32"); // Panic here means we send 200 anyway.
         let out = body.write().expect("outgoing stream");
         let fibo_res = if n >= 10 {
-            // Submit new execution, do not wait for result
+            // Submit new execution, do not wait for the result.
             let join_set_id = crate::bindings::obelisk::workflow::host_activities::new_join_set();
             let execution_id = bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_submit(
                 &join_set_id,
                 n,
                 iterations,
             );
-            format!("calculating in the background, see {execution_id}")
+            format!("submitted: {execution_id}")
+        } else if n >= 5 {
+            // Submit new execution, wait for the result.
+            let join_set_id = crate::bindings::obelisk::workflow::host_activities::new_join_set();
+            bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_submit(
+                &join_set_id,
+                n,
+                iterations,
+            );
+            let fibo_res = bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_await_next(
+                &join_set_id,
+            );
+            format!("submit/await-next: {fibo_res}")
         } else if n > 1 {
             // Call the execution directly.
-            bindings::testing::fibo_workflow::workflow::fiboa(n, iterations).to_string()
+            let fibo_res = bindings::testing::fibo_workflow::workflow::fiboa(n, iterations);
+            format!("direct call: {fibo_res}")
         } else {
-            "1".to_string() // For performance testing - no activity is called
+            "hardcoded: 1".to_string() // For performance testing - no activity is called
         };
         out.blocking_write_and_flush(format!("fiboa({n}, {iterations}) = {fibo_res}").as_bytes())
             .expect("writing response");

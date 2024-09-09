@@ -72,7 +72,7 @@ listening_addr = "0.0.0.0:9090"
 [[webhook]]
 name = "webhook_trigger_fibo"
 http_server = "external"
-location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-08@sha256:1d8eea4414d46eebec2a2bfb1501afedeb40ffd72de8a84bffd0590563683545"
+location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-09@sha256:d7162a690fd89e6a1dcb32ab3bf5ef8878f93f9fea2c30c08aa482d1e3d554c7"
 ## Routes: an array of routes that will be matched against incoming requests.
 ## Only the path portion of a URL is taken into cosideration, the query part
 ## ("?a=b") is ignored by the matcher.
