@@ -344,7 +344,7 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::ExecutorId,
         storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState},
-        FinishedExecutionError,
+        ComponentType, FinishedExecutionError,
     };
     use concepts::{ExecutionId, Params};
     use db_tests::Database;
@@ -379,11 +379,15 @@ pub(crate) mod tests {
     ) -> ExecutorTaskHandle {
         let workflow_engine =
             Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
+        let config_id = ConfigId {
+            component_type: ComponentType::Workflow,
+            hash: wasm_path.to_string(),
+        };
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
                 wasm_path,
                 WorkflowConfig {
-                    config_id: ConfigId::dummy(),
+                    config_id: config_id.clone(),
                     join_next_blocking_strategy,
                     child_retry_exp_backoff: None,
                     child_max_retries: None,
@@ -401,7 +405,7 @@ pub(crate) mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
-            config_id: ConfigId::dummy(),
+            config_id,
         };
         ExecTask::spawn_new(
             worker,

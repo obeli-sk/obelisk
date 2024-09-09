@@ -268,7 +268,7 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::ExecutorId,
         storage::{CreateRequest, DbConnection, DbPool, Version},
-        ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
+        ComponentType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -293,11 +293,15 @@ pub(crate) mod tests {
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+        let config_id = ConfigId {
+            component_type: ComponentType::WasmActivity,
+            hash: wasm_path.to_string(),
+        };
         let worker = Arc::new(
             ActivityWorker::new_with_config(
                 wasm_path,
                 ActivityConfig {
-                    config_id: ConfigId::dummy(),
+                    config_id: config_id.clone(),
                     recycle_instances: RecycleInstancesSetting::Disabled,
                 },
                 engine,
@@ -309,7 +313,7 @@ pub(crate) mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::dummy(),
+            config_id,
         };
         ExecTask::spawn_new(
             worker,
