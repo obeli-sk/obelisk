@@ -27,10 +27,20 @@ impl Guest for Component {
             .parse()
             .expect("parameter `ITERATIONS` must be of type u32"); // Panic here means we send 200 anyway.
         let out = body.write().expect("outgoing stream");
-        let fibo_res = if n > 0 {
-            bindings::testing::fibo_workflow::workflow::fiboa(n, iterations)
+        let fibo_res = if n >= 10 {
+            // Submit new execution, do not wait for result
+            let join_set_id = crate::bindings::obelisk::workflow::host_activities::new_join_set();
+            let execution_id = bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_submit(
+                &join_set_id,
+                n,
+                iterations,
+            );
+            format!("calculating in the background, see {execution_id}")
+        } else if n > 1 {
+            // Call the execution directly.
+            bindings::testing::fibo_workflow::workflow::fiboa(n, iterations).to_string()
         } else {
-            1
+            "1".to_string() // For performance testing - no activity is called
         };
         out.blocking_write_and_flush(format!("fiboa({n}, {iterations}) = {fibo_res}").as_bytes())
             .expect("writing response");

@@ -299,7 +299,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             } else if let Some(function_name) =
                 ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
             {
-                debug!("Got await-next extension for function `{function_name}`"); // FIXME: handle multiple functions in the same join set
+                debug!("Got await-next extension for function `{function_name}`"); // FIXME: handle different functions in the same join set
                 if params.len() != 1 {
                     error!("Expected single parameter with JoinSetId got {params:?}");
                     return Err(WorkflowFunctionError::UncategorizedError(
@@ -383,8 +383,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
 }
 
 pub(crate) const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
-const SUFFIX_FN_SUBMIT: &str = "-submit";
-const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
+pub(crate) const SUFFIX_FN_SUBMIT: &str = "-submit";
+pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 
 #[cfg(madsim)]
 #[cfg(test)]

@@ -14,15 +14,16 @@ wit-bindgen-rt = { workspace = true, features = ["bitflags"] }
 crate-type = ["cdylib"]
 
 [package.metadata.component.target.dependencies]
-"wasi:http".path = "wit/deps/http/"
-"wasi:random".path = "wit/deps/random/"
+"obelisk:workflow".path = "../../../../wasm-workers/host-wit/"
+"testing:fibo-workflow-obelisk-ext".path = "../workflow/wit/ifc-ext"
+"testing:fibo-workflow".path = "../workflow/wit/ifc"
 "wasi:cli".path = "wit/deps/cli"
-"wasi:io".path = "wit/deps/io"
 "wasi:clocks".path = "wit/deps/clocks"
 "wasi:filesystem".path = "wit/deps/filesystem"
+"wasi:http".path = "wit/deps/http/"
+"wasi:io".path = "wit/deps/io"
+"wasi:random".path = "wit/deps/random/"
 "wasi:sockets".path = "wit/deps/sockets"
-"testing:fibo-workflow".path = "../workflow/wit/ifc"
-"testing:fibo-workflow-obelisk-ext".path = "../workflow/wit/ifc-ext"
 
 [lints]
 rust.unused_imports = "allow"
