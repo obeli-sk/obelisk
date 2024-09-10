@@ -1,34 +1,40 @@
-use std::time::Duration;
-use tokio::task::AbortHandle;
+use std::{
+    sync::{atomic::AtomicBool, Arc},
+    time::Duration,
+};
 use tracing::info;
 use wasmtime::EngineWeak;
 
 pub struct EpochTicker {
-    abort_handle: AbortHandle,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl EpochTicker {
     #[must_use]
     pub fn spawn_new(engines: Vec<EngineWeak>, epoch: Duration) -> Self {
         info!("Spawning the epoch ticker");
-        let abort_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(epoch).await;
-                for engine in &engines {
-                    if let Some(engine) = engine.upgrade() {
-                        engine.increment_epoch();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        std::thread::spawn({
+            let shutdown = shutdown.clone();
+            move || {
+                while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(epoch);
+                    for engine in &engines {
+                        if let Some(engine) = engine.upgrade() {
+                            engine.increment_epoch();
+                        }
                     }
                 }
             }
-        })
-        .abort_handle();
-        Self { abort_handle }
+        });
+        Self { shutdown }
     }
 }
 
 impl Drop for EpochTicker {
     fn drop(&mut self) {
         info!("Aborting the epoch ticker");
-        self.abort_handle.abort();
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
