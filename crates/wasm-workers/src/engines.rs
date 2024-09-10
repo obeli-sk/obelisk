@@ -128,7 +128,10 @@ impl Engines {
     }
 
     pub(crate) fn get_webhook_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
-        Self::get_activity_engine(config)
+        let mut wasmtime_config = wasmtime::Config::new();
+        wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+        wasmtime_config.epoch_interruption(false); // FIXME
+        Self::configure_common(wasmtime_config, config)
     }
 
     pub(crate) fn get_activity_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
