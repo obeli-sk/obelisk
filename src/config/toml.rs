@@ -592,7 +592,7 @@ pub(crate) mod log {
 }
 
 pub(crate) mod webhook {
-    use super::ComponentCommon;
+    use super::{ComponentCommon, DurationConfig};
     use crate::config::ConfigStore;
     use anyhow::Context;
     use serde::Deserialize;
@@ -608,6 +608,8 @@ pub(crate) mod webhook {
     pub(crate) struct HttpServer {
         pub(crate) name: String,
         pub(crate) listening_addr: SocketAddr,
+        #[serde(default = "super::default_request_timeout")]
+        pub(crate) request_timeout: DurationConfig,
     }
 
     #[derive(Debug, Deserialize)]
@@ -733,4 +735,8 @@ const fn default_non_blocking_event_batching() -> u32 {
 
 fn default_out_style() -> LoggingStyle {
     LoggingStyle::PlainCompact
+}
+
+fn default_request_timeout() -> DurationConfig {
+    DurationConfig::Secs(1)
 }

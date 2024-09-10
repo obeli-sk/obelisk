@@ -98,6 +98,7 @@ pub struct Engines {
 }
 
 impl Engines {
+    #[must_use]
     pub fn weak_refs(&self) -> Vec<EngineWeak> {
         vec![
             self.activity_engine.weak(),

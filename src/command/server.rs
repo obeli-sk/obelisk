@@ -69,6 +69,8 @@ use wasm_workers::webhook_trigger;
 use wasm_workers::webhook_trigger::MethodAwareRouter;
 use wasm_workers::workflow_worker::WorkflowWorker;
 
+const EPOCH_MILLIS: u64 = 10;
+
 #[derive(Debug)]
 struct GrpcServer<DB: DbConnection, P: DbPool<DB>> {
     db_pool: P,
@@ -486,7 +488,8 @@ async fn run_internal(
             codegen_cache_config_file_holder,
         )?
     };
-    let _epoch_ticker = EpochTicker::spawn_new(engines.weak_refs(), Duration::from_millis(10));
+    let _epoch_ticker =
+        EpochTicker::spawn_new(engines.weak_refs(), Duration::from_millis(EPOCH_MILLIS));
     let timers_watcher = TimersWatcherTask::spawn_new(
         db_pool.connection(),
         TimersWatcherConfig {
@@ -615,6 +618,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                 now,
                 fn_registry.clone(),
                 webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
+                http_server.request_timeout.into(),
             ))
             .abort_handle(),
         );

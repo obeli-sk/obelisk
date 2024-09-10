@@ -19,13 +19,12 @@ impl Guest for Component {
             .expect("env var `N` must be set")
             .parse()
             .expect("parameter `N` must be of type u8");
-        // Start sending the 200 OK response
-        ResponseOutparam::set(outparam, Ok(resp));
+
         let iterations = std::env::var("ITERATIONS")
             .expect("env var `ITERATIONS` must be set")
             .parse()
             .expect("parameter `ITERATIONS` must be of type u32"); // Panic here means we send 200 anyway.
-        let out = body.write().expect("outgoing stream");
+
         let fibo_res = if n >= 10 {
             // Submit new execution, do not wait for the result.
             let join_set_id = crate::bindings::obelisk::workflow::host_activities::new_join_set();
@@ -54,6 +53,9 @@ impl Guest for Component {
         } else {
             "hardcoded: 1".to_string() // For performance testing - no activity is called
         };
+        // Start sending the 200 OK response
+        ResponseOutparam::set(outparam, Ok(resp));
+        let out = body.write().expect("outgoing stream");
         out.blocking_write_and_flush(format!("fiboa({n}, {iterations}) = {fibo_res}").as_bytes())
             .expect("writing response");
         drop(out);

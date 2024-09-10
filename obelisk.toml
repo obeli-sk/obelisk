@@ -52,6 +52,8 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # [[http_server]]
 # name = "external"
 # listening_addr = "0.0.0.0:8080"
+# request_timeout.secs = 1
+#
 # [[webhook]]
 ## Common settings for all components - see above.
 # http_server = "external" # link to a `http_server`'s name
@@ -91,10 +93,9 @@ listening_addr = "0.0.0.0:9090"
 
 [[webhook]]
 name = "webhook_trigger_fibo"
-location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-09@sha256:d7162a690fd89e6a1dcb32ab3bf5ef8878f93f9fea2c30c08aa482d1e3d554c7"
+location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-10@sha256:621f3dc8b91ea33348559faac51f1a210b641e6250edfe8e409ac2967d1827d0"
 http_server = "external"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
-# TODO timeout.millis = 100
 
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:
