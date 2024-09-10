@@ -83,12 +83,12 @@ pub(crate) mod tests {
         use tokio::net::TcpListener;
         use utils::{time::now, wasm_tools::WasmComponent};
 
-        #[tokio::test]
         #[rstest::rstest(path => [
-        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-        test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-    ])]
+            test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+            ])]
+        #[tokio::test]
         async fn activity(path: &str) {
             let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
             ActivityWorker::new_with_config(
@@ -103,12 +103,12 @@ pub(crate) mod tests {
             .unwrap();
         }
 
-        #[tokio::test]
         #[rstest::rstest(path => [
-        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
-        test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-        test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
-    ])]
+            test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+            ])]
+        #[tokio::test]
         async fn workflow(path: &str) {
             let (_guard, db_pool) = Database::Memory.set_up().await;
             get_workflow_worker(
@@ -121,10 +121,10 @@ pub(crate) mod tests {
             );
         }
 
-        #[tokio::test]
         #[rstest::rstest(path => [
-        test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK
-    ])]
+            test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK
+            ])]
+        #[tokio::test]
         async fn webhook(path: &str) {
             let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
             let instance = webhook_trigger::component_to_instance(
