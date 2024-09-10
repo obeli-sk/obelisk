@@ -26,12 +26,13 @@ pub enum WasmFileError {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::sync::Arc;
+
     use async_trait::async_trait;
     use concepts::{
         ComponentRetryConfig, ConfigId, FunctionFqn, FunctionMetadata, FunctionRegistry,
         ParameterTypes,
     };
-    use std::sync::Arc;
 
     pub(crate) struct TestingFnRegistry(
         hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ConfigId, ComponentRetryConfig)>,
@@ -65,5 +66,90 @@ pub(crate) mod tests {
             );
         }
         Arc::new(TestingFnRegistry(map))
+    }
+
+    mod populate_codegen_cache {
+        use crate::{
+            activity_worker::{ActivityConfig, ActivityWorker, RecycleInstancesSetting},
+            engines::{EngineConfig, Engines},
+            tests::fn_registry_dummy,
+            webhook_trigger::{self, MethodAwareRouter},
+            workflow_worker::{tests::get_workflow_worker, JoinNextBlockingStrategy},
+        };
+        use concepts::ConfigId;
+        use db_tests::Database;
+        use hyper::Method;
+        use std::{net::SocketAddr, time::Duration};
+        use tokio::net::TcpListener;
+        use utils::{time::now, wasm_tools::WasmComponent};
+
+        #[tokio::test]
+        #[rstest::rstest(path => [
+        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+        test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+        test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
+    ])]
+        async fn activity(path: &str) {
+            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            ActivityWorker::new_with_config(
+                path,
+                ActivityConfig {
+                    config_id: ConfigId::dummy(),
+                    recycle_instances: RecycleInstancesSetting::default(),
+                },
+                engine,
+                now,
+            )
+            .unwrap();
+        }
+
+        #[tokio::test]
+        #[rstest::rstest(path => [
+        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+        test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+        test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+    ])]
+        async fn workflow(path: &str) {
+            let (_guard, db_pool) = Database::Memory.set_up().await;
+            get_workflow_worker(
+                path,
+                db_pool,
+                now,
+                JoinNextBlockingStrategy::default(),
+                0,
+                fn_registry_dummy(&[]),
+            );
+        }
+
+        #[tokio::test]
+        #[rstest::rstest(path => [
+        test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK
+    ])]
+        async fn webhook(path: &str) {
+            let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
+            let instance = webhook_trigger::component_to_instance(
+                &WasmComponent::new(path, &engine).unwrap(),
+                &engine,
+                ConfigId::dummy(),
+            )
+            .unwrap();
+
+            let (_guard, db_pool) = Database::Memory.set_up().await;
+            let mut router = MethodAwareRouter::default();
+            router.add(Some(Method::GET), "/fibo/:N/:ITERATIONS", instance);
+            let tcp_listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+                .await
+                .unwrap();
+            drop(webhook_trigger::server(
+                tcp_listener,
+                engine,
+                router,
+                db_pool.clone(),
+                now,
+                fn_registry_dummy(&[]),
+                crate::webhook_trigger::RetryConfigOverride::default(),
+                Duration::from_secs(1),
+            ));
+        }
     }
 }

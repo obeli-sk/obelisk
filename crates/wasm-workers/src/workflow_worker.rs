@@ -608,7 +608,12 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    fn get_workflow_worker<C: ClockFn, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    pub(crate) fn get_workflow_worker<
+        C: ClockFn,
+        DB: DbConnection + 'static,
+        P: DbPool<DB> + 'static,
+    >(
+        path: &str,
         db_pool: P,
         clock_fn: C,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -617,7 +622,7 @@ pub(crate) mod tests {
     ) -> Arc<WorkflowWorker<C, DB, P>> {
         Arc::new(
             WorkflowWorker::new_with_config(
-                test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
+                path,
                 WorkflowConfig {
                     config_id: ConfigId::dummy(),
                     join_next_blocking_strategy,
@@ -642,6 +647,7 @@ pub(crate) mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         let worker = get_workflow_worker(
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),
             clock_fn.clone(),
             join_next_blocking_strategy,
@@ -957,6 +963,7 @@ pub(crate) mod tests {
         let (_guard, db_pool) = db.set_up().await;
         let fn_registry = fn_registry_dummy(&[RESCHEDULE_FFQN]);
         let worker = get_workflow_worker(
+            test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),
             sim_clock.get_clock_fn(),
             join_next_strategy,
