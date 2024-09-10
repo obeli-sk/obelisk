@@ -83,6 +83,7 @@ jobs:
         run: nix develop --command cargo nextest run --workspace --all-features --profile ci-test-populate-codegen-cache populate_codegen_cache --test-threads 1
         env:
           RUSTFLAGS: "--cfg madsim"
+          MADSIM_ALLOW_SYSTEM_THREAD: "1"
           CI: true
       - name: cargo test
         env:
