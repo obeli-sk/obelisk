@@ -1,9 +1,3 @@
-// TODO:
-// Test outbound HTTP, IO?
-// Timeouts
-// Panic - propagate reason
-// stdout and stderr
-
 use crate::workflow_ctx::{obelisk, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT};
 use crate::workflow_worker::HOST_ACTIVITY_IFC_STRING;
 use crate::WasmFileError;

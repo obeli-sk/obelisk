@@ -22,20 +22,25 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # location.path = "path/to/wasm"
 # location.oci = "docker.io/repo/image:tag"
 # content_digest = "sha256:AA.." # Optional. If specified, the WASM file must have a matching hash.
+
+## Common executor settings
 # exec_config.batch_size = 5 # Number of executions to lock for every event loop tick.
 # exec_config.lock_expiry.secs = 1 # Each execution is locked for 1s by default.
 # exec_config.tick_sleep.millis = 200 # Sleep between event loop ticks.
 
 ### WASM Activity components configuration
 # [[wasm_activity]]
-## Common settings for all components - see above
+## Common settings for all components - see above.
+## Common executor settings - see above.
 ## Specific settings for wasm_activity:
 # recycle_instances = true # If true, the same WASM instance will be used again instead of creating new instance for performance reasons.
 # default_max_retries = 5 # When calling the activity directly, `default_max_retries` is applied.
 # default_retry_exp_backoff.millis = 100 # Exponential backoff setting.
 
-### WASM Workflow components configuration
-## Common settings for all components - see above
+### Workflow components configuration
+# [[workflow]]
+## Common settings for all components - see above.
+## Common executor settings - see above.
 ## Joining strategy: When workflow requests a child execution result, it can either be interrupted, or kept in the memory.
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.
 # join_next_blocking_strategy = "await" # Default strategy is "await"/
@@ -43,37 +48,15 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # child_retry_exp_backoff_override.millis = 200 # When calling an activity, overrides its default `default_retry_exp_backoff`
 # non_blocking_event_batching = 100 # Number of non-blocking events that can be cached and written in a batch.
 
-[[wasm_activity]]
-name = "fibo_activity"
-location.oci = "docker.io/getobelisk/example_activity_fibo:2024-08-12-1@sha256:d33ea7dde23bb8204e8916a4ca868195c1d66b0459bf0e3bc874cb27e25abf3e"
-
-# TODO: FS allowance
-
-[[workflow]]
-name = "fibo_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-08-12-1@sha256:3da8be596e87693335423e52482cc2edc7424b40fa7ebcdd82d104eb94c2c418"
-exec.lock_expiry.secs = 10
-
-[[wasm_activity]]
-name = "http_get_activity"
-location.oci = "docker.io/getobelisk/example_activity_http_get:2024-08-12-1@sha256:deb576c153e375f7c1f016d82860fa6e1cf50264944b078858f577d54d2a9863"
-exec.lock_expiry.secs = 5
-# TODO: inherit_network, allow_ip_name_lookup in wasmtime_wasi::WasiCtxBuilder
-
-[[workflow]]
-name = "http_get_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-08-12-1@sha256:d591785af59e5b0809b87a6e32bae7f590f0ea459a53d4bbcb8dc3e4322ddce3"
-exec.lock_expiry.secs = 10
-
-[[http_server]]
-name = "external"
-listening_addr = "0.0.0.0:9090"
-
-[[webhook]]
-name = "webhook_trigger_fibo"
-http_server = "external"
-location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-09@sha256:d7162a690fd89e6a1dcb32ab3bf5ef8878f93f9fea2c30c08aa482d1e3d554c7"
-## Routes: an array of routes that will be matched against incoming requests.
+### Webhook section
+# [[http_server]]
+# name = "external"
+# listening_addr = "0.0.0.0:8080"
+# [[webhook]]
+## Common settings for all components - see above.
+# http_server = "external" # link to a `http_server`'s name
+### Routes section
+## An array of routes that will be matched against incoming requests.
 ## Only the path portion of a URL is taken into cosideration, the query part
 ## ("?a=b") is ignored by the matcher.
 ## Syntax of a route:
@@ -82,9 +65,36 @@ location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-09@sha256:d716
 ## "/status/:param1/:param2" - When URL matches, `param1` and `param2` values will be exposed as env vars.
 ## ""                        - Fallback pattern.
 ## For details about the matching engine please see https://docs.rs/route-recognizer/latest/route_recognizer/
+# routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]
+
+[[wasm_activity]]
+name = "fibo_activity"
+location.oci = "docker.io/getobelisk/example_activity_fibo:2024-08-12-1@sha256:d33ea7dde23bb8204e8916a4ca868195c1d66b0459bf0e3bc874cb27e25abf3e"
+default_max_retries = 0
+
+[[workflow]]
+name = "fibo_workflow"
+location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-08-12-1@sha256:3da8be596e87693335423e52482cc2edc7424b40fa7ebcdd82d104eb94c2c418"
+exec.lock_expiry.secs = 1
+
+[[wasm_activity]]
+name = "http_get_activity"
+location.oci = "docker.io/getobelisk/example_activity_http_get:2024-08-12-1@sha256:deb576c153e375f7c1f016d82860fa6e1cf50264944b078858f577d54d2a9863"
+
+[[workflow]]
+name = "http_get_workflow"
+location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-08-12-1@sha256:d591785af59e5b0809b87a6e32bae7f590f0ea459a53d4bbcb8dc3e4322ddce3"
+
+[[http_server]]
+name = "external"
+listening_addr = "0.0.0.0:9090"
+
+[[webhook]]
+name = "webhook_trigger_fibo"
+location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-09@sha256:d7162a690fd89e6a1dcb32ab3bf5ef8878f93f9fea2c30c08aa482d1e3d554c7"
+http_server = "external"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
-# routes = ["/fibo/*"]
-# execution-timeout.millis = 100
+# TODO timeout.millis = 100
 
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:
