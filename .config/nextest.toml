@@ -17,3 +17,9 @@ junit.path = "junit.xml"
 junit.report-name = "nosim"
 junit.store-success-output = true
 junit.store-failure-output = true
+
+[profile.ci-test-populate-codegen-cache]
+failure-output = "immediate"
+fail-fast = true
+status-level = "all"
+slow-timeout = { period = "10s", terminate-after = 4 }
