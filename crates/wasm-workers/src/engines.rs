@@ -1,7 +1,7 @@
 use std::{error::Error, fmt::Debug, path::Path, rc::Rc, sync::Arc};
 use tempfile::NamedTempFile;
 use tracing::{debug, info, trace, warn};
-use wasmtime::Engine;
+use wasmtime::{Engine, EngineWeak};
 
 #[derive(thiserror::Error, Debug)]
 pub enum EngineError {
@@ -98,6 +98,14 @@ pub struct Engines {
 }
 
 impl Engines {
+    pub fn weak_refs(&self) -> Vec<EngineWeak> {
+        vec![
+            self.activity_engine.weak(),
+            self.workflow_engine.weak(),
+            self.workflow_engine.weak(),
+        ]
+    }
+
     fn configure_common(
         mut wasmtime_config: wasmtime::Config,
         config: EngineConfig,
@@ -126,6 +134,7 @@ impl Engines {
     pub(crate) fn get_activity_engine(config: EngineConfig) -> Result<Arc<Engine>, EngineError> {
         let mut wasmtime_config = wasmtime::Config::new();
         wasmtime_config.wasm_backtrace_details(wasmtime::WasmBacktraceDetails::Enable);
+        wasmtime_config.epoch_interruption(true);
         Self::configure_common(wasmtime_config, config)
     }
 

@@ -486,13 +486,7 @@ async fn run_internal(
             codegen_cache_config_file_holder,
         )?
     };
-    let _epoch_ticker = EpochTicker::spawn_new(
-        vec![
-            engines.activity_engine.weak(),
-            engines.workflow_engine.weak(),
-        ],
-        Duration::from_millis(10),
-    );
+    let _epoch_ticker = EpochTicker::spawn_new(engines.weak_refs(), Duration::from_millis(10));
     let timers_watcher = TimersWatcherTask::spawn_new(
         db_pool.connection(),
         TimersWatcherConfig {
