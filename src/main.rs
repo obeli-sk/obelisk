@@ -28,11 +28,13 @@ async fn main() -> Result<(), anyhow::Error> {
         Subcommand::Server(Server::Run {
             clean_db,
             clean_cache,
+            clean_codegen_cache,
         }) => {
             Box::pin(command::server::run(
                 config,
                 clean_db,
                 clean_cache,
+                clean_codegen_cache,
                 config_holder,
             ))
             .await

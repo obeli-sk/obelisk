@@ -37,6 +37,9 @@ pub(crate) enum Server {
         /// Clean the codegen and OCI cache directories
         #[arg(long)]
         clean_cache: bool,
+        /// Clean the codegen cache
+        #[arg(long)]
+        clean_codegen_cache: bool,
     },
 }
 

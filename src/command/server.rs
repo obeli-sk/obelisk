@@ -378,11 +378,19 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
 pub(crate) async fn run(
     mut config: ObeliskConfig,
     clean_db: bool,
-    clean_cache: bool,
+    clean_all_cache: bool,
+    clean_codegen_cache: bool,
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
     let _guard = init::init(&mut config);
-    Box::pin(run_internal(config, clean_db, clean_cache, config_holder)).await?;
+    Box::pin(run_internal(
+        config,
+        clean_db,
+        clean_all_cache,
+        clean_codegen_cache,
+        config_holder,
+    ))
+    .await?;
     Ok(())
 }
 
@@ -391,6 +399,7 @@ async fn run_internal(
     config: ObeliskConfig,
     clean_db: bool,
     clean_cache: bool,
+    clean_codegen_cache: bool,
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
     debug!("Using toml configuration {config:#?}");
@@ -449,6 +458,8 @@ async fn run_internal(
             .await
             .or_else(ignore_not_found)
             .with_context(|| format!("cannot delete wasm cache directory {wasm_cache_dir:?}"))?;
+    }
+    if clean_cache || clean_codegen_cache {
         if let Some(codegen_cache) = &codegen_cache {
             tokio::fs::remove_dir_all(codegen_cache)
                 .await
