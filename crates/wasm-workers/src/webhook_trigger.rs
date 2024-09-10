@@ -21,7 +21,7 @@ use std::ops::Deref;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, info_span, instrument, trace, Instrument, Span};
+use tracing::{debug, error, info, info_span, instrument, trace, Instrument};
 use utils::time::ClockFn;
 use utils::wasm_tools::WasmComponent;
 use wasmtime::component::ResourceTable;
@@ -188,6 +188,7 @@ pub fn component_to_instance<
     })
 }
 
+#[expect(clippy::too_many_arguments)]
 pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     listener: TcpListener,
     engine: Arc<Engine>,
@@ -219,16 +220,18 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                         io,
                         hyper::service::service_fn(move |req| {
                             debug!("method: {}, uri: {}", req.method(), req.uri());
-                            handle_request(
-                                req,
-                                router.clone(),
-                                engine.clone(),
-                                clock_fn.clone(),
-                                db_pool.clone(),
-                                fn_registry.clone(),
+                            RequestHandler {
+                                engine: engine.clone(),
+                                clock_fn: clock_fn.clone(),
+                                db_pool: db_pool.clone(),
+                                fn_registry: fn_registry.clone(),
                                 retry_config,
                                 request_timeout,
-                            )
+                                execution_id: ExecutionId::generate(),
+                                router: router.clone(),
+                                phantom_data: PhantomData,
+                            }
+                            .handle_request(req)
                         }),
                     )
                     .await;
@@ -597,6 +600,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
     #[must_use]
+    #[expect(clippy::too_many_arguments)]
     fn new<'a>(
         config_id: ConfigId,
         engine: &Engine,
@@ -676,73 +680,149 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiHttpView for WebhookCtx<C,
     }
 }
 
-#[instrument(skip_all, fields(execution_id))]
-async fn handle_request<
-    C: ClockFn + 'static,
-    DB: DbConnection + 'static,
-    P: DbPool<DB> + 'static,
->(
-    req: hyper::Request<hyper::body::Incoming>,
-    router: Arc<MethodAwareRouter<WebhookInstance<C, DB, P>>>,
+struct RequestHandler<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
     engine: Arc<Engine>,
     clock_fn: C,
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
     retry_config: RetryConfigOverride,
     request_timeout: Duration,
-) -> Result<hyper::Response<HyperOutgoingBody>, hyper::Error> {
-    let execution_id = ExecutionId::generate();
-    Span::current().record("execution_id", tracing::field::display(execution_id));
-    handle_request_inner(
-        req,
-        router,
-        engine,
-        clock_fn,
-        db_pool,
-        fn_registry,
-        retry_config,
-        execution_id,
-        request_timeout,
-    )
-    .await
-    .or_else(|err| {
-        fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
-            let body = BoxBody::new(http_body_util::BodyExt::map_err(
-                http_body_util::Full::new(Bytes::copy_from_slice(body.as_bytes())),
-                |_| unreachable!(),
-            ));
-            hyper::Response::builder()
-                .status(status_code)
-                .body(body)
-                .unwrap()
-        }
-        debug!("{err:?}");
-        Ok(match err {
-            HandleRequestError::IncomingRequestError(err) => resp(
-                &format!("Incoming request error: {err}"),
-                StatusCode::BAD_REQUEST,
-            ),
-            HandleRequestError::ResponseCreationError(err) => resp(
-                &format!("Cannot create response: {err}"),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            ),
-            HandleRequestError::InstantiationError(err) => resp(
-                &format!("Cannot instantiate: {err}"),
-                StatusCode::SERVICE_UNAVAILABLE,
-            ),
-            HandleRequestError::ErrorCode(code) => resp(
-                &format!("Error code: {code}"),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            ),
-            HandleRequestError::ExecutionError(_) => {
-                resp("Component Error", StatusCode::INTERNAL_SERVER_ERROR)
-            }
-            HandleRequestError::RouteNotFound => resp("Route not found", StatusCode::NOT_FOUND),
-            HandleRequestError::Timeout => resp("Timeout", StatusCode::REQUEST_TIMEOUT),
-        })
-    })
+    execution_id: ExecutionId,
+    router: Arc<MethodAwareRouter<WebhookInstance<C, DB, P>>>,
+    phantom_data: PhantomData<DB>,
 }
 
+impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
+    RequestHandler<C, DB, P>
+{
+    #[instrument(skip_all, fields(execution_id = %self.execution_id))]
+    async fn handle_request(
+        self,
+        req: hyper::Request<hyper::body::Incoming>,
+    ) -> Result<hyper::Response<HyperOutgoingBody>, hyper::Error> {
+        self.handle_request_inner(req).await.or_else(|err| {
+            fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
+                let body = BoxBody::new(http_body_util::BodyExt::map_err(
+                    http_body_util::Full::new(Bytes::copy_from_slice(body.as_bytes())),
+                    |_| unreachable!(),
+                ));
+                hyper::Response::builder()
+                    .status(status_code)
+                    .body(body)
+                    .unwrap()
+            }
+            debug!("{err:?}");
+            Ok(match err {
+                HandleRequestError::IncomingRequestError(err) => resp(
+                    &format!("Incoming request error: {err}"),
+                    StatusCode::BAD_REQUEST,
+                ),
+                HandleRequestError::ResponseCreationError(err) => resp(
+                    &format!("Cannot create response: {err}"),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                ),
+                HandleRequestError::InstantiationError(err) => resp(
+                    &format!("Cannot instantiate: {err}"),
+                    StatusCode::SERVICE_UNAVAILABLE,
+                ),
+                HandleRequestError::ErrorCode(code) => resp(
+                    &format!("Error code: {code}"),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                ),
+                HandleRequestError::ExecutionError(_) => {
+                    resp("Component Error", StatusCode::INTERNAL_SERVER_ERROR)
+                }
+                HandleRequestError::RouteNotFound => resp("Route not found", StatusCode::NOT_FOUND),
+                HandleRequestError::Timeout => resp("Timeout", StatusCode::REQUEST_TIMEOUT),
+            })
+        })
+    }
+
+    async fn handle_request_inner(
+        self,
+        req: hyper::Request<hyper::body::Incoming>,
+    ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
+        #[derive(Debug, thiserror::Error)]
+        #[error("timeout")]
+        struct TimeoutError;
+
+        if let Some(matched) = self.router.find(req.method(), req.uri()) {
+            let found_instance = matched.handler();
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let mut store = WebhookCtx::new(
+                found_instance.config_id.clone(),
+                &self.engine,
+                self.clock_fn,
+                self.db_pool,
+                self.fn_registry,
+                self.retry_config,
+                matched.params().iter(),
+                self.execution_id,
+            );
+            let req = store
+                .data_mut()
+                .new_incoming_request(Scheme::Http, req)
+                .map_err(|err| HandleRequestError::IncomingRequestError(err.into()))?;
+            let out = store
+                .data_mut()
+                .new_response_outparam(sender)
+                .map_err(|err| HandleRequestError::ResponseCreationError(err.into()))?;
+            let proxy = found_instance
+                .proxy_pre
+                .instantiate_async(&mut store)
+                .await
+                .map_err(|err| HandleRequestError::InstantiationError(err.into()))?;
+
+            let task = tokio::task::spawn(
+                async move {
+                    tokio::select! {
+                        result = proxy.wasi_http_incoming_handler().call_handle(store, req, out)=> {
+                            result.inspect_err(|err| error!("Webhook instance returned error: {err:?}"))
+                        },
+                        () = tokio::time::sleep(self.request_timeout) => {
+                            info!("Timing out the request");
+                            Err(TimeoutError.into())
+                        }
+                    }
+                }
+                .instrument(info_span!("webhook_task")),
+            );
+            match receiver.await {
+                Ok(Ok(resp)) => {
+                    debug!("Streaming the response");
+                    Ok(resp)
+                }
+                Ok(Err(err)) => {
+                    error!("Webhook instance sent error code {err:?}");
+                    Err(HandleRequestError::ErrorCode(err))
+                }
+                Err(_recv_err) => {
+                    // An error in the receiver (`RecvError`) only indicates that the
+                    // task exited before a response was sent (i.e., the sender was
+                    // dropped); it does not describe the underlying cause of failure.
+                    // Instead we retrieve and propagate the error from inside the task
+                    // which should more clearly tell the user what went wrong. Note
+                    // that we assume the task has already exited at this point so the
+                    // `await` should resolve immediately.
+                    let err = match task.await {
+                        Ok(r) => {
+                            r.expect_err("if the receiver has an error, the task must have failed")
+                        } //
+                        Err(e) => e.into(), // e.g. Panic
+                    };
+                    if err.downcast_ref::<TimeoutError>().is_some() {
+                        Err(HandleRequestError::Timeout)
+                    } else {
+                        info!("Webhook task ended with ExecutionError - {err:?}");
+                        Err(HandleRequestError::ExecutionError(err.into()))
+                    }
+                }
+            }
+        } else {
+            Err(HandleRequestError::RouteNotFound)
+        }
+    }
+}
 #[derive(Debug, thiserror::Error)]
 pub enum HandleRequestError {
     #[error("incoming request error: {0}")]
@@ -759,102 +839,6 @@ pub enum HandleRequestError {
     RouteNotFound,
     #[error("timeout")]
     Timeout,
-}
-
-async fn handle_request_inner<
-    C: ClockFn + 'static,
-    DB: DbConnection + 'static,
-    P: DbPool<DB> + 'static,
->(
-    req: hyper::Request<hyper::body::Incoming>,
-    router: Arc<MethodAwareRouter<WebhookInstance<C, DB, P>>>,
-    engine: Arc<Engine>,
-    clock_fn: C,
-    db_pool: P,
-    fn_registry: Arc<dyn FunctionRegistry>,
-    retry_config: RetryConfigOverride,
-    execution_id: ExecutionId,
-    request_timeout: Duration,
-) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
-    #[derive(Debug, thiserror::Error)]
-    #[error("timeout")]
-    struct TimeoutError;
-
-    if let Some(matched) = router.find(req.method(), req.uri()) {
-        let found_instance = matched.handler();
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let mut store = WebhookCtx::new(
-            found_instance.config_id.clone(),
-            &engine,
-            clock_fn,
-            db_pool,
-            fn_registry,
-            retry_config,
-            matched.params().iter(),
-            execution_id,
-        );
-        let req = store
-            .data_mut()
-            .new_incoming_request(Scheme::Http, req)
-            .map_err(|err| HandleRequestError::IncomingRequestError(err.into()))?;
-        let out = store
-            .data_mut()
-            .new_response_outparam(sender)
-            .map_err(|err| HandleRequestError::ResponseCreationError(err.into()))?;
-        let proxy = found_instance
-            .proxy_pre
-            .instantiate_async(&mut store)
-            .await
-            .map_err(|err| HandleRequestError::InstantiationError(err.into()))?;
-
-        let task = tokio::task::spawn(
-            async move {
-                tokio::select! {
-                    result = proxy.wasi_http_incoming_handler().call_handle(store, req, out)=> {
-                        result.inspect_err(|err| error!("Webhook instance returned error: {err:?}"))
-                    },
-                    () = tokio::time::sleep(request_timeout) => {
-                        info!("Timing out the request");
-                        Err(TimeoutError.into())
-                    }
-                }
-            }
-            .instrument(info_span!("webhook_task")),
-        );
-        match receiver.await {
-            Ok(Ok(resp)) => {
-                debug!("Streaming the response");
-                Ok(resp)
-            }
-            Ok(Err(err)) => {
-                error!("Webhook instance sent error code {err:?}");
-                Err(HandleRequestError::ErrorCode(err))
-            }
-            Err(_recv_err) => {
-                // An error in the receiver (`RecvError`) only indicates that the
-                // task exited before a response was sent (i.e., the sender was
-                // dropped); it does not describe the underlying cause of failure.
-                // Instead we retrieve and propagate the error from inside the task
-                // which should more clearly tell the user what went wrong. Note
-                // that we assume the task has already exited at this point so the
-                // `await` should resolve immediately.
-                let err = match task.await {
-                    Ok(r) => {
-                        r.expect_err("if the receiver has an error, the task must have failed")
-                    } //
-                    Err(e) => e.into(), // e.g. Panic
-                };
-                if err.downcast_ref::<TimeoutError>().is_some() {
-                    Err(HandleRequestError::Timeout)
-                } else {
-                    info!("Webhook task ended with ExecutionError - {err:?}");
-                    Err(HandleRequestError::ExecutionError(err.into()))
-                }
-            }
-        }
-    } else {
-        Err(HandleRequestError::RouteNotFound)
-    }
 }
 
 #[cfg(test)]
