@@ -1,3 +1,4 @@
+use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::{
@@ -20,6 +21,7 @@ use rusqlite::{
 use std::{
     cmp::max,
     collections::VecDeque,
+    env::VarError,
     error::Error,
     fmt::Debug,
     path::Path,
@@ -266,8 +268,25 @@ impl CombinedState {
         })
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandPriority {
+    // Write, Shutdown
+    High,
+    // Read
+    Medium,
+    // Lock scan
+    Low,
+}
+
+#[derive(derivative::Derivative)]
+#[derivative(Debug)]
 enum ThreadCommand {
-    Func(Box<dyn FnOnce(&mut Connection) + Send>),
+    Func {
+        #[derivative(Debug = "ignore")]
+        func: Box<dyn FnOnce(&mut Connection) + Send>,
+        priority: CommandPriority,
+    },
     Shutdown(oneshot::Sender<()>),
 }
 
@@ -319,10 +338,19 @@ impl SqlitePool {
     #[instrument(skip_all)]
     #[instrument(skip_all)]
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, DbError> {
+        let queue_capacity: usize =
+            std::env::var("SQLITE_QUEUE_CAP") // TODO: Move the configuration
+                .and_then(|val| val.parse().map_err(|_| VarError::NotPresent))
+                .unwrap_or(100);
+        let low_prio_threshold: usize =
+            std::env::var("SQLITE_LOW_PRIO_THRESHOLD") // TODO: Move the configuration
+                .and_then(|val| val.parse().map_err(|_| VarError::NotPresent))
+                .unwrap_or(100);
+        debug!(queue_capacity, low_prio_threshold, "Initializing sqlite");
         let path = path.as_ref().to_owned();
         let (init_tx, init_rx) = oneshot::channel();
         let shutdown = Arc::new(AtomicBool::new(false));
-        let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(10); // TODO: make configurable?
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(queue_capacity);
         {
             let shutdown = shutdown.clone();
             std::thread::spawn(move || {
@@ -364,23 +392,53 @@ impl SqlitePool {
                 let init_tx = init(init_tx, IDX_T_STATE_LOCK_PENDING).unwrap();
                 let init_tx = init(init_tx, CREATE_TABLE_T_DELAY).unwrap();
                 init_tx.send(Ok(())).expect("sending init OK must succeed");
+                let mut vec: Vec<ThreadCommand> = Vec::with_capacity(queue_capacity);
                 loop {
-                    let res = command_rx
-                        .blocking_recv()
-                        .expect("command channel must be open");
-                    let ignore_commands = shutdown.load(Ordering::Relaxed);
-                    let res = match res {
-                        ThreadCommand::Func(_) if ignore_commands => None,
-                        ThreadCommand::Shutdown(callback) => {
-                            callback
-                                .send(())
-                                .expect("shutdown callback channel must be open");
-                            break;
+                    vec.clear();
+                    vec.push(
+                        command_rx
+                            .blocking_recv()
+                            .expect("command channel must be open"),
+                    );
+                    while let Ok(more) = command_rx.try_recv() {
+                        vec.push(more);
+                    }
+                    if shutdown.load(Ordering::SeqCst) {
+                        // Ignore everything except the shutdown command
+                        for item in vec.iter_mut() {
+                            if matches!(item, ThreadCommand::Shutdown(_)) {
+                                let item = std::mem::replace(
+                                    item,
+                                    ThreadCommand::Shutdown(oneshot::channel().0),
+                                );
+                                let callback = assert_matches!(item, ThreadCommand::Shutdown(callback) => callback);
+                                callback.send(()).expect("shutdown callback must be open");
+                                return;
+                            }
                         }
-                        ThreadCommand::Func(func) => Some(func),
+                    }
+
+                    let mut execute = |expected: CommandPriority| {
+                        let mut processed = 0;
+                        for item in vec.iter_mut() {
+                            if matches!(item, ThreadCommand::Func { priority, .. } if *priority == expected )
+                            {
+                                let item = std::mem::replace(
+                                    item,
+                                    ThreadCommand::Shutdown(oneshot::channel().0),
+                                );
+                                let func =
+                                    assert_matches!(item, ThreadCommand::Func{func, ..} => func);
+                                func(&mut conn);
+                                processed += 1;
+                            }
+                        }
+                        processed
                     };
-                    if let Some(func) = res {
-                        func(&mut conn);
+                    let processed =
+                        execute(CommandPriority::High) + execute(CommandPriority::Medium);
+                    if processed < low_prio_threshold {
+                        execute(CommandPriority::Low);
                     }
                 }
             })
@@ -409,8 +467,7 @@ impl SqlitePool {
         F: FnOnce(&mut rusqlite::Transaction) -> Result<T, DbError> + Send + 'static,
         T: Send + 'static,
     {
-        self.transaction(func, rusqlite::TransactionBehavior::Immediate)
-            .await
+        self.transaction(func, true).await
     }
 
     #[instrument(skip_all)]
@@ -419,16 +476,11 @@ impl SqlitePool {
         F: FnOnce(&mut rusqlite::Transaction) -> Result<T, DbError> + Send + 'static,
         T: Send + 'static,
     {
-        self.transaction(func, rusqlite::TransactionBehavior::Deferred)
-            .await
+        self.transaction(func, false).await
     }
 
     /// Invokes the provided function wrapping a new [`rusqlite::Transaction`] that is committed automatically.
-    async fn transaction<F, T>(
-        &self,
-        func: F,
-        behavior: rusqlite::TransactionBehavior,
-    ) -> Result<T, DbError>
+    async fn transaction<F, T>(&self, func: F, write: bool) -> Result<T, DbError>
     where
         F: FnOnce(&mut rusqlite::Transaction) -> Result<T, DbError> + Send + 'static,
         T: Send + 'static,
@@ -437,21 +489,32 @@ impl SqlitePool {
         let parent_span = Span::current();
 
         self.command_tx
-            .send(ThreadCommand::Func(Box::new(move |conn| {
-                let res = info_span!(parent: &parent_span, "tx_begin").in_scope(|| {
-                    conn.transaction_with_behavior(behavior)
+            .send(ThreadCommand::Func {
+                priority: if write {
+                    CommandPriority::High
+                } else {
+                    CommandPriority::Medium
+                },
+                func: Box::new(move |conn| {
+                    let res = info_span!(parent: &parent_span, "tx_begin").in_scope(|| {
+                        conn.transaction_with_behavior(if write {
+                            rusqlite::TransactionBehavior::Immediate
+                        } else {
+                            rusqlite::TransactionBehavior::Deferred
+                        })
                         .map_err(convert_err)
-                });
-                let res = res.and_then(|mut transaction| {
-                    info_span!(parent: &parent_span, "tx_fn")
-                        .in_scope(|| func(&mut transaction).map(|ok| (ok, transaction)))
-                });
-                let res = res.and_then(|(ok, transaction)| {
-                    info_span!(parent: &parent_span, "tx_commit")
-                        .in_scope(|| transaction.commit().map(|_| ok).map_err(convert_err))
-                });
-                _ = tx.send(res);
-            })))
+                    });
+                    let res = res.and_then(|mut transaction| {
+                        info_span!(parent: &parent_span, "tx_fn")
+                            .in_scope(|| func(&mut transaction).map(|ok| (ok, transaction)))
+                    });
+                    let res = res.and_then(|(ok, transaction)| {
+                        info_span!(parent: &parent_span, "tx_commit")
+                            .in_scope(|| transaction.commit().map(|_| ok).map_err(convert_err))
+                    });
+                    _ = tx.send(res);
+                }),
+            })
             .await
             .map_err(|_send_err| DbError::Connection(DbConnectionError::SendError))?;
         rx.await
@@ -459,7 +522,7 @@ impl SqlitePool {
     }
 
     #[instrument(skip_all)]
-    pub async fn conn<F, T>(&self, func: F) -> Result<T, DbError>
+    pub async fn conn_low_prio<F, T: Default>(&self, func: F) -> Result<T, DbError>
     where
         F: FnOnce(&Connection) -> Result<T, DbError> + Send + 'static,
         T: Send + 'static,
@@ -467,13 +530,18 @@ impl SqlitePool {
         let (tx, rx) = oneshot::channel();
         let span = tracing::info_span!("tx_function");
         self.command_tx
-            .send(ThreadCommand::Func(Box::new(move |conn| {
-                _ = tx.send(span.in_scope(|| func(conn)));
-            })))
+            .send(ThreadCommand::Func {
+                priority: CommandPriority::Low,
+                func: Box::new(move |conn| {
+                    _ = tx.send(span.in_scope(|| func(conn)));
+                }),
+            })
             .await
             .map_err(|_send_err| DbError::Connection(DbConnectionError::SendError))?;
-        rx.await
-            .map_err(|_recv_err| DbError::Connection(DbConnectionError::RecvError))?
+        match rx.await {
+            Ok(res) => res,
+            Err(_recv_err) => Ok(T::default()), // Dropped computation because of other priorities..
+        }
     }
 
     fn fetch_created_event(
@@ -1323,7 +1391,7 @@ impl SqlitePool {
         conn: &Connection,
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,
-        ffqns: &[FunctionFqn],
+        ffqns: &[FunctionFqn], // FIXME: Single FFQN
     ) -> Result<Vec<(ExecutionId, Version)>, DbError> {
         let mut execution_ids_versions = Vec::with_capacity(batch_size);
 
@@ -1437,7 +1505,9 @@ impl DbConnection for SqlitePool {
     ) -> Result<LockPendingResponse, DbError> {
         trace!("lock_pending");
         let execution_ids_versions = self
-            .conn(move |conn| Self::get_pending(conn, batch_size, pending_at_or_sooner, &ffqns))
+            .conn_low_prio(move |conn| {
+                Self::get_pending(conn, batch_size, pending_at_or_sooner, &ffqns)
+            })
             .await?;
         if execution_ids_versions.is_empty() {
             Ok(vec![])
@@ -1839,7 +1909,7 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip(self))]
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
         trace!("get_expired_timers");
-        self.conn(
+        self.conn_low_prio(
             move |conn| {
                 let mut expired_timers = conn.prepare(
                     "SELECT execution_id, join_set_id, delay_id FROM t_delay WHERE expires_at <= :at",
@@ -1901,7 +1971,9 @@ impl DbConnection for SqlitePool {
     ) {
         let ffqns2 = ffqns.clone();
         let Ok(execution_ids_versions) = self
-            .conn(move |conn| Self::get_pending(conn, 1, pending_at_or_sooner, ffqns2.as_ref()))
+            .conn_low_prio(move |conn| {
+                Self::get_pending(conn, 1, pending_at_or_sooner, ffqns2.as_ref())
+            })
             .await
         else {
             tokio::time::sleep(max_wait).await;
