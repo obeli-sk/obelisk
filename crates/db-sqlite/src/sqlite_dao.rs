@@ -105,7 +105,10 @@ CREATE TABLE IF NOT EXISTS t_state (
     return_type TEXT,
     PRIMARY KEY (execution_id, join_set_id)
 )
-"; // TODO: index by `pending_at` + `ffqn`
+";
+const IDX_T_STATE_LOCK_PENDING: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (ffqn, pending_or_expires_at);
+";
 
 /// Represents [`ExpiredTimer::AsyncDelay`] . Rows are deleted when the delay is processed.
 const CREATE_TABLE_T_DELAY: &str = r"
@@ -358,6 +361,7 @@ impl SqlitePool {
                 let init_tx =
                     init(init_tx, CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID).unwrap();
                 let init_tx = init(init_tx, CREATE_TABLE_T_STATE).unwrap();
+                let init_tx = init(init_tx, IDX_T_STATE_LOCK_PENDING).unwrap();
                 let init_tx = init(init_tx, CREATE_TABLE_T_DELAY).unwrap();
                 init_tx.send(Ok(())).expect("sending init OK must succeed");
                 loop {
