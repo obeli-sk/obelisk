@@ -15,7 +15,6 @@ val-json.workspace = true
 
 arbitrary.workspace = true
 assert_matches.workspace = true
-async-sqlite.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 derivative.workspace = true
