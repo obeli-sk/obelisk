@@ -14,7 +14,6 @@
       (system:
         let
           overlays = [ (import rust-overlay) ];
-          rustToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           makePkgs = config:
             import nixpkgs
               {
@@ -27,6 +26,7 @@
                   } else null;
               };
           makeObelisk = pkgs: patch-for-generic-linux:
+
             pkgs.rustPlatform.buildRustPackage {
               pname = "obelisk";
               version = "0.0.1";
@@ -38,7 +38,7 @@
                 };
               };
               nativeBuildInputs = with pkgs; [
-                rustToolchain
+                (pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                 patchelf
                 pkg-config
                 protobuf
@@ -81,6 +81,7 @@
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = with pkgs;
               [
+                (pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                 cargo-binstall
                 cargo-component
                 cargo-dist
@@ -95,7 +96,6 @@
                 nixpkgs-fmt
                 pkg-config
                 protobuf
-                rustToolchain
                 tokio-console
                 wasm-tools
                 wasmtime
