@@ -16,6 +16,10 @@ pub fn build_activity() {
     build_internal("wasm32-wasip1");
 }
 
+pub fn build_webhook() {
+    build_internal("wasm32-wasip1");
+}
+
 pub fn build_workflow() {
     build_internal("wasm32-unknown-unknown");
 }
