@@ -38,6 +38,7 @@
                 };
               };
               nativeBuildInputs = with pkgs; [
+                rustToolchain
                 patchelf
                 pkg-config
                 protobuf
