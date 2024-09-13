@@ -104,7 +104,7 @@
           };
           packages = rec {
             obelisk = makeObelisk pkgs false;
-            obelisk-patch-for-generic-linux = makeObelisk pkgs true;
+            obeliskPatchForGenericLinux = makeObelisk pkgs true;
             obeliskMusl = makeObelisk pkgsMusl false;
             docker = makeDocker pkgs obeliskMusl false;
             dockerBinSh = makeDocker pkgs obeliskMusl true;
