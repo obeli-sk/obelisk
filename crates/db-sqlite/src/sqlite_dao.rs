@@ -32,7 +32,10 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::Instant,
+};
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Level, Span};
 use val_json::type_wrapper::TypeWrapper;
 
@@ -1391,7 +1394,7 @@ impl SqlitePool {
         conn: &Connection,
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,
-        ffqns: &[FunctionFqn], // FIXME: Single FFQN
+        ffqns: &[FunctionFqn],
     ) -> Result<Vec<(ExecutionId, Version)>, DbError> {
         let mut execution_ids_versions = Vec::with_capacity(batch_size);
 
@@ -1969,19 +1972,7 @@ impl DbConnection for SqlitePool {
         ffqns: Arc<[FunctionFqn]>,
         max_wait: Duration,
     ) {
-        let ffqns2 = ffqns.clone();
-        let Ok(execution_ids_versions) = self
-            .conn_low_prio(move |conn| {
-                Self::get_pending(conn, 1, pending_at_or_sooner, ffqns2.as_ref())
-            })
-            .await
-        else {
-            tokio::time::sleep(max_wait).await;
-            return;
-        };
-        if !execution_ids_versions.is_empty() {
-            return;
-        }
+        let sleep_until = Instant::now() + max_wait;
         let (sender, mut receiver) = mpsc::channel(1);
         {
             let mut ffqn_to_pending_subscription =
@@ -1990,9 +1981,22 @@ impl DbConnection for SqlitePool {
                 ffqn_to_pending_subscription.insert(ffqn.clone(), sender.clone());
             }
         }
+        let Ok(execution_ids_versions) = self
+            .conn_low_prio({
+                let ffqns = ffqns.clone();
+                move |conn| Self::get_pending(conn, 1, pending_at_or_sooner, ffqns.as_ref())
+            })
+            .await
+        else {
+            tokio::time::sleep_until(sleep_until).await;
+            return;
+        };
+        if !execution_ids_versions.is_empty() {
+            return;
+        }
         tokio::select! { // future's liveness: Dropping the loser immediately.
             _ = receiver.recv() => {} // Got results eventually
-            () = tokio::time::sleep(max_wait) => {} // Timeout
+            () = tokio::time::sleep_until(sleep_until) => {} // Timeout
         }
     }
 }
