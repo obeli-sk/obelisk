@@ -126,6 +126,7 @@ CREATE TABLE IF NOT EXISTS t_delay (
 )
 ";
 
+#[expect(clippy::needless_pass_by_value)]
 fn convert_err(err: rusqlite::Error) -> DbError {
     if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
         DbError::Specific(SpecificError::NotFound)
@@ -408,7 +409,7 @@ impl SqlitePool {
                     }
                     if shutdown.load(Ordering::SeqCst) {
                         // Ignore everything except the shutdown command
-                        for item in vec.iter_mut() {
+                        for item in &mut vec {
                             if matches!(item, ThreadCommand::Shutdown(_)) {
                                 let item = std::mem::replace(
                                     item,
@@ -423,7 +424,7 @@ impl SqlitePool {
 
                     let mut execute = |expected: CommandPriority| {
                         let mut processed = 0;
-                        for item in vec.iter_mut() {
+                        for item in &mut vec {
                             if matches!(item, ThreadCommand::Func { priority, .. } if *priority == expected )
                             {
                                 let item = std::mem::replace(
@@ -513,7 +514,7 @@ impl SqlitePool {
                     });
                     let res = res.and_then(|(ok, transaction)| {
                         info_span!(parent: &parent_span, "tx_commit")
-                            .in_scope(|| transaction.commit().map(|_| ok).map_err(convert_err))
+                            .in_scope(|| transaction.commit().map(|()| ok).map_err(convert_err))
                     });
                     _ = tx.send(res);
                 }),
@@ -525,10 +526,10 @@ impl SqlitePool {
     }
 
     #[instrument(skip_all)]
-    pub async fn conn_low_prio<F, T: Default>(&self, func: F) -> Result<T, DbError>
+    pub async fn conn_low_prio<F, T>(&self, func: F) -> Result<T, DbError>
     where
         F: FnOnce(&Connection) -> Result<T, DbError> + Send + 'static,
-        T: Send + 'static,
+        T: Send + 'static + Default,
     {
         let (tx, rx) = oneshot::channel();
         let span = tracing::info_span!("tx_function");
@@ -617,16 +618,15 @@ impl SqlitePool {
         let mut stmt = conn.prepare(
             "SELECT COUNT(*) as count FROM t_execution_log WHERE execution_id = :execution_id AND (variant = :v1 OR variant = :v2)",
         ).map_err(convert_err)?;
-        Ok(stmt
-            .query_row(
-                named_params! {
-                    ":execution_id": execution_id.to_string(),
-                    ":v1": DUMMY_INTERMITTENT_TIMEOUT.variant(),
-                    ":v2": DUMMY_INTERMITTENT_FAILURE.variant(),
-                },
-                |row| row.get("count"),
-            )
-            .map_err(convert_err)?)
+        stmt.query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":v1": DUMMY_INTERMITTENT_TIMEOUT.variant(),
+                ":v2": DUMMY_INTERMITTENT_FAILURE.variant(),
+            },
+            |row| row.get("count"),
+        )
+        .map_err(convert_err)
     }
 
     fn get_current_version(
@@ -636,17 +636,16 @@ impl SqlitePool {
         let mut stmt = tx.prepare(
             "SELECT version FROM t_execution_log WHERE execution_id = :execution_id ORDER BY version DESC LIMIT 1",
         ).map_err(convert_err)?;
-        Ok(stmt
-            .query_row(
-                named_params! {
-                    ":execution_id": execution_id.to_string(),
-                },
-                |row| {
-                    let version: usize = row.get("version")?;
-                    Ok(Version::new(version))
-                },
-            )
-            .map_err(convert_err)?)
+        stmt.query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+            },
+            |row| {
+                let version: usize = row.get("version")?;
+                Ok(Version::new(version))
+            },
+        )
+        .map_err(convert_err)
     }
 
     fn get_next_version(tx: &Transaction, execution_id: ExecutionId) -> Result<Version, DbError> {
@@ -1060,16 +1059,15 @@ impl SqlitePool {
             "SELECT COUNT(*) as count FROM t_execution_log WHERE execution_id = :execution_id AND join_set_id = :join_set_id \
             AND history_event_type = :join_next",
         ).map_err(convert_err)?;
-        Ok(stmt
-            .query_row(
-                named_params! {
-                    ":execution_id": execution_id.to_string(),
-                    ":join_set_id": join_set_id.to_string(),
-                    ":join_next": "JoinNext",
-                },
-                |row| row.get("count"),
-            )
-            .map_err(convert_err)?)
+        stmt.query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":join_set_id": join_set_id.to_string(),
+                ":join_next": "JoinNext",
+            },
+            |row| row.get("count"),
+        )
+        .map_err(convert_err)
     }
 
     #[instrument(skip_all)]
@@ -1425,7 +1423,7 @@ impl SqlitePool {
                 .map_err(convert_err)?
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|err| parsing_err(err))?;
+                .map_err(parsing_err)?;
             execution_ids_versions.extend(execs_and_versions);
             if execution_ids_versions.len() == batch_size {
                 // Prioritieze lowering of db requests, although ffqns later in the list might get starved.
