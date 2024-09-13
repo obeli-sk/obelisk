@@ -3,6 +3,152 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/obeli-sk/obelisk/compare/v0.2.2...v0.3.0) - 2024-09-13
+
+### Added
+
+- Add `--clean-codegen-cache` flag
+- Implement request timeouts for webhook servers
+- Implement `-submit`, `-await-next` extensions for webhooks
+- Add host activities, `-submit` function handling to webhooks
+- [**breaking**] Rename generated function suffix from `future` to `-submit`
+- Expose webhooks as gRPC `Component` items
+- Implement fetching webhooks from OCI registries
+- [**breaking**] Stop exposing `file_path` of a `Component` over gRPC
+- Spawn webhook triggers on http servers, configured via TOML
+- Make retry overrides on workflows optional
+- Implement route matching for the webhook trigger
+- Allow `webhook_trigger` to submit child executions and await results
+- Make `api_listening_addr` mandatory in the TOML configuration
+- Display prettified JSON output of the execution result
+- Remove `enabled` key from TOML config
+- Handle Ctrl-C signal while downloading the images
+- Allow cleaning db and caches with separate flags
+
+### Fixed
+
+- Fix a small race in `subscribe_to_pending`
+- Add index on `t_state` for `lock_pending` performance
+- Disable epoch interruption for webhooks temporarily
+- Re-enable epoch interruption for activity engine
+- Keep the epoch ticker for the whole server lifetime
+- Do not allow retries on child workflows
+- Make retry configuration specific for `wasm_activity` TOML table
+- Configure rolling appender using its own properties
+- Enable tls for OTEL endpoint
+- Delete `-wal` and `-shm` files on `--clean`
+
+### Other
+
+- Merge pull request [#24](https://github.com/obeli-sk/obelisk/pull/24) from obeli-sk/dependabot/github_actions/cachix/install-nix-action-V28
+- Add `build_webhook` to `cargo-component-builder`
+- Update scripts and config
+- Fix clippy issues
+- Introduce priorities for sqlite commands
+- Replace `async-sqlite` with a dedicated thread
+- Make all test steps share the same settings to improve compile times
+- Allow system thread for `wasmtime_cache`
+- Fix tests for madsim
+- Disable parallel execution in the "Populate the codegen cache" step
+- Populate the codegen cache in a separate step
+- Add `populate_codegen_cache` for activities,workflows,webhooks
+- Disable parallel test execution
+- Extract `RequestHandler`
+- Update TOML configuration documentation
+- Turn the epoch ticker from a task to a thread
+- Improve test executor logging by (ab)using `config_id`
+- Update fibo webhook to use `-submit`, `-await-next`
+- Fix messages after `-submit` change
+- Rename fibo workflow extension wit function to use `-submit` suffix
+- Reorganize `test-programs` wit files
+- Make tests write logs with level info and above
+- Move `fibo-ext.wit` to `activity/wit/ext`
+- Move fibo webhook to `testing/test-programs/fibo/webhook`
+- Fix typo, clean up `component list` output
+- Rename `ObeliskConfig` fields to plural
+- Rename `Workflow` to `WorkflowToml`
+- Rename `WasmActivityToml`
+- Rename `ActivityConfigVerified`, `WasmActivityConfig`
+- Rename `WorkflowConfigVerified`
+- Rename `webhook_trigger::RetryConfig` to `RetryConfigOverride`
+- Fix madsim tests
+- Make `Component::exports` optional to accomodate for webhooks
+- Extract `ExecConfigToml` from `ComponentCommon` to accomodate for webhooks
+- Add `ConfigStore::WebhookV1`
+- Add `ComponentType::Webhook`
+- Rename `ComponentConfigHash` to `ConfigId`
+- Extract `VerifiedConfig`
+- Move webhook validation to `fetch_and_verify_all`
+- Rename `ComponentType::WasmWorkflow` to `Workflow`
+- Add `git-cliff` to dev shell dependencies
+- Check the whole workspace with clippy
+- Fix clippy attributes on generated code
+- Swap clippy `allow`ances to `expect`ations
+- Bump `dev-deps.txt`
+- Bump `rustc` to 1.81
+- Fix clippy issues
+- Use error 503 when number of core instances is exceeded
+- Use params instead of named wildcards in the webhook routing test
+- Fix clippy issues
+- Rename `replay_or_interrupt` to `apply`
+- Update the milestones
+- Add a hardcoded `call_imported_fn` to `webhook_trigger`
+- Rename http trigger to webhook trigger
+- Add builder for `trigger-http-simple`
+- Remove dead `patch` test activity and workflow
+- Reorganize fibo's wit files
+- Removev `http_trigger` server test
+- Fix clippy issues
+- Update milestones
+- Add incomplete `http_trigger`  with hardcoded configuration
+- Enable all default features of `wasmtime`
+- Update docs, todos, draft webhook configuration
+- Update milestones
+- Sync `wit-bindgen-rt` version with current `cargo-component`
+- Add `trigger-http-simple`
+- Add `wasmtime` to the dev shell
+- Update the milestones
+- Add license to `wasi_http`
+- Patch `with_printer`
+- Update `wit_printer` from upstream
+- Bump `wasmtime` to version 24.0.0
+- Bump `derive_more`
+- Add `cargo-edit`
+- Run `cargo upgrade`
+- Bump `Cargo.lock`
+- Bump `flake.lock`
+- Update the milestones
+- Update the readme
+- Simplify printing of the execution result
+- Update TOML documentation
+- Serialize `JoinNextBlockingStrategy` using snake case
+- Update documentation of the TOML configuration file
+- Remove deprecated `component_detector`
+- Move sha256 checksum to the `obeli-sk` package
+- Fix madsim, clippy issues
+- Update the readme
+- Extract `prespawn_all` to separate compilation from spawing executors
+- Use `Arc<dyn Worker>` in `executor` instead of generic `W`
+- Make `[otlp]` enabled if the table is present
+- Do not repeat sha256sum for files stored in cache on every startup
+- Start components in parallel if possible
+- Remove double file hash calculation if the hash is correct
+- Add more spans around startup
+- Update milestones
+- Trace `append`, extract `append_batch_create_new_execution_inner`
+- Lock `ffqn_to_pending_subscription` only once when batching
+- Move `join_all` to `select!`
+- Warn on component name clashes
+- Allow passing nested configs via envvars separated by `_`
+- Replace `JoinSet` with `join_all` due to a madsim limitation
+- Allow pulling the images in parallel
+- Extract `Digest` from `ContentDigest`
+- Track metadata mapping using separate files
+- Remove `content_digest` from `ComponentCommon`
+- Fetch and verify components before spawning
+- Update the readme
+- Add `component_name` and `config_id` to `toml`
+
 ## [0.2.2](https://github.com/obeli-sk/obelisk/compare/v0.2.1...v0.2.2) - 2024-08-24
 
 ### Added
