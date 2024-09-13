@@ -43,7 +43,7 @@ jobs:
 
       - id: release-info
         run: |
-          curl -L \
+          curl --fail -L \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -64,7 +64,7 @@ jobs:
 
       - name: Upload the archive
         run: |
-          curl -X POST \
+          curl -v --fail -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @archive.tar.gz \
