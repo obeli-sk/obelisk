@@ -319,6 +319,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             return Ok(found.clone());
         }
         // This is the first child execution submission, persist the execution ID of the whole request.
+        // If the correlation ID was not overriden, use the execution ID.
+        if self.correlation_id.is_none() {
+            self.correlation_id = Some(self.execution_id.to_string());
+        }
         let created_at = (self.clock_fn)();
         let create_request = CreateRequest {
             created_at,
@@ -631,7 +635,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             responses: Vec::new(),
             config_id,
             execution_id,
-            correlation_id: None, // user defined
+            correlation_id: None,
             phantom_data: PhantomData,
         };
         let mut store = Store::new(engine, ctx);

@@ -145,7 +145,11 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             .create(CreateRequest {
                 created_at,
                 execution_id,
-                correlation_id: Some(execution_id.to_string()), // TODO: Add to protobuf definition, CLI switch.
+                correlation_id: Some(
+                    request
+                        .correlation_id
+                        .unwrap_or_else(|| execution_id.to_string()),
+                ),
                 ffqn,
                 params,
                 parent: None,

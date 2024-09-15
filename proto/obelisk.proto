@@ -12,7 +12,6 @@ service Scheduler {
 
 service FunctionRepository {
     rpc ListComponents(ListComponentsRequest) returns (ListComponentsResponse);
-//    rpc GetFunction(GetFunctionRequest) returns (GetFunctionResponse);
 }
 
 message ListComponentsRequest {
@@ -33,14 +32,6 @@ message Component {
     repeated FunctionDetails exports = 6;
     repeated FunctionDetails imports = 7;
 }
-
-// message GetFunctionRequest {
-//     FunctionName exported_function = 1;
-// }
-
-// message GetFunctionResponse {
-//     Component component = 1;
-// }
 
 message FunctionDetails {
     FunctionName function = 1;
@@ -87,7 +78,8 @@ message FunctionName {
 message SubmitRequest {
     FunctionName function = 1;
     google.protobuf.Any params = 2;
-    optional ExecutionId execution_id = 3;
+    optional ExecutionId execution_id = 3;      // Generated if not set
+    optional string correlation_id = 4;         // Copied from execution_id if not set
 }
 
 message SubmitResponse {

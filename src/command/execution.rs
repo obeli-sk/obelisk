@@ -16,6 +16,7 @@ pub(crate) async fn submit(
     params: Vec<serde_json::Value>,
     follow: bool,
     verbosity: ExecutionVerbosity,
+    correlation_id: Option<String>,
 ) -> anyhow::Result<()> {
     let resp = client
         .submit(tonic::Request::new(grpc::SubmitRequest {
@@ -25,6 +26,7 @@ pub(crate) async fn submit(
             }),
             function: Some(ffqn.into()),
             execution_id: None,
+            correlation_id,
         }))
         .await
         .to_anyhow()?

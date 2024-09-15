@@ -95,15 +95,15 @@ pub(crate) enum Execution {
         /// Enable full verbosity with `-vv`
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
+        // Correlation ID of the execution and its child executions
+        #[arg(short, long)]
+        correlation_id: Option<String>,
         /// Function in the fully qualified format
         #[arg(value_name = "FUNCTION")]
         ffqn: FunctionFqn,
         /// Parameters encoded as an JSON array
         #[arg(value_name = "PARAMS")]
         params: String,
-        // TODO: interactive
-        // TODO: when: String,
-        // TODO: poll?
     },
     Get {
         /// Follow the stream of events until the execution finishes
