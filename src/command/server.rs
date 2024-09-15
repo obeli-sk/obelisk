@@ -34,6 +34,7 @@ use concepts::FunctionRegistry;
 use concepts::ParameterType;
 use concepts::Params;
 use concepts::ReturnType;
+use concepts::StrVariant;
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::ExecutorTaskHandle;
 use executor::executor::{ExecConfig, ExecTask};
@@ -145,7 +146,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             .create(CreateRequest {
                 created_at,
                 execution_id,
-                correlation_id: Some(
+                correlation_id: StrVariant::from(
                     request
                         .correlation_id
                         .unwrap_or_else(|| execution_id.to_string()),

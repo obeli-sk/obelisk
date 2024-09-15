@@ -288,7 +288,7 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     execution_id: ExecutionId,
     version: Option<Version>,
     // can only be changed before persisting the execution - so before any child execution request.
-    correlation_id: Option<String>,
+    correlation_id: StrVariant,
     phantom_data: PhantomData<DB>,
 }
 
@@ -317,11 +317,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
     async fn get_version(&mut self) -> Result<Version, DbError> {
         if let Some(found) = &self.version {
             return Ok(found.clone());
-        }
-        // This is the first child execution submission, persist the execution ID of the whole request.
-        // If the correlation ID was not overriden, use the execution ID.
-        if self.correlation_id.is_none() {
-            self.correlation_id = Some(self.execution_id.to_string());
         }
         let created_at = (self.clock_fn)();
         let create_request = CreateRequest {
@@ -635,7 +630,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             responses: Vec::new(),
             config_id,
             execution_id,
-            correlation_id: None,
+            correlation_id: StrVariant::from(execution_id.to_string()),
             phantom_data: PhantomData,
         };
         let mut store = Store::new(engine, ctx);

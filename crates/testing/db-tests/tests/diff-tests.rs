@@ -6,6 +6,7 @@ use concepts::storage::{AppendRequest, CreateRequest};
 use concepts::ConfigId;
 use concepts::ExecutionId;
 use concepts::Params;
+use concepts::StrVariant;
 use db_tests::Database;
 use db_tests::SOME_FFQN;
 use std::time::Duration;
@@ -25,7 +26,7 @@ async fn diff_proptest() {
         ffqn: SOME_FFQN,
         params: Params::default(),
         parent: None,
-        correlation_id: None,
+        correlation_id: StrVariant::empty(),
         scheduled_at: now(),
         retry_exp_backoff: Duration::ZERO,
         max_retries: 0,

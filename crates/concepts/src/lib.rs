@@ -40,6 +40,19 @@ pub enum StrVariant {
     Arc(Arc<str>),
 }
 
+impl StrVariant {
+    #[must_use]
+    pub const fn empty() -> StrVariant {
+        StrVariant::Static("")
+    }
+}
+
+impl From<String> for StrVariant {
+    fn from(value: String) -> Self {
+        StrVariant::Arc(Arc::from(value))
+    }
+}
+
 impl PartialEq for StrVariant {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {

@@ -203,7 +203,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     ffqn: FunctionFqn::new_static("", ""),
     params: Params::default(),
     parent: None,
-    correlation_id: None,
+    correlation_id: StrVariant::empty(),
     scheduled_at: DateTime::from_timestamp_nanos(0),
     retry_exp_backoff: Duration::ZERO,
     max_retries: 0,
@@ -222,7 +222,7 @@ pub const DUMMY_INTERMITTENT_TIMEOUT: ExecutionEventInner =
 pub const DUMMY_INTERMITTENT_FAILURE: ExecutionEventInner =
     ExecutionEventInner::IntermittentFailure {
         expires_at: DateTime::from_timestamp_nanos(0),
-        reason: StrVariant::Static(""),
+        reason: StrVariant::empty(),
     };
 
 #[derive(
@@ -247,7 +247,8 @@ pub enum ExecutionEventInner {
         #[arbitrary(default)]
         params: Params,
         parent: Option<(ExecutionId, JoinSetId)>,
-        correlation_id: Option<String>,
+        #[arbitrary(value = StrVariant::empty())]
+        correlation_id: StrVariant,
         scheduled_at: DateTime<Utc>,
         retry_exp_backoff: Duration,
         max_retries: u32,
@@ -451,7 +452,7 @@ pub type LockResponse = (Vec<HistoryEvent>, Version);
 #[derive(Debug, Clone)]
 pub struct LockedExecution {
     pub execution_id: ExecutionId,
-    pub correlation_id: Option<String>,
+    pub correlation_id: StrVariant,
     pub run_id: RunId,
     pub version: Version,
     pub ffqn: FunctionFqn,
@@ -482,7 +483,7 @@ pub struct CreateRequest {
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub parent: Option<(ExecutionId, JoinSetId)>,
-    pub correlation_id: Option<String>,
+    pub correlation_id: StrVariant,
     pub scheduled_at: DateTime<Utc>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,

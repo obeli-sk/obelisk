@@ -33,7 +33,7 @@ pub enum WorkerResult {
 #[derive(Debug)]
 pub struct WorkerContext {
     pub execution_id: ExecutionId,
-    pub correlation_id: Option<String>,
+    pub correlation_id: StrVariant,
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub event_history: Vec<HistoryEvent>,

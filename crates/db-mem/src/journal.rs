@@ -76,12 +76,12 @@ impl ExecutionJournal {
     }
 
     #[must_use]
-    pub fn correlation_id(&self) -> Option<&str> {
+    pub fn correlation_id(&self) -> &StrVariant {
         match self.execution_events.front().unwrap() {
             ExecutionEvent {
                 event: ExecutionEventInner::Created { correlation_id, .. },
                 ..
-            } => correlation_id.as_deref(),
+            } => correlation_id,
             _ => panic!("first event must be `Created`"),
         }
     }

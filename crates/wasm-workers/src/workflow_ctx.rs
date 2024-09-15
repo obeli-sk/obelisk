@@ -96,7 +96,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
-        correlation_id: Option<String>,
+        correlation_id: StrVariant,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         seed: u64,
@@ -395,6 +395,7 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
+    use concepts::StrVariant;
     use concepts::{
         storage::{
             wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
@@ -622,7 +623,7 @@ pub(crate) mod tests {
                 ffqn: FFQN_MOCK,
                 params: Params::default(),
                 parent: None,
-                correlation_id: None,
+                correlation_id: StrVariant::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,

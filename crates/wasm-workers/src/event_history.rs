@@ -37,7 +37,7 @@ enum ProcessingStatus {
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct EventHistory<C: ClockFn> {
     execution_id: ExecutionId,
-    correlation_id: Option<String>,
+    correlation_id: StrVariant,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     execution_deadline: DateTime<Utc>,
     retry_config: RetryConfig,
@@ -63,7 +63,7 @@ impl<C: ClockFn> EventHistory<C> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
-        correlation_id: Option<String>,
+        correlation_id: StrVariant,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -994,7 +994,8 @@ mod tests {
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::{
-        ConfigId, ExecutionId, FunctionFqn, FunctionRegistry, Params, SupportedFunctionReturnValue,
+        ConfigId, ExecutionId, FunctionFqn, FunctionRegistry, Params, StrVariant,
+        SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::worker::{WorkerError, WorkerResult};
@@ -1020,7 +1021,7 @@ mod tests {
         let exec_log = db_connection.get(execution_id).await.unwrap();
         let event_history = EventHistory::new(
             execution_id,
-            None,
+            StrVariant::empty(),
             exec_log.event_history().collect(),
             exec_log
                 .responses
@@ -1063,7 +1064,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                correlation_id: None,
+                correlation_id: StrVariant::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1228,7 +1229,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                correlation_id: None,
+                correlation_id: StrVariant::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1404,7 +1405,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                correlation_id: None,
+                correlation_id: StrVariant::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
