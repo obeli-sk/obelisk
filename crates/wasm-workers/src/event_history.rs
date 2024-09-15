@@ -37,7 +37,7 @@ enum ProcessingStatus {
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct EventHistory<C: ClockFn> {
     execution_id: ExecutionId,
-    topmost_parent_id: Option<ExecutionId>,
+    correlation_id: Option<String>,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     execution_deadline: DateTime<Utc>,
     retry_config: RetryConfig,
@@ -63,7 +63,7 @@ impl<C: ClockFn> EventHistory<C> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
-        topmost_parent_id: Option<ExecutionId>,
+        correlation_id: Option<String>,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -77,7 +77,7 @@ impl<C: ClockFn> EventHistory<C> {
         let non_blocking_event_batch_size = non_blocking_event_batching as usize;
         EventHistory {
             execution_id,
-            topmost_parent_id,
+            correlation_id,
             event_history: event_history
                 .into_iter()
                 .map(|event| (event, Unprocessed))
@@ -546,7 +546,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    topmost_parent_id: Some(self.topmost_parent_id.unwrap_or(self.execution_id)),
+                    correlation_id: self.correlation_id.clone(),
                     scheduled_at: created_at,
                     retry_exp_backoff: self
                         .retry_config
@@ -607,7 +607,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: new_execution_id,
-                    topmost_parent_id: Some(self.topmost_parent_id.unwrap_or(self.execution_id)),
+                    correlation_id: self.correlation_id.clone(),
                     ffqn,
                     params,
                     parent: None,
@@ -704,7 +704,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    topmost_parent_id: Some(self.topmost_parent_id.unwrap_or(self.execution_id)),
+                    correlation_id: self.correlation_id.clone(),
                     scheduled_at: created_at,
                     retry_exp_backoff: self
                         .retry_config
@@ -1063,7 +1063,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                topmost_parent_id: None,
+                correlation_id: None,
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1228,7 +1228,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                topmost_parent_id: None,
+                correlation_id: None,
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1404,7 +1404,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                topmost_parent_id: None,
+                correlation_id: None,
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,

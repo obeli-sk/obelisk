@@ -25,7 +25,7 @@ async fn diff_proptest() {
         ffqn: SOME_FFQN,
         params: Params::default(),
         parent: None,
-        topmost_parent_id: None,
+        correlation_id: None,
         scheduled_at: now(),
         retry_exp_backoff: Duration::ZERO,
         max_retries: 0,

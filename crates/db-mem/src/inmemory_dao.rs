@@ -405,7 +405,7 @@ impl DbHolder {
         for (journal, scheduled_at) in pending {
             let item = LockedExecution {
                 execution_id: journal.execution_id(),
-                topmost_parent_id: journal.topmost_parent_id(),
+                correlation_id: journal.correlation_id().map(ToString::to_string),
                 version: journal.version(), // updated later
                 ffqn: journal.ffqn().clone(),
                 params: journal.params(),

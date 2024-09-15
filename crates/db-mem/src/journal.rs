@@ -76,15 +76,12 @@ impl ExecutionJournal {
     }
 
     #[must_use]
-    pub fn topmost_parent_id(&self) -> Option<ExecutionId> {
+    pub fn correlation_id(&self) -> Option<&str> {
         match self.execution_events.front().unwrap() {
             ExecutionEvent {
-                event:
-                    ExecutionEventInner::Created {
-                        topmost_parent_id, ..
-                    },
+                event: ExecutionEventInner::Created { correlation_id, .. },
                 ..
-            } => *topmost_parent_id,
+            } => correlation_id.as_deref(),
             _ => panic!("first event must be `Created`"),
         }
     }

@@ -287,6 +287,8 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     execution_id: ExecutionId,
     version: Option<Version>,
+    // can only be changed before persisting the execution - so before any child execution request.
+    correlation_id: Option<String>,
     phantom_data: PhantomData<DB>,
 }
 
@@ -316,6 +318,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         if let Some(found) = &self.version {
             return Ok(found.clone());
         }
+        // This is the first child execution submission, persist the execution ID of the whole request.
         let created_at = (self.clock_fn)();
         let create_request = CreateRequest {
             created_at,
@@ -323,7 +326,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             ffqn: HTTP_HANDLER_FFQN,
             params: Params::default(),
             parent: None,
-            topmost_parent_id: None,
+            correlation_id: self.correlation_id.clone(),
             scheduled_at: created_at,
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
@@ -442,7 +445,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: Some((self.execution_id, join_set_id)),
-                    topmost_parent_id: Some(self.execution_id),
+                    correlation_id: self.correlation_id.clone(),
                     scheduled_at: created_at,
                     max_retries: self
                         .retry_config
@@ -542,7 +545,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 ffqn,
                 params: Params::from_wasmtime(Arc::from(params)),
                 parent: Some((self.execution_id, join_set_id)),
-                topmost_parent_id: Some(self.execution_id),
+                correlation_id: self.correlation_id.clone(),
                 scheduled_at: created_at,
                 max_retries: self
                     .retry_config
@@ -628,6 +631,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             responses: Vec::new(),
             config_id,
             execution_id,
+            correlation_id: None, // user defined
             phantom_data: PhantomData,
         };
         let mut store = Store::new(engine, ctx);

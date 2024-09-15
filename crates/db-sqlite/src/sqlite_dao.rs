@@ -582,7 +582,7 @@ impl SqlitePool {
             ffqn,
             params,
             parent,
-            topmost_parent_id,
+            correlation_id,
             scheduled_at,
             retry_exp_backoff,
             max_retries,
@@ -596,7 +596,7 @@ impl SqlitePool {
                 ffqn,
                 params,
                 parent,
-                topmost_parent_id,
+                correlation_id,
                 scheduled_at,
                 retry_exp_backoff,
                 max_retries,
@@ -1008,7 +1008,7 @@ impl SqlitePool {
             retry_exp_backoff,
             max_retries,
             parent,
-            topmost_parent_id,
+            correlation_id,
             ..
         }) = events.pop_front()
         else {
@@ -1035,7 +1035,7 @@ impl SqlitePool {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(LockedExecution {
             execution_id,
-            topmost_parent_id,
+            correlation_id,
             run_id,
             version: next_version,
             ffqn,
