@@ -7,6 +7,7 @@ pub(crate) mod server;
 #[allow(clippy::struct_field_names)]
 #[allow(clippy::similar_names)]
 #[allow(clippy::wildcard_imports)]
+#[allow(clippy::doc_markdown)]
 pub(crate) mod grpc {
     tonic::include_proto!("obelisk");
 }
