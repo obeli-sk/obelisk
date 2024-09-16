@@ -521,7 +521,7 @@ async fn run_internal(
         config.wasm_activities,
         config.workflows,
         config.http_servers,
-        config.webhooks,
+        config.webhook_components,
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
     )
@@ -578,7 +578,7 @@ async fn run_internal(
 }
 
 async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::WebhookVerified>)>,
+    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::WebhookComponentVerified>)>,
     engines: &Engines,
     db_pool: P,
     component_registry: &mut ComponentConfigRegistry,
@@ -646,7 +646,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 struct VerifiedConfig {
     wasm_activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
-    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::WebhookVerified>)>,
+    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::WebhookComponentVerified>)>,
 }
 
 #[instrument(skip_all)]
@@ -654,7 +654,7 @@ async fn fetch_and_verify_all(
     wasm_activities: Vec<WasmActivityToml>,
     workflows: Vec<WorkflowToml>,
     http_servers: Vec<webhook::HttpServer>,
-    webhooks: Vec<webhook::Webhook>,
+    webhooks: Vec<webhook::WebhookComponent>,
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
 ) -> Result<VerifiedConfig, anyhow::Error> {

@@ -150,6 +150,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 * Time traveling debugger for workflows, that works accross WASM deployments
 * Ability to hotfix a set of workflows, with an approval system when non determinism is detected
 * Trace strings to their origin accross workflows and activities
+* Webhook functions: translating between HTTP and WIT defined parameters and return value
 
 # Building from source
 Set up the development dependencies using nix flakes:

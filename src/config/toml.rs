@@ -16,7 +16,7 @@ use wasm_workers::{
     activity_worker::ActivityConfig,
     workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig},
 };
-use webhook::{HttpServer, Webhook};
+use webhook::{HttpServer, WebhookComponent};
 
 const DATA_DIR_PREFIX: &str = "${DATA_DIR}/";
 const CACHE_DIR_PREFIX: &str = "${CACHE_DIR}/";
@@ -54,8 +54,8 @@ pub(crate) struct ObeliskConfig {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
-    #[serde(default, rename = "webhook")]
-    pub(crate) webhooks: Vec<Webhook>,
+    #[serde(default, rename = "webhook_component")]
+    pub(crate) webhook_components: Vec<WebhookComponent>,
 }
 
 async fn replace_path_prefix_mkdir(
@@ -614,20 +614,20 @@ pub(crate) mod webhook {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
-    pub(crate) struct Webhook {
+    pub(crate) struct WebhookComponent {
         #[serde(flatten)]
         pub(crate) common: ComponentCommon,
         pub(crate) http_server: String,
         pub(crate) routes: Vec<WebhookRoute>,
     }
 
-    impl Webhook {
+    impl WebhookComponent {
         #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
         pub(crate) async fn fetch_and_verify(
             self,
             wasm_cache_dir: Arc<Path>,
             metadata_dir: Arc<Path>,
-        ) -> Result<WebhookVerified, anyhow::Error> {
+        ) -> Result<WebhookComponentVerified, anyhow::Error> {
             let (common, wasm_path) = self
                 .common
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
@@ -636,7 +636,7 @@ pub(crate) mod webhook {
             let config_id = config_store.config_id();
             tracing::Span::current().record("config_id", tracing::field::display(&config_id));
 
-            Ok(WebhookVerified {
+            Ok(WebhookComponentVerified {
                 wasm_path,
                 routes: self
                     .routes
@@ -665,7 +665,7 @@ pub(crate) mod webhook {
         pub(crate) route: String,
     }
 
-    pub(crate) struct WebhookVerified {
+    pub(crate) struct WebhookComponentVerified {
         pub(crate) config_store: ConfigStore,
         pub(crate) wasm_path: PathBuf,
         pub(crate) routes: Vec<WebhookRouteVerified>,

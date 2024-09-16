@@ -91,7 +91,7 @@ location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-08-12-1@sha2
 name = "external"
 listening_addr = "0.0.0.0:9090"
 
-[[webhook]]
+[[webhook_component]]
 name = "webhook_trigger_fibo"
 location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-10@sha256:621f3dc8b91ea33348559faac51f1a210b641e6250edfe8e409ac2967d1827d0"
 http_server = "external"
