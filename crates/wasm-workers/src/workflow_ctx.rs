@@ -203,6 +203,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         )
     }
 
+    #[expect(clippy::too_many_lines)]
     fn imported_fn_to_event_call(
         &mut self,
         ffqn: FunctionFqn,

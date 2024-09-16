@@ -377,7 +377,15 @@ pub enum HistoryEvent {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    arbitrary::Arbitrary,
+    Serialize,
+    Deserialize,
 )]
 pub enum HistoryEventScheduledAt {
     Now,
@@ -428,17 +436,13 @@ impl TryFrom<&wasmtime::component::Val> for HistoryEventScheduledAt {
                         Ok(HistoryEventScheduledAt::At(date_time))
                     }
                     _ => {
-                        return Err(
+                        Err(
                             "cannot convert `scheduled-at`, record must have exactly two keys: `seconds`(U64), `nanoseconds`(U32)",
                         )
                     }
                 }
             }
-            _ => {
-                return Err(
-                    "cannot convert `scheduled-at` variant, expected one of `now`, `in`, `at`",
-                );
-            }
+            _ => Err("cannot convert `scheduled-at` variant, expected one of `now`, `in`, `at`"),
         }
     }
 }
