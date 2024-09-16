@@ -19,7 +19,6 @@ Please exercise caution if attempting to use it for production.
     * Observability (planned) - parameters and results together with function hierarchy must be preserved.
     * Composability - nesting workflows, calling activities written in any supported language
     * Replay and fork existing workflows(planned). Fix problems and continue.
-    * Time traveling debugger for workflows (planned)
 
 ## Concepts and features
 * *Activities* that must be idempotent, so that they can be stopped and retried at any moment. This contract must be fulfilled by the activity itself.
@@ -129,25 +128,28 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [ ] WASM to WIT exporter with extensions
 - [ ] Print the component's WIT, filter by export/import.
 
-## Planned features
-- [ ] Interactive CLI for execution management
-- [ ] OpenAPI activity generator
-- [ ] Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
-- [ ] Multi process executors
-- [ ] Labels restricting workflows/activities to executors
-- [ ] Periodic scheduling
-- [ ] [Deadline propagation](https://sre.google/sre-book/addressing-cascading-failures)
-- [ ] [Cancellation propagation](https://sre.google/sre-book/addressing-cascading-failures)
-- [ ] Queue capacity setting, adding backpressure to execution submission
-- [ ] Ability to simulate behaviour of the system with injected failures
-- [ ] Notify activities. When called, thir return value must be supplied via an API endpoint.
-- [ ] An API for listing executions with their open notify activities.
-- [ ] Read only query function that can be called during an await point or after execution finishes.
-- [ ] Workflow snapshots for faster replay
-- [ ] Optional stdout,stderr persistence / forwarding
-- [ ] Smart dependency routing from a caller via an interface import to one of many components that export it.
-- [ ] Smart retries - Retry budget, disabling retries when the activity is failing certain % of requests
-- [ ] Add jitter to retries
+## Future ideas
+* Interactive CLI for execution management
+* OpenAPI activity generator
+* Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
+* Multi process executors
+* Labels restricting workflows/activities to executors
+* Periodic scheduling
+* [Deadline propagation](https://sre.google/sre-book/addressing-cascading-failures)
+* [Cancellation propagation](https://sre.google/sre-book/addressing-cascading-failures)
+* Queue capacity setting, adding backpressure to execution submission
+* Ability to simulate behaviour of the system with injected failures
+* Notify activities. When called, thir return value must be supplied via an API endpoint.
+* An API for listing executions with their open notify activities.
+* Read only query function that can be called during an await point or after execution finishes.
+* Optional stdout,stderr persistence / forwarding
+* Smart dependency routing from a caller via an interface import to one of many components that export it.
+* Smart retries - Retry budget, disabling retries when the activity is failing certain % of requests
+* Configurable jitter added to retries
+* Workflow memory snapshots for faster replay
+* Time traveling debugger for workflows, that works accross WASM deployments
+* Ability to hotfix a set of workflows, with an approval system when non determinism is detected
+* Trace strings to their origin accross workflows and activities
 
 # Building from source
 Set up the development dependencies using nix flakes:
