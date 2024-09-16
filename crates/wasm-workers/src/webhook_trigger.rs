@@ -1,10 +1,12 @@
-use crate::workflow_ctx::{obelisk, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT};
+use crate::workflow_ctx::{
+    obelisk, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT,
+};
 use crate::workflow_worker::HOST_ACTIVITY_IFC_STRING;
 use crate::WasmFileError;
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
     ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner, HistoryEvent,
-    JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, Version,
+    HistoryEventScheduledAt, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, Version,
 };
 use concepts::{
     ComponentType, ConfigId, ExecutionId, FinishedExecutionError, FunctionFqn, FunctionRegistry,
@@ -398,15 +400,21 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 ffqn.ifc_fqn.version(),
             );
             if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SUBMIT) {
-                debug!("Got `-submit` extension for function `{function_name}`");
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
+                debug!("Got `-submit` extension for {ffqn}");
                 if params.is_empty() {
                     error!("Got empty params, expected JoinSetId");
                     return Err(WebhookFunctionError::UncategorizedError(
                         "error running `-submit` extension function: exepcted at least one parameter with JoinSetId, got empty parameter list",
                     ));
                     // TODO Replace with `split_at_checked` once stable
+                }
+                if results.len() != 1 {
+                    error!("Unexpected results length");
+                    return Err(WebhookFunctionError::UncategorizedError(
+                        "Unexpected results length",
+                    ));
                 }
                 let (join_set_id, params) = params.split_at(1);
 
@@ -431,7 +439,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 };
                 // Write to db
                 let created_at = (self.clock_fn)();
-
                 let child_exec_req = ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id,
@@ -467,12 +474,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     )
                     .await?;
                 self.version = Some(version);
-                if results.len() != 1 {
-                    error!("Unexpected results length");
-                    return Err(WebhookFunctionError::UncategorizedError(
-                        "Unexpected results length",
-                    ));
-                }
                 results[0] = Val::String(child_execution_id.to_string());
                 Ok(())
             } else if let Some(function_name) =
@@ -514,6 +515,84 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     );
                     trace!("All responses: {:?}", self.responses);
                 }
+                Ok(())
+            } else if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
+            {
+                let ffqn =
+                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
+                debug!("Got `-schedule` extension for {ffqn}");
+                if params.is_empty() {
+                    error!("Error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list");
+                    return Err(WebhookFunctionError::UncategorizedError(
+                        "error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list",
+                    ));
+                    // TODO Replace with `split_at_checked` once stable
+                }
+                if results.len() != 1 {
+                    error!("Unexpected results length");
+                    return Err(WebhookFunctionError::UncategorizedError(
+                        "Unexpected results length",
+                    ));
+                }
+                let (scheduled_at, params) = params.split_at(1);
+                let scheduled_at = scheduled_at.first().expect("split so that the size is 1");
+                let scheduled_at = match HistoryEventScheduledAt::try_from(scheduled_at) {
+                    Ok(scheduled_at) => scheduled_at,
+                    Err(err) => {
+                        error!("Wrong type for the first `-scheduled-at` parameter, expected `scheduled-at`, got `{scheduled_at:?}` - {err:?}");
+                        return Err(WebhookFunctionError::UncategorizedError(
+                            "error running `-schedule` extension function: wrong first parameter type"
+                        ));
+                    }
+                };
+                // Write to db
+                let version = self.get_version().await?;
+                tracing::Span::current().record("version", tracing::field::display(&version));
+                let new_execution_id = ExecutionId::generate();
+                let Some((function_metadata, config_id, default_retry_config)) =
+                    self.fn_registry.get_by_exported_function(&ffqn).await
+                else {
+                    return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
+                };
+                let created_at = (self.clock_fn)();
+
+                let event = HistoryEvent::Schedule {
+                    execution_id: new_execution_id,
+                    scheduled_at,
+                };
+                let scheduled_at = scheduled_at.as_date_time(created_at);
+                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
+
+                let create_child_req = CreateRequest {
+                    created_at,
+                    execution_id: new_execution_id,
+                    ffqn,
+                    params: Params::from_wasmtime(Arc::from(params)),
+                    parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
+                    correlation_id: self.correlation_id.clone(),
+                    scheduled_at,
+                    max_retries: self
+                        .retry_config
+                        .max_retries(config_id.component_type, default_retry_config.max_retries),
+                    retry_exp_backoff: self.retry_config.retry_exp_backoff(
+                        config_id.component_type,
+                        default_retry_config.retry_exp_backoff,
+                    ),
+                    config_id,
+                    return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
+                };
+                let db_connection = self.db_pool.connection();
+                let version = db_connection
+                    .append_batch_create_new_execution(
+                        created_at,
+                        vec![child_exec_req],
+                        self.execution_id,
+                        version.clone(),
+                        vec![create_child_req],
+                    )
+                    .await?;
+                self.version = Some(version);
+                results[0] = Val::String(new_execution_id.to_string());
                 Ok(())
             } else {
                 error!("unrecognized extension function {ffqn}");
@@ -651,17 +730,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
     async fn new_join_set(&mut self) -> wasmtime::Result<String> {
         let join_set_id = JoinSetId::generate();
         Ok(join_set_id.to_string())
-    }
-
-    // TODO: Apply jitter, should be configured on the component level
-    #[instrument(skip(self))]
-    async fn schedule(
-        &mut self,
-        _ffqn: String,
-        _params_json: String,
-        _scheduled_at: obelisk::workflow::host_activities::ScheduledAt,
-    ) -> wasmtime::Result<String> {
-        unimplemented!("deprecated")
     }
 }
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiView for WebhookCtx<C, DB, P> {

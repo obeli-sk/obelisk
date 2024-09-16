@@ -28,92 +28,27 @@ pub mod exports {
                     _rt::run_ctors_once();
                     T::sleep_loop(arg0 as u32, arg1 as u32);
                 }
-                #[doc(hidden)]
-                #[allow(non_snake_case)]
-                pub unsafe fn _export_sleep_result_cabi<T: Guest>(arg0: i32) -> i32 {
-                    #[cfg(target_arch = "wasm32")]
-                    _rt::run_ctors_once();
-                    let result0 = T::sleep_result(arg0 as u32);
-                    let result1 = match result0 {
-                        Ok(_) => 0i32,
-                        Err(_) => 1i32,
-                    };
-                    result1
-                }
-                #[doc(hidden)]
-                #[allow(non_snake_case)]
-                pub unsafe fn _export_sleep_result_err_string_cabi<T: Guest>(arg0: i32) -> *mut u8 {
-                    #[cfg(target_arch = "wasm32")]
-                    _rt::run_ctors_once();
-                    let result0 = T::sleep_result_err_string(arg0 as u32);
-                    let ptr1 = _RET_AREA.0.as_mut_ptr().cast::<u8>();
-                    match result0 {
-                        Ok(_) => {
-                            *ptr1.add(0).cast::<u8>() = (0i32) as u8;
-                        }
-                        Err(e) => {
-                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
-                            let vec2 = (e.into_bytes()).into_boxed_slice();
-                            let ptr2 = vec2.as_ptr().cast::<u8>();
-                            let len2 = vec2.len();
-                            ::core::mem::forget(vec2);
-                            *ptr1.add(8).cast::<usize>() = len2;
-                            *ptr1.add(4).cast::<*mut u8>() = ptr2.cast_mut();
-                        }
-                    };
-                    ptr1
-                }
-                #[doc(hidden)]
-                #[allow(non_snake_case)]
-                pub unsafe fn __post_return_sleep_result_err_string<T: Guest>(arg0: *mut u8) {
-                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
-                    match l0 {
-                        0 => (),
-                        _ => {
-                            let l1 = *arg0.add(4).cast::<*mut u8>();
-                            let l2 = *arg0.add(8).cast::<usize>();
-                            _rt::cabi_dealloc(l1, l2, 1);
-                        }
-                    }
-                }
                 pub trait Guest {
                     fn sleep(millis: u32);
                     fn sleep_loop(millis: u32, iterations: u32);
-                    fn sleep_result(millis: u32) -> Result<(), ()>;
-                    fn sleep_result_err_string(millis: u32) -> Result<(), _rt::String>;
                 }
                 #[doc(hidden)]
 
                 macro_rules! __export_testing_sleep_sleep_cabi{
-  ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
+      ($ty:ident with_types_in $($path_to_types:tt)*) => (const _: () = {
 
-    #[export_name = "testing:sleep/sleep#sleep"]
-    unsafe extern "C" fn export_sleep(arg0: i32,) {
-      $($path_to_types)*::_export_sleep_cabi::<$ty>(arg0)
+        #[export_name = "testing:sleep/sleep#sleep"]
+        unsafe extern "C" fn export_sleep(arg0: i32,) {
+          $($path_to_types)*::_export_sleep_cabi::<$ty>(arg0)
+        }
+        #[export_name = "testing:sleep/sleep#sleep-loop"]
+        unsafe extern "C" fn export_sleep_loop(arg0: i32,arg1: i32,) {
+          $($path_to_types)*::_export_sleep_loop_cabi::<$ty>(arg0, arg1)
+        }
+      };);
     }
-    #[export_name = "testing:sleep/sleep#sleep-loop"]
-    unsafe extern "C" fn export_sleep_loop(arg0: i32,arg1: i32,) {
-      $($path_to_types)*::_export_sleep_loop_cabi::<$ty>(arg0, arg1)
-    }
-    #[export_name = "testing:sleep/sleep#sleep-result"]
-    unsafe extern "C" fn export_sleep_result(arg0: i32,) -> i32 {
-      $($path_to_types)*::_export_sleep_result_cabi::<$ty>(arg0)
-    }
-    #[export_name = "testing:sleep/sleep#sleep-result-err-string"]
-    unsafe extern "C" fn export_sleep_result_err_string(arg0: i32,) -> *mut u8 {
-      $($path_to_types)*::_export_sleep_result_err_string_cabi::<$ty>(arg0)
-    }
-    #[export_name = "cabi_post_testing:sleep/sleep#sleep-result-err-string"]
-    unsafe extern "C" fn _post_return_sleep_result_err_string(arg0: *mut u8,) {
-      $($path_to_types)*::__post_return_sleep_result_err_string::<$ty>(arg0)
-    }
-  };);
-}
                 #[doc(hidden)]
                 pub(crate) use __export_testing_sleep_sleep_cabi;
-                #[repr(align(4))]
-                struct _RetArea([::core::mem::MaybeUninit<u8>; 12]);
-                static mut _RET_AREA: _RetArea = _RetArea([::core::mem::MaybeUninit::uninit(); 12]);
             }
         }
     }
@@ -124,16 +59,6 @@ mod _rt {
     pub fn run_ctors_once() {
         wit_bindgen_rt::run_ctors_once();
     }
-    pub unsafe fn cabi_dealloc(ptr: *mut u8, size: usize, align: usize) {
-        if size == 0 {
-            return;
-        }
-        let layout = alloc::Layout::from_size_align_unchecked(size, align);
-        alloc::dealloc(ptr as *mut u8, layout);
-    }
-    pub use alloc_crate::alloc;
-    pub use alloc_crate::string::String;
-    extern crate alloc as alloc_crate;
 }
 
 /// Generates `#[no_mangle]` functions to export the specified type as the
@@ -167,14 +92,12 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.25.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 314] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc0\x01\x01A\x02\x01\
-A\x02\x01B\x0a\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\x02\x06millis\
-y\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\x01\x01j\0\0\x01@\x01\x06millisy\0\
-\x02\x04\0\x0csleep-result\x01\x03\x01j\0\x01s\x01@\x01\x06millisy\0\x04\x04\0\x17\
-sleep-result-err-string\x01\x05\x04\x01\x13testing:sleep/sleep\x05\0\x04\x01\x0b\
-any:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-\
-by\x02\x0dwit-component\x070.208.1\x10wit-bindgen-rust\x060.25.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 233] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07p\x01A\x02\x01A\x02\x01\
+B\x04\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\0\x01@\x02\x06millisy\x0aiter\
+ationsy\x01\0\x04\0\x0asleep-loop\x01\x01\x04\x01\x13testing:sleep/sleep\x05\0\x04\
+\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cpr\
+ocessed-by\x02\x0dwit-component\x070.208.1\x10wit-bindgen-rust\x060.25.0";
 
 #[inline(never)]
 #[doc(hidden)]

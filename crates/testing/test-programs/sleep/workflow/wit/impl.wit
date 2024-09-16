@@ -1,0 +1,8 @@
+package any:any;
+
+world any {
+    import obelisk:workflow/host-activities;
+    import testing:sleep/sleep;
+    import testing:sleep-workflow-obelisk-ext/workflow;
+    export testing:sleep-workflow/workflow;
+}

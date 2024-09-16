@@ -12,26 +12,6 @@ pub mod obelisk {
             static __FORCE_SECTION_REF: fn() =
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
-            pub type Datetime = super::super::super::wasi::clocks::wall_clock::Datetime;
-            /// TODO: new-execution-id: func() -> string;
-            /// FIXME: import Duration from wasi:clocks
-            /// A duration of time, in nanoseconds.
-            pub type Duration = u64;
-            #[derive(Clone, Copy)]
-            pub enum ScheduledAt {
-                Now,
-                At(Datetime),
-                In(Duration),
-            }
-            impl ::core::fmt::Debug for ScheduledAt {
-                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                    match self {
-                        ScheduledAt::Now => f.debug_tuple("ScheduledAt::Now").finish(),
-                        ScheduledAt::At(e) => f.debug_tuple("ScheduledAt::At").field(e).finish(),
-                        ScheduledAt::In(e) => f.debug_tuple("ScheduledAt::In").field(e).finish(),
-                    }
-                }
-            }
             #[allow(unused_unsafe, clippy::all)]
             pub fn sleep(millis: u32) {
                 unsafe {
@@ -73,81 +53,6 @@ pub mod obelisk {
                     let len3 = l2;
                     let bytes3 = _rt::Vec::from_raw_parts(l1.cast(), len3, len3);
                     _rt::string_lift(bytes3)
-                }
-            }
-            #[allow(unused_unsafe, clippy::all)]
-            pub fn schedule(
-                ffqn: &str,
-                params_json: &str,
-                scheduled_at: ScheduledAt,
-            ) -> _rt::String {
-                unsafe {
-                    #[repr(align(4))]
-                    struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
-                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
-                    let vec0 = ffqn;
-                    let ptr0 = vec0.as_ptr().cast::<u8>();
-                    let len0 = vec0.len();
-                    let vec1 = params_json;
-                    let ptr1 = vec1.as_ptr().cast::<u8>();
-                    let len1 = vec1.len();
-                    let (result3_0, result3_1, result3_2) = match scheduled_at {
-                        ScheduledAt::Now => (0i32, 0i64, 0i32),
-                        ScheduledAt::At(e) => {
-                            let super::super::super::wasi::clocks::wall_clock::Datetime {
-                                seconds: seconds2,
-                                nanoseconds: nanoseconds2,
-                            } = e;
-
-                            (1i32, _rt::as_i64(seconds2), _rt::as_i32(nanoseconds2))
-                        }
-                        ScheduledAt::In(e) => (2i32, _rt::as_i64(e), 0i32),
-                    };
-                    let ptr4 = ret_area.0.as_mut_ptr().cast::<u8>();
-                    #[cfg(target_arch = "wasm32")]
-                    #[link(wasm_import_module = "obelisk:workflow/host-activities")]
-                    extern "C" {
-                        #[link_name = "schedule"]
-                        fn wit_import(
-                            _: *mut u8,
-                            _: usize,
-                            _: *mut u8,
-                            _: usize,
-                            _: i32,
-                            _: i64,
-                            _: i32,
-                            _: *mut u8,
-                        );
-                    }
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(
-                        _: *mut u8,
-                        _: usize,
-                        _: *mut u8,
-                        _: usize,
-                        _: i32,
-                        _: i64,
-                        _: i32,
-                        _: *mut u8,
-                    ) {
-                        unreachable!()
-                    }
-                    wit_import(
-                        ptr0.cast_mut(),
-                        len0,
-                        ptr1.cast_mut(),
-                        len1,
-                        result3_0,
-                        result3_1,
-                        result3_2,
-                        ptr4,
-                    );
-                    let l5 = *ptr4.add(0).cast::<*mut u8>();
-                    let l6 = *ptr4.add(4).cast::<usize>();
-                    let len7 = l6;
-                    let bytes7 = _rt::Vec::from_raw_parts(l5.cast(), len7, len7);
-                    _rt::string_lift(bytes7)
                 }
             }
         }
@@ -909,34 +814,6 @@ mod _rt {
         }
     }
 
-    pub fn as_i64<T: AsI64>(t: T) -> i64 {
-        t.as_i64()
-    }
-
-    pub trait AsI64 {
-        fn as_i64(self) -> i64;
-    }
-
-    impl<'a, T: Copy + AsI64> AsI64 for &'a T {
-        fn as_i64(self) -> i64 {
-            (*self).as_i64()
-        }
-    }
-
-    impl AsI64 for i64 {
-        #[inline]
-        fn as_i64(self) -> i64 {
-            self as i64
-        }
-    }
-
-    impl AsI64 for u64 {
-        #[inline]
-        fn as_i64(self) -> i64 {
-            self as i64
-        }
-    }
-
     #[cfg(target_arch = "wasm32")]
     pub fn run_ctors_once() {
         wit_bindgen_rt::run_ctors_once();
@@ -983,8 +860,8 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.25.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 895] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x85\x06\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 844] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd2\x05\x01A\x02\x01\
 A\x0b\x01B\x04\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0e\
 get-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x05\x01@\x02\x0b\
 join-set-ids\x03urls\0s\x04\0\x15get-successful-submit\x01\0\x01j\x01s\x01s\x01@\
@@ -992,18 +869,17 @@ join-set-ids\x03urls\0s\x04\0\x15get-successful-submit\x01\0\x01j\x01s\x01s\x01@
 sting:http-obelisk-ext/http-get\x05\x01\x01B\x05\x01r\x02\x07secondsw\x0bnanosec\
 ondsy\x04\0\x08datetime\x03\0\0\x01@\0\0\x01\x04\0\x03now\x01\x02\x04\0\x0aresol\
 ution\x01\x02\x03\x01\x1cwasi:clocks/wall-clock@0.2.0\x05\x02\x02\x03\0\x02\x08d\
-atetime\x01B\x0c\x02\x03\x02\x01\x03\x04\0\x08datetime\x03\0\0\x01w\x04\0\x08dur\
+atetime\x01B\x0a\x02\x03\x02\x01\x03\x04\0\x08datetime\x03\0\0\x01w\x04\0\x08dur\
 ation\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x01\0\x02in\x01\x03\0\x04\0\x0csch\
 eduled-at\x03\0\x04\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\x06\x01@\0\0s\x04\
-\0\x0cnew-join-set\x01\x07\x01@\x03\x04ffqns\x0bparams-jsons\x0cscheduled-at\x05\
-\0s\x04\0\x08schedule\x01\x08\x03\x01\x20obelisk:workflow/host-activities\x05\x04\
-\x01B\x0a\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-\
-successful\x01\x01\x01ps\x01j\x01\x02\x01s\x01@\x01\x04urls\x02\0\x03\x04\0\x1bg\
-et-successful-concurrently\x01\x04\x01@\x02\x03urls\x0bconcurrencyy\0\x03\x04\0\"\
-get-successful-concurrently-stress\x01\x05\x04\x01\x1etesting:http-workflow/work\
-flow\x05\x05\x04\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\
-\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.208.1\x10wit-\
-bindgen-rust\x060.25.0";
+\0\x0cnew-join-set\x01\x07\x03\x01\x20obelisk:workflow/host-activities\x05\x04\x01\
+B\x0a\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-succ\
+essful\x01\x01\x01ps\x01j\x01\x02\x01s\x01@\x01\x04urls\x02\0\x03\x04\0\x1bget-s\
+uccessful-concurrently\x01\x04\x01@\x02\x03urls\x0bconcurrencyy\0\x03\x04\0\"get\
+-successful-concurrently-stress\x01\x05\x04\x01\x1etesting:http-workflow/workflo\
+w\x05\x05\x04\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\
+\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.208.1\x10wit-bind\
+gen-rust\x060.25.0";
 
 #[inline(never)]
 #[doc(hidden)]

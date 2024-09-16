@@ -16,7 +16,6 @@ use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, instrument, trace};
@@ -189,54 +188,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         Ok(())
     }
 
-    async fn call_schedule(
-        &mut self,
-        ffqn: String,
-        params: String,
-        scheduled_at: obelisk::workflow::host_activities::ScheduledAt,
-    ) -> wasmtime::Result<String> {
-        trace!("schedule");
-        let execution_id =
-            ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
-        let ffqn = FunctionFqn::from_str(&ffqn)?;
-        let params = serde_json::from_str(&params)?;
-        let params = Params::from_json_value(params)?;
-        let scheduled_at = match scheduled_at {
-            obelisk::workflow::host_activities::ScheduledAt::Now => HistoryEventScheduledAt::Now,
-            obelisk::workflow::host_activities::ScheduledAt::At(
-                wasi::clocks::wall_clock::Datetime {
-                    seconds,
-                    nanoseconds,
-                },
-            ) => HistoryEventScheduledAt::At(
-                DateTime::from_timestamp(seconds.try_into().unwrap(), nanoseconds).unwrap(),
-            ),
-            obelisk::workflow::host_activities::ScheduledAt::In(duration_nanos) => {
-                HistoryEventScheduledAt::In(Duration::from_nanos(duration_nanos))
-            }
-        };
-        let res = self
-            .event_history
-            .apply(
-                EventCall::ScheduleRequest {
-                    scheduled_at,
-                    execution_id,
-                    ffqn,
-                    params,
-                },
-                &self.db_pool.connection(),
-                &mut self.version,
-                self.fn_registry.as_ref(),
-            )
-            .await?;
-        Ok(
-            assert_matches!(res, SupportedFunctionReturnValue::Infallible(WastValWithType {
-            r#type: TypeWrapper::String,
-            value: WastVal::String(execution_id),
-        }) => execution_id),
-        )
-    }
-
     pub(crate) fn next_u128(&mut self) -> u128 {
         let mut bytes = [0; 16];
         self.rng.fill_bytes(&mut bytes);
@@ -265,9 +216,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 ffqn.ifc_fqn.version(),
             );
             if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SUBMIT) {
-                debug!("Got `-submit` extension for function `{function_name}`");
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
+                debug!("Got `-submit` extension for {ffqn}");
                 if params.is_empty() {
                     error!("Got empty params, expected JoinSetId");
                     return Err(WorkflowFunctionError::UncategorizedError(
@@ -281,7 +232,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 let Val::String(join_set_id) = join_set_id else {
                     error!("Wrong type for JoinSetId, expected string, got `{join_set_id:?}`");
                     return Err(WorkflowFunctionError::UncategorizedError(
-                        "error running `-submit` extension function: wrong first parameter type, string parameter containing JoinSetId`"
+                        "error running `-submit` extension function: wrong first parameter type, string parameter containing JoinSetId"
                     ));
                 };
                 let join_set_id = join_set_id.parse().map_err(|parse_err| {
@@ -303,14 +254,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 if params.len() != 1 {
                     error!("Expected single parameter with JoinSetId got {params:?}");
                     return Err(WorkflowFunctionError::UncategorizedError(
-                        "error running `-await-next` extension function: wrong parameter length, expected single string parameter containing JoinSetId`"
+                        "error running `-await-next` extension function: wrong parameter length, expected single string parameter containing JoinSetId"
                     ));
                 }
                 let join_set_id = params.first().expect("checked that the size is 1");
                 let Val::String(join_set_id) = join_set_id else {
                     error!("Wrong type for JoinSetId, expected string, got `{join_set_id:?}`");
                     return Err(WorkflowFunctionError::UncategorizedError(
-                        "error running `-await-next` extension function: wrong parameter type, expected single string parameter containing JoinSetId`"
+                        "error running `-await-next` extension function: wrong parameter type, expected single string parameter containing JoinSetId"
                     ));
                 };
                 let join_set_id = join_set_id.parse().map_err(|parse_err| {
@@ -318,6 +269,37 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     WorkflowFunctionError::UncategorizedError("cannot parse JoinSetId")
                 })?;
                 Ok(EventCall::BlockingChildJoinNext { join_set_id })
+            } else if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
+            {
+                let ffqn =
+                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
+                debug!("Got `-schedule` extension for {ffqn}");
+                if params.is_empty() {
+                    error!("Error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list");
+                    return Err(WorkflowFunctionError::UncategorizedError(
+                        "error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list",
+                    ));
+                    // TODO Replace with `split_at_checked` once stable
+                }
+                let (scheduled_at, params) = params.split_at(1);
+                let scheduled_at = scheduled_at.first().expect("split so that the size is 1");
+                let scheduled_at = match HistoryEventScheduledAt::try_from(scheduled_at) {
+                    Ok(scheduled_at) => scheduled_at,
+                    Err(err) => {
+                        error!("Wrong type for the first `-scheduled-at` parameter, expected `scheduled-at`, got `{scheduled_at:?}` - {err:?}");
+                        return Err(WorkflowFunctionError::UncategorizedError(
+                                "error running `-schedule` extension function: wrong first parameter type"
+                            ));
+                    }
+                };
+                let execution_id =
+                    ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+                Ok(EventCall::ScheduleRequest {
+                    scheduled_at,
+                    execution_id,
+                    ffqn,
+                    params: Params::from_wasmtime(Arc::from(params)),
+                })
             } else {
                 error!("unrecognized extension function {ffqn}");
                 return Err(WorkflowFunctionError::UncategorizedError(
@@ -367,24 +349,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
         }) => join_set_id),
         )
     }
-
-    // TODO: Apply jitter, should be configured on the component level
-    #[instrument(skip(self))]
-    async fn schedule(
-        &mut self,
-        ffqn: String,
-        params_json: String,
-        scheduled_at: obelisk::workflow::host_activities::ScheduledAt,
-    ) -> wasmtime::Result<String> {
-        self.call_schedule(ffqn, params_json, scheduled_at)
-            .await
-            .inspect_err(|err| error!("{err:?}"))
-    }
 }
 
 pub(crate) const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
 pub(crate) const SUFFIX_FN_SUBMIT: &str = "-submit";
 pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
+pub(crate) const SUFFIX_FN_SCHEDULE: &str = "-schedule";
 
 #[cfg(madsim)]
 #[cfg(test)]

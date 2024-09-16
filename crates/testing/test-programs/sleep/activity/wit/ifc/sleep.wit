@@ -3,7 +3,4 @@ package testing:sleep;
 interface sleep {
     sleep: func(millis: u32);
     sleep-loop: func(millis: u32, iterations: u32);
-
-    sleep-result: func(millis: u32) -> result;
-    sleep-result-err-string: func(millis: u32) -> result<_,string>;
 }

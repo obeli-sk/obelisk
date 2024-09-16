@@ -955,9 +955,11 @@ pub(crate) mod tests {
     ) {
         use concepts::prefixed_ulid::ExecutorId;
 
-        const SLEEP_MILLIS: u32 = 100;
+        const SLEEP_DURATION: Duration = Duration::from_millis(100);
+        const ITERATIONS: u8 = 1;
         const RESCHEDULE_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::RESCHEDULE);
+        const CORRELATION_ID: StrVariant = StrVariant::Static("cor");
         let _guard = test_utils::set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = db.set_up().await;
@@ -973,15 +975,16 @@ pub(crate) mod tests {
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
 
-        let params = Params::from_json_value(json!([SLEEP_MILLIS])).unwrap();
+        let params =
+            Params::from_json_value(json!([SLEEP_DURATION.as_nanos(), ITERATIONS])).unwrap();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
                 execution_id,
                 ffqn: RESCHEDULE_FFQN,
-                params: params.clone(),
+                params,
                 parent: None,
-                correlation_id: StrVariant::empty(),
+                correlation_id: CORRELATION_ID,
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -990,7 +993,6 @@ pub(crate) mod tests {
             })
             .await
             .unwrap();
-        // tick2 + await should mark the execution finished.
         let exec_task = ExecTask::new(
             worker,
             ExecConfig {
@@ -1003,6 +1005,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             Arc::new([RESCHEDULE_FFQN]),
         );
+        // tick2 + await should mark the first execution finished.
         assert_eq!(
             1,
             exec_task
@@ -1018,10 +1021,8 @@ pub(crate) mod tests {
             res.into_finished_result().unwrap(),
             Ok(SupportedFunctionReturnValue::None)
         );
-        // New execution should be pending in SLEEP_MILLIS.
-        sim_clock
-            .move_time_forward(Duration::from_millis(u64::from(SLEEP_MILLIS)))
-            .await;
+        sim_clock.move_time_forward(SLEEP_DURATION).await;
+        // New execution should be pending.
         let mut next_pending = db_pool
             .connection()
             .lock_pending(
@@ -1037,7 +1038,12 @@ pub(crate) mod tests {
         assert_eq!(1, next_pending.len());
         let next_pending = next_pending.pop().unwrap();
         assert!(next_pending.parent.is_none());
-        assert_eq!(params, next_pending.params);
+        let params = serde_json::to_string(
+            &Params::from_json_value(json!([SLEEP_DURATION.as_nanos(), ITERATIONS - 1])).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(params, serde_json::to_string(&next_pending.params).unwrap());
+        assert_eq!(CORRELATION_ID, next_pending.correlation_id);
         drop(exec_task);
         db_pool.close().await.unwrap();
     }

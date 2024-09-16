@@ -587,11 +587,11 @@ impl<C: ClockFn> EventHistory<C> {
                 ffqn,
                 params,
             } => {
-                let at = scheduled_at.as_date_time(created_at);
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id,
                     scheduled_at,
                 };
+                let scheduled_at = scheduled_at.as_date_time(created_at);
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%new_execution_id, "ScheduleRequest: appending");
@@ -610,8 +610,8 @@ impl<C: ClockFn> EventHistory<C> {
                     correlation_id: self.correlation_id.clone(),
                     ffqn,
                     params,
-                    parent: None,
-                    scheduled_at: at,
+                    parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
+                    scheduled_at,
                     retry_exp_backoff: self
                         .retry_config
                         .child_retry_exp_backoff(config_id.component_type, child_retry_config),

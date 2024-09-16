@@ -16,14 +16,4 @@ impl crate::bindings::exports::testing::sleep::sleep::Guest for Component {
             Self::sleep(millis);
         }
     }
-
-    fn sleep_result(millis: u32) -> Result<(), ()> {
-        std::thread::sleep(Duration::from_millis(millis as u64));
-        Ok(())
-    }
-
-    fn sleep_result_err_string(millis: u32) -> Result<(), String> {
-        std::thread::sleep(Duration::from_millis(millis as u64));
-        Ok(())
-    }
 }

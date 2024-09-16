@@ -20,6 +20,8 @@ crate-type = ["cdylib"]
 "testing:sleep".path = "../activity/wit/ifc"
 "obelisk:workflow".path = "../../../../wasm-workers/host-wit/"
 "wasi:clocks".path = "../../../../wasm-workers/host-wit/deps/clocks"
+"testing:sleep-workflow".path = "wit/ifc"
+"testing:sleep-workflow-obelisk-ext".path = "wit/ifc-ext"
 
 [lints]
 rust.unused_imports = "allow"

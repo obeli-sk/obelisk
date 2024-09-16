@@ -14,7 +14,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fmt::Debug;
+use std::ops::Deref as _;
 use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoStaticStr;
@@ -375,7 +377,7 @@ pub enum HistoryEvent {
 }
 
 #[derive(
-    Debug, Clone, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, arbitrary::Arbitrary, Serialize, Deserialize,
 )]
 pub enum HistoryEventScheduledAt {
     Now,
@@ -390,6 +392,53 @@ impl HistoryEventScheduledAt {
             Self::Now => now,
             Self::At(date_time) => *date_time,
             Self::In(duration) => now + *duration,
+        }
+    }
+}
+impl TryFrom<&wasmtime::component::Val> for HistoryEventScheduledAt {
+    type Error = &'static str;
+
+    fn try_from(scheduled_at: &wasmtime::component::Val) -> Result<Self, Self::Error> {
+        use wasmtime::component::Val;
+        let Val::Variant(variant, val) = scheduled_at else {
+            return Err("wrong type");
+        };
+        match (variant.as_str(), val) {
+            ("now", None) => Ok(HistoryEventScheduledAt::Now),
+            ("in", Some(dur)) if matches!(dur.deref(), Val::U64(_)) => {
+                let nanos = assert_matches!(dur.deref(), Val::U64(nanos) => *nanos);
+                Ok(HistoryEventScheduledAt::In(Duration::from_nanos(nanos)))
+            }
+            ("at", Some(date_time)) if matches!(date_time.deref(), Val::Record(_)) => {
+                let date_time =
+                    assert_matches!(date_time.deref(), Val::Record(keys_vals) => keys_vals)
+                        .iter()
+                        .map(|(k, v)| (k.as_str(), v))
+                        .collect::<HashMap<_, _>>();
+                let seconds = date_time.get("seconds");
+                let nanos = date_time.get("nanoseconds");
+                match (date_time.len(), seconds, nanos) {
+                    (2, Some(Val::U64(seconds)), Some(Val::U32(nanos))) => {
+                        let Ok(seconds) = i64::try_from(*seconds) else {
+                            return Err("cannot convert `scheduled-at`, cannot convert seconds from u64 to i64");
+                        };
+                        let Some(date_time) = DateTime::from_timestamp(seconds, *nanos) else {
+                            return Err("cannot convert `scheduled-at`, cannot convert seconds and nanos to DateTime");
+                        };
+                        Ok(HistoryEventScheduledAt::At(date_time))
+                    }
+                    _ => {
+                        return Err(
+                            "cannot convert `scheduled-at`, record must have exactly two keys: `seconds`(U64), `nanoseconds`(U32)",
+                        )
+                    }
+                }
+            }
+            _ => {
+                return Err(
+                    "cannot convert `scheduled-at` variant, expected one of `now`, `in`, `at`",
+                );
+            }
         }
     }
 }
