@@ -93,7 +93,7 @@ impl ConfigStore {
         }
     }
 
-    pub(crate) fn config_id(&self) -> ConfigId {
+    pub(crate) fn config_id(&self) -> Result<ConfigId, anyhow::Error> {
         let hash = {
             use std::hash::Hash as _;
             use std::hash::Hasher as _;
@@ -101,10 +101,11 @@ impl ConfigStore {
             self.hash(&mut hasher);
             format!("{:x}", hasher.finish())
         };
-        ConfigId {
-            component_type: self.as_component_type(),
+        Ok(ConfigId::new(
+            self.as_component_type(),
+            self.name().to_string(),
             hash,
-        }
+        )?)
     }
 }
 

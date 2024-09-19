@@ -257,9 +257,8 @@ impl WasmActivityToml {
             default_retry_exp_backoff: self.default_retry_exp_backoff.into(),
             recycle_instances: self.recycle_instances,
         };
-        let config_id = config_store.config_id();
+        let config_id = config_store.config_id()?;
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
-        let exec_config = self.exec.into_exec_exec_config(config_id.clone());
         let activity_config = ActivityConfig {
             config_id: config_id.clone(),
             recycle_instances: self.recycle_instances.into(),
@@ -268,7 +267,7 @@ impl WasmActivityToml {
             config_store,
             wasm_path,
             activity_config,
-            exec_config,
+            exec_config: self.exec.into_exec_exec_config(config_id),
         })
     }
 }
@@ -320,7 +319,7 @@ impl WorkflowToml {
             child_max_retries: self.child_max_retries_override,
             non_blocking_event_batching: self.non_blocking_event_batching,
         };
-        let config_id = config_store.config_id();
+        let config_id = config_store.config_id()?;
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
         let workflow_config = WorkflowConfig {
             config_id: config_id.clone(),
@@ -329,12 +328,11 @@ impl WorkflowToml {
             child_max_retries: self.child_max_retries_override,
             non_blocking_event_batching: self.non_blocking_event_batching,
         };
-        let exec_config = self.exec.into_exec_exec_config(config_id);
         Ok(WorkflowConfigVerified {
             config_store,
             wasm_path,
             workflow_config,
-            exec_config,
+            exec_config: self.exec.into_exec_exec_config(config_id),
         })
     }
 }
@@ -595,6 +593,7 @@ pub(crate) mod webhook {
     use super::{ComponentCommon, DurationConfig};
     use crate::config::ConfigStore;
     use anyhow::Context;
+    use concepts::ConfigId;
     use serde::Deserialize;
     use std::{
         net::SocketAddr,
@@ -633,10 +632,11 @@ pub(crate) mod webhook {
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
                 .await?;
             let config_store = ConfigStore::WebhookV1 { common };
-            let config_id = config_store.config_id();
+            let config_id = config_store.config_id()?;
             tracing::Span::current().record("config_id", tracing::field::display(&config_id));
 
             Ok(WebhookComponentVerified {
+                config_id,
                 wasm_path,
                 routes: self
                     .routes
@@ -666,6 +666,7 @@ pub(crate) mod webhook {
     }
 
     pub(crate) struct WebhookComponentVerified {
+        pub(crate) config_id: ConfigId,
         pub(crate) config_store: ConfigStore,
         pub(crate) wasm_path: PathBuf,
         pub(crate) routes: Vec<WebhookRouteVerified>,

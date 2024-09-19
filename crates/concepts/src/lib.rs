@@ -780,23 +780,56 @@ pub mod prefixed_ulid {
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, derive_more::Display,
 )]
-#[display("{component_type}:{hash}")]
+#[display("{component_type}:{name}:{hash}")]
 pub struct ConfigId {
     pub component_type: ComponentType,
+    pub name: String,
     pub hash: String,
+    _private: (),
 }
 impl ConfigId {
+    pub fn new(
+        component_type: ComponentType,
+        name: String,
+        hash: String,
+    ) -> Result<Self, ConfigIdErrror> {
+        if let Some(invalid) = name
+            .chars()
+            .find(|c| !c.is_ascii_alphanumeric() && *c != '_')
+        {
+            return Err(ConfigIdErrror::InvalidName { invalid, name });
+        }
+        Ok(Self {
+            component_type,
+            name,
+            hash,
+            _private: (),
+        })
+    }
+    pub fn component_type(&self) -> ComponentType {
+        self.component_type
+    }
+
     #[must_use]
     pub const fn dummy() -> Self {
         Self {
             component_type: ComponentType::WasmActivity,
+            name: String::new(),
             hash: String::new(),
+            _private: (),
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum ConfigIdErrror {
+    #[error("name must only contain alphanumeric characters and underscore, found invalid character `{invalid}` in: {name}")]
+    InvalidName { invalid: char, name: String },
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum ComponentConfigHashParseErrror {
+    // TODO: Rename to ConfigIdParseError
     #[error("cannot parse ComponentConfigHash - delimiter ':' not found")]
     DelimiterNotFound,
     #[error("cannot parse prefix of ComponentConfigHash - {0}")]
@@ -809,11 +842,14 @@ impl FromStr for ConfigId {
     type Err = ComponentConfigHashParseErrror;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let (component_type, hash) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
+        let (component_type, input) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
+        let (name, hash) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
         let component_type = component_type.parse()?;
         Ok(Self {
             component_type,
+            name: name.to_string(),
             hash: hash.to_string(),
+            _private: (),
         })
     }
 }

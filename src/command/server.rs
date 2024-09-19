@@ -590,13 +590,11 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         for webhook in webhooks {
             let wasm_component = WasmComponent::new(webhook.wasm_path, engine)?;
             let imports = wasm_component.imported_functions().to_vec();
-            let instance = webhook_trigger::component_to_instance(
-                &wasm_component,
-                engine,
-                webhook.config_store.config_id(),
-            )?;
+            let config_id = webhook.config_id;
+            let instance =
+                webhook_trigger::component_to_instance(&wasm_component, engine, config_id.clone())?;
             component_registry.insert(Component {
-                config_id: webhook.config_store.config_id(),
+                config_id,
                 config_store: webhook.config_store,
                 exports: None,
                 imports,
@@ -970,7 +968,7 @@ fn register_worker_and_prespawn(
 ) -> Result<ExecutorPreSpawn, anyhow::Error> {
     let component_name = config_store.name().to_string();
     let component = Component {
-        config_id: config_store.config_id(),
+        config_id: exec_config.config_id.clone(),
         config_store,
         exports: Some(worker.exported_functions().to_vec()),
         imports: worker.imported_functions().to_vec(),

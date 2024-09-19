@@ -287,16 +287,25 @@ pub(crate) mod tests {
     pub const FIBO_10_INPUT: u8 = 10;
     pub const FIBO_10_OUTPUT: u64 = 55;
 
+    pub(crate) fn wasm_file_name(input: impl AsRef<Path>) -> String {
+        let input = input.as_ref();
+        let input = input.file_name().and_then(|name| name.to_str()).unwrap();
+        let input = input.strip_suffix(".wasm").unwrap().to_string();
+        input
+    }
+
     pub(crate) fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
-        let config_id = ConfigId {
-            component_type: ComponentType::WasmActivity,
-            hash: wasm_path.to_string(),
-        };
+        let config_id = ConfigId::new(
+            ComponentType::WasmActivity,
+            wasm_file_name(wasm_path),
+            "dummy hash".to_string(),
+        )
+        .unwrap();
         let worker = Arc::new(
             ActivityWorker::new_with_config(
                 wasm_path,

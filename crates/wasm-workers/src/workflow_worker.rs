@@ -335,7 +335,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         activity_worker::tests::{
-            spawn_activity_fibo, FIBO_10_INPUT, FIBO_10_OUTPUT, FIBO_ACTIVITY_FFQN,
+            spawn_activity_fibo, wasm_file_name, FIBO_10_INPUT, FIBO_10_OUTPUT, FIBO_ACTIVITY_FFQN,
         },
         engines::{EngineConfig, Engines},
         tests::fn_registry_dummy,
@@ -379,10 +379,12 @@ pub(crate) mod tests {
     ) -> ExecutorTaskHandle {
         let workflow_engine =
             Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
-        let config_id = ConfigId {
-            component_type: ComponentType::Workflow,
-            hash: wasm_path.to_string(),
-        };
+        let config_id = ConfigId::new(
+            ComponentType::Workflow,
+            wasm_file_name(wasm_path),
+            "dummy hash".to_string(),
+        )
+        .unwrap();
         let worker = Arc::new(
             WorkflowWorker::new_with_config(
                 wasm_path,

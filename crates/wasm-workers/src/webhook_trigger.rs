@@ -933,7 +933,7 @@ mod tests {
             storage::{DbConnection, DbPool},
             ExecutionId, FunctionFqn,
         };
-        use concepts::{ComponentType, ConfigId, SupportedFunctionReturnValue};
+        use concepts::{ConfigId, SupportedFunctionReturnValue};
         use db_tests::{Database, DbGuard, DbPoolEnum};
         use executor::executor::ExecutorTaskHandle;
         use std::net::SocketAddr;
@@ -994,11 +994,7 @@ mod tests {
                         )
                         .unwrap(),
                         &engine,
-                        ConfigId {
-                            component_type: ComponentType::Webhook,
-                            hash: test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK
-                                .to_string(),
-                        },
+                        ConfigId::dummy(),
                     )
                     .unwrap();
                     let mut router = MethodAwareRouter::default();
