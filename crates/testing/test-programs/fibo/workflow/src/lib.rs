@@ -32,7 +32,6 @@ impl crate::bindings::exports::testing::fibo_workflow::workflow::Guest for Compo
         let join_set_id = bindings::obelisk::workflow::host_activities::new_join_set();
         for _ in 0..iterations {
             crate::bindings::testing::fibo_obelisk_ext::fibo::fibo_submit(&join_set_id, n);
-            // FIXME: fibo_submit
         }
         let mut last = 0;
         for _ in 0..iterations {
