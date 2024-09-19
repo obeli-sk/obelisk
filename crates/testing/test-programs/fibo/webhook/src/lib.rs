@@ -26,6 +26,7 @@ impl Guest for Component {
             .expect("parameter `ITERATIONS` must be of type u32"); // Panic here means we send 200 anyway.
 
         let fibo_res = if n >= 10 {
+            println!("submitting");
             // Submit new execution, do not wait for the result.
             let join_set_id = crate::bindings::obelisk::workflow::host_activities::new_join_set();
             let execution_id = bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_submit(
@@ -36,6 +37,7 @@ impl Guest for Component {
             format!("submitted: {execution_id}")
         } else if n >= 5 {
             // Submit new execution, wait for the result.
+            println!("submitting and awaiting");
             let join_set_id = crate::bindings::obelisk::workflow::host_activities::new_join_set();
             bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_submit(
                 &join_set_id,
@@ -48,9 +50,11 @@ impl Guest for Component {
             format!("submit/await-next: {fibo_res}")
         } else if n > 1 {
             // Call the execution directly.
+            println!("direct call");
             let fibo_res = bindings::testing::fibo_workflow::workflow::fiboa(n, iterations);
             format!("direct call: {fibo_res}")
         } else {
+            println!("hardcoded");
             "hardcoded: 1".to_string() // For performance testing - no activity is called
         };
         // Start sending the 200 OK response

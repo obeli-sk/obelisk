@@ -2512,6 +2512,7 @@ dependencies = [
  "assert_matches",
  "async-channel",
  "async-trait",
+ "bytes",
  "chrono",
  "db-mem",
  "db-tests",

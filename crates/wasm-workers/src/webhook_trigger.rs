@@ -1,3 +1,4 @@
+use crate::std_output_stream::LogStream;
 use crate::workflow_ctx::{
     obelisk, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT,
 };
@@ -693,9 +694,20 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         execution_id: ExecutionId,
     ) -> Store<WebhookCtx<C, DB, P>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
+        let stdout = LogStream::new(
+            format!("[{config_id} {execution_id} stdout]"),
+            crate::std_output_stream::Output::Stderr,
+        );
+        let stderr = LogStream::new(
+            format!("[{config_id} {execution_id} stderr]"),
+            crate::std_output_stream::Output::Stderr,
+        );
+
         for (key, val) in params {
             wasi_ctx.env(key, val);
         }
+        wasi_ctx.stdout(stdout.clone());
+        wasi_ctx.stderr(stderr.clone());
         let wasi_ctx = wasi_ctx.build();
         let ctx = WebhookCtx {
             clock_fn,

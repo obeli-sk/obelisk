@@ -19,6 +19,7 @@ arbitrary.workspace = true
 assert_matches.workspace = true
 async-channel.workspace = true
 async-trait.workspace = true
+bytes.workspace = true
 chrono.workspace = true
 derivative.workspace = true
 derive_more.workspace = true
