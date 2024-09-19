@@ -66,7 +66,7 @@ pub struct ActivityWorker<C: ClockFn> {
     exim: ExIm,
     clock_fn: C,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
-    config_id: ConfigId, // Move to WorkerContext?
+    config_id: ConfigId, // TODO: Move to WorkerContext?
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
 }
@@ -152,7 +152,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             let mut store = crate::activity_ctx::store(
                 &self.engine,
                 ctx.execution_id,
-                self.config_id.clone(),
+                &self.config_id,
                 self.forward_stdout,
                 self.forward_stderr,
             );
@@ -643,6 +643,7 @@ pub(crate) mod tests {
         }
 
         #[tokio::test]
+        #[allow(clippy::too_many_lines)]
         async fn http_get_simple() {
             use std::ops::Deref;
             use wiremock::{
