@@ -259,7 +259,7 @@ impl RetryConfigOverride {
                 .activity_max_retries_override
                 .unwrap_or(component_default),
             ComponentType::Workflow => 0,
-            ComponentType::Webhook => unreachable!("webhook can only be invoked via HTTP"),
+            ComponentType::WebhookComponent => unreachable!("webhook can only be invoked via HTTP"),
         }
     }
 
@@ -273,7 +273,7 @@ impl RetryConfigOverride {
                 .activity_retry_exp_backoff_override
                 .unwrap_or(component_default),
             ComponentType::Workflow => Duration::ZERO,
-            ComponentType::Webhook => unreachable!("webhook can only be invoked via HTTP"),
+            ComponentType::WebhookComponent => unreachable!("webhook can only be invoked via HTTP"),
         }
     }
 }

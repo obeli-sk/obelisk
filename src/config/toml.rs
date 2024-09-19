@@ -631,7 +631,7 @@ pub(crate) mod webhook {
                 .common
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
                 .await?;
-            let config_store = ConfigStore::WebhookV1 { common };
+            let config_store = ConfigStore::WebhookComponentV1 { common };
             let config_id = config_store.config_id()?;
             tracing::Span::current().record("config_id", tracing::field::display(&config_id));
 

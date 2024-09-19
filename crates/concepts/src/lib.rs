@@ -980,7 +980,7 @@ impl FromStr for Digest {
 pub enum ComponentType {
     WasmActivity,
     Workflow,
-    Webhook,
+    WebhookComponent,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
