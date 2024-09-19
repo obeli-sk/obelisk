@@ -85,7 +85,7 @@ exec.lock_expiry.secs = 2
 
 [[wasm_activity]]
 name = "http_get_activity"
-location.oci = "docker.io/getobelisk/example_activity_http_get:2024-08-12-1@sha256:deb576c153e375f7c1f016d82860fa6e1cf50264944b078858f577d54d2a9863"
+location.oci = "docker.io/getobelisk/example_activity_http_get:2024-09-19@sha256:f20902e6586e8915abb809b3cde9d57c86d4648366175bd8d0e08c05c80a67a7"
 forward_stdout = "stderr"
 forward_stderr = "stderr"
 
