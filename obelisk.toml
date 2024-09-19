@@ -93,7 +93,7 @@ listening_addr = "0.0.0.0:9090"
 
 [[webhook_component]]
 name = "webhook_trigger_fibo"
-location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-10@sha256:621f3dc8b91ea33348559faac51f1a210b641e6250edfe8e409ac2967d1827d0"
+location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-19@sha256:ba0a28fc5670769e17c0361675b788f65f427e53be8983d3d1a181c2702dcb6b"
 http_server = "external"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 
