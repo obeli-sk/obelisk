@@ -75,6 +75,8 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 name = "fibo_activity"
 location.oci = "docker.io/getobelisk/example_activity_fibo:2024-08-12-1@sha256:d33ea7dde23bb8204e8916a4ca868195c1d66b0459bf0e3bc874cb27e25abf3e"
 default_max_retries = 0
+forward_stdout = "stderr"
+forward_stderr = "stderr"
 
 [[workflow]]
 name = "fibo_workflow"
@@ -84,6 +86,8 @@ exec.lock_expiry.secs = 2
 [[wasm_activity]]
 name = "http_get_activity"
 location.oci = "docker.io/getobelisk/example_activity_http_get:2024-08-12-1@sha256:deb576c153e375f7c1f016d82860fa6e1cf50264944b078858f577d54d2a9863"
+forward_stdout = "stderr"
+forward_stderr = "stderr"
 
 [[workflow]]
 name = "http_get_workflow"

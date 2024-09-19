@@ -97,6 +97,8 @@ pub(crate) mod tests {
                 ActivityConfig {
                     config_id: ConfigId::dummy(),
                     recycle_instances: RecycleInstancesSetting::default(),
+                    forward_stdout: None,
+                    forward_stderr: None,
                 },
                 engine,
                 now,

@@ -230,6 +230,8 @@ pub(crate) struct WasmActivityToml {
     pub(crate) default_retry_exp_backoff: DurationConfig,
     #[serde(default = "default_true")]
     pub(crate) recycle_instances: bool,
+    pub(crate) forward_stdout: Option<StdOutput>,
+    pub(crate) forward_stderr: Option<StdOutput>,
 }
 
 #[derive(Debug)]
@@ -262,6 +264,8 @@ impl WasmActivityToml {
         let activity_config = ActivityConfig {
             config_id: config_id.clone(),
             recycle_instances: self.recycle_instances.into(),
+            forward_stdout: self.forward_stdout.map(From::from),
+            forward_stderr: self.forward_stderr.map(From::from),
         };
         Ok(ActivityConfigVerified {
             config_store,
@@ -663,12 +667,8 @@ pub(crate) mod webhook {
                     .collect::<Result<Vec<_>, _>>()
                     .with_context(|| format!("cannot parse webhook `{}`", config_store.name()))?,
                 config_store,
-                forward_stdout: self
-                    .forward_stdout
-                    .map(wasm_workers::std_output_stream::StdOutput::from),
-                forward_stderr: self
-                    .forward_stderr
-                    .map(wasm_workers::std_output_stream::StdOutput::from),
+                forward_stdout: self.forward_stdout.map(From::from),
+                forward_stderr: self.forward_stderr.map(From::from),
             })
         }
     }

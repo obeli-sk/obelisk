@@ -1,3 +1,5 @@
+use crate::std_output_stream::{LogStream, StdOutput};
+use concepts::{ConfigId, ExecutionId};
 use wasmtime::Engine;
 use wasmtime::{component::ResourceTable, Store};
 use wasmtime_wasi::{self, WasiCtx, WasiCtxBuilder, WasiView};
@@ -29,11 +31,25 @@ impl WasiHttpView for ActivityCtx {
 }
 
 #[must_use]
-pub fn store(engine: &Engine) -> Store<ActivityCtx> {
-    let mut builder = WasiCtxBuilder::new();
+pub fn store(
+    engine: &Engine,
+    execution_id: ExecutionId,
+    config_id: ConfigId,
+    forward_stdout: Option<StdOutput>,
+    forward_stderr: Option<StdOutput>,
+) -> Store<ActivityCtx> {
+    let mut wasi_ctx = WasiCtxBuilder::new();
+    if let Some(stdout) = forward_stdout {
+        let stdout = LogStream::new(format!("[{config_id} {execution_id} stdout]"), stdout);
+        wasi_ctx.stdout(stdout);
+    }
+    if let Some(stderr) = forward_stderr {
+        let stderr = LogStream::new(format!("[{config_id} {execution_id} stderr]"), stderr);
+        wasi_ctx.stderr(stderr);
+    }
     let ctx = ActivityCtx {
         table: ResourceTable::new(),
-        wasi_ctx: builder.build(),
+        wasi_ctx: wasi_ctx.build(),
         http_ctx: WasiHttpCtx::new(),
     };
     Store::new(engine, ctx)

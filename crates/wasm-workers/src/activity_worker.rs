@@ -1,3 +1,4 @@
+use crate::std_output_stream::StdOutput;
 use crate::WasmFileError;
 use async_trait::async_trait;
 use concepts::{ConfigId, FunctionFqn, SupportedFunctionReturnValue};
@@ -50,6 +51,8 @@ impl RecycleInstancesSetting {
 pub struct ActivityConfig {
     pub config_id: ConfigId,
     pub recycle_instances: RecycleInstancesSetting,
+    pub forward_stdout: Option<StdOutput>,
+    pub forward_stderr: Option<StdOutput>,
 }
 
 pub const TIMEOUT_SLEEP_UNIT: Duration = Duration::from_millis(10);
@@ -63,6 +66,9 @@ pub struct ActivityWorker<C: ClockFn> {
     exim: ExIm,
     clock_fn: C,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
+    config_id: ConfigId, // Move to WorkerContext?
+    forward_stdout: Option<StdOutput>,
+    forward_stderr: Option<StdOutput>,
 }
 
 impl<C: ClockFn> ActivityWorker<C> {
@@ -115,6 +121,9 @@ impl<C: ClockFn> ActivityWorker<C> {
             exim: wasm_component.exim,
             clock_fn,
             exported_ffqn_to_index,
+            config_id: config.config_id,
+            forward_stdout: config.forward_stdout,
+            forward_stderr: config.forward_stderr,
         })
     }
 }
@@ -140,7 +149,13 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         let (instance, mut store) = if let Some((instance, store)) = instance_and_store {
             (instance, store)
         } else {
-            let mut store = crate::activity_ctx::store(&self.engine);
+            let mut store = crate::activity_ctx::store(
+                &self.engine,
+                ctx.execution_id,
+                self.config_id.clone(),
+                self.forward_stdout,
+                self.forward_stderr,
+            );
             match self
                 .linker
                 .instantiate_async(&mut store, &self.component)
@@ -312,6 +327,8 @@ pub(crate) mod tests {
                 ActivityConfig {
                     config_id: config_id.clone(),
                     recycle_instances: RecycleInstancesSetting::Disabled,
+                    forward_stdout: None,
+                    forward_stderr: None,
                 },
                 engine,
                 clock_fn.clone(),
@@ -415,6 +432,8 @@ pub(crate) mod tests {
             ActivityConfig {
                 config_id: ConfigId::dummy(),
                 recycle_instances,
+                forward_stdout: None,
+                forward_stderr: None,
             },
             engine,
             now,
@@ -504,6 +523,8 @@ pub(crate) mod tests {
                     ActivityConfig {
                         config_id: ConfigId::dummy(),
                         recycle_instances,
+                        forward_stdout: None,
+                        forward_stderr: None,
                     },
                     engine,
                     now,
@@ -594,6 +615,8 @@ pub(crate) mod tests {
                     ActivityConfig {
                         config_id: ConfigId::dummy(),
                         recycle_instances: RecycleInstancesSetting::Disabled,
+                        forward_stdout: None,
+                        forward_stderr: None,
                     },
                     engine,
                     now,
@@ -639,6 +662,8 @@ pub(crate) mod tests {
                     ActivityConfig {
                         config_id: ConfigId::dummy(),
                         recycle_instances: RecycleInstancesSetting::Disabled,
+                        forward_stdout: None,
+                        forward_stderr: None,
                     },
                     engine,
                     sim_clock.get_clock_fn(),
@@ -750,6 +775,8 @@ pub(crate) mod tests {
                     ActivityConfig {
                         config_id: ConfigId::dummy(),
                         recycle_instances: RecycleInstancesSetting::Disabled,
+                        forward_stdout: None,
+                        forward_stderr: None,
                     },
                     engine,
                     sim_clock.get_clock_fn(),

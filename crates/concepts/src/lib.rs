@@ -783,7 +783,7 @@ pub mod prefixed_ulid {
 #[display("{component_type}:{name}:{hash}")]
 pub struct ConfigId {
     pub component_type: ComponentType,
-    pub name: String,
+    pub name: String, // FIXME: StrVariant
     pub hash: String,
     _private: PhantomData<()>,
 }
