@@ -7,7 +7,7 @@ pub mod activity_worker;
 pub mod engines;
 pub mod epoch_ticker;
 mod event_history;
-mod std_output_stream;
+pub mod std_output_stream;
 pub mod webhook_trigger;
 mod workflow_ctx;
 pub mod workflow_worker;
@@ -132,6 +132,8 @@ pub(crate) mod tests {
                 &WasmComponent::new(path, &engine).unwrap(),
                 &engine,
                 ConfigId::dummy(),
+                None,
+                None,
             )
             .unwrap();
 

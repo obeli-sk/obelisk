@@ -1,4 +1,4 @@
-use crate::std_output_stream::LogStream;
+use crate::std_output_stream::{LogStream, StdOutput};
 use crate::workflow_ctx::{
     obelisk, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT,
 };
@@ -59,6 +59,8 @@ pub enum WebhookServerError {
 pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     proxy_pre: Arc<ProxyPre<WebhookCtx<C, DB, P>>>,
     config_id: ConfigId,
+    forward_stdout: Option<StdOutput>,
+    forward_stderr: Option<StdOutput>,
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> Clone for WebhookInstance<C, DB, P> {
@@ -66,6 +68,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> Clone for WebhookInstance<C, D
         Self {
             proxy_pre: self.proxy_pre.clone(),
             config_id: self.config_id.clone(),
+            forward_stdout: self.forward_stdout,
+            forward_stderr: self.forward_stderr,
         }
     }
 }
@@ -117,6 +121,8 @@ pub fn component_to_instance<
     wasm_component: &WasmComponent,
     engine: &Engine,
     config_id: ConfigId,
+    forward_stdout: Option<StdOutput>,
+    forward_stderr: Option<StdOutput>,
 ) -> Result<WebhookInstance<C, DB, P>, WebhookComponentInstantiationError> {
     let mut linker = Linker::new(engine);
     wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| WasmFileError::LinkingError {
@@ -188,6 +194,8 @@ pub fn component_to_instance<
     Ok(WebhookInstance {
         proxy_pre: Arc::new(instance),
         config_id,
+        forward_stdout,
+        forward_stderr,
     })
 }
 
@@ -692,22 +700,21 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         retry_config: RetryConfigOverride,
         params: impl Iterator<Item = (&'a str, &'a str)>,
         execution_id: ExecutionId,
+        forward_stdout: Option<StdOutput>,
+        forward_stderr: Option<StdOutput>,
     ) -> Store<WebhookCtx<C, DB, P>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
-        let stdout = LogStream::new(
-            format!("[{config_id} {execution_id} stdout]"),
-            crate::std_output_stream::Output::Stderr,
-        );
-        let stderr = LogStream::new(
-            format!("[{config_id} {execution_id} stderr]"),
-            crate::std_output_stream::Output::Stderr,
-        );
-
+        if let Some(stdout) = forward_stdout {
+            let stdout = LogStream::new(format!("[{config_id} {execution_id} stdout]"), stdout);
+            wasi_ctx.stdout(stdout);
+        }
+        if let Some(stderr) = forward_stderr {
+            let stderr = LogStream::new(format!("[{config_id} {execution_id} stderr]"), stderr);
+            wasi_ctx.stderr(stderr);
+        }
         for (key, val) in params {
             wasi_ctx.env(key, val);
         }
-        wasi_ctx.stdout(stdout.clone());
-        wasi_ctx.stderr(stderr.clone());
         let wasi_ctx = wasi_ctx.build();
         let ctx = WebhookCtx {
             clock_fn,
@@ -841,6 +848,8 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 self.retry_config,
                 matched.params().iter(),
                 self.execution_id,
+                found_instance.forward_stdout,
+                found_instance.forward_stderr,
             );
             let req = store
                 .data_mut()
@@ -1007,6 +1016,8 @@ mod tests {
                         .unwrap(),
                         &engine,
                         ConfigId::dummy(),
+                        None,
+                        None,
                     )
                     .unwrap();
                     let mut router = MethodAwareRouter::default();

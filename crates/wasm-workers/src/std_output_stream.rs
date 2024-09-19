@@ -1,21 +1,21 @@
 // https://github.com/bytecodealliance/wasmtime/tree/v24.0.0/src/commands/serve.rs
 use wasmtime_wasi::{StreamError, StreamResult};
 
-#[derive(Clone)]
-pub enum Output {
+#[derive(Clone, Copy)]
+pub enum StdOutput {
     Stdout,
     Stderr,
 }
 
-impl Output {
+impl StdOutput {
     fn write_all(&self, buf: &[u8]) -> Result<(), wasmtime::Error> {
         use std::io::Write;
 
         match self {
-            Output::Stdout => std::io::stdout()
+            StdOutput::Stdout => std::io::stdout()
                 .write_all(buf)
                 .map_err(wasmtime::Error::from),
-            Output::Stderr => std::io::stderr()
+            StdOutput::Stderr => std::io::stderr()
                 .write_all(buf)
                 .map_err(wasmtime::Error::from),
         }
@@ -25,12 +25,12 @@ impl Output {
 #[derive(Clone)]
 pub(crate) struct LogStream {
     prefix: String,
-    output: Output,
+    output: StdOutput,
     needs_prefix_on_next_write: bool,
 }
 
 impl LogStream {
-    pub(crate) fn new(prefix: String, output: Output) -> LogStream {
+    pub(crate) fn new(prefix: String, output: StdOutput) -> LogStream {
         LogStream {
             prefix,
             output,
@@ -48,8 +48,8 @@ impl wasmtime_wasi::StdoutStream for LogStream {
         use std::io::IsTerminal;
 
         match &self.output {
-            Output::Stdout => std::io::stdout().is_terminal(),
-            Output::Stderr => std::io::stderr().is_terminal(),
+            StdOutput::Stdout => std::io::stdout().is_terminal(),
+            StdOutput::Stderr => std::io::stderr().is_terminal(),
         }
     }
 }

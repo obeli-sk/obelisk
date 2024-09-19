@@ -589,8 +589,24 @@ pub(crate) mod log {
     }
 }
 
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StdOutput {
+    Stdout,
+    Stderr,
+}
+
+impl From<StdOutput> for wasm_workers::std_output_stream::StdOutput {
+    fn from(value: StdOutput) -> Self {
+        match value {
+            StdOutput::Stdout => Self::Stdout,
+            StdOutput::Stderr => Self::Stderr,
+        }
+    }
+}
+
 pub(crate) mod webhook {
-    use super::{ComponentCommon, DurationConfig};
+    use super::{ComponentCommon, DurationConfig, StdOutput};
     use crate::config::ConfigStore;
     use anyhow::Context;
     use concepts::ConfigId;
@@ -618,6 +634,8 @@ pub(crate) mod webhook {
         pub(crate) common: ComponentCommon,
         pub(crate) http_server: String,
         pub(crate) routes: Vec<WebhookRoute>,
+        pub(crate) forward_stdout: Option<StdOutput>,
+        pub(crate) forward_stderr: Option<StdOutput>,
     }
 
     impl WebhookComponent {
@@ -645,6 +663,12 @@ pub(crate) mod webhook {
                     .collect::<Result<Vec<_>, _>>()
                     .with_context(|| format!("cannot parse webhook `{}`", config_store.name()))?,
                 config_store,
+                forward_stdout: self
+                    .forward_stdout
+                    .map(wasm_workers::std_output_stream::StdOutput::from),
+                forward_stderr: self
+                    .forward_stderr
+                    .map(wasm_workers::std_output_stream::StdOutput::from),
             })
         }
     }
@@ -670,6 +694,8 @@ pub(crate) mod webhook {
         pub(crate) config_store: ConfigStore,
         pub(crate) wasm_path: PathBuf,
         pub(crate) routes: Vec<WebhookRouteVerified>,
+        pub(crate) forward_stdout: Option<wasm_workers::std_output_stream::StdOutput>,
+        pub(crate) forward_stderr: Option<wasm_workers::std_output_stream::StdOutput>,
     }
 
     pub(crate) struct WebhookRouteVerified {

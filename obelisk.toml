@@ -54,7 +54,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # listening_addr = "0.0.0.0:8080"
 # request_timeout.secs = 1
 #
-# [[webhook]]
+# [[webhook_component]]
 ## Common settings for all components - see above.
 # http_server = "external" # link to a `http_server`'s name
 ### Routes section
@@ -68,6 +68,8 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## ""                        - Fallback pattern.
 ## For details about the matching engine please see https://docs.rs/route-recognizer/latest/route_recognizer/
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]
+## forward_stdout, forward_stdout: Can be set to "stdout" or "stderr" to forward guest streams to the host.
+
 
 [[wasm_activity]]
 name = "fibo_activity"
@@ -96,6 +98,8 @@ name = "webhook_trigger_fibo"
 location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-19@sha256:ba0a28fc5670769e17c0361675b788f65f427e53be8983d3d1a181c2702dcb6b"
 http_server = "external"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
+forward_stdout = "stderr"
+forward_stderr = "stderr"
 
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:
