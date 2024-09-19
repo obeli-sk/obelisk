@@ -36,6 +36,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # recycle_instances = true # If true, the same WASM instance will be used again instead of creating new instance for performance reasons.
 # default_max_retries = 5 # When calling the activity directly, `default_max_retries` is applied.
 # default_retry_exp_backoff.millis = 100 # Exponential backoff setting.
+## forward_stdout, forward_stdout: Can be set to "stdout" or "stderr" to forward guest std streams to the host.
 
 ### Workflow components configuration
 # [[workflow]]
@@ -68,8 +69,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## ""                        - Fallback pattern.
 ## For details about the matching engine please see https://docs.rs/route-recognizer/latest/route_recognizer/
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]
-## forward_stdout, forward_stdout: Can be set to "stdout" or "stderr" to forward guest streams to the host.
-
+## forward_stdout, forward_stdout: Can be set to "stdout" or "stderr" to forward guest std streams to the host.
 
 [[wasm_activity]]
 name = "fibo_activity"

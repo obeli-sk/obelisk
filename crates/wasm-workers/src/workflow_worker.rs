@@ -382,7 +382,7 @@ pub(crate) mod tests {
         let config_id = ConfigId::new(
             ComponentType::Workflow,
             wasm_file_name(wasm_path),
-            "dummy hash".to_string(),
+            StrVariant::Static("dummy hash"),
         )
         .unwrap();
         let worker = Arc::new(

@@ -5,6 +5,7 @@ use crate::oci;
 use anyhow::Context;
 use concepts::ConfigId;
 use concepts::ContentDigest;
+use concepts::StrVariant;
 use concepts::{ComponentType, FunctionMetadata};
 use serde_with::serde_as;
 use std::path::{Path, PathBuf};
@@ -99,11 +100,11 @@ impl ConfigStore {
             use std::hash::Hasher as _;
             let mut hasher = std::hash::DefaultHasher::new();
             self.hash(&mut hasher);
-            format!("{:x}", hasher.finish())
+            StrVariant::from(format!("{:x}", hasher.finish()))
         };
         Ok(ConfigId::new(
             self.as_component_type(),
-            self.name().to_string(),
+            StrVariant::from(self.name().to_string()),
             hash,
         )?)
     }

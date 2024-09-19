@@ -302,11 +302,11 @@ pub(crate) mod tests {
     pub const FIBO_10_INPUT: u8 = 10;
     pub const FIBO_10_OUTPUT: u64 = 55;
 
-    pub(crate) fn wasm_file_name(input: impl AsRef<Path>) -> String {
+    pub(crate) fn wasm_file_name(input: impl AsRef<Path>) -> StrVariant {
         let input = input.as_ref();
         let input = input.file_name().and_then(|name| name.to_str()).unwrap();
         let input = input.strip_suffix(".wasm").unwrap().to_string();
-        input
+        StrVariant::from(input)
     }
 
     pub(crate) fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -318,7 +318,7 @@ pub(crate) mod tests {
         let config_id = ConfigId::new(
             ComponentType::WasmActivity,
             wasm_file_name(wasm_path),
-            "dummy hash".to_string(),
+            StrVariant::Static("dummy hash"),
         )
         .unwrap();
         let worker = Arc::new(

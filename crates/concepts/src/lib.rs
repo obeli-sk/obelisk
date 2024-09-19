@@ -783,15 +783,15 @@ pub mod prefixed_ulid {
 #[display("{component_type}:{name}:{hash}")]
 pub struct ConfigId {
     pub component_type: ComponentType,
-    pub name: String, // FIXME: StrVariant
-    pub hash: String,
+    pub name: StrVariant,
+    pub hash: StrVariant,
     _private: PhantomData<()>,
 }
 impl ConfigId {
     pub fn new(
         component_type: ComponentType,
-        name: String,
-        hash: String,
+        name: StrVariant,
+        hash: StrVariant,
     ) -> Result<Self, ConfigIdErrror> {
         if let Some(invalid) = name
             .chars()
@@ -815,8 +815,8 @@ impl ConfigId {
     pub const fn dummy() -> Self {
         Self {
             component_type: ComponentType::WasmActivity,
-            name: String::new(),
-            hash: String::new(),
+            name: StrVariant::empty(),
+            hash: StrVariant::empty(),
             _private: PhantomData,
         }
     }
@@ -825,7 +825,7 @@ impl ConfigId {
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigIdErrror {
     #[error("name must only contain alphanumeric characters and underscore, found invalid character `{invalid}` in: {name}")]
-    InvalidName { invalid: char, name: String },
+    InvalidName { invalid: char, name: StrVariant },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -848,8 +848,8 @@ impl FromStr for ConfigId {
         let component_type = component_type.parse()?;
         Ok(Self {
             component_type,
-            name: name.to_string(),
-            hash: hash.to_string(),
+            name: StrVariant::from(name.to_string()),
+            hash: StrVariant::from(hash.to_string()),
             _private: PhantomData,
         })
     }
