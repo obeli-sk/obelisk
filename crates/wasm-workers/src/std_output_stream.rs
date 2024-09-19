@@ -65,21 +65,18 @@ impl wasmtime_wasi::HostOutputStream for LogStream {
                     .map_err(StreamError::LastOperationFailed)?;
                 self.needs_prefix_on_next_write = false;
             }
-            match bytes.iter().position(|b| *b == b'\n') {
-                Some(i) => {
-                    let (a, b) = bytes.split_at(i + 1);
-                    bytes = b;
-                    self.output
-                        .write_all(a)
-                        .map_err(StreamError::LastOperationFailed)?;
-                    self.needs_prefix_on_next_write = true;
-                }
-                None => {
-                    self.output
-                        .write_all(bytes)
-                        .map_err(StreamError::LastOperationFailed)?;
-                    break;
-                }
+            if let Some(i) = bytes.iter().position(|b| *b == b'\n') {
+                let (a, b) = bytes.split_at(i + 1);
+                bytes = b;
+                self.output
+                    .write_all(a)
+                    .map_err(StreamError::LastOperationFailed)?;
+                self.needs_prefix_on_next_write = true;
+            } else {
+                self.output
+                    .write_all(bytes)
+                    .map_err(StreamError::LastOperationFailed)?;
+                break;
             }
         }
 

@@ -785,7 +785,7 @@ pub struct ConfigId {
     pub component_type: ComponentType,
     pub name: String,
     pub hash: String,
-    _private: (),
+    _private: PhantomData<()>,
 }
 impl ConfigId {
     pub fn new(
@@ -803,9 +803,10 @@ impl ConfigId {
             component_type,
             name,
             hash,
-            _private: (),
+            _private: PhantomData,
         })
     }
+    #[must_use]
     pub fn component_type(&self) -> ComponentType {
         self.component_type
     }
@@ -816,7 +817,7 @@ impl ConfigId {
             component_type: ComponentType::WasmActivity,
             name: String::new(),
             hash: String::new(),
-            _private: (),
+            _private: PhantomData,
         }
     }
 }
@@ -849,7 +850,7 @@ impl FromStr for ConfigId {
             component_type,
             name: name.to_string(),
             hash: hash.to_string(),
-            _private: (),
+            _private: PhantomData,
         })
     }
 }
