@@ -829,8 +829,7 @@ pub enum ConfigIdErrror {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ComponentConfigHashParseErrror {
-    // TODO: Rename to ConfigIdParseError
+pub enum ConfigIdParseError {
     #[error("cannot parse ComponentConfigHash - delimiter ':' not found")]
     DelimiterNotFound,
     #[error("cannot parse prefix of ComponentConfigHash - {0}")]
@@ -840,7 +839,7 @@ pub enum ComponentConfigHashParseErrror {
 }
 
 impl FromStr for ConfigId {
-    type Err = ComponentConfigHashParseErrror;
+    type Err = ConfigIdParseError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         let (component_type, input) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
