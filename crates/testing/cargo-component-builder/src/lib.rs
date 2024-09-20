@@ -1,10 +1,9 @@
+use cargo_metadata::camino::Utf8Path;
+use indexmap::IndexMap;
 use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-
-use cargo_metadata::camino::Utf8Path;
-use indexmap::IndexMap;
 use utils::wasm_tools::WasmComponent;
 use wasmtime::Engine;
 
@@ -158,7 +157,7 @@ fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str) -> PathB
         .arg(format!("--target={tripple}"))
         .arg(format!("--package={name}"))
         .env("CARGO_TARGET_DIR", out_dir)
-        .env("RUSTFLAGS", "-g") // keep debuginfo for backtraces
+        .env("CARGO_PROFILE_RELEASE_DEBUG", "limited") // keep debuginfo for backtraces
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .env_remove("CLIPPY_ARGS"); // do not pass clippy parameters
     let status = cmd.status().unwrap();
