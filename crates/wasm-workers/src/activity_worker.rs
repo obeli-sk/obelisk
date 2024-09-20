@@ -1,3 +1,4 @@
+use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
 use crate::WasmFileError;
 use async_trait::async_trait;
@@ -18,8 +19,8 @@ use wasmtime_wasi_http::WasiHttpImpl;
 
 type StoreCtx = crate::activity_ctx::ActivityCtx;
 
-//TODO: Benchmark and decide whether this is still needed, consider using InstancePre instead.
-#[derive(Clone, Debug, Copy, Default, serde::Serialize, serde::Deserialize)]
+// TODO: Benchmark and decide whether this is still needed, consider using InstancePre instead.
+#[derive(Clone, Debug, Copy, Default)]
 pub enum RecycleInstancesSetting {
     #[default]
     Enabled,
@@ -47,12 +48,13 @@ impl RecycleInstancesSetting {
     }
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug)]
 pub struct ActivityConfig {
     pub config_id: ConfigId,
     pub recycle_instances: RecycleInstancesSetting,
     pub forward_stdout: Option<StdOutput>,
     pub forward_stderr: Option<StdOutput>,
+    pub env_vars: Arc<[EnvVar]>,
 }
 
 pub const TIMEOUT_SLEEP_UNIT: Duration = Duration::from_millis(10);
@@ -69,6 +71,7 @@ pub struct ActivityWorker<C: ClockFn> {
     config_id: ConfigId, // TODO: Move to WorkerContext?
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
+    env_vars: Arc<[EnvVar]>,
 }
 
 impl<C: ClockFn> ActivityWorker<C> {
@@ -124,6 +127,7 @@ impl<C: ClockFn> ActivityWorker<C> {
             config_id: config.config_id,
             forward_stdout: config.forward_stdout,
             forward_stderr: config.forward_stderr,
+            env_vars: config.env_vars,
         })
     }
 }
@@ -155,6 +159,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 &self.config_id,
                 self.forward_stdout,
                 self.forward_stderr,
+                &self.env_vars,
             );
             match self
                 .linker
@@ -309,6 +314,19 @@ pub(crate) mod tests {
         StrVariant::from(input)
     }
 
+    fn activity_config(
+        config_id: ConfigId,
+        recycle_instances: RecycleInstancesSetting,
+    ) -> ActivityConfig {
+        ActivityConfig {
+            config_id,
+            recycle_instances,
+            forward_stdout: None,
+            forward_stderr: None,
+            env_vars: Arc::from([]),
+        }
+    }
+
     pub(crate) fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         wasm_path: &'static str,
@@ -324,12 +342,7 @@ pub(crate) mod tests {
         let worker = Arc::new(
             ActivityWorker::new_with_config(
                 wasm_path,
-                ActivityConfig {
-                    config_id: config_id.clone(),
-                    recycle_instances: RecycleInstancesSetting::Disabled,
-                    forward_stdout: None,
-                    forward_stderr: None,
-                },
+                activity_config(config_id.clone(), RecycleInstancesSetting::Disabled),
                 engine,
                 clock_fn.clone(),
             )
@@ -429,12 +442,7 @@ pub(crate) mod tests {
 
         let fibo_worker = ActivityWorker::new_with_config(
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-            ActivityConfig {
-                config_id: ConfigId::dummy(),
-                recycle_instances,
-                forward_stdout: None,
-                forward_stderr: None,
-            },
+            activity_config(ConfigId::dummy(), recycle_instances),
             engine,
             now,
         )
@@ -520,12 +528,7 @@ pub(crate) mod tests {
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                    ActivityConfig {
-                        config_id: ConfigId::dummy(),
-                        recycle_instances,
-                        forward_stdout: None,
-                        forward_stderr: None,
-                    },
+                    activity_config(ConfigId::dummy(), recycle_instances),
                     engine,
                     now,
                 )
@@ -612,12 +615,7 @@ pub(crate) mod tests {
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                    ActivityConfig {
-                        config_id: ConfigId::dummy(),
-                        recycle_instances: RecycleInstancesSetting::Disabled,
-                        forward_stdout: None,
-                        forward_stderr: None,
-                    },
+                    activity_config(ConfigId::dummy(), RecycleInstancesSetting::Disabled),
                     engine,
                     now,
                 )
@@ -660,12 +658,7 @@ pub(crate) mod tests {
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                    ActivityConfig {
-                        config_id: ConfigId::dummy(),
-                        recycle_instances: RecycleInstancesSetting::Disabled,
-                        forward_stdout: None,
-                        forward_stderr: None,
-                    },
+                    activity_config(ConfigId::dummy(), RecycleInstancesSetting::Disabled),
                     engine,
                     sim_clock.get_clock_fn(),
                 )
@@ -773,12 +766,7 @@ pub(crate) mod tests {
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                    ActivityConfig {
-                        config_id: ConfigId::dummy(),
-                        recycle_instances: RecycleInstancesSetting::Disabled,
-                        forward_stdout: None,
-                        forward_stderr: None,
-                    },
+                    activity_config(ConfigId::dummy(), RecycleInstancesSetting::Disabled),
                     engine,
                     sim_clock.get_clock_fn(),
                 )

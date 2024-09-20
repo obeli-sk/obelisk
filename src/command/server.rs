@@ -597,6 +597,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                 config_id.clone(),
                 webhook.forward_stdout,
                 webhook.forward_stderr,
+                Arc::from(webhook.env_vars),
             )?;
             component_registry.insert(Component {
                 config_id,

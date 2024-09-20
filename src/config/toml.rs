@@ -14,6 +14,7 @@ use std::{
 use tracing::instrument;
 use wasm_workers::{
     activity_worker::ActivityConfig,
+    envvar::EnvVar,
     workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig},
 };
 use webhook::{HttpServer, WebhookComponent};
@@ -232,6 +233,8 @@ pub(crate) struct WasmActivityToml {
     pub(crate) recycle_instances: bool,
     pub(crate) forward_stdout: Option<StdOutput>,
     pub(crate) forward_stderr: Option<StdOutput>,
+    #[serde(default)]
+    pub(crate) env_vars: Vec<EnvVar>,
 }
 
 #[derive(Debug)]
@@ -266,6 +269,7 @@ impl WasmActivityToml {
             recycle_instances: self.recycle_instances.into(),
             forward_stdout: self.forward_stdout.map(From::from),
             forward_stderr: self.forward_stderr.map(From::from),
+            env_vars: Arc::from(self.env_vars),
         };
         Ok(ActivityConfigVerified {
             config_store,
@@ -599,7 +603,6 @@ pub(crate) enum StdOutput {
     Stdout,
     Stderr,
 }
-
 impl From<StdOutput> for wasm_workers::std_output_stream::StdOutput {
     fn from(value: StdOutput) -> Self {
         match value {
@@ -621,6 +624,7 @@ pub(crate) mod webhook {
         sync::Arc,
     };
     use tracing::instrument;
+    use wasm_workers::envvar::EnvVar;
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -640,6 +644,8 @@ pub(crate) mod webhook {
         pub(crate) routes: Vec<WebhookRoute>,
         pub(crate) forward_stdout: Option<StdOutput>,
         pub(crate) forward_stderr: Option<StdOutput>,
+        #[serde(default)]
+        pub(crate) env_vars: Vec<EnvVar>,
     }
 
     impl WebhookComponent {
@@ -669,6 +675,7 @@ pub(crate) mod webhook {
                 config_store,
                 forward_stdout: self.forward_stdout.map(From::from),
                 forward_stderr: self.forward_stderr.map(From::from),
+                env_vars: self.env_vars,
             })
         }
     }
@@ -696,6 +703,7 @@ pub(crate) mod webhook {
         pub(crate) routes: Vec<WebhookRouteVerified>,
         pub(crate) forward_stdout: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) forward_stderr: Option<wasm_workers::std_output_stream::StdOutput>,
+        pub(crate) env_vars: Vec<EnvVar>,
     }
 
     pub(crate) struct WebhookRouteVerified {

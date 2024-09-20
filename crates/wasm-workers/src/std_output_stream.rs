@@ -1,8 +1,7 @@
 // https://github.com/bytecodealliance/wasmtime/tree/v24.0.0/src/commands/serve.rs
 use wasmtime_wasi::{StreamError, StreamResult};
 
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug)]
 pub enum StdOutput {
     Stdout,
     Stderr,

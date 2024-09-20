@@ -1,3 +1,4 @@
+use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::workflow_ctx::{
     obelisk, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT,
@@ -61,6 +62,7 @@ pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     config_id: ConfigId,
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
+    env_vars: Arc<[EnvVar]>,
 }
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> Clone for WebhookInstance<C, DB, P> {
@@ -70,6 +72,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> Clone for WebhookInstance<C, D
             config_id: self.config_id.clone(),
             forward_stdout: self.forward_stdout,
             forward_stderr: self.forward_stderr,
+            env_vars: self.env_vars.clone(),
         }
     }
 }
@@ -123,6 +126,7 @@ pub fn component_to_instance<
     config_id: ConfigId,
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
+    env_vars: Arc<[EnvVar]>,
 ) -> Result<WebhookInstance<C, DB, P>, WebhookComponentInstantiationError> {
     let mut linker = Linker::new(engine);
     wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| WasmFileError::LinkingError {
@@ -196,6 +200,7 @@ pub fn component_to_instance<
         config_id,
         forward_stdout,
         forward_stderr,
+        env_vars,
     })
 }
 
@@ -702,6 +707,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         execution_id: ExecutionId,
         forward_stdout: Option<StdOutput>,
         forward_stderr: Option<StdOutput>,
+        env_vars: &[EnvVar],
     ) -> Store<WebhookCtx<C, DB, P>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
         if let Some(stdout) = forward_stdout {
@@ -711,6 +717,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         if let Some(stderr) = forward_stderr {
             let stderr = LogStream::new(format!("[{config_id} {execution_id} stderr]"), stderr);
             wasi_ctx.stderr(stderr);
+        }
+        for env_var in env_vars {
+            wasi_ctx.env(&env_var.key, &env_var.val);
         }
         for (key, val) in params {
             wasi_ctx.env(key, val);
@@ -850,6 +859,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 self.execution_id,
                 found_instance.forward_stdout,
                 found_instance.forward_stderr,
+                &found_instance.env_vars,
             );
             let req = store
                 .data_mut()
@@ -959,6 +969,7 @@ mod tests {
         use executor::executor::ExecutorTaskHandle;
         use std::net::SocketAddr;
         use std::str::FromStr;
+        use std::sync::Arc;
         use std::time::Duration;
         use test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO;
         use test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA;
@@ -1018,6 +1029,7 @@ mod tests {
                         ConfigId::dummy(),
                         None,
                         None,
+                        Arc::from([]),
                     )
                     .unwrap();
                     let mut router = MethodAwareRouter::default();

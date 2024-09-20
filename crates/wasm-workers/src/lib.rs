@@ -25,6 +25,65 @@ pub enum WasmFileError {
     },
 }
 
+pub mod envvar {
+    use serde::{Deserialize, Deserializer};
+
+    #[derive(Clone, derivative::Derivative)]
+    #[derivative(Debug)]
+    pub struct EnvVar {
+        pub key: String,
+        #[derivative(Debug = "ignore")]
+        pub val: String,
+    }
+
+    struct EnvVarVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for EnvVarVisitor {
+        type Value = EnvVar;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str(
+                "either key of environment varaible to be forwarded from host, or key=value",
+            )
+        }
+
+        fn visit_str<E>(self, input: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(match input.split_once('=') {
+                None => {
+                    let val = match std::env::var(input) {
+                        Ok(val) => val,
+                        Err(err) => {
+                            return Err(E::custom(format!(
+                                "cannot get environment variable `{input}` from the host - {err}"
+                            )))
+                        }
+                    };
+
+                    EnvVar {
+                        key: input.to_string(),
+                        val,
+                    }
+                }
+                Some((k, input)) => EnvVar {
+                    key: k.to_string(),
+                    val: input.to_string(),
+                },
+            })
+        }
+    }
+    impl<'de> Deserialize<'de> for EnvVar {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_str(EnvVarVisitor)
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use std::sync::Arc;
@@ -80,7 +139,7 @@ pub(crate) mod tests {
         use concepts::ConfigId;
         use db_tests::Database;
         use hyper::Method;
-        use std::{net::SocketAddr, time::Duration};
+        use std::{net::SocketAddr, sync::Arc, time::Duration};
         use tokio::net::TcpListener;
         use utils::{time::now, wasm_tools::WasmComponent};
 
@@ -99,6 +158,7 @@ pub(crate) mod tests {
                     recycle_instances: RecycleInstancesSetting::default(),
                     forward_stdout: None,
                     forward_stderr: None,
+                    env_vars: Arc::from([]),
                 },
                 engine,
                 now,
@@ -136,6 +196,7 @@ pub(crate) mod tests {
                 ConfigId::dummy(),
                 None,
                 None,
+                Arc::from([]),
             )
             .unwrap();
 

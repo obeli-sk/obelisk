@@ -1,3 +1,4 @@
+use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
 use concepts::{ConfigId, ExecutionId};
 use wasmtime::Engine;
@@ -37,6 +38,7 @@ pub fn store(
     config_id: &ConfigId,
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
+    env_vars: &[EnvVar],
 ) -> Store<ActivityCtx> {
     let mut wasi_ctx = WasiCtxBuilder::new();
     if let Some(stdout) = forward_stdout {
@@ -46,6 +48,9 @@ pub fn store(
     if let Some(stderr) = forward_stderr {
         let stderr = LogStream::new(format!("[{config_id} {execution_id} stderr]"), stderr);
         wasi_ctx.stderr(stderr);
+    }
+    for env_var in env_vars {
+        wasi_ctx.env(&env_var.key, &env_var.val);
     }
     let ctx = ActivityCtx {
         table: ResourceTable::new(),
