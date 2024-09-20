@@ -5,12 +5,23 @@ use directories::ProjectDirs;
 use std::path::PathBuf;
 use tracing::debug;
 
+const EXAMPLE_TOML: &[u8] = include_bytes!("../../obelisk.toml");
+
 pub(crate) struct ConfigHolder {
     paths: Vec<PathBuf>,
     pub(crate) project_dirs: Option<ProjectDirs>,
 }
 
 impl ConfigHolder {
+    pub(crate) async fn generate_default_config() -> Result<PathBuf, anyhow::Error> {
+        let path = PathBuf::from("obelisk.toml");
+        if path.try_exists()? {
+            bail!("file already exists: {path:?}");
+        }
+        tokio::fs::write(&path, EXAMPLE_TOML).await?;
+        Ok(path)
+    }
+
     pub(crate) fn new(project_dirs: Option<ProjectDirs>, config: Option<PathBuf>) -> Self {
         let paths = if let Some(config) = config {
             vec![config]

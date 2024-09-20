@@ -41,6 +41,11 @@ async fn main() -> Result<(), anyhow::Error> {
             ))
             .await
         }
+        Subcommand::Server(Server::GenerateConfig) => {
+            let path = ConfigHolder::generate_default_config().await?;
+            println!("Generated {path:?}");
+            Ok(())
+        }
         Subcommand::Client(Client { api_url, command }) => {
             match command {
                 ClientSubcommand::Component(args::Component::Inspect { path, verbosity }) => {
