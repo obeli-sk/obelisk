@@ -40,6 +40,9 @@ pub(crate) enum Server {
         /// Clean the codegen cache
         #[arg(long)]
         clean_codegen_cache: bool,
+
+        #[arg(long, short)]
+        config: Option<PathBuf>,
     },
 }
 

@@ -26,8 +26,10 @@ async fn main() -> Result<(), anyhow::Error> {
             clean_db,
             clean_cache,
             clean_codegen_cache,
+            config,
         }) => {
-            let config_holder = ConfigHolder::new(ProjectDirs::from("com", "obelisk", "obelisk"));
+            let config_holder =
+                ConfigHolder::new(ProjectDirs::from("com", "obelisk", "obelisk"), config);
             let config = config_holder.load_config().await?;
 
             Box::pin(command::server::run(
