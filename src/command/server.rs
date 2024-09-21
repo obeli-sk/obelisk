@@ -409,6 +409,7 @@ async fn run_internal(
 ) -> anyhow::Result<()> {
     debug!("Using toml configuration {config:#?}");
     let db_file = &config
+        .sqlite
         .get_sqlite_file(config_holder.project_dirs.as_ref())
         .await?;
     let wasm_cache_dir = config

@@ -7,7 +7,7 @@
 ## Server configuration
 api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server will listen.
 
-# sqlite_file = "${DATA_DIR}/obelisk.sqlite" # Path to sqlite database. Supports path prefixes.
+# sqlite.file = "${DATA_DIR}/obelisk.sqlite" # Path to sqlite database. Supports path prefixes.
 
 # oci.wasm_directory = "${CACHE_DIR}/wasm" # Path to directory where wasm files downloaded from an OCI registry are stored. Supports path prefixes.
 

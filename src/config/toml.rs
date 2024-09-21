@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 use tracing::instrument;
+use util::{replace_path_prefix_mkdir, FileOrFolder};
 use wasm_workers::{
     activity_worker::ActivityConfig,
     envvar::EnvVar,
@@ -35,9 +36,9 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ObeliskConfig {
-    #[serde(default)]
-    sqlite_file: Option<String>,
     pub(crate) api_listening_addr: SocketAddr,
+    #[serde(default)]
+    pub(crate) sqlite: SqliteConfig,
     #[serde(default)]
     pub(crate) oci: OciConfig,
     #[serde(default)]
@@ -59,45 +60,17 @@ pub(crate) struct ObeliskConfig {
     pub(crate) webhook_components: Vec<WebhookComponent>,
 }
 
-async fn replace_path_prefix_mkdir(
-    path: &str,
-    project_dirs: Option<&ProjectDirs>,
-    file_or_folder: FileOrFolder,
-) -> Result<PathBuf, anyhow::Error> {
-    let path = match project_dirs {
-        Some(project_dirs) => {
-            if let Some(suffix) = path.strip_prefix(DATA_DIR_PREFIX) {
-                project_dirs.data_dir().join(suffix)
-            } else if let Some(suffix) = path.strip_prefix(CACHE_DIR_PREFIX) {
-                project_dirs.cache_dir().join(suffix)
-            } else if let Some(suffix) = path.strip_prefix(CONFIG_DIR_PREFIX) {
-                project_dirs.config_dir().join(suffix)
-            } else {
-                PathBuf::from(path)
-            }
-        }
-        None => PathBuf::from(path),
-    };
-    if file_or_folder == FileOrFolder::Folder {
-        tokio::fs::create_dir_all(&path).await?;
-    } else if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    Ok(path)
+#[derive(Debug, Deserialize, Default)]
+pub(crate) struct SqliteConfig {
+    #[serde(default)]
+    file: Option<String>,
 }
-
-#[derive(PartialEq, Eq)]
-enum FileOrFolder {
-    File,
-    Folder,
-}
-
-impl ObeliskConfig {
+impl SqliteConfig {
     pub(crate) async fn get_sqlite_file(
         &self,
         project_dirs: Option<&ProjectDirs>,
     ) -> Result<PathBuf, anyhow::Error> {
-        let sqlite_file = self.sqlite_file.as_deref().unwrap_or_else(|| {
+        let sqlite_file = self.file.as_deref().unwrap_or_else(|| {
             if project_dirs.is_some() {
                 DEFAULT_SQLITE_FILE_IF_PROJECT_DIRS
             } else {
@@ -738,6 +711,47 @@ pub(crate) mod webhook {
                 }
             })
         }
+    }
+}
+
+mod util {
+    use std::path::PathBuf;
+
+    use directories::ProjectDirs;
+
+    use super::{CACHE_DIR_PREFIX, CONFIG_DIR_PREFIX, DATA_DIR_PREFIX};
+
+    pub(crate) async fn replace_path_prefix_mkdir(
+        path: &str,
+        project_dirs: Option<&ProjectDirs>,
+        file_or_folder: FileOrFolder,
+    ) -> Result<PathBuf, anyhow::Error> {
+        let path = match project_dirs {
+            Some(project_dirs) => {
+                if let Some(suffix) = path.strip_prefix(DATA_DIR_PREFIX) {
+                    project_dirs.data_dir().join(suffix)
+                } else if let Some(suffix) = path.strip_prefix(CACHE_DIR_PREFIX) {
+                    project_dirs.cache_dir().join(suffix)
+                } else if let Some(suffix) = path.strip_prefix(CONFIG_DIR_PREFIX) {
+                    project_dirs.config_dir().join(suffix)
+                } else {
+                    PathBuf::from(path)
+                }
+            }
+            None => PathBuf::from(path),
+        };
+        if file_or_folder == FileOrFolder::Folder {
+            tokio::fs::create_dir_all(&path).await?;
+        } else if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        Ok(path)
+    }
+
+    #[derive(PartialEq, Eq)]
+    pub(crate) enum FileOrFolder {
+        File,
+        Folder,
     }
 }
 
