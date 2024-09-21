@@ -508,8 +508,7 @@ impl SqlitePool {
                         .map_err(convert_err)
                     });
                     let res = res.and_then(|mut transaction| {
-                        debug_span!(parent: &parent_span, "tx_fn")
-                            .in_scope(|| func(&mut transaction).map(|ok| (ok, transaction)))
+                        parent_span.in_scope(|| func(&mut transaction).map(|ok| (ok, transaction)))
                     });
                     let res = res.and_then(|(ok, transaction)| {
                         debug_span!(parent: &parent_span, "tx_commit")
