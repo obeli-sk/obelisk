@@ -1,6 +1,6 @@
 use std::{error::Error, fmt::Debug, path::Path, rc::Rc, sync::Arc};
 use tempfile::NamedTempFile;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, instrument, trace, warn};
 use wasmtime::{Engine, EngineWeak};
 
 #[derive(thiserror::Error, Debug)]
@@ -150,6 +150,7 @@ impl Engines {
         Self::configure_common(wasmtime_config, config)
     }
 
+    #[instrument(skip_all)]
     fn on_demand(cache_config: Option<Rc<NamedTempFile>>) -> Result<Self, EngineError> {
         let strategy = wasmtime::InstanceAllocationStrategy::OnDemand;
         let engine_config = match cache_config {
@@ -163,6 +164,7 @@ impl Engines {
         })
     }
 
+    #[instrument(skip_all)]
     fn pooling(
         opts: &PoolingOptions,
         cache_config: Option<Rc<NamedTempFile>>,
@@ -221,6 +223,7 @@ impl Engines {
     }
 
     // TODO: Create a wasmtime issue requesting a better cache config API
+    #[instrument(skip_all)]
     pub async fn write_codegen_config(
         codegen_cache: Option<&Path>,
     ) -> Result<Option<Rc<NamedTempFile>>, std::io::Error> {

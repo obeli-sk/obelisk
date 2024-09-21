@@ -502,10 +502,12 @@ async fn run_internal(
                 .instrument(init_span.clone())
                 .await
                 .context("error configuring codegen cache")?;
-        Engines::auto_detect_allocator(
-            &config.wasmtime_pooling_config.into(),
-            codegen_cache_config_file_holder,
-        )?
+        init_span.in_scope(|| {
+            Engines::auto_detect_allocator(
+                &config.wasmtime_pooling_config.into(),
+                codegen_cache_config_file_holder,
+            )
+        })?
     };
     let _epoch_ticker =
         EpochTicker::spawn_new(engines.weak_refs(), Duration::from_millis(EPOCH_MILLIS));
@@ -528,6 +530,7 @@ async fn run_internal(
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
     )
+    .instrument(init_span.clone())
     .await?;
     let exec_join_handles = spawn_tasks(
         &engines,
