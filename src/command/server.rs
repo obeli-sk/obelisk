@@ -490,7 +490,7 @@ async fn run_internal(
 
     let api_listening_addr = config.api_listening_addr;
     let init_span = info_span!("init");
-    let db_pool = SqlitePool::new(db_file)
+    let db_pool = SqlitePool::new(db_file, config.sqlite.as_config())
         .instrument(init_span.clone())
         .await
         .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;

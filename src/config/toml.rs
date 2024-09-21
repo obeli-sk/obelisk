@@ -2,6 +2,7 @@ use super::{
     ComponentLocation, {ConfigStore, ConfigStoreCommon},
 };
 use concepts::ConfigId;
+use db_sqlite::sqlite_dao::SqliteConfig;
 use directories::ProjectDirs;
 use log::{LoggingConfig, LoggingStyle};
 use serde::Deserialize;
@@ -38,7 +39,7 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 pub(crate) struct ObeliskConfig {
     pub(crate) api_listening_addr: SocketAddr,
     #[serde(default)]
-    pub(crate) sqlite: SqliteConfig,
+    pub(crate) sqlite: SqliteConfigToml,
     #[serde(default)]
     pub(crate) oci: OciConfig,
     #[serde(default)]
@@ -61,11 +62,13 @@ pub(crate) struct ObeliskConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-pub(crate) struct SqliteConfig {
+pub(crate) struct SqliteConfigToml {
     #[serde(default)]
     file: Option<String>,
+    queue_capacity: Option<usize>,
+    low_prio_threshold: Option<usize>,
 }
-impl SqliteConfig {
+impl SqliteConfigToml {
     pub(crate) async fn get_sqlite_file(
         &self,
         project_dirs: Option<&ProjectDirs>,
@@ -78,6 +81,14 @@ impl SqliteConfig {
             }
         });
         replace_path_prefix_mkdir(sqlite_file, project_dirs, FileOrFolder::File).await
+    }
+
+    pub(crate) fn as_config(&self) -> SqliteConfig {
+        let def = SqliteConfig::default();
+        SqliteConfig {
+            queue_capacity: self.queue_capacity.unwrap_or(def.queue_capacity),
+            low_prio_threshold: self.low_prio_threshold.unwrap_or(def.low_prio_threshold),
+        }
     }
 }
 

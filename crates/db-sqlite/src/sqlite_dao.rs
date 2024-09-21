@@ -13,6 +13,7 @@ use concepts::{
     },
     ExecutionId, FunctionFqn, StrVariant,
 };
+use derivative::Derivative;
 use rusqlite::{
     named_params,
     types::{FromSql, FromSqlError},
@@ -21,7 +22,6 @@ use rusqlite::{
 use std::{
     cmp::max,
     collections::VecDeque,
-    env::VarError,
     error::Error,
     fmt::Debug,
     path::Path,
@@ -338,23 +338,23 @@ impl DbPool<SqlitePool> for SqlitePool {
     }
 }
 
+#[derive(Debug, Derivative, Clone, Copy)]
+#[derivative(Default)]
+pub struct SqliteConfig {
+    #[derivative(Default(value = "100"))]
+    pub queue_capacity: usize,
+    #[derivative(Default(value = "100"))]
+    pub low_prio_threshold: usize,
+}
+
 impl SqlitePool {
     #[instrument(skip_all)]
     #[instrument(skip_all)]
-    pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, DbError> {
-        let queue_capacity: usize =
-            std::env::var("SQLITE_QUEUE_CAP") // TODO: Move the configuration
-                .and_then(|val| val.parse().map_err(|_| VarError::NotPresent))
-                .unwrap_or(100);
-        let low_prio_threshold: usize =
-            std::env::var("SQLITE_LOW_PRIO_THRESHOLD") // TODO: Move the configuration
-                .and_then(|val| val.parse().map_err(|_| VarError::NotPresent))
-                .unwrap_or(100);
-        debug!(queue_capacity, low_prio_threshold, "Initializing sqlite");
+    pub async fn new<P: AsRef<Path>>(path: P, config: SqliteConfig) -> Result<Self, DbError> {
         let path = path.as_ref().to_owned();
         let (init_tx, init_rx) = oneshot::channel();
         let shutdown = Arc::new(AtomicBool::new(false));
-        let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(queue_capacity);
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(config.queue_capacity);
         {
             let shutdown = shutdown.clone();
             std::thread::spawn(move || {
@@ -396,7 +396,7 @@ impl SqlitePool {
                 let init_tx = init(init_tx, IDX_T_STATE_LOCK_PENDING).unwrap();
                 let init_tx = init(init_tx, CREATE_TABLE_T_DELAY).unwrap();
                 init_tx.send(Ok(())).expect("sending init OK must succeed");
-                let mut vec: Vec<ThreadCommand> = Vec::with_capacity(queue_capacity);
+                let mut vec: Vec<ThreadCommand> = Vec::with_capacity(config.queue_capacity);
                 loop {
                     vec.clear();
                     vec.push(
@@ -441,7 +441,7 @@ impl SqlitePool {
                     };
                     let processed =
                         execute(CommandPriority::High) + execute(CommandPriority::Medium);
-                    if processed < low_prio_threshold {
+                    if processed < config.low_prio_threshold {
                         execute(CommandPriority::Low);
                     }
                 }
@@ -2001,16 +2001,26 @@ impl DbConnection for SqlitePool {
 
 #[cfg(any(test, feature = "tempfile"))]
 pub mod tempfile {
-    use super::SqlitePool;
+    use super::{SqliteConfig, SqlitePool};
     use tempfile::NamedTempFile;
 
     pub async fn sqlite_pool() -> (SqlitePool, Option<NamedTempFile>) {
         if let Ok(path) = std::env::var("SQLITE_FILE") {
-            (SqlitePool::new(path).await.unwrap(), None)
+            (
+                SqlitePool::new(path, SqliteConfig::default())
+                    .await
+                    .unwrap(),
+                None,
+            )
         } else {
             let file = NamedTempFile::new().unwrap();
             let path = file.path();
-            (SqlitePool::new(path).await.unwrap(), Some(file))
+            (
+                SqlitePool::new(path, SqliteConfig::default())
+                    .await
+                    .unwrap(),
+                Some(file),
+            )
         }
     }
 }
