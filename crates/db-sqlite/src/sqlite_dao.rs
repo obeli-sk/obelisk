@@ -525,14 +525,14 @@ impl SqlitePool {
             .map_err(|_recv_err| DbError::Connection(DbConnectionError::RecvError))?
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = Level::DEBUG, skip_all)]
     pub async fn conn_low_prio<F, T>(&self, func: F) -> Result<T, DbError>
     where
         F: FnOnce(&Connection) -> Result<T, DbError> + Send + 'static,
         T: Send + 'static + Default,
     {
         let (tx, rx) = oneshot::channel();
-        let span = tracing::info_span!("tx_function");
+        let span = tracing::debug_span!("tx_function");
         self.command_tx
             .send(ThreadCommand::Func {
                 priority: CommandPriority::Low,
