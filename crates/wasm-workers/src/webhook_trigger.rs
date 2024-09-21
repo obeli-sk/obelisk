@@ -14,6 +14,7 @@ use concepts::{
     ComponentType, ConfigId, ExecutionId, FinishedExecutionError, FunctionFqn, FunctionRegistry,
     IfcFqnName, Params, StrVariant,
 };
+use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -57,24 +58,14 @@ pub enum WebhookServerError {
     SocketError(std::io::Error),
 }
 
+#[derive(Derivative)]
+#[derivative(Clone(bound = ""))]
 pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     proxy_pre: Arc<ProxyPre<WebhookCtx<C, DB, P>>>,
     config_id: ConfigId,
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
-}
-
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> Clone for WebhookInstance<C, DB, P> {
-    fn clone(&self) -> Self {
-        Self {
-            proxy_pre: self.proxy_pre.clone(),
-            config_id: self.config_id.clone(),
-            forward_stdout: self.forward_stdout,
-            forward_stderr: self.forward_stderr,
-            env_vars: self.env_vars.clone(),
-        }
-    }
 }
 
 pub struct MethodAwareRouter<T> {

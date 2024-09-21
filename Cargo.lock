@@ -2394,6 +2394,7 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "chrono",
+ "derivative",
  "derive_more",
  "getrandom",
  "madsim",

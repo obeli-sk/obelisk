@@ -618,12 +618,15 @@ impl Params {
 
 pub mod prefixed_ulid {
     use arbitrary::Arbitrary;
+    use derivative::Derivative;
     use serde_with::{DeserializeFromStr, SerializeDisplay};
     use std::marker::PhantomData;
     use ulid::Ulid;
 
-    #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr)]
+    #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr, Derivative)]
     #[display("{}_{ulid}", Self::prefix())]
+    #[derivative(Clone(bound = ""))]
+    #[derivative(Copy(bound = ""))]
     pub struct PrefixedUlid<T: 'static> {
         ulid: Ulid,
         phantom_data: PhantomData<fn(T) -> T>,
@@ -715,14 +718,6 @@ pub mod prefixed_ulid {
                 Display::fmt(&self, f)
             }
         }
-
-        impl<T> Clone for PrefixedUlid<T> {
-            fn clone(&self) -> Self {
-                *self
-            }
-        }
-
-        impl<T> Copy for PrefixedUlid<T> {}
 
         impl<T> Hash for PrefixedUlid<T> {
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
