@@ -764,10 +764,10 @@ async fn fetch_and_verify_all(
                     let name = webhook.common.name.clone();
                     let webhook = webhook
                         .fetch_and_verify(wasm_cache_dir.clone(), metadata_dir.clone())
-                        .in_current_span()
                         .await?;
                     Ok::<_, anyhow::Error>((name, webhook))
                 }
+                .in_current_span()
             })
         })
         .collect::<Vec<_>>();

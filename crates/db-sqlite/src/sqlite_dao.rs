@@ -348,8 +348,7 @@ pub struct SqliteConfig {
 }
 
 impl SqlitePool {
-    #[instrument(skip_all)]
-    #[instrument(skip_all)]
+    #[instrument(skip_all, name = "sqlite_new")]
     pub async fn new<P: AsRef<Path>>(path: P, config: SqliteConfig) -> Result<Self, DbError> {
         let path = path.as_ref().to_owned();
         let (init_tx, init_rx) = oneshot::channel();
