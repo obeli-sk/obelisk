@@ -231,8 +231,10 @@ pub(crate) struct WasmActivityToml {
     pub(crate) default_retry_exp_backoff: DurationConfig,
     #[serde(default = "default_true")]
     pub(crate) recycle_instances: bool,
-    pub(crate) forward_stdout: Option<StdOutput>,
-    pub(crate) forward_stderr: Option<StdOutput>,
+    #[serde(default)]
+    pub(crate) forward_stdout: StdOutput,
+    #[serde(default)]
+    pub(crate) forward_stderr: StdOutput,
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVar>,
 }
@@ -267,8 +269,8 @@ impl WasmActivityToml {
         let activity_config = ActivityConfig {
             config_id: config_id.clone(),
             recycle_instances: self.recycle_instances.into(),
-            forward_stdout: self.forward_stdout.map(From::from),
-            forward_stderr: self.forward_stderr.map(From::from),
+            forward_stdout: self.forward_stdout.into(),
+            forward_stderr: self.forward_stderr.into(),
             env_vars: Arc::from(self.env_vars),
         };
         Ok(ActivityConfigVerified {
@@ -461,6 +463,7 @@ impl From<DurationConfig> for Duration {
         }
     }
 }
+
 pub(crate) mod log {
     use std::str::FromStr;
 
@@ -597,17 +600,20 @@ pub(crate) mod log {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum StdOutput {
+    #[default]
+    None,
     Stdout,
     Stderr,
 }
-impl From<StdOutput> for wasm_workers::std_output_stream::StdOutput {
+impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
     fn from(value: StdOutput) -> Self {
         match value {
-            StdOutput::Stdout => Self::Stdout,
-            StdOutput::Stderr => Self::Stderr,
+            StdOutput::None => None,
+            StdOutput::Stdout => Some(wasm_workers::std_output_stream::StdOutput::Stdout),
+            StdOutput::Stderr => Some(wasm_workers::std_output_stream::StdOutput::Stderr),
         }
     }
 }
@@ -642,8 +648,8 @@ pub(crate) mod webhook {
         pub(crate) common: ComponentCommon,
         pub(crate) http_server: String,
         pub(crate) routes: Vec<WebhookRoute>,
-        pub(crate) forward_stdout: Option<StdOutput>,
-        pub(crate) forward_stderr: Option<StdOutput>,
+        pub(crate) forward_stdout: StdOutput,
+        pub(crate) forward_stderr: StdOutput,
         #[serde(default)]
         pub(crate) env_vars: Vec<EnvVar>,
     }
@@ -673,8 +679,8 @@ pub(crate) mod webhook {
                     .collect::<Result<Vec<_>, _>>()
                     .with_context(|| format!("cannot parse webhook `{}`", config_store.name()))?,
                 config_store,
-                forward_stdout: self.forward_stdout.map(From::from),
-                forward_stderr: self.forward_stderr.map(From::from),
+                forward_stdout: self.forward_stdout.into(),
+                forward_stderr: self.forward_stderr.into(),
                 env_vars: self.env_vars,
             })
         }

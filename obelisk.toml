@@ -36,9 +36,9 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # recycle_instances = true # If true, the same WASM instance will be used again instead of creating new instance for performance reasons.
 # default_max_retries = 5 # When calling the activity directly, `default_max_retries` is applied.
 # default_retry_exp_backoff.millis = 100 # Exponential backoff setting.
-## Std stream forwarding: Can be set to "stdout" or "stderr" to forward guest std streams to the host. Default is none.
-# forward_stdout="stderr"
-# forward_stderr="stderr"
+## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".
+# forward_stdout="stderr" # forwards stdout to host's stderr
+# forward_stderr="stderr" # forwards stderr to host's stderr
 ## Environment variables: Set to a specific value or forward from the host. Default is empty.
 # env_vars = ["ENV1", "ENV2=somevalue"]
 
@@ -73,9 +73,9 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## ""                        - Fallback pattern.
 ## For details about the matching engine please see https://docs.rs/route-recognizer/latest/route_recognizer/
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]
-## Std stream forwarding: Can be set to "stdout" or "stderr" to forward guest std streams to the host. Default is none.
-# forward_stdout="stderr"
-# forward_stderr="stderr"
+## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".
+# forward_stdout="stderr" # forwards stdout to host's stderr
+# forward_stderr="stderr" # forwards stderr to host's stderr
 ## Environment variables: Set to a specific value or forward from the host. Default is empty.
 # env_vars = ["ENV1", "ENV2=somevalue"]
 
@@ -125,8 +125,8 @@ forward_stderr = "stderr"
 [log.stdout]
 ## Defaults:
 # level = "info"
-# style = "plain_compact"
-# span = "none"
+# style = "plain_compact" # One of "plain","plain_compact","json"
+# span = "none" # One of "none","new","enter","exit","close","active","full"
 # target = false
 
 ## Sample (rolling) file configuration
