@@ -994,20 +994,21 @@ mod tests {
                 let sim_clock = SimClock::default();
                 let (guard, db_pool) = Database::Memory.set_up().await;
                 let activity_exec_task =
-                    spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn());
+                    spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn()).await;
                 let fn_registry = fn_registry_dummy(&[
                     FunctionFqn::new_static(FIBOA.0, FIBOA.1),
                     FunctionFqn::new_static(FIBO.0, FIBO.1),
                 ]);
                 let engine =
-                    Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
+                    Engines::get_webhook_engine(EngineConfig::on_demand_testing().await).unwrap();
                 let workflow_exec_task = spawn_workflow_fibo(
                     db_pool.clone(),
                     sim_clock.get_clock_fn(),
                     JoinNextBlockingStrategy::Await,
                     0,
                     fn_registry.clone(),
-                );
+                )
+                .await;
 
                 let router = {
                     let instance = webhook_trigger::component_to_instance(

@@ -150,7 +150,8 @@ pub(crate) mod tests {
             ])]
         #[tokio::test]
         async fn activity(path: &str) {
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
             ActivityWorker::new_with_config(
                 path,
                 ActivityConfig {
@@ -181,7 +182,8 @@ pub(crate) mod tests {
                 JoinNextBlockingStrategy::default(),
                 0,
                 fn_registry_dummy(&[]),
-            );
+            )
+            .await;
         }
 
         #[rstest::rstest(path => [
@@ -189,7 +191,8 @@ pub(crate) mod tests {
             ])]
         #[tokio::test]
         async fn webhook(path: &str) {
-            let engine = Engines::get_webhook_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_webhook_engine(EngineConfig::on_demand_testing().await).unwrap();
             let instance = webhook_trigger::component_to_instance(
                 &WasmComponent::new(path, &engine).unwrap(),
                 &engine,

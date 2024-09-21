@@ -327,12 +327,12 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    pub(crate) async fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
-        let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+        let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
         let config_id = ConfigId::new(
             ComponentType::WasmActivity,
             wasm_file_name(wasm_path),
@@ -365,7 +365,7 @@ pub(crate) mod tests {
         )
     }
 
-    pub(crate) fn spawn_activity_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    pub(crate) async fn spawn_activity_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         clock_fn: impl ClockFn + 'static,
     ) -> ExecutorTaskHandle {
@@ -374,6 +374,7 @@ pub(crate) mod tests {
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             clock_fn,
         )
+        .await
     }
 
     #[tokio::test]
@@ -382,7 +383,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
-        let exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn());
+        let exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn()).await;
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -517,7 +518,8 @@ pub(crate) mod tests {
                         clock_fn: now,
                     },
                 );
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
                 Duration::from_millis(EPOCH_MILLIS),
@@ -606,7 +608,8 @@ pub(crate) mod tests {
             const TIMEOUT: Duration = Duration::from_millis(200);
             test_utils::set_up();
 
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(
                 vec![engine.weak()],
                 Duration::from_millis(EPOCH_MILLIS),
@@ -654,7 +657,8 @@ pub(crate) mod tests {
             info!("All set up");
             let sim_clock = SimClock::default();
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
@@ -762,7 +766,8 @@ pub(crate) mod tests {
             test_utils::set_up();
             let sim_clock = SimClock::default();
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing()).unwrap();
+            let engine =
+                Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,

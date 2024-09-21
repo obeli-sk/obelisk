@@ -78,11 +78,12 @@ impl Debug for EngineConfig {
 
 impl EngineConfig {
     #[cfg(test)]
-    pub(crate) fn on_demand_testing() -> Self {
+    pub(crate) async fn on_demand_testing() -> Self {
         use std::path::PathBuf;
         let codegen_cache = PathBuf::from("test-codegen-cache");
         std::fs::create_dir_all(&codegen_cache).unwrap();
         let temp_file = Engines::write_codegen_config(Some(&codegen_cache))
+            .await
             .unwrap()
             .unwrap();
         std::fs::create_dir_all(&codegen_cache).unwrap();
@@ -219,21 +220,24 @@ impl Engines {
         })
     }
 
-    pub fn write_codegen_config(
+    // TODO: Create a wasmtime issue requesting a better cache config API
+    pub async fn write_codegen_config(
         codegen_cache: Option<&Path>,
     ) -> Result<Option<Rc<NamedTempFile>>, std::io::Error> {
         Ok(if let Some(codegen_cache) = codegen_cache {
-            use std::io::Write;
-            let mut codegen_cache_config_file = tempfile::NamedTempFile::new()?;
+            let codegen_cache_config_file = tempfile::NamedTempFile::new()?;
             info!("Setting codegen cache to {codegen_cache:?}");
             let codegen_cache = codegen_cache.canonicalize()?;
-            writeln!(
-                codegen_cache_config_file,
-                r#"[cache]
+            tokio::fs::write(
+                &codegen_cache_config_file,
+                format!(
+                    r#"[cache]
 enabled = true
 directory = {codegen_cache:?}
 "#
-            )?;
+                ),
+            )
+            .await?;
             trace!(
                 "Wrote temporary cache config to {:?}",
                 codegen_cache_config_file.path()

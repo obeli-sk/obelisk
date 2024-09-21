@@ -499,6 +499,8 @@ async fn run_internal(
     let engines = {
         let codegen_cache_config_file_holder =
             Engines::write_codegen_config(codegen_cache.as_deref())
+                .instrument(init_span.clone())
+                .await
                 .context("error configuring codegen cache")?;
         Engines::auto_detect_allocator(
             &config.wasmtime_pooling_config.into(),

@@ -368,7 +368,7 @@ pub(crate) mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
-    fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    async fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         wasm_path: &'static str,
         clock_fn: impl ClockFn + 'static,
@@ -377,7 +377,7 @@ pub(crate) mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> ExecutorTaskHandle {
         let workflow_engine =
-            Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap();
+            Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
         let config_id = ConfigId::new(
             ComponentType::Workflow,
             wasm_file_name(wasm_path),
@@ -419,7 +419,7 @@ pub(crate) mod tests {
         )
     }
 
-    pub(crate) fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    pub(crate) async fn spawn_workflow_fibo<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -434,6 +434,7 @@ pub(crate) mod tests {
             non_blocking_event_batching,
             fn_registry,
         )
+        .await
     }
 
     #[rstest]
@@ -493,7 +494,8 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
             batching,
             fn_registry,
-        );
+        )
+        .await;
         // Create an execution.
         let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = sim_clock.now();
@@ -533,7 +535,8 @@ pub(crate) mod tests {
         .unwrap();
 
         info!("Execution should call the activity and finish");
-        let activity_exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn());
+        let activity_exec_task =
+            spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn()).await;
 
         let res = db_connection
             .wait_for_finished_result(execution_id, None)
@@ -565,7 +568,8 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
             batching,
             fn_registry,
-        );
+        )
+        .await;
         // Create an execution.
         let execution_id = ExecutionId::from_parts(0, 0);
         let created_at = sim_clock.now();
@@ -609,7 +613,7 @@ pub(crate) mod tests {
         db_pool.close().await.unwrap();
     }
 
-    pub(crate) fn get_workflow_worker<
+    pub(crate) async fn get_workflow_worker<
         C: ClockFn,
         DB: DbConnection + 'static,
         P: DbPool<DB> + 'static,
@@ -631,7 +635,7 @@ pub(crate) mod tests {
                     child_max_retries: None,
                     non_blocking_event_batching,
                 },
-                Engines::get_workflow_engine(EngineConfig::on_demand_testing()).unwrap(),
+                Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap(),
                 db_pool,
                 clock_fn,
                 fn_registry,
@@ -640,7 +644,10 @@ pub(crate) mod tests {
         )
     }
 
-    pub(crate) fn spawn_workflow_sleep<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+    pub(crate) async fn spawn_workflow_sleep<
+        DB: DbConnection + 'static,
+        P: DbPool<DB> + 'static,
+    >(
         db_pool: P,
         clock_fn: impl ClockFn + 'static,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -654,7 +661,8 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
             non_blocking_event_batching,
             fn_registry,
-        );
+        )
+        .await;
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -692,7 +700,8 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
             batching,
             empty_fn_registry.clone(),
-        );
+        )
+        .await;
         let timers_watcher_task = expired_timers_watcher::TimersWatcherTask::spawn_new(
             db_pool.connection(),
             expired_timers_watcher::TimersWatcherConfig {
@@ -746,7 +755,8 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
             batching,
             empty_fn_registry,
-        );
+        )
+        .await;
         let res = db_connection
             .wait_for_finished_result(execution_id, None)
             .await
@@ -790,7 +800,8 @@ pub(crate) mod tests {
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.get_clock_fn(),
-        );
+        )
+        .await;
 
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
@@ -799,7 +810,8 @@ pub(crate) mod tests {
             join_next_blocking_strategy,
             batching,
             fn_registry,
-        );
+        )
+        .await;
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/"))
@@ -886,7 +898,8 @@ pub(crate) mod tests {
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             sim_clock.get_clock_fn(),
-        );
+        )
+        .await;
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
@@ -894,7 +907,8 @@ pub(crate) mod tests {
             join_next_strategy,
             batching,
             fn_registry,
-        );
+        )
+        .await;
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/"))
@@ -972,7 +986,8 @@ pub(crate) mod tests {
             join_next_strategy,
             batching,
             fn_registry,
-        );
+        )
+        .await;
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
 
