@@ -36,7 +36,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
 };
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Level, Span};
+use tracing::{debug, debug_span, error, info, instrument, trace, warn, Level, Span};
 use val_json::type_wrapper::TypeWrapper;
 
 #[derive(Debug, Clone, Copy)]
@@ -464,7 +464,7 @@ impl SqlitePool {
         })
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = Level::DEBUG, skip_all)]
     pub async fn transaction_write<F, T>(&self, func: F) -> Result<T, DbError>
     where
         F: FnOnce(&mut rusqlite::Transaction) -> Result<T, DbError> + Send + 'static,
@@ -473,7 +473,7 @@ impl SqlitePool {
         self.transaction(func, true).await
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = Level::DEBUG, skip_all)]
     pub async fn transaction_read<F, T>(&self, func: F) -> Result<T, DbError>
     where
         F: FnOnce(&mut rusqlite::Transaction) -> Result<T, DbError> + Send + 'static,
@@ -499,7 +499,7 @@ impl SqlitePool {
                     CommandPriority::Medium
                 },
                 func: Box::new(move |conn| {
-                    let res = info_span!(parent: &parent_span, "tx_begin").in_scope(|| {
+                    let res = debug_span!(parent: &parent_span, "tx_begin").in_scope(|| {
                         conn.transaction_with_behavior(if write {
                             rusqlite::TransactionBehavior::Immediate
                         } else {
@@ -508,11 +508,11 @@ impl SqlitePool {
                         .map_err(convert_err)
                     });
                     let res = res.and_then(|mut transaction| {
-                        info_span!(parent: &parent_span, "tx_fn")
+                        debug_span!(parent: &parent_span, "tx_fn")
                             .in_scope(|| func(&mut transaction).map(|ok| (ok, transaction)))
                     });
                     let res = res.and_then(|(ok, transaction)| {
-                        info_span!(parent: &parent_span, "tx_commit")
+                        debug_span!(parent: &parent_span, "tx_commit")
                             .in_scope(|| transaction.commit().map(|()| ok).map_err(convert_err))
                     });
                     _ = tx.send(res);
@@ -663,7 +663,8 @@ impl SqlitePool {
         }
         Ok(())
     }
-    #[instrument(skip_all, fields(execution_id = %req.execution_id))]
+
+    #[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
     fn create_inner(
         tx: &Transaction,
         req: CreateRequest,
@@ -822,7 +823,7 @@ impl SqlitePool {
         }
     }
 
-    #[instrument(skip_all, fields(%execution_id, %next_version, purge))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %next_version, purge))]
     fn update_index_next_version(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -1069,7 +1070,7 @@ impl SqlitePool {
         .map_err(convert_err)
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = Level::DEBUG, skip_all)]
     fn append(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -1355,7 +1356,7 @@ impl SqlitePool {
         .map_err(convert_err)
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = Level::DEBUG, skip_all)]
     fn get_responses_with_offset(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -1663,7 +1664,7 @@ impl DbConnection for SqlitePool {
             )));
         }
 
-        #[instrument(skip_all)]
+        #[instrument(level = Level::DEBUG, skip_all)]
         fn append_batch_create_new_execution_inner(
             tx: &mut rusqlite::Transaction,
             created_at: DateTime<Utc>,

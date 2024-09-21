@@ -9,7 +9,9 @@ use concepts::{ExecutionId, FunctionFqn};
 use grpc::execution_status::Status;
 use std::str::FromStr;
 use tonic::transport::Channel;
+use tracing::instrument;
 
+#[instrument(skip_all)]
 pub(crate) async fn submit(
     mut client: SchedulerClient<Channel>,
     ffqn: FunctionFqn,
