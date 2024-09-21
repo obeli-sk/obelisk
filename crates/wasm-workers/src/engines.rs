@@ -227,20 +227,27 @@ impl Engines {
     pub async fn write_codegen_config(
         codegen_cache: Option<&Path>,
     ) -> Result<Option<Rc<NamedTempFile>>, std::io::Error> {
+        #[cfg(not(madsim))]
+        async fn write(file: &NamedTempFile, content: String) -> Result<(), std::io::Error> {
+            tokio::fs::write(file, content).await
+        }
+        #[cfg(madsim)]
+        #[allow(clippy::unused_async)]
+        async fn write(mut file: &NamedTempFile, content: String) -> Result<(), std::io::Error> {
+            use std::io::Write;
+            writeln!(file, "{content}")
+        }
         Ok(if let Some(codegen_cache) = codegen_cache {
             let codegen_cache_config_file = tempfile::NamedTempFile::new()?;
             info!("Setting codegen cache to {codegen_cache:?}");
             let codegen_cache = codegen_cache.canonicalize()?;
-            tokio::fs::write(
-                &codegen_cache_config_file,
-                format!(
-                    r#"[cache]
+            let content = format!(
+                r#"[cache]
 enabled = true
 directory = {codegen_cache:?}
 "#
-                ),
-            )
-            .await?;
+            );
+            write(&codegen_cache_config_file, content).await?;
             trace!(
                 "Wrote temporary cache config to {:?}",
                 codegen_cache_config_file.path()
