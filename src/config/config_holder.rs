@@ -5,6 +5,9 @@ use directories::ProjectDirs;
 use std::path::PathBuf;
 use tracing::debug;
 
+#[cfg(debug_assertions)]
+const EXAMPLE_TOML: &[u8] = b"not supported in debug build";
+#[cfg(not(debug_assertions))]
 const EXAMPLE_TOML: &[u8] = include_bytes!("../../obelisk.toml");
 
 pub(crate) struct ConfigHolder {
