@@ -60,7 +60,9 @@ pub enum WebhookServerError {
 
 #[derive(Derivative)]
 #[derivative(Clone(bound = ""))]
+#[derivative(Debug)]
 pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+    #[derivative(Debug = "ignore")]
     proxy_pre: Arc<ProxyPre<WebhookCtx<C, DB, P>>>,
     config_id: ConfigId,
     forward_stdout: Option<StdOutput>,

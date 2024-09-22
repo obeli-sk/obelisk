@@ -541,13 +541,13 @@ async fn run_internal(
     )
     .instrument(init_span)
     .await?;
-    let _http_servers_handles = start_webhooks(
+    let _http_servers_handles: Vec<AbortOnDropHandle> = start_webhooks(
         http_servers_to_webhooks,
         &engines,
         db_pool.clone(),
         &mut component_registry,
     )
-    .await;
+    .await?;
     let grpc_server = Arc::new(GrpcServer::new(db_pool.clone(), component_registry));
     let grpc_server_res = tonic::transport::Server::builder()
         .add_service(

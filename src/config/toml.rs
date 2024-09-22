@@ -686,6 +686,7 @@ pub(crate) mod webhook {
         pub(crate) route: String,
     }
 
+    #[derive(Debug)]
     pub(crate) struct WebhookComponentVerified {
         pub(crate) config_id: ConfigId,
         pub(crate) config_store: ConfigStore,
@@ -696,6 +697,7 @@ pub(crate) mod webhook {
         pub(crate) env_vars: Vec<EnvVar>,
     }
 
+    #[derive(Debug)]
     pub(crate) struct WebhookRouteVerified {
         pub(crate) methods: Vec<http::Method>,
         pub(crate) route: String,
