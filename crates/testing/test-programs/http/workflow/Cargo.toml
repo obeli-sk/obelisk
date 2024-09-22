@@ -23,6 +23,7 @@ crate-type = ["cdylib"]
 "wasi:clocks".path = "../../../../wasm-workers/host-wit/deps/clocks"
 
 [lints]
-rust.unused_imports = "allow"
-clippy.wrong_self_convention = "allow"
 clippy.unnecessary_cast = "allow"
+clippy.wrong_self_convention = "allow"
+rust.unused_braces = "allow"
+rust.unused_imports = "allow"
