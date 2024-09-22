@@ -6,7 +6,8 @@ pub mod obelisk {
         pub mod host_activities {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             pub type Datetime = super::super::super::wasi::clocks::wall_clock::Datetime;
             /// A duration of time, in nanoseconds.
@@ -18,18 +19,11 @@ pub mod obelisk {
                 In(Duration),
             }
             impl ::core::fmt::Debug for ScheduledAt {
-                fn fmt(
-                    &self,
-                    f: &mut ::core::fmt::Formatter<'_>,
-                ) -> ::core::fmt::Result {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                     match self {
                         ScheduledAt::Now => f.debug_tuple("ScheduledAt::Now").finish(),
-                        ScheduledAt::At(e) => {
-                            f.debug_tuple("ScheduledAt::At").field(e).finish()
-                        }
-                        ScheduledAt::In(e) => {
-                            f.debug_tuple("ScheduledAt::In").field(e).finish()
-                        }
+                        ScheduledAt::At(e) => f.debug_tuple("ScheduledAt::At").field(e).finish(),
+                        ScheduledAt::In(e) => f.debug_tuple("ScheduledAt::In").field(e).finish(),
                     }
                 }
             }
@@ -85,7 +79,8 @@ pub mod testing {
         pub mod sleep {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
             pub fn sleep(millis: u32) {
@@ -127,9 +122,11 @@ pub mod testing {
         pub mod workflow {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
-            pub type ScheduledAt = super::super::super::obelisk::workflow::host_activities::ScheduledAt;
+            pub type ScheduledAt =
+                super::super::super::obelisk::workflow::host_activities::ScheduledAt;
             pub type Duration = super::super::super::obelisk::workflow::host_activities::Duration;
             #[allow(unused_unsafe, clippy::all)]
             pub fn reschedule_schedule(
@@ -155,19 +152,10 @@ pub mod testing {
                     };
                     let ptr3 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
-                    #[link(
-                        wasm_import_module = "testing:sleep-workflow-obelisk-ext/workflow"
-                    )]
+                    #[link(wasm_import_module = "testing:sleep-workflow-obelisk-ext/workflow")]
                     extern "C" {
                         #[link_name = "reschedule-schedule"]
-                        fn wit_import(
-                            _: i32,
-                            _: i64,
-                            _: i32,
-                            _: i64,
-                            _: i32,
-                            _: *mut u8,
-                        );
+                        fn wit_import(_: i32, _: i64, _: i32, _: i64, _: i32, _: *mut u8);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
                     fn wit_import(_: i32, _: i64, _: i32, _: i64, _: i32, _: *mut u8) {
@@ -199,7 +187,8 @@ pub mod wasi {
         pub mod wall_clock {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             /// A time and date in seconds plus nanoseconds.
             #[repr(C)]
             #[derive(Clone, Copy)]
@@ -208,10 +197,7 @@ pub mod wasi {
                 pub nanoseconds: u32,
             }
             impl ::core::fmt::Debug for Datetime {
-                fn fmt(
-                    &self,
-                    f: &mut ::core::fmt::Formatter<'_>,
-                ) -> ::core::fmt::Result {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                     f.debug_struct("Datetime")
                         .field("seconds", &self.seconds)
                         .field("nanoseconds", &self.nanoseconds)
@@ -299,25 +285,30 @@ pub mod exports {
             pub mod workflow {
                 #[used]
                 #[doc(hidden)]
-                static __FORCE_SECTION_REF: fn() = super::super::super::super::__link_custom_section_describing_imports;
+                static __FORCE_SECTION_REF: fn() =
+                    super::super::super::super::__link_custom_section_describing_imports;
                 use super::super::super::super::_rt;
-                pub type Duration = super::super::super::super::obelisk::workflow::host_activities::Duration;
+                pub type Duration =
+                    super::super::super::super::obelisk::workflow::host_activities::Duration;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
                 pub unsafe fn _export_sleep_host_activity_cabi<T: Guest>(arg0: i32) {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     T::sleep_host_activity(arg0 as u32);
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
                 pub unsafe fn _export_sleep_activity_cabi<T: Guest>(arg0: i32) {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     T::sleep_activity(arg0 as u32);
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
                 pub unsafe fn _export_reschedule_cabi<T: Guest>(arg0: i64, arg1: i32) {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     T::reschedule(arg0 as u64, arg1 as u8);
                 }
                 pub trait Guest {

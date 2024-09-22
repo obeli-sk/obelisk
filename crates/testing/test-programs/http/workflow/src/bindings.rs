@@ -6,7 +6,8 @@ pub mod obelisk {
         pub mod host_activities {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
             pub fn sleep(millis: u32) {
@@ -60,7 +61,8 @@ pub mod testing {
         pub mod http_get {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
             pub fn get(url: &str) -> Result<_rt::String, _rt::String> {
@@ -90,11 +92,7 @@ pub mod testing {
                                 let l3 = *ptr1.add(4).cast::<*mut u8>();
                                 let l4 = *ptr1.add(8).cast::<usize>();
                                 let len5 = l4;
-                                let bytes5 = _rt::Vec::from_raw_parts(
-                                    l3.cast(),
-                                    len5,
-                                    len5,
-                                );
+                                let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
                                 _rt::string_lift(bytes5)
                             };
                             Ok(e)
@@ -104,11 +102,7 @@ pub mod testing {
                                 let l6 = *ptr1.add(4).cast::<*mut u8>();
                                 let l7 = *ptr1.add(8).cast::<usize>();
                                 let len8 = l7;
-                                let bytes8 = _rt::Vec::from_raw_parts(
-                                    l6.cast(),
-                                    len8,
-                                    len8,
-                                );
+                                let bytes8 = _rt::Vec::from_raw_parts(l6.cast(), len8, len8);
                                 _rt::string_lift(bytes8)
                             };
                             Err(e)
@@ -145,11 +139,7 @@ pub mod testing {
                                 let l3 = *ptr1.add(4).cast::<*mut u8>();
                                 let l4 = *ptr1.add(8).cast::<usize>();
                                 let len5 = l4;
-                                let bytes5 = _rt::Vec::from_raw_parts(
-                                    l3.cast(),
-                                    len5,
-                                    len5,
-                                );
+                                let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
                                 _rt::string_lift(bytes5)
                             };
                             Ok(e)
@@ -159,11 +149,7 @@ pub mod testing {
                                 let l6 = *ptr1.add(4).cast::<*mut u8>();
                                 let l7 = *ptr1.add(8).cast::<usize>();
                                 let len8 = l7;
-                                let bytes8 = _rt::Vec::from_raw_parts(
-                                    l6.cast(),
-                                    len8,
-                                    len8,
-                                );
+                                let bytes8 = _rt::Vec::from_raw_parts(l6.cast(), len8, len8);
                                 _rt::string_lift(bytes8)
                             };
                             Err(e)
@@ -180,7 +166,8 @@ pub mod testing {
         pub mod http_get {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
             pub fn get_successful_submit(join_set_id: &str, url: &str) -> _rt::String {
@@ -199,22 +186,10 @@ pub mod testing {
                     #[link(wasm_import_module = "testing:http-obelisk-ext/http-get")]
                     extern "C" {
                         #[link_name = "get-successful-submit"]
-                        fn wit_import(
-                            _: *mut u8,
-                            _: usize,
-                            _: *mut u8,
-                            _: usize,
-                            _: *mut u8,
-                        );
+                        fn wit_import(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(
-                        _: *mut u8,
-                        _: usize,
-                        _: *mut u8,
-                        _: usize,
-                        _: *mut u8,
-                    ) {
+                    fn wit_import(_: *mut u8, _: usize, _: *mut u8, _: usize, _: *mut u8) {
                         unreachable!()
                     }
                     wit_import(ptr0.cast_mut(), len0, ptr1.cast_mut(), len1, ptr2);
@@ -255,11 +230,7 @@ pub mod testing {
                                 let l3 = *ptr1.add(4).cast::<*mut u8>();
                                 let l4 = *ptr1.add(8).cast::<usize>();
                                 let len5 = l4;
-                                let bytes5 = _rt::Vec::from_raw_parts(
-                                    l3.cast(),
-                                    len5,
-                                    len5,
-                                );
+                                let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
                                 _rt::string_lift(bytes5)
                             };
                             Ok(e)
@@ -269,11 +240,7 @@ pub mod testing {
                                 let l6 = *ptr1.add(4).cast::<*mut u8>();
                                 let l7 = *ptr1.add(8).cast::<usize>();
                                 let len8 = l7;
-                                let bytes8 = _rt::Vec::from_raw_parts(
-                                    l6.cast(),
-                                    len8,
-                                    len8,
-                                );
+                                let bytes8 = _rt::Vec::from_raw_parts(l6.cast(), len8, len8);
                                 _rt::string_lift(bytes8)
                             };
                             Err(e)
@@ -293,7 +260,8 @@ pub mod wasi {
         pub mod wall_clock {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             /// A time and date in seconds plus nanoseconds.
             #[repr(C)]
             #[derive(Clone, Copy)]
@@ -302,10 +270,7 @@ pub mod wasi {
                 pub nanoseconds: u32,
             }
             impl ::core::fmt::Debug for Datetime {
-                fn fmt(
-                    &self,
-                    f: &mut ::core::fmt::Formatter<'_>,
-                ) -> ::core::fmt::Result {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                     f.debug_struct("Datetime")
                         .field("seconds", &self.seconds)
                         .field("nanoseconds", &self.nanoseconds)
@@ -393,15 +358,14 @@ pub mod exports {
             pub mod workflow {
                 #[used]
                 #[doc(hidden)]
-                static __FORCE_SECTION_REF: fn() = super::super::super::super::__link_custom_section_describing_imports;
+                static __FORCE_SECTION_REF: fn() =
+                    super::super::super::super::__link_custom_section_describing_imports;
                 use super::super::super::super::_rt;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_get_cabi<T: Guest>(
-                    arg0: *mut u8,
-                    arg1: usize,
-                ) -> *mut u8 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                pub unsafe fn _export_get_cabi<T: Guest>(arg0: *mut u8, arg1: usize) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     let len0 = arg1;
                     let bytes0 = _rt::Vec::from_raw_parts(arg0.cast(), len0, len0);
                     let result1 = T::get(_rt::string_lift(bytes0));
@@ -451,7 +415,8 @@ pub mod exports {
                     arg0: *mut u8,
                     arg1: usize,
                 ) -> *mut u8 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     let len0 = arg1;
                     let bytes0 = _rt::Vec::from_raw_parts(arg0.cast(), len0, len0);
                     let result1 = T::get_successful(_rt::string_lift(bytes0));
@@ -501,7 +466,8 @@ pub mod exports {
                     arg0: *mut u8,
                     arg1: usize,
                 ) -> *mut u8 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     let base3 = arg0;
                     let len3 = arg1;
                     let mut result3 = _rt::Vec::with_capacity(len3);
@@ -524,10 +490,8 @@ pub mod exports {
                             *ptr5.add(0).cast::<u8>() = (0i32) as u8;
                             let vec7 = e;
                             let len7 = vec7.len();
-                            let layout7 = _rt::alloc::Layout::from_size_align_unchecked(
-                                vec7.len() * 8,
-                                4,
-                            );
+                            let layout7 =
+                                _rt::alloc::Layout::from_size_align_unchecked(vec7.len() * 8, 4);
                             let result7 = if layout7.size() != 0 {
                                 let ptr = _rt::alloc::alloc(layout7).cast::<u8>();
                                 if ptr.is_null() {
@@ -535,7 +499,9 @@ pub mod exports {
                                 }
                                 ptr
                             } else {
-                                { ::core::ptr::null_mut() }
+                                {
+                                    ::core::ptr::null_mut()
+                                }
                             };
                             for (i, e) in vec7.into_iter().enumerate() {
                                 let base = result7.add(i * 8);
@@ -565,9 +531,7 @@ pub mod exports {
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn __post_return_get_successful_concurrently<T: Guest>(
-                    arg0: *mut u8,
-                ) {
+                pub unsafe fn __post_return_get_successful_concurrently<T: Guest>(arg0: *mut u8) {
                     let l0 = i32::from(*arg0.add(0).cast::<u8>());
                     match l0 {
                         0 => {
@@ -599,7 +563,8 @@ pub mod exports {
                     arg1: usize,
                     arg2: i32,
                 ) -> *mut u8 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     let len0 = arg1;
                     let bytes0 = _rt::Vec::from_raw_parts(arg0.cast(), len0, len0);
                     let result1 = T::get_successful_concurrently_stress(
@@ -612,10 +577,8 @@ pub mod exports {
                             *ptr2.add(0).cast::<u8>() = (0i32) as u8;
                             let vec4 = e;
                             let len4 = vec4.len();
-                            let layout4 = _rt::alloc::Layout::from_size_align_unchecked(
-                                vec4.len() * 8,
-                                4,
-                            );
+                            let layout4 =
+                                _rt::alloc::Layout::from_size_align_unchecked(vec4.len() * 8, 4);
                             let result4 = if layout4.size() != 0 {
                                 let ptr = _rt::alloc::alloc(layout4).cast::<u8>();
                                 if ptr.is_null() {
@@ -623,7 +586,9 @@ pub mod exports {
                                 }
                                 ptr
                             } else {
-                                { ::core::ptr::null_mut() }
+                                {
+                                    ::core::ptr::null_mut()
+                                }
                             };
                             for (i, e) in vec4.into_iter().enumerate() {
                                 let base = result4.add(i * 8);
@@ -682,9 +647,7 @@ pub mod exports {
                 }
                 pub trait Guest {
                     fn get(url: _rt::String) -> Result<_rt::String, _rt::String>;
-                    fn get_successful(
-                        url: _rt::String,
-                    ) -> Result<_rt::String, _rt::String>;
+                    fn get_successful(url: _rt::String) -> Result<_rt::String, _rt::String>;
                     fn get_successful_concurrently(
                         urls: _rt::Vec<_rt::String>,
                     ) -> Result<_rt::Vec<_rt::String>, _rt::String>;
@@ -740,9 +703,7 @@ pub mod exports {
                 pub(crate) use __export_testing_http_workflow_workflow_cabi;
                 #[repr(align(4))]
                 struct _RetArea([::core::mem::MaybeUninit<u8>; 12]);
-                static mut _RET_AREA: _RetArea = _RetArea(
-                    [::core::mem::MaybeUninit::uninit(); 12],
-                );
+                static mut _RET_AREA: _RetArea = _RetArea([::core::mem::MaybeUninit::uninit(); 12]);
             }
         }
     }

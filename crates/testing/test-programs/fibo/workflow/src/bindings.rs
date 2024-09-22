@@ -6,7 +6,8 @@ pub mod obelisk {
         pub mod host_activities {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
             pub fn sleep(millis: u32) {
@@ -60,7 +61,8 @@ pub mod testing {
         pub mod fibo {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
             pub fn fibo(n: u8) -> u64 {
@@ -87,7 +89,8 @@ pub mod testing {
         pub mod fibo {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
             pub fn fibo_submit(join_set_id: &str, n: u8) -> _rt::String {
@@ -145,7 +148,8 @@ pub mod testing {
         pub mod workflow {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
             pub fn fibow(n: u8, iterations: u32) -> u64 {
@@ -203,15 +207,14 @@ pub mod testing {
         pub mod workflow_nesting {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
             pub fn fibo_nested_workflow(n: u8) -> u64 {
                 unsafe {
                     #[cfg(target_arch = "wasm32")]
-                    #[link(
-                        wasm_import_module = "testing:fibo-workflow/workflow-nesting"
-                    )]
+                    #[link(wasm_import_module = "testing:fibo-workflow/workflow-nesting")]
                     extern "C" {
                         #[link_name = "fibo-nested-workflow"]
                         fn wit_import(_: i32) -> i64;
@@ -225,16 +228,10 @@ pub mod testing {
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            pub fn fibo_start_fiboas(
-                n: u8,
-                fiboas: u32,
-                iterations_per_fiboa: u32,
-            ) -> u64 {
+            pub fn fibo_start_fiboas(n: u8, fiboas: u32, iterations_per_fiboa: u32) -> u64 {
                 unsafe {
                     #[cfg(target_arch = "wasm32")]
-                    #[link(
-                        wasm_import_module = "testing:fibo-workflow/workflow-nesting"
-                    )]
+                    #[link(wasm_import_module = "testing:fibo-workflow/workflow-nesting")]
                     extern "C" {
                         #[link_name = "fibo-start-fiboas"]
                         fn wit_import(_: i32, _: i32, _: i32) -> i64;
@@ -259,14 +256,11 @@ pub mod testing {
         pub mod workflow {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn fiboa_submit(
-                join_set_id: &str,
-                n: u8,
-                iterations: u32,
-            ) -> _rt::String {
+            pub fn fiboa_submit(join_set_id: &str, n: u8, iterations: u32) -> _rt::String {
                 unsafe {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
@@ -276,9 +270,7 @@ pub mod testing {
                     let len0 = vec0.len();
                     let ptr1 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
-                    #[link(
-                        wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow"
-                    )]
+                    #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
                     extern "C" {
                         #[link_name = "fiboa-submit"]
                         fn wit_import(_: *mut u8, _: usize, _: i32, _: i32, _: *mut u8);
@@ -308,9 +300,7 @@ pub mod testing {
                     let ptr0 = vec0.as_ptr().cast::<u8>();
                     let len0 = vec0.len();
                     #[cfg(target_arch = "wasm32")]
-                    #[link(
-                        wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow"
-                    )]
+                    #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
                     extern "C" {
                         #[link_name = "fiboa-await-next"]
                         fn wit_import(_: *mut u8, _: usize) -> i64;
@@ -334,7 +324,8 @@ pub mod wasi {
         pub mod wall_clock {
             #[used]
             #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
             /// A time and date in seconds plus nanoseconds.
             #[repr(C)]
             #[derive(Clone, Copy)]
@@ -343,10 +334,7 @@ pub mod wasi {
                 pub nanoseconds: u32,
             }
             impl ::core::fmt::Debug for Datetime {
-                fn fmt(
-                    &self,
-                    f: &mut ::core::fmt::Formatter<'_>,
-                ) -> ::core::fmt::Result {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                     f.debug_struct("Datetime")
                         .field("seconds", &self.seconds)
                         .field("nanoseconds", &self.nanoseconds)
@@ -434,29 +422,30 @@ pub mod exports {
             pub mod workflow {
                 #[used]
                 #[doc(hidden)]
-                static __FORCE_SECTION_REF: fn() = super::super::super::super::__link_custom_section_describing_imports;
+                static __FORCE_SECTION_REF: fn() =
+                    super::super::super::super::__link_custom_section_describing_imports;
                 use super::super::super::super::_rt;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
                 pub unsafe fn _export_fibow_cabi<T: Guest>(arg0: i32, arg1: i32) -> i64 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     let result0 = T::fibow(arg0 as u8, arg1 as u32);
                     _rt::as_i64(result0)
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
                 pub unsafe fn _export_fiboa_cabi<T: Guest>(arg0: i32, arg1: i32) -> i64 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     let result0 = T::fiboa(arg0 as u8, arg1 as u32);
                     _rt::as_i64(result0)
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_fiboa_concurrent_cabi<T: Guest>(
-                    arg0: i32,
-                    arg1: i32,
-                ) -> i64 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                pub unsafe fn _export_fiboa_concurrent_cabi<T: Guest>(arg0: i32, arg1: i32) -> i64 {
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     let result0 = T::fiboa_concurrent(arg0 as u8, arg1 as u32);
                     _rt::as_i64(result0)
                 }
@@ -489,14 +478,14 @@ pub mod exports {
             pub mod workflow_nesting {
                 #[used]
                 #[doc(hidden)]
-                static __FORCE_SECTION_REF: fn() = super::super::super::super::__link_custom_section_describing_imports;
+                static __FORCE_SECTION_REF: fn() =
+                    super::super::super::super::__link_custom_section_describing_imports;
                 use super::super::super::super::_rt;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_fibo_nested_workflow_cabi<T: Guest>(
-                    arg0: i32,
-                ) -> i64 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                pub unsafe fn _export_fibo_nested_workflow_cabi<T: Guest>(arg0: i32) -> i64 {
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     let result0 = T::fibo_nested_workflow(arg0 as u8);
                     _rt::as_i64(result0)
                 }
@@ -507,21 +496,14 @@ pub mod exports {
                     arg1: i32,
                     arg2: i32,
                 ) -> i64 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
-                    let result0 = T::fibo_start_fiboas(
-                        arg0 as u8,
-                        arg1 as u32,
-                        arg2 as u32,
-                    );
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
+                    let result0 = T::fibo_start_fiboas(arg0 as u8, arg1 as u32, arg2 as u32);
                     _rt::as_i64(result0)
                 }
                 pub trait Guest {
                     fn fibo_nested_workflow(n: u8) -> u64;
-                    fn fibo_start_fiboas(
-                        n: u8,
-                        fiboas: u32,
-                        iterations_per_fiboa: u32,
-                    ) -> u64;
+                    fn fibo_start_fiboas(n: u8, fiboas: u32, iterations_per_fiboa: u32) -> u64;
                 }
                 #[doc(hidden)]
                 macro_rules! __export_testing_fibo_workflow_workflow_nesting_cabi {

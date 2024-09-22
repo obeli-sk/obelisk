@@ -8,15 +8,14 @@ pub mod exports {
             pub mod http_get {
                 #[used]
                 #[doc(hidden)]
-                static __FORCE_SECTION_REF: fn() = super::super::super::super::__link_custom_section_describing_imports;
+                static __FORCE_SECTION_REF: fn() =
+                    super::super::super::super::__link_custom_section_describing_imports;
                 use super::super::super::super::_rt;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_get_cabi<T: Guest>(
-                    arg0: *mut u8,
-                    arg1: usize,
-                ) -> *mut u8 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                pub unsafe fn _export_get_cabi<T: Guest>(arg0: *mut u8, arg1: usize) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     let len0 = arg1;
                     let bytes0 = _rt::Vec::from_raw_parts(arg0.cast(), len0, len0);
                     let result1 = T::get(_rt::string_lift(bytes0));
@@ -66,7 +65,8 @@ pub mod exports {
                     arg0: *mut u8,
                     arg1: usize,
                 ) -> *mut u8 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     let len0 = arg1;
                     let bytes0 = _rt::Vec::from_raw_parts(arg0.cast(), len0, len0);
                     let result1 = T::get_successful(_rt::string_lift(bytes0));
@@ -112,9 +112,7 @@ pub mod exports {
                 }
                 pub trait Guest {
                     fn get(url: _rt::String) -> Result<_rt::String, _rt::String>;
-                    fn get_successful(
-                        url: _rt::String,
-                    ) -> Result<_rt::String, _rt::String>;
+                    fn get_successful(url: _rt::String) -> Result<_rt::String, _rt::String>;
                 }
                 #[doc(hidden)]
                 macro_rules! __export_testing_http_http_get_cabi {
@@ -140,9 +138,7 @@ pub mod exports {
                 pub(crate) use __export_testing_http_http_get_cabi;
                 #[repr(align(4))]
                 struct _RetArea([::core::mem::MaybeUninit<u8>; 12]);
-                static mut _RET_AREA: _RetArea = _RetArea(
-                    [::core::mem::MaybeUninit::uninit(); 12],
-                );
+                static mut _RET_AREA: _RetArea = _RetArea([::core::mem::MaybeUninit::uninit(); 12]);
             }
         }
     }

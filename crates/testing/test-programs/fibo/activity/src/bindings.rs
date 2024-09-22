@@ -8,12 +8,14 @@ pub mod exports {
             pub mod fibo {
                 #[used]
                 #[doc(hidden)]
-                static __FORCE_SECTION_REF: fn() = super::super::super::super::__link_custom_section_describing_imports;
+                static __FORCE_SECTION_REF: fn() =
+                    super::super::super::super::__link_custom_section_describing_imports;
                 use super::super::super::super::_rt;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
                 pub unsafe fn _export_fibo_cabi<T: Guest>(arg0: i32) -> i64 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
                     let result0 = T::fibo(arg0 as u8);
                     _rt::as_i64(result0)
                 }
