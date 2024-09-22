@@ -45,15 +45,6 @@ pub struct HttpTriggerConfig {
 type StdError = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Debug, thiserror::Error)]
-// FIXME: Replace with WasmFileError
-pub enum WebhookComponentInstantiationError {
-    #[error(transparent)]
-    WasmFileError(#[from] WasmFileError),
-    #[error("instantiation error: {0}")]
-    InstantiationError(wasmtime::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
 pub enum WebhookServerError {
     #[error("socket error: {0}")]
     SocketError(std::io::Error),
@@ -122,7 +113,7 @@ pub fn component_to_instance<
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
-) -> Result<WebhookInstance<C, DB, P>, WebhookComponentInstantiationError> {
+) -> Result<WebhookInstance<C, DB, P>, WasmFileError> {
     const WASI_NAMESPACE_WITH_COLON: &str = "wasi:";
 
     let mut linker = Linker::new(engine);
@@ -179,14 +170,12 @@ pub fn component_to_instance<
                         // FIXME: Add test for error message stability
                         debug!("Skipping mocking of {ffqn}");
                     } else {
-                        return Err(WebhookComponentInstantiationError::WasmFileError(
-                            WasmFileError::LinkingError {
-                                context: StrVariant::Arc(Arc::from(format!(
-                                    "cannot add mock for imported function {ffqn}"
-                                ))),
-                                err: err.into(),
-                            },
-                        ));
+                        return Err(WasmFileError::LinkingError {
+                            context: StrVariant::Arc(Arc::from(format!(
+                                "cannot add mock for imported function {ffqn}"
+                            ))),
+                            err: err.into(),
+                        });
                     }
                 }
             }
