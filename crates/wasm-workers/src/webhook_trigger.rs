@@ -45,6 +45,7 @@ pub struct HttpTriggerConfig {
 type StdError = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Debug, thiserror::Error)]
+// FIXME: Replace with WasmFileError
 pub enum WebhookComponentInstantiationError {
     #[error(transparent)]
     WasmFileError(#[from] WasmFileError),
@@ -122,6 +123,8 @@ pub fn component_to_instance<
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
 ) -> Result<WebhookInstance<C, DB, P>, WebhookComponentInstantiationError> {
+    const WASI_NAMESPACE_WITH_COLON: &str = "wasi:";
+
     let mut linker = Linker::new(engine);
     wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| WasmFileError::LinkingError {
         context: StrVariant::Static("linking `wasmtime_wasi`"),
@@ -135,8 +138,15 @@ pub fn component_to_instance<
     })?;
     // Mock imported functions
     for import in &wasm_component.exim.imports_hierarchy {
-        if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
-            // Skip host-implemented functions
+        if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING
+            || import
+                .ifc_fqn
+                .deref()
+                .starts_with(WASI_NAMESPACE_WITH_COLON)
+        {
+            trace!(
+                ifc_fqn = %import.ifc_fqn,
+                "Skipping");
             continue;
         }
         trace!(
@@ -166,6 +176,7 @@ pub fn component_to_instance<
                 });
                 if let Err(err) = res {
                     if err.to_string() == format!("import `{function_name}` not found") {
+                        // FIXME: Add test for error message stability
                         debug!("Skipping mocking of {ffqn}");
                     } else {
                         return Err(WebhookComponentInstantiationError::WasmFileError(
@@ -184,11 +195,18 @@ pub fn component_to_instance<
         }
     }
     WebhookCtx::add_to_linker(&mut linker)?;
-    let instance = linker
-        .instantiate_pre(&wasm_component.component)
-        .map_err(WebhookComponentInstantiationError::InstantiationError)?;
     let instance =
-        ProxyPre::new(instance).map_err(WebhookComponentInstantiationError::InstantiationError)?;
+        linker
+            .instantiate_pre(&wasm_component.component)
+            .map_err(|err: wasmtime::Error| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking error while creating instantiate_pre"),
+                err: err.into(),
+            })?;
+    let instance =
+        ProxyPre::new(instance).map_err(|err: wasmtime::Error| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking error while creating ProxyPre instance"),
+            err: err.into(),
+        })?;
     Ok(WebhookInstance {
         proxy_pre: Arc::new(instance),
         config_id,

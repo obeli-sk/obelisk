@@ -105,6 +105,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
                     });
                     if let Err(err) = res {
                         if err.to_string() == format!("import `{function_name}` not found") {
+                            // FIXME: Add test for error message stability
                             debug!("Skipping mocking of {ffqn}");
                         } else {
                             return Err(WasmFileError::LinkingError {
