@@ -1,9 +1,9 @@
-cargo-binstall 1.10.3
-cargo-component 0.15.0
-cargo-dist 0.22.0
-cargo-edit-upgrade 0.12.2
+cargo-binstall 1.10.5
+cargo-component 0.16.0
+cargo-dist 0.22.1
+cargo-edit-upgrade 0.13.0
 cargo-expand 1.0.90
-cargo-nextest 0.9.72
+cargo-nextest 0.9.78
 dive 0.12.0
 litecli Version: 1.11.0s
 lldb version 18.1.8
@@ -12,4 +12,5 @@ libprotoc 25.4
 rustc 1.81.0 (eeb90cda1 2024-09-04)
 tokio-console 0.1.10
 wasm-tools 1.216.0
+wasmtime-cli 24.0.0
 ldd (GNU libc) 2.39
