@@ -1,4 +1,4 @@
-// https://github.com/bytecodealliance/wasm-tools/blob/v1.215.0/crates/wit-component/src/printing.rs
+// https://github.com/bytecodealliance/wasm-tools/blob/v1.217.0/crates/wit-component/src/printing.rs
 /*
 Apache License
 Version 2.0, January 2004
@@ -233,7 +233,6 @@ Software.
 #![allow(unused_parens)]
 #![allow(clippy::semicolon_if_nothing_returned)]
 #![allow(clippy::clone_on_copy)]
-
 use anyhow::{anyhow, bail, Result};
 use std::collections::HashMap;
 use std::fmt::{self, Write};
@@ -1149,17 +1148,9 @@ impl WitPrinter {
     fn print_stability(&mut self, stability: &Stability) {
         match stability {
             Stability::Unknown => {}
-            Stability::Stable {
-                since,
-                feature,
-                deprecated,
-            } => {
+            Stability::Stable { since, deprecated } => {
                 self.output.push_str("@since(version = ");
                 self.output.push_str(&since.to_string());
-                if let Some(feature) = feature {
-                    self.output.push_str(", feature = ");
-                    self.output.push_str(feature);
-                }
                 self.output.push_str(")\n");
                 if let Some(version) = deprecated {
                     self.output.push_str("@deprecated(version = ");

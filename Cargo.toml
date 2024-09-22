@@ -236,11 +236,11 @@ waki = "0.3.1"
 wiremock = "0.6"
 
 # wasmtime
-wasmtime = { version = "24.0", features = ["memory-protection-keys"] }
-wasmtime-wasi = "24.0"
-wasmtime-wasi-http = "24.0"
-wast = "215.0.0"
-wit-parser = "0.215.0"
+wasmtime = { version = "25.0", features = ["memory-protection-keys"] }
+wasmtime-wasi = "25.0"
+wasmtime-wasi-http = "25.0"
+wast = "217.0.0"
+wit-parser = "0.217.0"
 
 # cargo-component
 wit-bindgen-rt = "0.30.0"
