@@ -15,7 +15,6 @@ use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::ComponentExportIndex;
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
-use wasmtime_wasi_http::WasiHttpImpl;
 
 type StoreCtx = crate::activity_ctx::ActivityCtx;
 
@@ -82,15 +81,6 @@ impl<C: ClockFn> ActivityWorker<C> {
         engine: Arc<Engine>,
         clock_fn: C,
     ) -> Result<Self, WasmFileError> {
-        // See wasmtime/crates/wasi-http/tests/all/main.rs and wasmtime/crates/wasi-http/src/proxy.rs
-        fn type_annotate_http<T, F>(val: F) -> F
-        where
-            F: Fn(&mut T) -> WasiHttpImpl<&mut T>,
-        {
-            val
-        }
-        let closure = type_annotate_http::<StoreCtx, _>(|t| WasiHttpImpl(t));
-
         let wasm_path = wasm_path.as_ref();
         let wasm_component =
             WasmComponent::new(wasm_path, &engine).map_err(WasmFileError::DecodeError)?;
@@ -103,14 +93,7 @@ impl<C: ClockFn> ActivityWorker<C> {
         // wasi
         wasmtime_wasi::add_to_linker_async(&mut linker).map_err(linking_err)?;
         // wasi-http
-        // FIXME: Use wasmtime_wasi_http::add_only_http_to_linker_async instead the two calls:
-        wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker_get_host(
-            &mut linker,
-            closure,
-        )
-        .map_err(linking_err)?;
-        wasmtime_wasi_http::bindings::http::types::add_to_linker_get_host(&mut linker, closure)
-            .map_err(linking_err)?;
+        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(linking_err)?;
 
         // Attempt to pre-instantiate to catch missing imports
         // TODO: Use it in `run`
