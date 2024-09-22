@@ -774,9 +774,17 @@ pub mod prefixed_ulid {
 
 // FIXME: serde to & from str
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, derive_more::Display,
+    derive_more::Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    derive_more::Display,
 )]
 #[display("{component_type}:{name}:{hash}")]
+#[debug("{}", self)]
 pub struct ConfigId {
     pub component_type: ComponentType,
     pub name: StrVariant,

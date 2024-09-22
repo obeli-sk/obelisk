@@ -407,7 +407,7 @@ async fn run_internal(
     clean_codegen_cache: bool,
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
-    debug!("Using toml configuration {config:#?}");
+    debug!("Using toml config: {config:#?}");
     let db_file = &config
         .sqlite
         .get_sqlite_file(config_holder.project_dirs.as_ref())
@@ -518,11 +518,7 @@ async fn run_internal(
             clock_fn: now,
         },
     );
-    let VerifiedConfig {
-        wasm_activities,
-        workflows,
-        http_servers_to_webhooks,
-    } = fetch_and_verify_all(
+    let verified_config = fetch_and_verify_all(
         config.wasm_activities,
         config.workflows,
         config.http_servers,
@@ -532,17 +528,18 @@ async fn run_internal(
     )
     .instrument(init_span.clone())
     .await?;
+    debug!("Verified config: {verified_config:#?}");
     let exec_join_handles = spawn_tasks(
         &engines,
-        wasm_activities,
-        workflows,
+        verified_config.wasm_activities,
+        verified_config.workflows,
         &db_pool,
         &mut component_registry,
     )
     .instrument(init_span)
     .await?;
     let _http_servers_handles: Vec<AbortOnDropHandle> = start_webhooks(
-        http_servers_to_webhooks,
+        verified_config.http_servers_to_webhooks,
         &engines,
         db_pool.clone(),
         &mut component_registry,
@@ -594,9 +591,12 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     for (http_server, webhooks) in http_servers_to_webhooks {
         let mut router = MethodAwareRouter::default();
         for webhook in webhooks {
-            let wasm_component = WasmComponent::new(webhook.wasm_path, engine)?;
-            let imports = wasm_component.imported_functions().to_vec();
             let config_id = webhook.config_id;
+            // FIXME: Move to component_to_instance
+            let wasm_component = info_span!("component_to_instance", %config_id)
+                .in_scope(|| WasmComponent::new(webhook.wasm_path, engine))?;
+            let imports = wasm_component.imported_functions().to_vec();
+
             let instance = webhook_trigger::component_to_instance(
                 &wasm_component,
                 engine,
@@ -653,6 +653,8 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     Ok(abort_handles)
 }
 
+#[derive(Debug)]
+// TODO: Rename to ConfigVerified
 struct VerifiedConfig {
     wasm_activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,

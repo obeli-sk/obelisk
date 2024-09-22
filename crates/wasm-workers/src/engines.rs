@@ -52,6 +52,7 @@ pub struct PoolingOptions {
 }
 
 #[derive(Clone)]
+// TODO: Change to a struct with `strategy` and optional cache config file
 pub enum EngineConfig {
     NoCache(wasmtime::InstanceAllocationStrategy),
     Cache(wasmtime::InstanceAllocationStrategy, Rc<NamedTempFile>),

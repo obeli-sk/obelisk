@@ -36,6 +36,7 @@ const DEFAULT_CODEGEN_CACHE_DIRECTORY: &str = "cache/codegen";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+// TODO: Rename to ConfigToml
 pub(crate) struct ObeliskConfig {
     pub(crate) api_listening_addr: SocketAddr,
     #[serde(default)]

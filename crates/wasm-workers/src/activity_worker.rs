@@ -75,7 +75,7 @@ pub struct ActivityWorker<C: ClockFn> {
 }
 
 impl<C: ClockFn> ActivityWorker<C> {
-    #[tracing::instrument(skip_all, fields(config_id = %config.config_id))]
+    #[tracing::instrument(skip_all, fields(%config.config_id), err)]
     pub fn new_with_config(
         wasm_path: impl AsRef<Path>,
         config: ActivityConfig,
@@ -103,12 +103,12 @@ impl<C: ClockFn> ActivityWorker<C> {
         // wasi
         wasmtime_wasi::add_to_linker_async(&mut linker).map_err(map_err)?;
         // wasi-http
+        // FIXME: Use wasmtime_wasi_http::add_only_http_to_linker_async instead the two calls:
         wasmtime_wasi_http::bindings::http::outgoing_handler::add_to_linker_get_host(
             &mut linker,
             closure,
         )
         .map_err(map_err)?;
-
         wasmtime_wasi_http::bindings::http::types::add_to_linker_get_host(&mut linker, closure)
             .map_err(map_err)?;
 

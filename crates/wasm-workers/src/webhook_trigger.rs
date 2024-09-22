@@ -109,6 +109,7 @@ impl<T> Default for MethodAwareRouter<T> {
     }
 }
 
+#[instrument(skip_all, fields(%config_id), err)]
 pub fn component_to_instance<
     C: ClockFn + 'static,
     DB: DbConnection + 'static,

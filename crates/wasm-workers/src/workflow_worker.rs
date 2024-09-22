@@ -55,7 +55,7 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 pub(crate) const HOST_ACTIVITY_IFC_STRING: &str = "obelisk:workflow/host-activities";
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
-    #[tracing::instrument(skip_all, fields(config_id = %config.config_id))]
+    #[tracing::instrument(skip_all, fields(%config.config_id), err)]
     pub fn new_with_config(
         wasm_path: impl AsRef<Path>,
         config: WorkflowConfig,
