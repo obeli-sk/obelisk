@@ -1,6 +1,11 @@
 {
     "rust-analyzer.check.overrideCommand": [
-        "scripts/vscode-check.sh"
+        "cargo",
+        "component",
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--message-format=json"
     ],
     "rust-analyzer.cargo.features": [],
 }
