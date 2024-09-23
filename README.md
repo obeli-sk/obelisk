@@ -1,5 +1,5 @@
 # Obelisk
-Deterministic workflow engine built on top of WASI Component Model
+Deterministic workflow engine built on top of the WASM Component Model
 
 ## Project status / Disclaimer
 This is a **pre-release**.
@@ -38,7 +38,7 @@ Please exercise caution if attempting to use it for production.
     * Execution is persisted at every state change, so that it can be replayed after an interrupt or an error.
     * Ability to replay workflows with added log messages and other changes that do not alter the determinism of the execution (planned)
 
-* *HTTP triggers* (planned)
+* *WASI webhooks*
     * Mounted as a URL path, serving HTTP traffic.
     * Able to spawn child workflows or activities.
 
