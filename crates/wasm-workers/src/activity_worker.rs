@@ -499,14 +499,13 @@ pub(crate) mod tests {
             const TICK_SLEEP: Duration = Duration::from_millis(10);
             test_utils::set_up();
             let (_guard, db_pool) = Database::Memory.set_up().await;
-            let timers_watcher_task =
-                executor::expired_timers_watcher::TimersWatcherTask::spawn_new(
-                    db_pool.connection(),
-                    executor::expired_timers_watcher::TimersWatcherConfig {
-                        tick_sleep: TICK_SLEEP,
-                        clock_fn: now,
-                    },
-                );
+            let timers_watcher_task = executor::expired_timers_watcher::spawn_new(
+                db_pool.clone(),
+                executor::expired_timers_watcher::TimersWatcherConfig {
+                    tick_sleep: TICK_SLEEP,
+                    clock_fn: now,
+                },
+            );
             let engine =
                 Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
             let _epoch_ticker = crate::epoch_ticker::EpochTicker::spawn_new(

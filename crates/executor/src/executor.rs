@@ -1082,10 +1082,9 @@ mod tests {
         if expected_child_err == FinishedExecutionError::PermanentTimeout {
             // In case of timeout, let the timers watcher handle it
             sim_clock.move_time_forward(LOCK_EXPIRY).await;
-            let timers_watcher = expired_timers_watcher::TimersWatcherTask {
-                db_connection: db_pool.connection(),
-            };
-            timers_watcher.tick(sim_clock.now()).await.unwrap();
+            expired_timers_watcher::tick(db_pool.connection(), sim_clock.now())
+                .await
+                .unwrap();
         }
         let child_log = db_pool.connection().get(child_execution_id).await.unwrap();
         assert_eq!(PendingState::Finished, child_log.pending_state);
@@ -1162,10 +1161,6 @@ mod tests {
             config_id: ConfigId::dummy(),
         };
 
-        let timers_watcher = expired_timers_watcher::TimersWatcherTask {
-            db_connection: db_pool.connection(),
-        };
-
         let worker = Arc::new(SleepyWorker {
             duration: lock_expiry + Duration::from_millis(1), // sleep more than allowed by the lock expiry
             result: SupportedFunctionReturnValue::None,
@@ -1216,11 +1211,11 @@ mod tests {
             assert!(cleanup_progress.executions.is_empty());
         }
         {
-            let expired_locks = timers_watcher
-                .tick(now_after_first_lock_expiry)
-                .await
-                .unwrap()
-                .expired_locks;
+            let expired_locks =
+                expired_timers_watcher::tick(db_pool.connection(), now_after_first_lock_expiry)
+                    .await
+                    .unwrap()
+                    .expired_locks;
             assert_eq!(1, expired_locks);
         }
         assert!(!first_execution_progress
@@ -1262,11 +1257,11 @@ mod tests {
             assert!(cleanup_progress.executions.is_empty());
         }
         {
-            let expired_locks = timers_watcher
-                .tick(now_after_second_lock_expiry)
-                .await
-                .unwrap()
-                .expired_locks;
+            let expired_locks =
+                expired_timers_watcher::tick(db_pool.connection(), now_after_second_lock_expiry)
+                    .await
+                    .unwrap()
+                    .expired_locks;
             assert_eq!(1, expired_locks);
         }
         assert!(!second_execution_progress
@@ -1278,7 +1273,6 @@ mod tests {
 
         drop(db_connection);
         drop(executor);
-        drop(timers_watcher);
         db_pool.close().await.unwrap();
     }
 }

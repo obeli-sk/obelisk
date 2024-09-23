@@ -38,7 +38,8 @@ use concepts::StrVariant;
 use db_sqlite::sqlite_dao::SqlitePool;
 use executor::executor::ExecutorTaskHandle;
 use executor::executor::{ExecConfig, ExecTask};
-use executor::expired_timers_watcher::{TimersWatcherConfig, TimersWatcherTask};
+use executor::expired_timers_watcher;
+use executor::expired_timers_watcher::TimersWatcherConfig;
 use executor::worker::Worker;
 use hashbrown::HashSet;
 use serde::Deserialize;
@@ -510,8 +511,8 @@ async fn run_internal(
     };
     let _epoch_ticker =
         EpochTicker::spawn_new(engines.weak_refs(), Duration::from_millis(EPOCH_MILLIS));
-    let timers_watcher = TimersWatcherTask::spawn_new(
-        db_pool.connection(),
+    let timers_watcher = expired_timers_watcher::spawn_new(
+        db_pool.clone(),
         TimersWatcherConfig {
             tick_sleep: Duration::from_millis(100),
             clock_fn: now,
