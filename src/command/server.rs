@@ -62,7 +62,6 @@ use tracing::warn;
 use tracing::Instrument;
 use tracing::{debug, info, trace};
 use utils::time::now;
-use utils::wasm_tools::WasmComponent;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
@@ -592,13 +591,8 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         let mut router = MethodAwareRouter::default();
         for webhook in webhooks {
             let config_id = webhook.config_id;
-            // FIXME: Move to component_to_instance
-            let wasm_component = info_span!("component_to_instance", %config_id)
-                .in_scope(|| WasmComponent::new(webhook.wasm_path, engine))?;
-            let imports = wasm_component.imported_functions().to_vec();
-
             let instance = webhook_trigger::component_to_instance(
-                &wasm_component,
+                webhook.wasm_path,
                 engine,
                 config_id.clone(),
                 webhook.forward_stdout,
@@ -606,6 +600,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                 Arc::from(webhook.env_vars),
                 webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
             )?;
+            let imports = instance.imported_functions().to_vec();
             component_registry.insert(Component {
                 config_id,
                 config_store: webhook.config_store,

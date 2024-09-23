@@ -11,8 +11,8 @@ use concepts::storage::{
     HistoryEventScheduledAt, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, Version,
 };
 use concepts::{
-    ComponentType, ConfigId, ExecutionId, FinishedExecutionError, FunctionFqn, FunctionRegistry,
-    IfcFqnName, Params, StrVariant,
+    ComponentType, ConfigId, ExecutionId, FinishedExecutionError, FunctionFqn, FunctionMetadata,
+    FunctionRegistry, IfcFqnName, Params, StrVariant,
 };
 use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
@@ -23,12 +23,13 @@ use hyper_util::rt::TokioIo;
 use route_recognizer::{Match, Router};
 use std::marker::PhantomData;
 use std::ops::Deref;
+use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, info_span, instrument, trace, Instrument};
 use utils::time::ClockFn;
-use utils::wasm_tools::WasmComponent;
+use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};
@@ -61,6 +62,14 @@ pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
     retry_config: RetryConfigOverride,
+    exim: ExIm,
+}
+
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookInstance<C, DB, P> {
+    #[must_use]
+    pub fn imported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.imports_flat
+    }
 }
 
 pub struct MethodAwareRouter<T> {
@@ -108,7 +117,7 @@ pub fn component_to_instance<
     DB: DbConnection + 'static,
     P: DbPool<DB> + 'static,
 >(
-    wasm_component: &WasmComponent,
+    wasm_path: impl AsRef<Path>,
     engine: &Engine,
     config_id: ConfigId,
     forward_stdout: Option<StdOutput>,
@@ -118,6 +127,7 @@ pub fn component_to_instance<
 ) -> Result<WebhookInstance<C, DB, P>, WasmFileError> {
     const WASI_NAMESPACE_WITH_COLON: &str = "wasi:";
 
+    let wasm_component = WasmComponent::new(wasm_path, engine)?;
     let mut linker = Linker::new(engine);
     wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| WasmFileError::LinkingError {
         context: StrVariant::Static("linking `wasmtime_wasi`"),
@@ -205,6 +215,7 @@ pub fn component_to_instance<
         forward_stderr,
         env_vars,
         retry_config,
+        exim: wasm_component.exim,
     })
 }
 
@@ -978,7 +989,6 @@ mod tests {
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
         use tracing::info;
-        use utils::wasm_tools::WasmComponent;
         use val_json::type_wrapper::TypeWrapper;
         use val_json::wast_val::{WastVal, WastValWithType};
 
@@ -1023,11 +1033,7 @@ mod tests {
 
                 let router = {
                     let instance = webhook_trigger::component_to_instance(
-                        &WasmComponent::new(
-                            test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
-                            &engine,
-                        )
-                        .unwrap(),
+                        test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
                         &engine,
                         ConfigId::dummy(),
                         None,

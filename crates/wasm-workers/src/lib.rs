@@ -17,7 +17,7 @@ pub enum WasmFileError {
     #[error("cannot read WASM file: {0}")]
     CannotReadComponent(wasmtime::Error),
     #[error("cannot decode: {0}")]
-    DecodeError(wasm_tools::DecodeError),
+    DecodeError(#[from] wasm_tools::DecodeError),
     #[error("linking error - {context}, details: {err}")]
     LinkingError {
         context: StrVariant,
@@ -141,7 +141,7 @@ pub(crate) mod tests {
         use hyper::Method;
         use std::{net::SocketAddr, sync::Arc, time::Duration};
         use tokio::net::TcpListener;
-        use utils::{time::now, wasm_tools::WasmComponent};
+        use utils::time::now;
 
         #[rstest::rstest(path => [
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
@@ -194,7 +194,7 @@ pub(crate) mod tests {
             let engine =
                 Engines::get_webhook_engine(EngineConfig::on_demand_testing().await).unwrap();
             let instance = webhook_trigger::component_to_instance(
-                &WasmComponent::new(path, &engine).unwrap(),
+                path,
                 &engine,
                 ConfigId::dummy(),
                 None,
