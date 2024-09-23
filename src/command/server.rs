@@ -57,7 +57,6 @@ use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
 use tracing::error;
-use tracing::info_span;
 use tracing::instrument;
 use tracing::warn;
 use tracing::Instrument;
@@ -489,63 +488,20 @@ async fn run_internal(
         .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
 
     let api_listening_addr = config.api_listening_addr;
-    let init_span = info_span!("init");
-    let db_pool = SqlitePool::new(db_file, config.sqlite.as_config())
-        .instrument(init_span.clone())
-        .await
-        .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
 
-    let mut component_registry = ComponentConfigRegistry::default();
-    let engines = {
-        let codegen_cache_config_file_holder =
-            Engines::write_codegen_config(codegen_cache.as_deref())
-                .instrument(init_span.clone())
-                .await
-                .context("error configuring codegen cache")?;
-        init_span.in_scope(|| {
-            Engines::auto_detect_allocator(
-                &config.wasmtime_pooling_config.into(),
-                codegen_cache_config_file_holder,
-            )
-        })?
-    };
-    let _epoch_ticker =
-        EpochTicker::spawn_new(engines.weak_refs(), Duration::from_millis(EPOCH_MILLIS));
-    let timers_watcher = expired_timers_watcher::spawn_new(
-        db_pool.clone(),
-        TimersWatcherConfig {
-            tick_sleep: Duration::from_millis(100),
-            clock_fn: now,
-        },
-    );
-    let verified_config = fetch_and_verify_all(
-        config.wasm_activities,
-        config.workflows,
-        config.http_servers,
-        config.webhook_components,
+    let init = ServerInit::new(
+        db_file,
+        config,
+        codegen_cache.as_deref(),
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
     )
-    .instrument(init_span.clone())
     .await?;
-    debug!("Verified config: {verified_config:#?}");
-    let exec_join_handles = spawn_tasks(
-        &engines,
-        verified_config.wasm_activities,
-        verified_config.workflows,
-        &db_pool,
-        &mut component_registry,
-    )
-    .instrument(init_span)
-    .await?;
-    let _http_servers_handles: Vec<AbortOnDropHandle> = start_webhooks(
-        verified_config.http_servers_to_webhooks,
-        &engines,
-        db_pool.clone(),
-        &mut component_registry,
-    )
-    .await?;
-    let grpc_server = Arc::new(GrpcServer::new(db_pool.clone(), component_registry));
+
+    let grpc_server = Arc::new(GrpcServer::new(
+        init.db_pool.clone(),
+        init.component_registry.clone(),
+    ));
     let grpc_server_res = tonic::transport::Server::builder()
         .add_service(
             grpc::scheduler_server::SchedulerServer::from_arc(grpc_server.clone())
@@ -572,12 +528,98 @@ async fn run_internal(
         .await
         .with_context(|| format!("grpc server error listening on {api_listening_addr}"));
     // ^ Will await until the gRPC server shuts down.
-    timers_watcher.close().await;
-    for exec_join_handle in exec_join_handles {
-        exec_join_handle.close().await;
-    }
-    db_pool.close().await.context("cannot close database")?;
+    init.close().await?;
     grpc_server_res
+}
+
+struct ServerInit {
+    db_pool: SqlitePool,
+    component_registry: ComponentConfigRegistry,
+    exec_join_handles: Vec<ExecutorTaskHandle>,
+    timers_watcher: expired_timers_watcher::TaskHandle,
+    #[expect(dead_code)] // http servers will be aborted automatically
+    http_servers_handles: Vec<AbortOnDropHandle>,
+}
+
+impl ServerInit {
+    #[instrument(name = "init", skip_all)]
+    async fn new(
+        db_file: impl AsRef<Path> + Debug,
+        config: ObeliskConfig,
+        codegen_cache: Option<&Path>,
+        wasm_cache_dir: Arc<Path>,
+        metadata_dir: Arc<Path>,
+    ) -> Result<ServerInit, anyhow::Error> {
+        let db_pool = SqlitePool::new(&db_file, config.sqlite.as_config())
+            .await
+            .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
+
+        let mut component_registry = ComponentConfigRegistry::default();
+        let engines = {
+            let codegen_cache_config_file_holder =
+                Engines::write_codegen_config(codegen_cache.as_deref())
+                    .await
+                    .context("error configuring codegen cache")?;
+
+            Engines::auto_detect_allocator(
+                &config.wasmtime_pooling_config.into(),
+                codegen_cache_config_file_holder,
+            )?
+        };
+        let _epoch_ticker =
+            EpochTicker::spawn_new(engines.weak_refs(), Duration::from_millis(EPOCH_MILLIS));
+        let timers_watcher = expired_timers_watcher::spawn_new(
+            db_pool.clone(),
+            TimersWatcherConfig {
+                tick_sleep: Duration::from_millis(100),
+                clock_fn: now,
+            },
+        );
+        let verified_config = fetch_and_verify_all(
+            config.wasm_activities,
+            config.workflows,
+            config.http_servers,
+            config.webhook_components,
+            wasm_cache_dir,
+            metadata_dir,
+        )
+        .await?;
+        debug!("Verified config: {verified_config:#?}");
+        let exec_join_handles = spawn_tasks(
+            &engines,
+            verified_config.wasm_activities,
+            verified_config.workflows,
+            &db_pool,
+            &mut component_registry,
+        )
+        .await?;
+        // TODO: spawn webhooks in parallel to other tasks
+        let http_servers_handles: Vec<AbortOnDropHandle> = start_webhooks(
+            verified_config.http_servers_to_webhooks,
+            &engines,
+            db_pool.clone(),
+            &mut component_registry,
+        )
+        .await?;
+        Ok(ServerInit {
+            db_pool,
+            component_registry,
+            exec_join_handles,
+            timers_watcher,
+            http_servers_handles,
+        })
+    }
+
+    async fn close(self) -> Result<(), anyhow::Error> {
+        self.timers_watcher.close().await;
+        for exec_join_handle in self.exec_join_handles {
+            exec_join_handle.close().await;
+        }
+        self.db_pool
+            .close()
+            .await
+            .context("cannot close the database")
+    }
 }
 
 async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -809,7 +851,7 @@ async fn fetch_and_verify_all(
             Ok(VerifiedConfig {wasm_activities, workflows, http_servers_to_webhooks})
         },
         _ = tokio::signal::ctrl_c() => {
-            anyhow::bail!("cancelled downloading images from OCI registries")
+            anyhow::bail!("cancelled while resolving the WASM files")
         }
     }
 }
@@ -842,7 +884,7 @@ async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             pre_spawns
         },
         _ = tokio::signal::ctrl_c() => {
-            anyhow::bail!("cancelled downloading images from OCI registries")
+            anyhow::bail!("cancelled while compiling the components")
         }
     };
     // Start all executors
