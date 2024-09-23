@@ -210,8 +210,7 @@ impl ExecutionJournal {
                         })
                     }
                 }
-
-                _ => None, // previous event
+                ExecutionEventInner::HistoryEvent { .. } => None, // previous event
             })
             .expect("journal must begin with Created event")
     }
