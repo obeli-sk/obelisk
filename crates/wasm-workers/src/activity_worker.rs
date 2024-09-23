@@ -1,3 +1,4 @@
+use crate::activity_ctx::ActivityCtx;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
 use crate::WasmFileError;
@@ -12,7 +13,7 @@ use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, error, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
-use wasmtime::component::ComponentExportIndex;
+use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -61,8 +62,7 @@ pub const TIMEOUT_SLEEP_UNIT: Duration = Duration::from_millis(10);
 #[derive(Clone)]
 pub struct ActivityWorker<C: ClockFn> {
     engine: Arc<Engine>,
-    linker: wasmtime::component::Linker<StoreCtx>,
-    component: wasmtime::component::Component,
+    instance_pre: InstancePre<ActivityCtx>,
     recycled_instances: MaybeRecycledInstances,
     exim: ExIm,
     clock_fn: C,
@@ -96,8 +96,7 @@ impl<C: ClockFn> ActivityWorker<C> {
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(linking_err)?;
 
         // Attempt to pre-instantiate to catch missing imports
-        // TODO: Use it in `run`
-        linker
+        let instance_pre = linker
             .instantiate_pre(&wasm_component.component)
             .map_err(linking_err)?;
 
@@ -107,8 +106,6 @@ impl<C: ClockFn> ActivityWorker<C> {
             .map_err(WasmFileError::DecodeError)?;
         Ok(Self {
             engine,
-            linker,
-            component: wasm_component.component,
             recycled_instances,
             exim: wasm_component.exim,
             clock_fn,
@@ -117,6 +114,7 @@ impl<C: ClockFn> ActivityWorker<C> {
             forward_stdout: config.forward_stdout,
             forward_stderr: config.forward_stderr,
             env_vars: config.env_vars,
+            instance_pre,
         })
     }
 }
@@ -150,11 +148,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 self.forward_stderr,
                 &self.env_vars,
             );
-            match self
-                .linker
-                .instantiate_async(&mut store, &self.component)
-                .await
-            {
+            match self.instance_pre.instantiate_async(&mut store).await {
                 Ok(instance) => (instance, store),
                 Err(err) => {
                     let reason = err.to_string();
