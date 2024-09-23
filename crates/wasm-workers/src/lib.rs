@@ -133,7 +133,7 @@ pub(crate) mod tests {
             activity_worker::{ActivityConfig, ActivityWorker, RecycleInstancesSetting},
             engines::{EngineConfig, Engines},
             tests::fn_registry_dummy,
-            webhook_trigger::{self, MethodAwareRouter},
+            webhook_trigger::{self, MethodAwareRouter, RetryConfigOverride},
             workflow_worker::{tests::get_workflow_worker, JoinNextBlockingStrategy},
         };
         use concepts::ConfigId;
@@ -200,6 +200,7 @@ pub(crate) mod tests {
                 None,
                 None,
                 Arc::from([]),
+                RetryConfigOverride::default(),
             )
             .unwrap();
 
@@ -216,7 +217,6 @@ pub(crate) mod tests {
                 db_pool.clone(),
                 now,
                 fn_registry_dummy(&[]),
-                crate::webhook_trigger::RetryConfigOverride::default(),
                 Duration::from_secs(1),
             ));
         }
