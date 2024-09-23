@@ -428,18 +428,6 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         assert_eq!(Vec::from("hello".as_bytes()), *value);
         version = current_version;
     }
-    {
-        let created_at = sim_clock.now();
-        debug!(now = %created_at, "Cancel request");
-        let req = AppendRequest {
-            event: ExecutionEventInner::CancelRequest,
-            created_at,
-        };
-        version = db_connection
-            .append(execution_id, version, req)
-            .await
-            .unwrap();
-    }
     sim_clock
         .move_time_forward(Duration::from_millis(300))
         .await;

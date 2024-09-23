@@ -296,11 +296,6 @@ pub enum ExecutionEventInner {
         #[arbitrary(value = Ok(SupportedFunctionReturnValue::None))]
         result: FinishedExecutionResult,
     },
-    // Created by an external system or a scheduler during a race.
-    // Processed by the executor holding the last Lock.
-    // Imediately followed by Finished by a scheduler.
-    #[display("CancelRequest")]
-    CancelRequest, // TODO Rename to CancelRequested
 
     #[display("HistoryEvent({event})")]
     HistoryEvent { event: HistoryEvent },

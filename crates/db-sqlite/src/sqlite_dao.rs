@@ -308,6 +308,7 @@ impl DbPool<SqlitePool> for SqlitePool {
         self.clone()
     }
 
+    // FIXME: close(self)
     async fn close(&self) -> Result<(), DbError> {
         let res = self
             .shutdown
@@ -1201,11 +1202,6 @@ impl SqlitePool {
                         lock_expires_at: *lock_expires_at,
                     })
                 }
-            }
-
-            ExecutionEventInner::CancelRequest => {
-                // FIXME
-                IndexAction::NoPendingStateChange(None)
             }
         };
         let next_version = Version(appending_version.0 + 1);
