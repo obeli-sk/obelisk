@@ -772,15 +772,14 @@ pub mod prefixed_ulid {
     }
 }
 
-// FIXME: serde to & from str
 #[derive(
     derive_more::Debug,
     Clone,
     PartialEq,
     Eq,
     Hash,
-    serde::Serialize,
-    serde::Deserialize,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
     derive_more::Display,
 )]
 #[display("{component_type}:{name}:{hash}")]
