@@ -60,6 +60,7 @@ pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
+    retry_config: RetryConfigOverride,
 }
 
 pub struct MethodAwareRouter<T> {
@@ -113,6 +114,7 @@ pub fn component_to_instance<
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
+    retry_config: RetryConfigOverride,
 ) -> Result<WebhookInstance<C, DB, P>, WasmFileError> {
     const WASI_NAMESPACE_WITH_COLON: &str = "wasi:";
 
@@ -202,6 +204,7 @@ pub fn component_to_instance<
         forward_stdout,
         forward_stderr,
         env_vars,
+        retry_config,
     })
 }
 
@@ -213,7 +216,6 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
     db_pool: P,
     clock_fn: C,
     fn_registry: Arc<dyn FunctionRegistry>,
-    retry_config: RetryConfigOverride,
     request_timeout: Duration,
 ) -> Result<(), WebhookServerError> {
     let router = Arc::new(router);
@@ -242,7 +244,6 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                                 clock_fn: clock_fn.clone(),
                                 db_pool: db_pool.clone(),
                                 fn_registry: fn_registry.clone(),
-                                retry_config,
                                 request_timeout,
                                 execution_id: ExecutionId::generate(),
                                 router: router.clone(),
@@ -260,7 +261,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct RetryConfigOverride {
     activity_max_retries_override: Option<u32>,
     activity_retry_exp_backoff_override: Option<Duration>,
@@ -785,7 +786,6 @@ struct RequestHandler<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPoo
     clock_fn: C,
     db_pool: P,
     fn_registry: Arc<dyn FunctionRegistry>,
-    retry_config: RetryConfigOverride,
     request_timeout: Duration,
     execution_id: ExecutionId,
     router: Arc<MethodAwareRouter<WebhookInstance<C, DB, P>>>,
@@ -855,7 +855,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 self.clock_fn,
                 self.db_pool,
                 self.fn_registry,
-                self.retry_config,
+                found_instance.retry_config,
                 matched.params().iter(),
                 self.execution_id,
                 found_instance.forward_stdout,
@@ -954,6 +954,7 @@ mod tests {
         use super::*;
         use crate::activity_worker::tests::FIBO_10_OUTPUT;
         use crate::engines::{EngineConfig, Engines};
+        use crate::webhook_trigger::RetryConfigOverride;
         use crate::{
             activity_worker::tests::spawn_activity_fibo,
             tests::fn_registry_dummy,
@@ -1032,6 +1033,7 @@ mod tests {
                         None,
                         None,
                         Arc::from([]),
+                        RetryConfigOverride::default(),
                     )
                     .unwrap();
                     let mut router = MethodAwareRouter::default();
@@ -1050,7 +1052,6 @@ mod tests {
                         db_pool.clone(),
                         sim_clock.get_clock_fn(),
                         fn_registry,
-                        crate::webhook_trigger::RetryConfigOverride::default(),
                         Duration::from_secs(1),
                     ))
                     .abort_handle(),

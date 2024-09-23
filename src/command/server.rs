@@ -604,6 +604,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                 webhook.forward_stdout,
                 webhook.forward_stderr,
                 Arc::from(webhook.env_vars),
+                webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
             )?;
             component_registry.insert(Component {
                 config_id,
@@ -643,7 +644,6 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                 db_pool.clone(),
                 now,
                 fn_registry.clone(),
-                webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
                 http_server.request_timeout.into(),
             ))
             .abort_handle(),
