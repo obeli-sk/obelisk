@@ -37,7 +37,6 @@ pub(crate) enum ConfigStore {
         common: ConfigStoreCommon,
         default_max_retries: u32,
         default_retry_exp_backoff: Duration,
-        recycle_instances: bool,
     },
     WasmWorkflowV1 {
         common: ConfigStoreCommon,

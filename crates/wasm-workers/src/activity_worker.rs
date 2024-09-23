@@ -14,44 +14,12 @@ use tracing::{debug, error, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
+use wasmtime::UpdateDeadline;
 use wasmtime::{component::Val, Engine};
-use wasmtime::{Store, UpdateDeadline};
-
-type StoreCtx = crate::activity_ctx::ActivityCtx;
-
-// TODO: Benchmark and decide whether this is still needed, consider using InstancePre instead.
-#[derive(Clone, Debug, Copy, Default)]
-pub enum RecycleInstancesSetting {
-    #[default]
-    Enabled,
-    Disabled,
-}
-impl From<bool> for RecycleInstancesSetting {
-    fn from(value: bool) -> Self {
-        if value {
-            Self::Enabled
-        } else {
-            Self::Disabled
-        }
-    }
-}
-
-type MaybeRecycledInstances =
-    Option<Arc<std::sync::Mutex<Vec<(wasmtime::component::Instance, Store<StoreCtx>)>>>>;
-
-impl RecycleInstancesSetting {
-    pub(crate) fn instantiate(&self) -> MaybeRecycledInstances {
-        match self {
-            Self::Enabled => Some(Arc::default()),
-            Self::Disabled => None,
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct ActivityConfig {
     pub config_id: ConfigId,
-    pub recycle_instances: RecycleInstancesSetting,
     pub forward_stdout: Option<StdOutput>,
     pub forward_stderr: Option<StdOutput>,
     pub env_vars: Arc<[EnvVar]>,
@@ -63,7 +31,6 @@ pub const TIMEOUT_SLEEP_UNIT: Duration = Duration::from_millis(10);
 pub struct ActivityWorker<C: ClockFn> {
     engine: Arc<Engine>,
     instance_pre: InstancePre<ActivityCtx>,
-    recycled_instances: MaybeRecycledInstances,
     exim: ExIm,
     clock_fn: C,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
@@ -100,13 +67,11 @@ impl<C: ClockFn> ActivityWorker<C> {
             .instantiate_pre(&wasm_component.component)
             .map_err(linking_err)?;
 
-        let recycled_instances = config.recycle_instances.instantiate();
         let exported_ffqn_to_index = wasm_component
             .index_exported_functions()
             .map_err(WasmFileError::DecodeError)?;
         Ok(Self {
             engine,
-            recycled_instances,
             exim: wasm_component.exim,
             clock_fn,
             exported_ffqn_to_index,
@@ -133,34 +98,26 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Params: {params:?}", params = ctx.params);
         assert!(ctx.event_history.is_empty());
-        let instance_and_store = self
-            .recycled_instances
-            .as_ref()
-            .and_then(|i| i.lock().unwrap().pop());
-        let (instance, mut store) = if let Some((instance, store)) = instance_and_store {
-            (instance, store)
-        } else {
-            let mut store = crate::activity_ctx::store(
-                &self.engine,
-                ctx.execution_id,
-                &self.config_id,
-                self.forward_stdout,
-                self.forward_stderr,
-                &self.env_vars,
-            );
-            match self.instance_pre.instantiate_async(&mut store).await {
-                Ok(instance) => (instance, store),
-                Err(err) => {
-                    let reason = err.to_string();
-                    if reason.starts_with("maximum concurrent") {
-                        return WorkerResult::Err(WorkerError::LimitReached(reason, ctx.version));
-                    }
-                    return WorkerResult::Err(WorkerError::IntermittentError {
-                        reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
-                        err: Some(err.into()),
-                        version: ctx.version,
-                    });
+        let mut store = crate::activity_ctx::store(
+            &self.engine,
+            ctx.execution_id,
+            &self.config_id,
+            self.forward_stdout,
+            self.forward_stderr,
+            &self.env_vars,
+        );
+        let instance = match self.instance_pre.instantiate_async(&mut store).await {
+            Ok(instance) => instance,
+            Err(err) => {
+                let reason = err.to_string();
+                if reason.starts_with("maximum concurrent") {
+                    return WorkerResult::Err(WorkerError::LimitReached(reason, ctx.version));
                 }
+                return WorkerResult::Err(WorkerError::IntermittentError {
+                    reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
+                    err: Some(err.into()),
+                    version: ctx.version,
+                });
             }
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
@@ -217,10 +174,6 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                     err: Some(err.into()),
                     version: ctx.version,
                 });
-            }
-
-            if let Some(recycled_instances) = &self.recycled_instances {
-                recycled_instances.lock().unwrap().push((instance, store));
             }
 
             // Interpret `SupportedFunctionResult::Fallible` Err variant as an retry request
@@ -297,13 +250,9 @@ pub(crate) mod tests {
         StrVariant::from(input)
     }
 
-    fn activity_config(
-        config_id: ConfigId,
-        recycle_instances: RecycleInstancesSetting,
-    ) -> ActivityConfig {
+    fn activity_config(config_id: ConfigId) -> ActivityConfig {
         ActivityConfig {
             config_id,
-            recycle_instances,
             forward_stdout: None,
             forward_stderr: None,
             env_vars: Arc::from([]),
@@ -325,7 +274,7 @@ pub(crate) mod tests {
         let worker = Arc::new(
             ActivityWorker::new_with_config(
                 wasm_path,
-                activity_config(config_id.clone(), RecycleInstancesSetting::Disabled),
+                activity_config(config_id.clone()),
                 engine,
                 clock_fn.clone(),
             )
@@ -399,14 +348,12 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn limit_reached() {
         const FIBO_INPUT: u8 = 10;
-        const RECYCLE: bool = true;
         const LOCK_EXPIRY_MILLIS: u64 = 1100;
         const TASKS: u32 = 10;
         const MAX_INSTANCES: u32 = 1;
 
         test_utils::set_up();
         let fibo_input = env_or_default("FIBO_INPUT", FIBO_INPUT);
-        let recycle_instances = env_or_default("RECYCLE", RECYCLE).into();
         let lock_expiry =
             Duration::from_millis(env_or_default("LOCK_EXPIRY_MILLIS", LOCK_EXPIRY_MILLIS));
         let tasks = env_or_default("TASKS", TASKS);
@@ -426,7 +373,7 @@ pub(crate) mod tests {
 
         let fibo_worker = ActivityWorker::new_with_config(
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-            activity_config(ConfigId::dummy(), recycle_instances),
+            activity_config(ConfigId::dummy()),
             engine,
             now,
         )
@@ -487,7 +434,6 @@ pub(crate) mod tests {
             #[case] sleep_millis: u32,
             #[case] sleep_iterations: u32,
             #[case] expected: concepts::FinishedExecutionResult,
-            #[values(false, true)] recycle: bool,
         ) {
             const LOCK_EXPIRY: Duration = Duration::from_millis(500);
             const TICK_SLEEP: Duration = Duration::from_millis(10);
@@ -507,12 +453,10 @@ pub(crate) mod tests {
                 Duration::from_millis(EPOCH_MILLIS),
             );
 
-            let recycle_instances: RecycleInstancesSetting =
-                env_or_default("RECYCLE", recycle).into();
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                    activity_config(ConfigId::dummy(), recycle_instances),
+                    activity_config(ConfigId::dummy()),
                     engine,
                     now,
                 )
@@ -600,7 +544,7 @@ pub(crate) mod tests {
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                    activity_config(ConfigId::dummy(), RecycleInstancesSetting::Disabled),
+                    activity_config(ConfigId::dummy()),
                     engine,
                     now,
                 )
@@ -644,7 +588,7 @@ pub(crate) mod tests {
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                    activity_config(ConfigId::dummy(), RecycleInstancesSetting::Disabled),
+                    activity_config(ConfigId::dummy()),
                     engine,
                     sim_clock.get_clock_fn(),
                 )
@@ -753,7 +697,7 @@ pub(crate) mod tests {
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                    activity_config(ConfigId::dummy(), RecycleInstancesSetting::Disabled),
+                    activity_config(ConfigId::dummy()),
                     engine,
                     sim_clock.get_clock_fn(),
                 )

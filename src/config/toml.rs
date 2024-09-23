@@ -214,8 +214,6 @@ pub(crate) struct WasmActivityToml {
     pub(crate) default_max_retries: u32,
     #[serde(default = "default_retry_exp_backoff")]
     pub(crate) default_retry_exp_backoff: DurationConfig,
-    #[serde(default = "default_true")]
-    pub(crate) recycle_instances: bool,
     #[serde(default)]
     pub(crate) forward_stdout: StdOutput,
     #[serde(default)]
@@ -247,13 +245,11 @@ impl WasmActivityToml {
             common,
             default_max_retries: self.default_max_retries,
             default_retry_exp_backoff: self.default_retry_exp_backoff.into(),
-            recycle_instances: self.recycle_instances,
         };
         let config_id = config_store.config_id()?;
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
         let activity_config = ActivityConfig {
             config_id: config_id.clone(),
-            recycle_instances: self.recycle_instances.into(),
             forward_stdout: self.forward_stdout.into(),
             forward_stderr: self.forward_stderr.into(),
             env_vars: Arc::from(self.env_vars),
@@ -767,11 +763,6 @@ mod util {
         File,
         Folder,
     }
-}
-
-// https://github.com/serde-rs/serde/issues/368
-const fn default_true() -> bool {
-    true
 }
 
 const fn default_max_retries() -> u32 {

@@ -33,7 +33,6 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## Common settings for all components - see above.
 ## Common executor settings - see above.
 ## Specific settings for wasm_activity:
-# recycle_instances = true # If true, the same WASM instance will be used again instead of creating new instance for performance reasons.
 # default_max_retries = 5 # When calling the activity directly, `default_max_retries` is applied.
 # default_retry_exp_backoff.millis = 100 # Exponential backoff setting.
 ## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".

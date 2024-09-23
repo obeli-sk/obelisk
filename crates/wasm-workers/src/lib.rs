@@ -130,7 +130,7 @@ pub(crate) mod tests {
 
     mod populate_codegen_cache {
         use crate::{
-            activity_worker::{ActivityConfig, ActivityWorker, RecycleInstancesSetting},
+            activity_worker::{ActivityConfig, ActivityWorker},
             engines::{EngineConfig, Engines},
             tests::fn_registry_dummy,
             webhook_trigger::{self, MethodAwareRouter, RetryConfigOverride},
@@ -156,7 +156,6 @@ pub(crate) mod tests {
                 path,
                 ActivityConfig {
                     config_id: ConfigId::dummy(),
-                    recycle_instances: RecycleInstancesSetting::default(),
                     forward_stdout: None,
                     forward_stderr: None,
                     env_vars: Arc::from([]),
