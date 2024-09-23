@@ -4,6 +4,7 @@ use crate::prefixed_ulid::JoinSetId;
 use crate::prefixed_ulid::RunId;
 use crate::ConfigId;
 use crate::ExecutionId;
+use crate::ExecutionMetadata;
 use crate::FinishedExecutionResult;
 use crate::FunctionFqn;
 use crate::Params;
@@ -205,12 +206,12 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     ffqn: FunctionFqn::new_static("", ""),
     params: Params::default(),
     parent: None,
-    correlation_id: StrVariant::empty(),
     scheduled_at: DateTime::from_timestamp_nanos(0),
     retry_exp_backoff: Duration::ZERO,
     max_retries: 0,
     config_id: ConfigId::dummy(),
     return_type: None,
+    metadata: ExecutionMetadata::empty(),
 };
 pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
     event: HistoryEvent::JoinSet {
@@ -249,8 +250,6 @@ pub enum ExecutionEventInner {
         #[arbitrary(default)]
         params: Params,
         parent: Option<(ExecutionId, JoinSetId)>,
-        #[arbitrary(value = StrVariant::empty())]
-        correlation_id: StrVariant,
         scheduled_at: DateTime<Utc>,
         retry_exp_backoff: Duration,
         max_retries: u32,
@@ -258,6 +257,8 @@ pub enum ExecutionEventInner {
         config_id: ConfigId,
         #[arbitrary(default)]
         return_type: Option<TypeWrapper>,
+        #[arbitrary(default)]
+        metadata: ExecutionMetadata,
     },
     // Created by an executor.
     // Either immediately followed by an execution request by an executor or
@@ -500,7 +501,7 @@ pub type LockResponse = (Vec<HistoryEvent>, Version);
 #[derive(Debug, Clone)]
 pub struct LockedExecution {
     pub execution_id: ExecutionId,
-    pub correlation_id: StrVariant,
+    pub metadata: ExecutionMetadata,
     pub run_id: RunId,
     pub version: Version,
     pub ffqn: FunctionFqn,
@@ -531,12 +532,12 @@ pub struct CreateRequest {
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub parent: Option<(ExecutionId, JoinSetId)>,
-    pub correlation_id: StrVariant,
     pub scheduled_at: DateTime<Utc>,
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
     pub config_id: ConfigId,
     pub return_type: Option<TypeWrapper>,
+    pub metadata: ExecutionMetadata,
 }
 
 impl From<CreateRequest> for ExecutionEventInner {
@@ -545,12 +546,12 @@ impl From<CreateRequest> for ExecutionEventInner {
             ffqn: value.ffqn,
             params: value.params,
             parent: value.parent,
-            correlation_id: value.correlation_id,
             scheduled_at: value.scheduled_at,
             retry_exp_backoff: value.retry_exp_backoff,
             max_retries: value.max_retries,
             config_id: value.config_id,
             return_type: value.return_type,
+            metadata: value.metadata,
         }
     }
 }

@@ -169,7 +169,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             let seed = ctx.execution_id.random_part();
             let ctx = WorkflowCtx::new(
                 ctx.execution_id,
-                ctx.correlation_id,
+                ctx.metadata,
                 ctx.event_history,
                 ctx.responses,
                 seed,
@@ -510,7 +510,7 @@ pub(crate) mod tests {
                 ffqn: FIBO_WORKFLOW_FFQN,
                 params,
                 parent: None,
-                correlation_id: StrVariant::empty(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -584,7 +584,7 @@ pub(crate) mod tests {
                 ffqn: FIBO_WORKFLOW_FFQN,
                 params,
                 parent: None,
-                correlation_id: StrVariant::empty(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -720,7 +720,7 @@ pub(crate) mod tests {
                 ffqn: SLEEP_HOST_ACTIVITY_FFQN,
                 params,
                 parent: None,
-                correlation_id: StrVariant::empty(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -832,7 +832,7 @@ pub(crate) mod tests {
                 ffqn: HTTP_GET_WORKFLOW_FFQN,
                 params,
                 parent: None,
-                correlation_id: StrVariant::empty(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -929,7 +929,7 @@ pub(crate) mod tests {
                 ffqn: HTTP_GET_WORKFLOW_FFQN,
                 params,
                 parent: None,
-                correlation_id: StrVariant::empty(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::from_millis(0),
                 max_retries: concurrency - 1, // response can conflict with next ChildExecutionRequest
@@ -975,7 +975,6 @@ pub(crate) mod tests {
         const ITERATIONS: u8 = 1;
         const RESCHEDULE_FFQN: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::RESCHEDULE);
-        const CORRELATION_ID: StrVariant = StrVariant::Static("cor");
         let _guard = test_utils::set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = db.set_up().await;
@@ -1001,7 +1000,7 @@ pub(crate) mod tests {
                 ffqn: RESCHEDULE_FFQN,
                 params,
                 parent: None,
-                correlation_id: CORRELATION_ID,
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1060,7 +1059,6 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_eq!(params, serde_json::to_string(&next_pending.params).unwrap());
-        assert_eq!(CORRELATION_ID, next_pending.correlation_id);
         drop(exec_task);
         db_pool.close().await.unwrap();
     }

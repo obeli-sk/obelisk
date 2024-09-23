@@ -6,7 +6,7 @@ use concepts::storage::{
     JoinSetResponseEventOuter,
 };
 use concepts::storage::{ExecutionLog, PendingState, SpecificError, Version};
-use concepts::ExecutionId;
+use concepts::{ExecutionId, ExecutionMetadata};
 use concepts::{FunctionFqn, Params, StrVariant};
 use std::cmp::max;
 use std::{collections::VecDeque, time::Duration};
@@ -76,12 +76,12 @@ impl ExecutionJournal {
     }
 
     #[must_use]
-    pub fn correlation_id(&self) -> &StrVariant {
+    pub fn metadata(&self) -> &ExecutionMetadata {
         match self.execution_events.front().unwrap() {
             ExecutionEvent {
-                event: ExecutionEventInner::Created { correlation_id, .. },
+                event: ExecutionEventInner::Created { metadata, .. },
                 ..
-            } => correlation_id,
+            } => metadata,
             _ => panic!("first event must be `Created`"),
         }
     }

@@ -327,7 +327,7 @@ pub(crate) mod tests {
                 ffqn: FIBO_ACTIVITY_FFQN,
                 params,
                 parent: None,
-                correlation_id: StrVariant::empty(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -385,7 +385,7 @@ pub(crate) mod tests {
                 let fibo_worker = fibo_worker.clone();
                 let ctx = WorkerContext {
                     execution_id: ExecutionId::generate(),
-                    correlation_id: StrVariant::empty(),
+                    metadata: concepts::ExecutionMetadata::empty(),
                     ffqn: FIBO_ACTIVITY_FFQN,
                     params: Params::from_json_value(json!([fibo_input])).unwrap(),
                     event_history: Vec::new(),
@@ -493,7 +493,7 @@ pub(crate) mod tests {
                     params: Params::from_json_value(json!([sleep_millis, sleep_iterations]))
                         .unwrap(),
                     parent: None,
-                    correlation_id: StrVariant::empty(),
+                    metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     retry_exp_backoff: Duration::ZERO,
                     max_retries: 0,
@@ -554,7 +554,7 @@ pub(crate) mod tests {
             let executed_at = now();
             let ctx = WorkerContext {
                 execution_id: ExecutionId::generate(),
-                correlation_id: StrVariant::empty(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
                 params: Params::from_json_value(json!([sleep_millis, sleep_iterations])).unwrap(),
                 event_history: Vec::new(),
@@ -631,7 +631,7 @@ pub(crate) mod tests {
                     ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
                     params,
                     parent: None,
-                    correlation_id: StrVariant::empty(),
+                    metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
@@ -738,7 +738,7 @@ pub(crate) mod tests {
                     ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
                     params,
                     parent: None,
-                    correlation_id: StrVariant::empty(),
+                    metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,

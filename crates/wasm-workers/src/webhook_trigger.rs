@@ -315,8 +315,6 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     execution_id: ExecutionId,
     version: Option<Version>,
-    // can only be changed before persisting the execution - so before any child execution request.
-    correlation_id: StrVariant,
     phantom_data: PhantomData<DB>,
 }
 
@@ -342,6 +340,7 @@ const HTTP_HANDLER_FFQN: FunctionFqn =
     FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
+    // Create new execution if this is the first call of the request/response cycle
     async fn get_version(&mut self) -> Result<Version, DbError> {
         if let Some(found) = &self.version {
             return Ok(found.clone());
@@ -353,7 +352,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             ffqn: HTTP_HANDLER_FFQN,
             params: Params::default(),
             parent: None,
-            correlation_id: self.correlation_id.clone(),
+            metadata: concepts::ExecutionMetadata::empty(),
             scheduled_at: created_at,
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
@@ -477,7 +476,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: Some((self.execution_id, join_set_id)),
-                    correlation_id: self.correlation_id.clone(),
+                    metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     max_retries: self
                         .retry_config
@@ -595,7 +594,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
-                    correlation_id: self.correlation_id.clone(),
+                    metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at,
                     max_retries: self
                         .retry_config
@@ -649,7 +648,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 ffqn,
                 params: Params::from_wasmtime(Arc::from(params)),
                 parent: Some((self.execution_id, join_set_id)),
-                correlation_id: self.correlation_id.clone(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 max_retries: self
                     .retry_config
@@ -749,7 +748,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             responses: Vec::new(),
             config_id,
             execution_id,
-            correlation_id: StrVariant::from(execution_id.to_string()),
             phantom_data: PhantomData,
         };
         let mut store = Store::new(engine, ctx);

@@ -581,12 +581,12 @@ impl SqlitePool {
             ffqn,
             params,
             parent,
-            correlation_id,
             scheduled_at,
             retry_exp_backoff,
             max_retries,
             config_id,
             return_type,
+            metadata,
         } = event
         {
             Ok(CreateRequest {
@@ -595,12 +595,12 @@ impl SqlitePool {
                 ffqn,
                 params,
                 parent,
-                correlation_id,
                 scheduled_at,
                 retry_exp_backoff,
                 max_retries,
                 config_id,
                 return_type,
+                metadata,
             })
         } else {
             error!("Cannt match `Created` event - {event:?}");
@@ -1008,7 +1008,7 @@ impl SqlitePool {
             retry_exp_backoff,
             max_retries,
             parent,
-            correlation_id,
+            metadata,
             ..
         }) = events.pop_front()
         else {
@@ -1035,7 +1035,7 @@ impl SqlitePool {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(LockedExecution {
             execution_id,
-            correlation_id,
+            metadata,
             run_id,
             version: next_version,
             ffqn,

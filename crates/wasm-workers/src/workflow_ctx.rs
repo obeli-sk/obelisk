@@ -7,8 +7,8 @@ use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::{
-    ExecutionId, FinishedExecutionError, FunctionRegistry, IfcFqnName, StrVariant,
-    SupportedFunctionReturnValue,
+    ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionRegistry, IfcFqnName,
+    StrVariant, SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
 use executor::worker::{FatalError, WorkerError, WorkerResult};
@@ -95,7 +95,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
-        correlation_id: StrVariant,
+        metadata: ExecutionMetadata,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         seed: u64,
@@ -114,7 +114,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             execution_id,
             event_history: EventHistory::new(
                 execution_id,
-                correlation_id,
+                metadata,
                 event_history,
                 responses,
                 join_next_blocking_strategy,
@@ -366,7 +366,6 @@ pub(crate) mod tests {
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::StrVariant;
     use concepts::{
         storage::{
             wait_for_pending_state_fn, CreateRequest, DbConnection, DbPool, HistoryEvent,
@@ -449,7 +448,7 @@ pub(crate) mod tests {
             let seed = ctx.execution_id.random_part();
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id,
-                ctx.correlation_id,
+                ctx.metadata,
                 ctx.event_history,
                 ctx.responses,
                 seed,
@@ -594,7 +593,7 @@ pub(crate) mod tests {
                 ffqn: FFQN_MOCK,
                 params: Params::default(),
                 parent: None,
-                correlation_id: StrVariant::empty(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,

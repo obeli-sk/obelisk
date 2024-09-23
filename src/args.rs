@@ -98,9 +98,6 @@ pub(crate) enum Execution {
         /// Enable full verbosity with `-vv`
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
-        // Correlation ID of the execution and its child executions
-        #[arg(short, long)]
-        correlation_id: Option<String>,
         /// Function in the fully qualified format
         #[arg(value_name = "FUNCTION")]
         ffqn: FunctionFqn,

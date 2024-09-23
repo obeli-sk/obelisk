@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use concepts::storage::HistoryEvent;
 use concepts::storage::Version;
 use concepts::ExecutionId;
+use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
 use concepts::{
     storage::{DbError, JoinSetResponseEvent},
@@ -33,7 +34,7 @@ pub enum WorkerResult {
 #[derive(Debug)]
 pub struct WorkerContext {
     pub execution_id: ExecutionId,
-    pub correlation_id: StrVariant,
+    pub metadata: ExecutionMetadata,
     pub ffqn: FunctionFqn,
     pub params: Params,
     pub event_history: Vec<HistoryEvent>,

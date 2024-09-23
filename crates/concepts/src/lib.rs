@@ -1068,6 +1068,18 @@ pub trait FunctionRegistry: Send + Sync {
     ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)>;
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize, derive_more::Display, PartialEq, Eq)]
+#[display("{_0:?}")]
+pub struct ExecutionMetadata(Option<hashbrown::HashMap<String, String>>);
+
+impl ExecutionMetadata {
+    #[must_use]
+    pub const fn empty() -> Self {
+        // Remove `Optional` when https://github.com/rust-lang/rust/issues/123197 is resolved
+        Self(None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{

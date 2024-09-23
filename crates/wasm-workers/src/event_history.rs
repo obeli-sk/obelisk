@@ -13,6 +13,7 @@ use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
 use concepts::ConfigId;
+use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::{ExecutionId, StrVariant};
@@ -37,7 +38,7 @@ enum ProcessingStatus {
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct EventHistory<C: ClockFn> {
     execution_id: ExecutionId,
-    correlation_id: StrVariant,
+    metadata: ExecutionMetadata,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     execution_deadline: DateTime<Utc>,
     retry_config: RetryConfig,
@@ -63,7 +64,7 @@ impl<C: ClockFn> EventHistory<C> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
-        correlation_id: StrVariant,
+        metadata: ExecutionMetadata,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -77,7 +78,7 @@ impl<C: ClockFn> EventHistory<C> {
         let non_blocking_event_batch_size = non_blocking_event_batching as usize;
         EventHistory {
             execution_id,
-            correlation_id,
+            metadata,
             event_history: event_history
                 .into_iter()
                 .map(|event| (event, Unprocessed))
@@ -546,7 +547,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    correlation_id: self.correlation_id.clone(),
+                    metadata: ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     retry_exp_backoff: self
                         .retry_config
@@ -607,7 +608,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: new_execution_id,
-                    correlation_id: self.correlation_id.clone(),
+                    metadata: ExecutionMetadata::empty(),
                     ffqn,
                     params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
@@ -704,7 +705,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    correlation_id: self.correlation_id.clone(),
+                    metadata: ExecutionMetadata::empty(),
                     scheduled_at: created_at,
                     retry_exp_backoff: self
                         .retry_config
@@ -994,7 +995,7 @@ mod tests {
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::{
-        ConfigId, ExecutionId, FunctionFqn, FunctionRegistry, Params, StrVariant,
+        ConfigId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionRegistry, Params,
         SupportedFunctionReturnValue,
     };
     use db_tests::Database;
@@ -1021,7 +1022,7 @@ mod tests {
         let exec_log = db_connection.get(execution_id).await.unwrap();
         let event_history = EventHistory::new(
             execution_id,
-            StrVariant::empty(),
+            ExecutionMetadata::empty(),
             exec_log.event_history().collect(),
             exec_log
                 .responses
@@ -1064,7 +1065,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                correlation_id: StrVariant::empty(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1229,7 +1230,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                correlation_id: StrVariant::empty(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
@@ -1405,7 +1406,7 @@ mod tests {
                 ffqn: MOCK_FFQN,
                 params: Params::default(),
                 parent: None,
-                correlation_id: StrVariant::empty(),
+                metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,

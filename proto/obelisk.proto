@@ -79,7 +79,7 @@ message SubmitRequest {
     FunctionName function = 1;
     google.protobuf.Any params = 2;
     optional ExecutionId execution_id = 3;      // Generated if not set
-    optional string correlation_id = 4;         // Copied from execution_id if not set
+    reserved 4;
 }
 
 message SubmitResponse {
