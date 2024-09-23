@@ -2392,6 +2392,7 @@ dependencies = [
  "madsim",
  "madsim-tokio",
  "obeli-sk-val-json",
+ "opentelemetry",
  "serde",
  "serde_json",
  "serde_with",
@@ -2447,11 +2448,13 @@ dependencies = [
  "obeli-sk-db-sqlite",
  "obeli-sk-utils",
  "obeli-sk-val-json",
+ "opentelemetry",
  "rstest",
  "serde",
  "test-utils",
  "thiserror",
  "tracing",
+ "tracing-opentelemetry",
  "ulid",
 ]
 

@@ -1,4 +1,5 @@
 use ::serde::{Deserialize, Serialize};
+use assert_matches::assert_matches;
 use async_trait::async_trait;
 pub use prefixed_ulid::ExecutionId;
 use serde_json::Value;
@@ -1075,8 +1076,37 @@ pub struct ExecutionMetadata(Option<hashbrown::HashMap<String, String>>);
 impl ExecutionMetadata {
     #[must_use]
     pub const fn empty() -> Self {
-        // Remove `Optional` when https://github.com/rust-lang/rust/issues/123197 is resolved
+        // Remove `Optional` when const hashmap creation is allowed - https://github.com/rust-lang/rust/issues/123197
         Self(None)
+    }
+}
+
+impl opentelemetry::propagation::Injector for ExecutionMetadata {
+    fn set(&mut self, key: &str, value: String) {
+        let map = match self.0.as_mut() {
+            Some(map) => map,
+            None => {
+                self.0 = Some(hashbrown::HashMap::new());
+                assert_matches!(&mut self.0, Some(ref mut map) => map)
+            }
+        };
+        map.insert(key.to_string(), value);
+    }
+}
+
+impl opentelemetry::propagation::Extractor for ExecutionMetadata {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0
+            .as_ref()
+            .and_then(|map| map.get(key))
+            .map(|string| string.as_str())
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        match &self.0.as_ref() {
+            Some(map) => map.keys().map(|s| s.as_str()).collect(),
+            None => vec![],
+        }
     }
 }
 

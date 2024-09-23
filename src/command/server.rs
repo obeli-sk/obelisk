@@ -59,6 +59,7 @@ use tracing::error;
 use tracing::instrument;
 use tracing::warn;
 use tracing::Instrument;
+use tracing::Span;
 use tracing::{debug, info, trace};
 use utils::time::now;
 use wasm_workers::activity_worker::ActivityWorker;
@@ -96,6 +97,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         &self,
         request: tonic::Request<grpc::SubmitRequest>,
     ) -> TonicRespResult<grpc::SubmitResponse> {
+        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+
         let request = request.into_inner();
         let grpc::FunctionName {
             interface_name,
@@ -104,7 +107,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         let execution_id = request
             .execution_id
             .map_or_else(|| Ok(ExecutionId::generate()), ExecutionId::try_from)?;
-        tracing::Span::current().record("execution_id", tracing::field::display(execution_id));
+        let span = Span::current();
+        span.record("execution_id", tracing::field::display(execution_id));
         let ffqn =
             concepts::FunctionFqn::new_arc(Arc::from(interface_name), Arc::from(function_name));
         // Deserialize params JSON into `Params`
@@ -140,11 +144,22 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         }
         let db_connection = self.db_pool.connection();
         let created_at = now();
+
+        let metadata = {
+            let mut metadata = concepts::ExecutionMetadata::empty();
+            // retrieve the current context
+            let span_ctx = span.context();
+            // inject the current context through the amqp headers
+            opentelemetry::global::get_text_map_propagator(|propagator| {
+                propagator.inject_context(&span_ctx, &mut metadata)
+            });
+            metadata
+        };
         db_connection
             .create(CreateRequest {
                 created_at,
                 execution_id,
-                metadata: concepts::ExecutionMetadata::empty(),
+                metadata,
                 ffqn,
                 params,
                 parent: None,

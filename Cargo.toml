@@ -57,7 +57,7 @@ opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry-semantic-conventions = { workspace = true, optional = true }
-tracing-opentelemetry = { workspace = true, optional = true }
+tracing-opentelemetry.workspace = true
 # tokio-console
 console-subscriber = { workspace = true, optional = true }
 # tracing-chrome
@@ -76,7 +76,6 @@ otlp = [
     "dep:opentelemetry_sdk",
     "dep:opentelemetry-otlp",
     "dep:opentelemetry-semantic-conventions",
-    "dep:tracing-opentelemetry",
 ]
 tracing-chrome = ["dep:tracing-chrome"]
 default = ["otlp"]

@@ -23,9 +23,11 @@ derivative.workspace = true
 derive_more.workspace = true
 hashbrown.workspace = true
 indexmap.workspace = true
+opentelemetry.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tracing-opentelemetry.workspace = true
 tracing.workspace = true
 ulid.workspace = true
 
