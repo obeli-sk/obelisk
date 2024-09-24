@@ -9,12 +9,9 @@ mod oci;
 use anyhow::{bail, Context};
 use args::{Args, Client, ClientSubcommand, Server, Subcommand};
 use clap::Parser;
-use command::grpc::{
-    function_repository_client::FunctionRepositoryClient, scheduler_client::SchedulerClient,
-};
 use config::config_holder::ConfigHolder;
 use directories::ProjectDirs;
-use grpc_util::to_channel;
+use grpc_util::{injector::TracingInjector, to_channel};
 use tonic::{codec::CompressionEncoding, transport::Channel};
 
 pub type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -93,20 +90,34 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 }
 
-async fn get_scheduler_client(url: String) -> Result<SchedulerClient<Channel>, anyhow::Error> {
-    Ok(SchedulerClient::new(to_channel(url).await?)
-        .send_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Gzip))
-}
+type SchedulerClient = command::grpc::scheduler_client::SchedulerClient<
+    tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
+>;
 
-async fn get_fn_repository_client(
-    url: String,
-) -> Result<FunctionRepositoryClient<Channel>, anyhow::Error> {
-    Ok(FunctionRepositoryClient::new(to_channel(url).await?)
+async fn get_scheduler_client(url: String) -> Result<SchedulerClient, anyhow::Error> {
+    Ok(
+        command::grpc::scheduler_client::SchedulerClient::with_interceptor(
+            to_channel(url).await?,
+            TracingInjector,
+        )
         .send_compressed(CompressionEncoding::Zstd)
         .accept_compressed(CompressionEncoding::Zstd)
-        .accept_compressed(CompressionEncoding::Gzip))
+        .accept_compressed(CompressionEncoding::Gzip),
+    )
+}
+type FunctionRepositoryClient = command::grpc::function_repository_client::FunctionRepositoryClient<
+    tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
+>;
+async fn get_fn_repository_client(url: String) -> Result<FunctionRepositoryClient, anyhow::Error> {
+    Ok(
+        command::grpc::function_repository_client::FunctionRepositoryClient::with_interceptor(
+            to_channel(url).await?,
+            TracingInjector,
+        )
+        .send_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Zstd)
+        .accept_compressed(CompressionEncoding::Gzip),
+    )
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd)]

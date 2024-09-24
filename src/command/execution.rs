@@ -1,19 +1,18 @@
 use super::grpc;
-use super::grpc::scheduler_client::SchedulerClient;
 use crate::command::grpc::execution_status::Finished;
 use crate::grpc_util::grpc_mapping::TonicClientResultExt;
+use crate::SchedulerClient;
 use anyhow::Context;
 use chrono::DateTime;
 use concepts::FinishedExecutionResult;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::execution_status::Status;
 use std::str::FromStr;
-use tonic::transport::Channel;
 use tracing::instrument;
 
 #[instrument(skip_all)]
 pub(crate) async fn submit(
-    mut client: SchedulerClient<Channel>,
+    mut client: SchedulerClient,
     ffqn: FunctionFqn,
     params: Vec<serde_json::Value>,
     follow: bool,
@@ -27,7 +26,6 @@ pub(crate) async fn submit(
             }),
             function: Some(ffqn.into()),
             execution_id: None,
-            // metadata: concepts::ExecutionMetadata::empty(), TODO: expose metadata over gRPC
         }))
         .await
         .to_anyhow()?
@@ -125,7 +123,7 @@ impl From<u8> for ExecutionVerbosity {
 }
 
 pub(crate) async fn get(
-    mut client: SchedulerClient<Channel>,
+    mut client: SchedulerClient,
     execution_id: ExecutionId,
     follow: bool,
     _verbosity: ExecutionVerbosity, // TODO

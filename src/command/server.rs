@@ -8,6 +8,7 @@ use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::WorkflowToml;
 use crate::config::Component;
 use crate::config::ConfigStore;
+use crate::grpc_util::extractor::accept_trace;
 use crate::grpc_util::grpc_mapping::PendingStatusExt as _;
 use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
 use crate::grpc_util::grpc_mapping::TonicServerResultExt;
@@ -56,6 +57,7 @@ use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
 use tracing::error;
+use tracing::info_span;
 use tracing::instrument;
 use tracing::warn;
 use tracing::Instrument;
@@ -501,6 +503,11 @@ async fn run_internal(
         init.component_registry.clone(),
     ));
     let grpc_server_res = tonic::transport::Server::builder()
+        .layer(
+            tower::ServiceBuilder::new()
+                .layer(tower_http::trace::TraceLayer::new_for_grpc().make_span_with(make_span))
+                .map_request(accept_trace),
+        )
         .add_service(
             grpc::scheduler_server::SchedulerServer::from_arc(grpc_server.clone())
                 .send_compressed(CompressionEncoding::Zstd)
@@ -528,6 +535,11 @@ async fn run_internal(
     // ^ Will await until the gRPC server shuts down.
     init.close().await?;
     grpc_server_res
+}
+
+fn make_span<B>(request: &axum::http::Request<B>) -> Span {
+    let headers = request.headers();
+    info_span!("incoming request", ?headers)
 }
 
 struct ServerInit {
