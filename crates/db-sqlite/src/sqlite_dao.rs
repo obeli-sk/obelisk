@@ -1428,7 +1428,7 @@ impl SqlitePool {
         Ok(execution_ids_versions)
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = Level::DEBUG, skip_all)]
     fn notify_pending(&self, pending_at: PendingAt, created_at: DateTime<Utc>) {
         Self::notify_pending_locked(
             pending_at,
@@ -1437,7 +1437,7 @@ impl SqlitePool {
         );
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = Level::DEBUG, skip_all)]
     fn notify_pending_all(
         &self,
         pending_ats: impl Iterator<Item = PendingAt>,
