@@ -1,6 +1,7 @@
 use ::serde::{Deserialize, Serialize};
 use assert_matches::assert_matches;
 use async_trait::async_trait;
+use opentelemetry::propagation::{Extractor, Injector};
 pub use prefixed_ulid::ExecutionId;
 use serde_json::Value;
 use std::{
@@ -1075,13 +1076,14 @@ pub trait FunctionRegistry: Send + Sync {
 pub struct ExecutionMetadata(Option<hashbrown::HashMap<String, String>>);
 
 impl ExecutionMetadata {
+    const LINKED_KEY: &str = "obelisk-tracing-linked";
     #[must_use]
     pub const fn empty() -> Self {
         // Remove `Optional` when const hashmap creation is allowed - https://github.com/rust-lang/rust/issues/123197
         Self(None)
     }
 
-    pub fn with_parent_context(span: Span) -> Self {
+    pub fn from_parent_span(span: Span) -> Self {
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
         let mut metadata = ExecutionMetadata(Some(Default::default()));
         // retrieve the current context
@@ -1093,8 +1095,7 @@ impl ExecutionMetadata {
         metadata
     }
 
-    // FIXME
-    pub fn with_linked_context(span: Span) -> Self {
+    pub fn from_linked_span(span: Span) -> Self {
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
         let mut metadata = ExecutionMetadata(Some(Default::default()));
         // retrieve the current context
@@ -1103,7 +1104,21 @@ impl ExecutionMetadata {
         opentelemetry::global::get_text_map_propagator(|propagator| {
             propagator.inject_context(&span_ctx, &mut metadata)
         });
+        metadata.set(Self::LINKED_KEY, String::new());
         metadata
+    }
+
+    pub fn enrich(&self, span: &Span) {
+        use opentelemetry::trace::TraceContextExt as _;
+        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+        let otel_context =
+            opentelemetry::global::get_text_map_propagator(|propagator| propagator.extract(self));
+        if self.get(Self::LINKED_KEY).is_some() {
+            let linked_span_context = otel_context.span().span_context().clone();
+            span.add_link(linked_span_context);
+        } else {
+            span.set_parent(otel_context);
+        }
     }
 }
 

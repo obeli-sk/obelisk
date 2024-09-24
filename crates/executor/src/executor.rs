@@ -200,7 +200,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
     #[instrument(level = Level::DEBUG, skip_all)]
     async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
-        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
         let locked_executions = {
             let db_connection = self.db_pool.connection();
             let mut permits = self.acquire_task_permits();
@@ -239,10 +238,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 let clock_fn = self.clock_fn.clone();
                 let run_id = locked_execution.run_id;
                 let span = info_span!(parent: None, "worker", %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.executor_id);
-                let parent_cx = opentelemetry::global::get_text_map_propagator(|propagator| {
-                    propagator.extract(&locked_execution.metadata)
-                });
-                span.set_parent(parent_cx);
+                locked_execution.metadata.enrich(&span);
                 tokio::spawn(
                     async move {
                         let res = Self::run_worker(
