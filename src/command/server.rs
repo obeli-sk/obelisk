@@ -94,7 +94,7 @@ impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
 impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server::Scheduler
     for GrpcServer<DB, P>
 {
-    #[instrument(skip_all, fields(execution_id))]
+    #[instrument(skip_all, fields(execution_id, ffqn, params, config_id))]
     async fn submit(
         &self,
         request: tonic::Request<grpc::SubmitRequest>,
@@ -111,12 +111,14 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         span.record("execution_id", tracing::field::display(execution_id));
         let ffqn =
             concepts::FunctionFqn::new_arc(Arc::from(interface_name), Arc::from(function_name));
+        span.record("ffqn", ffqn.to_string());
         // Deserialize params JSON into `Params`
         let params = {
             let params = request.params.argument_must_exist("params")?;
             let params = String::from_utf8(params.value).map_err(|_err| {
                 tonic::Status::invalid_argument("argument `params` must be UTF-8 encoded")
             })?;
+            span.record("params", &params);
             Params::deserialize(&mut serde_json::Deserializer::from_str(&params)).map_err(
                 |serde_err| {
                     tonic::Status::invalid_argument(format!(
@@ -144,6 +146,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         }
         let db_connection = self.db_pool.connection();
         let created_at = now();
+        span.record("config_id", component.config_id.to_string());
 
         db_connection
             .create(CreateRequest {
