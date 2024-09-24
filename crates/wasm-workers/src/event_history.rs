@@ -593,7 +593,7 @@ impl<C: ClockFn> EventHistory<C> {
                     execution_id: new_execution_id,
                     scheduled_at,
                 };
-                let scheduled_at = scheduled_at.as_date_time(created_at);
+                let scheduled_at = scheduled_at.as_date_time(called_at);
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 debug!(%new_execution_id, "ScheduleRequest: appending");
