@@ -1083,26 +1083,28 @@ impl ExecutionMetadata {
         Self(None)
     }
 
-    pub fn from_parent_span(span: Span) -> Self {
+    #[must_use]
+    pub fn from_parent_span(span: &Span) -> Self {
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        let mut metadata = ExecutionMetadata(Some(Default::default()));
+        let mut metadata = ExecutionMetadata(Some(hashbrown::HashMap::default()));
         // retrieve the current context
         let span_ctx = span.context();
         // inject the current context through the amqp headers
         opentelemetry::global::get_text_map_propagator(|propagator| {
-            propagator.inject_context(&span_ctx, &mut metadata)
+            propagator.inject_context(&span_ctx, &mut metadata);
         });
         metadata
     }
 
-    pub fn from_linked_span(span: Span) -> Self {
+    #[must_use]
+    pub fn from_linked_span(span: &Span) -> Self {
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        let mut metadata = ExecutionMetadata(Some(Default::default()));
+        let mut metadata = ExecutionMetadata(Some(hashbrown::HashMap::default()));
         // retrieve the current context
         let span_ctx = span.context();
         // inject the current context through the amqp headers
         opentelemetry::global::get_text_map_propagator(|propagator| {
-            propagator.inject_context(&span_ctx, &mut metadata)
+            propagator.inject_context(&span_ctx, &mut metadata);
         });
         metadata.set(Self::LINKED_KEY, String::new());
         metadata
@@ -1124,12 +1126,11 @@ impl ExecutionMetadata {
 
 impl opentelemetry::propagation::Injector for ExecutionMetadata {
     fn set(&mut self, key: &str, value: String) {
-        let map = match self.0.as_mut() {
-            Some(map) => map,
-            None => {
-                self.0 = Some(hashbrown::HashMap::new());
-                assert_matches!(&mut self.0, Some(ref mut map) => map)
-            }
+        let map = if let Some(map) = self.0.as_mut() {
+            map
+        } else {
+            self.0 = Some(hashbrown::HashMap::new());
+            assert_matches!(&mut self.0, Some(ref mut map) => map)
         };
         map.insert(key.to_string(), value);
     }
@@ -1140,12 +1141,12 @@ impl opentelemetry::propagation::Extractor for ExecutionMetadata {
         self.0
             .as_ref()
             .and_then(|map| map.get(key))
-            .map(|string| string.as_str())
+            .map(std::string::String::as_str)
     }
 
     fn keys(&self) -> Vec<&str> {
         match &self.0.as_ref() {
-            Some(map) => map.keys().map(|s| s.as_str()).collect(),
+            Some(map) => map.keys().map(std::string::String::as_str).collect(),
             None => vec![],
         }
     }

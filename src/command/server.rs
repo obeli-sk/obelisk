@@ -147,7 +147,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             .create(CreateRequest {
                 created_at,
                 execution_id,
-                metadata: concepts::ExecutionMetadata::from_parent_span(span),
+                metadata: concepts::ExecutionMetadata::from_parent_span(&span),
                 ffqn,
                 params,
                 parent: None,

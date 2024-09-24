@@ -548,7 +548,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: concepts::ExecutionMetadata::from_parent_span(Span::current()),
+                    metadata: concepts::ExecutionMetadata::from_parent_span(&Span::current()),
                     scheduled_at: called_at,
                     retry_exp_backoff: self
                         .retry_config
@@ -609,7 +609,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: new_execution_id,
-                    metadata: concepts::ExecutionMetadata::from_linked_span(Span::current()),
+                    metadata: concepts::ExecutionMetadata::from_linked_span(&Span::current()),
                     ffqn,
                     params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
@@ -706,7 +706,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: concepts::ExecutionMetadata::from_parent_span(Span::current()),
+                    metadata: concepts::ExecutionMetadata::from_parent_span(&Span::current()),
                     scheduled_at: called_at,
                     retry_exp_backoff: self
                         .retry_config
