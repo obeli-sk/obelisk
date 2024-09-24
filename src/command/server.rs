@@ -97,8 +97,6 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         &self,
         request: tonic::Request<grpc::SubmitRequest>,
     ) -> TonicRespResult<grpc::SubmitResponse> {
-        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-
         let request = request.into_inner();
         let grpc::FunctionName {
             interface_name,
@@ -145,21 +143,11 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         let db_connection = self.db_pool.connection();
         let created_at = now();
 
-        let metadata = {
-            let mut metadata = concepts::ExecutionMetadata::empty();
-            // retrieve the current context
-            let span_ctx = span.context();
-            // inject the current context through the amqp headers
-            opentelemetry::global::get_text_map_propagator(|propagator| {
-                propagator.inject_context(&span_ctx, &mut metadata)
-            });
-            metadata
-        };
         db_connection
             .create(CreateRequest {
                 created_at,
                 execution_id,
-                metadata,
+                metadata: concepts::ExecutionMetadata::with_parent_context(span),
                 ffqn,
                 params,
                 parent: None,

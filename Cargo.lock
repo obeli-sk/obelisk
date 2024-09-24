@@ -2399,6 +2399,7 @@ dependencies = [
  "strum",
  "thiserror",
  "tracing",
+ "tracing-opentelemetry",
  "ulid",
  "wasmtime",
 ]

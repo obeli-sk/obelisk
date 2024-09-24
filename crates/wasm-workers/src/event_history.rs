@@ -23,6 +23,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::instrument;
+use tracing::Span;
 use tracing::{debug, error, trace};
 use utils::time::ClockFn;
 use val_json::type_wrapper::TypeWrapper;
@@ -547,7 +548,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: ExecutionMetadata::empty(),
+                    metadata: concepts::ExecutionMetadata::with_parent_context(Span::current()),
                     scheduled_at: created_at,
                     retry_exp_backoff: self
                         .retry_config
@@ -608,7 +609,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let child_req = CreateRequest {
                     created_at,
                     execution_id: new_execution_id,
-                    metadata: ExecutionMetadata::empty(),
+                    metadata: concepts::ExecutionMetadata::with_linked_context(Span::current()),
                     ffqn,
                     params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
@@ -705,7 +706,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: ExecutionMetadata::empty(),
+                    metadata: concepts::ExecutionMetadata::with_parent_context(Span::current()),
                     scheduled_at: created_at,
                     retry_exp_backoff: self
                         .retry_config

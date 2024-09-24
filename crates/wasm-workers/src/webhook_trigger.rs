@@ -27,7 +27,7 @@ use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, info_span, instrument, trace, Instrument};
+use tracing::{debug, error, info, info_span, instrument, trace, Instrument, Span};
 use utils::time::ClockFn;
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::ResourceTable;
@@ -455,7 +455,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     WebhookFunctionError::UncategorizedError("cannot parse JoinSetId")
                 })?;
                 let version = self.get_version().await?;
-                tracing::Span::current().record("version", tracing::field::display(&version));
+                let span = Span::current();
+                span.record("version", tracing::field::display(&version));
                 let child_execution_id = ExecutionId::generate();
                 let Some((function_metadata, config_id, default_retry_config)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
@@ -476,7 +477,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: concepts::ExecutionMetadata::empty(),
+                    metadata: concepts::ExecutionMetadata::with_parent_context(Span::current()),
                     scheduled_at: created_at,
                     max_retries: self
                         .retry_config
@@ -572,7 +573,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 };
                 // Write to db
                 let version = self.get_version().await?;
-                tracing::Span::current().record("version", tracing::field::display(&version));
+                let span = Span::current();
+                span.record("version", tracing::field::display(&version));
                 let new_execution_id = ExecutionId::generate();
                 let Some((function_metadata, config_id, default_retry_config)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
@@ -594,7 +596,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
-                    metadata: concepts::ExecutionMetadata::empty(),
+                    metadata: concepts::ExecutionMetadata::with_linked_context(Span::current()),
                     scheduled_at,
                     max_retries: self
                         .retry_config
@@ -627,7 +629,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             }
         } else {
             let version = self.get_version().await?;
-            tracing::Span::current().record("version", tracing::field::display(&version));
+            let span = Span::current();
+            span.record("version", tracing::field::display(&version));
             let child_execution_id = ExecutionId::generate();
             let created_at = (self.clock_fn)();
             let Some((function_metadata, config_id, default_retry_config)) =
@@ -648,7 +651,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 ffqn,
                 params: Params::from_wasmtime(Arc::from(params)),
                 parent: Some((self.execution_id, join_set_id)),
-                metadata: concepts::ExecutionMetadata::empty(),
+                metadata: concepts::ExecutionMetadata::with_parent_context(span),
                 scheduled_at: created_at,
                 max_retries: self
                     .retry_config

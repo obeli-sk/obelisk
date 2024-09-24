@@ -13,6 +13,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tracing::Span;
 use val_json::{
     type_wrapper::{TypeConversionError, TypeWrapper},
     wast_val::{WastVal, WastValWithType},
@@ -1078,6 +1079,31 @@ impl ExecutionMetadata {
     pub const fn empty() -> Self {
         // Remove `Optional` when const hashmap creation is allowed - https://github.com/rust-lang/rust/issues/123197
         Self(None)
+    }
+
+    pub fn with_parent_context(span: Span) -> Self {
+        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+        let mut metadata = ExecutionMetadata(Some(Default::default()));
+        // retrieve the current context
+        let span_ctx = span.context();
+        // inject the current context through the amqp headers
+        opentelemetry::global::get_text_map_propagator(|propagator| {
+            propagator.inject_context(&span_ctx, &mut metadata)
+        });
+        metadata
+    }
+
+    // FIXME
+    pub fn with_linked_context(span: Span) -> Self {
+        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+        let mut metadata = ExecutionMetadata(Some(Default::default()));
+        // retrieve the current context
+        let span_ctx = span.context();
+        // inject the current context through the amqp headers
+        opentelemetry::global::get_text_map_propagator(|propagator| {
+            propagator.inject_context(&span_ctx, &mut metadata)
+        });
+        metadata
     }
 }
 
