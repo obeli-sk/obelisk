@@ -111,7 +111,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         span.record("execution_id", tracing::field::display(execution_id));
         let ffqn =
             concepts::FunctionFqn::new_arc(Arc::from(interface_name), Arc::from(function_name));
-        span.record("ffqn", ffqn.to_string());
+        span.record("ffqn", tracing::field::display(&ffqn));
         // Deserialize params JSON into `Params`
         let params = {
             let params = request.params.argument_must_exist("params")?;
@@ -146,7 +146,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         }
         let db_connection = self.db_pool.connection();
         let created_at = now();
-        span.record("config_id", component.config_id.to_string());
+        span.record("config_id", tracing::field::display(&component.config_id));
 
         db_connection
             .create(CreateRequest {

@@ -237,7 +237,8 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 let db_pool = self.db_pool.clone();
                 let clock_fn = self.clock_fn.clone();
                 let run_id = locked_execution.run_id;
-                let span = info_span!(parent: None, "worker", %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.executor_id);
+                let span = info_span!(parent: None, "worker",
+                    %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.executor_id, config_id = %self.config.config_id);
                 locked_execution.metadata.enrich(&span);
                 tokio::spawn(
                     async move {
