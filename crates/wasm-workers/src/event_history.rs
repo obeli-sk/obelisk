@@ -487,7 +487,7 @@ impl<C: ClockFn> EventHistory<C> {
         event_call: EventCall,
         db_connection: &DB,
         fn_registry: &dyn FunctionRegistry,
-        created_at: DateTime<Utc>,
+        called_at: DateTime<Utc>,
         lock_expires_at: DateTime<Utc>,
         version: &mut Version,
     ) -> Result<Vec<HistoryEvent>, WorkflowFunctionError> {
@@ -510,7 +510,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let event = HistoryEvent::JoinSet { join_set_id };
                 let history_events = vec![event.clone()];
                 let join_set = AppendRequest {
-                    created_at,
+                    created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
@@ -543,13 +543,13 @@ impl<C: ClockFn> EventHistory<C> {
                     child_retry_config,
                 ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child_req = CreateRequest {
-                    created_at,
+                    created_at: called_at,
                     execution_id: child_execution_id,
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
                     metadata: concepts::ExecutionMetadata::with_parent_context(Span::current()),
-                    scheduled_at: created_at,
+                    scheduled_at: called_at,
                     retry_exp_backoff: self
                         .retry_config
                         .child_retry_exp_backoff(config_id.component_type, child_retry_config),
@@ -566,13 +566,13 @@ impl<C: ClockFn> EventHistory<C> {
                             version: version.clone(),
                             child_req,
                         });
-                        self.flush_non_blocking_event_cache_if_full(db_connection, created_at)
+                        self.flush_non_blocking_event_cache_if_full(db_connection, called_at)
                             .await?;
                         Version::new(version.0 + 1)
                     } else {
                         db_connection
                             .append_batch_create_new_execution(
-                                created_at,
+                                called_at,
                                 vec![child_exec_req],
                                 self.execution_id,
                                 version.clone(),
@@ -607,7 +607,7 @@ impl<C: ClockFn> EventHistory<C> {
                     child_retry_config,
                 ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child_req = CreateRequest {
-                    created_at,
+                    created_at: called_at,
                     execution_id: new_execution_id,
                     metadata: concepts::ExecutionMetadata::with_linked_context(Span::current()),
                     ffqn,
@@ -630,13 +630,13 @@ impl<C: ClockFn> EventHistory<C> {
                             version: version.clone(),
                             child_req,
                         });
-                        self.flush_non_blocking_event_cache_if_full(db_connection, created_at)
+                        self.flush_non_blocking_event_cache_if_full(db_connection, called_at)
                             .await?;
                         Version::new(version.0 + 1)
                     } else {
                         db_connection
                             .append_batch_create_new_execution(
-                                created_at,
+                                called_at,
                                 vec![child_exec_req],
                                 self.execution_id,
                                 version.clone(),
@@ -648,7 +648,7 @@ impl<C: ClockFn> EventHistory<C> {
             }
 
             EventCall::BlockingChildJoinNext { join_set_id } => {
-                self.flush_non_blocking_event_cache(db_connection, created_at)
+                self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
@@ -656,7 +656,7 @@ impl<C: ClockFn> EventHistory<C> {
                 };
                 let history_events = vec![event.clone()];
                 let join_next = AppendRequest {
-                    created_at,
+                    created_at: called_at,
                     event: ExecutionEventInner::HistoryEvent { event },
                 };
                 debug!(%join_set_id, "BlockingChildJoinNext: appending JoinNext");
@@ -672,7 +672,7 @@ impl<C: ClockFn> EventHistory<C> {
                 child_execution_id,
                 params,
             } => {
-                self.flush_non_blocking_event_cache(db_connection, created_at)
+                self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSet { join_set_id };
@@ -701,13 +701,13 @@ impl<C: ClockFn> EventHistory<C> {
                     child_retry_config,
                 ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
                 let child = CreateRequest {
-                    created_at,
+                    created_at: called_at,
                     execution_id: child_execution_id,
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
                     metadata: concepts::ExecutionMetadata::with_parent_context(Span::current()),
-                    scheduled_at: created_at,
+                    scheduled_at: called_at,
                     retry_exp_backoff: self
                         .retry_config
                         .child_retry_exp_backoff(config_id.component_type, child_retry_config),
@@ -719,7 +719,7 @@ impl<C: ClockFn> EventHistory<C> {
                 };
                 *version = db_connection
                     .append_batch_create_new_execution(
-                        created_at,
+                        called_at,
                         vec![join_set, child_exec_req, join_next],
                         self.execution_id,
                         version.clone(),
@@ -734,7 +734,7 @@ impl<C: ClockFn> EventHistory<C> {
                 delay_id,
                 expires_at_if_new,
             } => {
-                self.flush_non_blocking_event_cache(db_connection, created_at)
+                self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSet { join_set_id };
@@ -758,7 +758,7 @@ impl<C: ClockFn> EventHistory<C> {
                 debug!(%delay_id, %join_set_id, "BlockingDelayRequest: appending JoinSet,DelayRequest,JoinNext");
                 *version = db_connection
                     .append_batch(
-                        created_at,
+                        called_at,
                         vec![join_set, delay_req, join_next],
                         self.execution_id,
                         version.clone(),
