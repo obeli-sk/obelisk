@@ -11,8 +11,8 @@ use concepts::storage::{
     HistoryEventScheduledAt, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, Version,
 };
 use concepts::{
-    ComponentType, ConfigId, ExecutionId, FinishedExecutionError, FunctionFqn, FunctionMetadata,
-    FunctionRegistry, IfcFqnName, Params, StrVariant,
+    ComponentType, ConfigId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
+    FunctionMetadata, FunctionRegistry, IfcFqnName, Params, StrVariant,
 };
 use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
@@ -27,7 +27,7 @@ use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, info_span, instrument, trace, Instrument, Span};
+use tracing::{debug, error, info, instrument, trace, Instrument, Level, Span};
 use utils::time::ClockFn;
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::ResourceTable;
@@ -315,6 +315,7 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     execution_id: ExecutionId,
     version: Option<Version>,
+    /// Needed only to construct `ExecutionMetadata`
     request_span: Span,
     phantom_data: PhantomData<DB>,
 }
@@ -347,13 +348,15 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             return Ok(found.clone());
         }
         let created_at = (self.clock_fn)();
+        // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
+        let metadata = concepts::ExecutionMetadata::from_parent_span(&self.request_span);
         let create_request = CreateRequest {
             created_at,
             execution_id: self.execution_id,
             ffqn: HTTP_HANDLER_FFQN,
             params: Params::default(),
             parent: None,
-            metadata: concepts::ExecutionMetadata::empty(),
+            metadata,
             scheduled_at: created_at,
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
@@ -410,7 +413,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         }
     }
 
-    #[instrument(skip_all, fields(%ffqn, version), err)]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%ffqn, version), err)]
     async fn call_imported_fn(
         &mut self,
         ffqn: FunctionFqn,
@@ -478,7 +481,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: concepts::ExecutionMetadata::from_parent_span(&self.request_span),
+                    metadata: ExecutionMetadata::from_parent_span(&Span::current()),
                     scheduled_at: created_at,
                     max_retries: self
                         .retry_config
@@ -597,7 +600,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
-                    metadata: concepts::ExecutionMetadata::from_linked_span(&self.request_span),
+                    metadata: ExecutionMetadata::from_linked_span(&Span::current()),
                     scheduled_at,
                     max_retries: self
                         .retry_config
@@ -652,7 +655,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 ffqn,
                 params: Params::from_wasmtime(Arc::from(params)),
                 parent: Some((self.execution_id, join_set_id)),
-                metadata: concepts::ExecutionMetadata::from_parent_span(&self.request_span),
+                metadata: ExecutionMetadata::from_parent_span(&Span::current()),
                 scheduled_at: created_at,
                 max_retries: self
                     .retry_config
@@ -723,6 +726,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         forward_stdout: Option<StdOutput>,
         forward_stderr: Option<StdOutput>,
         env_vars: &[EnvVar],
+        request_span: Span,
     ) -> Store<WebhookCtx<C, DB, P>> {
         let mut wasi_ctx = WasiCtxBuilder::new();
         if let Some(stdout) = forward_stdout {
@@ -752,7 +756,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             responses: Vec::new(),
             config_id,
             execution_id,
-            request_span: Span::current(),
+            request_span,
             phantom_data: PhantomData,
         };
         let mut store = Store::new(engine, ctx);
@@ -813,47 +817,52 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         self,
         req: hyper::Request<hyper::body::Incoming>,
     ) -> Result<hyper::Response<HyperOutgoingBody>, hyper::Error> {
-        self.handle_request_inner(req).await.or_else(|err| {
-            fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
-                let body = BoxBody::new(http_body_util::BodyExt::map_err(
-                    http_body_util::Full::new(Bytes::copy_from_slice(body.as_bytes())),
-                    |_| unreachable!(),
-                ));
-                hyper::Response::builder()
-                    .status(status_code)
-                    .body(body)
-                    .unwrap()
-            }
-            debug!("{err:?}");
-            Ok(match err {
-                HandleRequestError::IncomingRequestError(err) => resp(
-                    &format!("Incoming request error: {err}"),
-                    StatusCode::BAD_REQUEST,
-                ),
-                HandleRequestError::ResponseCreationError(err) => resp(
-                    &format!("Cannot create response: {err}"),
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                ),
-                HandleRequestError::InstantiationError(err) => resp(
-                    &format!("Cannot instantiate: {err}"),
-                    StatusCode::SERVICE_UNAVAILABLE,
-                ),
-                HandleRequestError::ErrorCode(code) => resp(
-                    &format!("Error code: {code}"),
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                ),
-                HandleRequestError::ExecutionError(_) => {
-                    resp("Component Error", StatusCode::INTERNAL_SERVER_ERROR)
+        self.handle_request_inner(req, Span::current())
+            .await
+            .or_else(|err| {
+                fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
+                    let body = BoxBody::new(http_body_util::BodyExt::map_err(
+                        http_body_util::Full::new(Bytes::copy_from_slice(body.as_bytes())),
+                        |_| unreachable!(),
+                    ));
+                    hyper::Response::builder()
+                        .status(status_code)
+                        .body(body)
+                        .unwrap()
                 }
-                HandleRequestError::RouteNotFound => resp("Route not found", StatusCode::NOT_FOUND),
-                HandleRequestError::Timeout => resp("Timeout", StatusCode::REQUEST_TIMEOUT),
+                debug!("{err:?}");
+                Ok(match err {
+                    HandleRequestError::IncomingRequestError(err) => resp(
+                        &format!("Incoming request error: {err}"),
+                        StatusCode::BAD_REQUEST,
+                    ),
+                    HandleRequestError::ResponseCreationError(err) => resp(
+                        &format!("Cannot create response: {err}"),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    ),
+                    HandleRequestError::InstantiationError(err) => resp(
+                        &format!("Cannot instantiate: {err}"),
+                        StatusCode::SERVICE_UNAVAILABLE,
+                    ),
+                    HandleRequestError::ErrorCode(code) => resp(
+                        &format!("Error code: {code}"),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    ),
+                    HandleRequestError::ExecutionError(_) => {
+                        resp("Component Error", StatusCode::INTERNAL_SERVER_ERROR)
+                    }
+                    HandleRequestError::RouteNotFound => {
+                        resp("Route not found", StatusCode::NOT_FOUND)
+                    }
+                    HandleRequestError::Timeout => resp("Timeout", StatusCode::REQUEST_TIMEOUT),
+                })
             })
-        })
     }
 
     async fn handle_request_inner(
         self,
         req: hyper::Request<hyper::body::Incoming>,
+        request_span: Span,
     ) -> Result<hyper::Response<HyperOutgoingBody>, HandleRequestError> {
         #[derive(Debug, thiserror::Error)]
         #[error("timeout")]
@@ -874,6 +883,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 found_instance.forward_stdout,
                 found_instance.forward_stderr,
                 &found_instance.env_vars,
+                request_span.clone(),
             );
             let req = store
                 .data_mut()
@@ -901,7 +911,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                         }
                     }
                 }
-                .instrument(info_span!("webhook_task")),
+                .instrument(request_span),
             );
             match receiver.await {
                 Ok(Ok(resp)) => {

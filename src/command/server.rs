@@ -147,12 +147,13 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         let db_connection = self.db_pool.connection();
         let created_at = now();
         span.record("config_id", tracing::field::display(&component.config_id));
-
+        // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
+        let metadata = concepts::ExecutionMetadata::from_parent_span(&span);
         db_connection
             .create(CreateRequest {
                 created_at,
                 execution_id,
-                metadata: concepts::ExecutionMetadata::root(&span),
+                metadata,
                 ffqn,
                 params,
                 parent: None,

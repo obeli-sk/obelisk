@@ -7,7 +7,7 @@ use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
     FinishedExecutionError,
 };
-use concepts::{ConfigId, FinishedExecutionResult, FunctionMetadata, SpanKind};
+use concepts::{ConfigId, FinishedExecutionResult, FunctionMetadata};
 use derivative::Derivative;
 use std::marker::PhantomData;
 use std::{
@@ -237,10 +237,11 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 let db_pool = self.db_pool.clone();
                 let clock_fn = self.clock_fn.clone();
                 let run_id = locked_execution.run_id;
-                let span = info_span!(parent: None, "worker",
+                let worker_span = info_span!(parent: None, "worker",
                     %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.executor_id, config_id = %self.config.config_id);
-                locked_execution.metadata.enrich(&span, SpanKind::Technical);
-                tokio::spawn(
+                locked_execution.metadata.enrich(&worker_span);
+                tokio::spawn({
+                    let worker_span2 = worker_span.clone();
                     async move {
                         let res = Self::run_worker(
                             worker,
@@ -248,6 +249,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             execution_deadline,
                             clock_fn,
                             locked_execution,
+                            worker_span2,
                         )
                         .await;
                         if let Err(db_error) = res {
@@ -255,8 +257,8 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         }
                         drop(permit);
                     }
-                    .instrument(span),
-                )
+                    .instrument(worker_span)
+                })
             };
             executions.push((execution_id, join_handle));
         }
@@ -269,6 +271,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         execution_deadline: DateTime<Utc>,
         clock_fn: C,
         locked_execution: LockedExecution,
+        worker_span: Span,
     ) -> Result<(), DbError> {
         debug!("Worker::run starting");
         trace!(
@@ -297,6 +300,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             execution_deadline,
             can_be_retried: can_be_retried.is_some(),
             run_id: locked_execution.run_id,
+            worker_span,
         };
         let worker_result = worker.run(ctx).await;
         trace!(?worker_result, "Worker::run finished");

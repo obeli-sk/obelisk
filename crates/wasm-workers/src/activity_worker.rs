@@ -3,14 +3,14 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
 use crate::WasmFileError;
 use async_trait::async_trait;
-use concepts::{ConfigId, FunctionFqn, SpanKind, SupportedFunctionReturnValue};
+use concepts::{ConfigId, FunctionFqn, SupportedFunctionReturnValue};
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{error, info, info_span, trace};
+use tracing::{error, info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
@@ -98,10 +98,6 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Params: {params:?}", params = ctx.params);
         assert!(ctx.event_history.is_empty());
-        let business_span =
-            info_span!("activity", execution_id = %ctx.execution_id, run_id = %ctx.run_id);
-        ctx.metadata.enrich(&business_span, SpanKind::Business);
-        business_span.in_scope(|| info!("Started"));
         let mut store = crate::activity_ctx::store(
             &self.engine,
             ctx.execution_id,
@@ -153,7 +149,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         let mut results = vec![Val::Bool(false); result_types.len()];
 
         let call_function = {
-            let business_span = business_span.clone();
+            let worker_span = ctx.worker_span.clone();
             async move {
                 if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
                     return WorkerResult::Err(WorkerError::IntermittentError {
@@ -198,7 +194,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                         });
                     }
                     // else: log and pass the result as is to be stored.
-                    business_span.in_scope(|| {
+                    worker_span.in_scope(|| {
                         info!("Execution returned an error result, not able to retry");
                     });
                 }
@@ -212,7 +208,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
 
         tokio::select! { // future's liveness: Dropping the loser immediately.
             res = call_function => {
-                business_span
+                ctx.worker_span
                     .in_scope(||{
                 if let WorkerResult::Err(err) = &res {
                     info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an error");
@@ -222,7 +218,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 return res;
             },
             ()  = tokio::time::sleep(deadline_duration) => {
-                    business_span.in_scope(||
+                ctx.worker_span.in_scope(||
                         info!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.clock_fn)(), "Timed out")
                     );
                     return WorkerResult::Err(WorkerError::IntermittentTimeout);
@@ -247,6 +243,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::time::Duration;
     use test_utils::{env_or_default, sim_clock::SimClock};
+    use tracing::info_span;
     use utils::time::now;
     use val_json::{
         type_wrapper::TypeWrapper,
@@ -410,6 +407,7 @@ pub(crate) mod tests {
                     execution_deadline,
                     can_be_retried: false,
                     run_id: RunId::generate(),
+                    worker_span: info_span!("worker-test"),
                 };
                 tokio::spawn(async move { fibo_worker.run(ctx).await })
             })
@@ -580,6 +578,7 @@ pub(crate) mod tests {
                 execution_deadline: executed_at + TIMEOUT,
                 can_be_retried: false,
                 run_id: RunId::generate(),
+                worker_span: info_span!("worker-test"),
             };
             let WorkerResult::Err(err) = worker.run(ctx).await else {
                 panic!()

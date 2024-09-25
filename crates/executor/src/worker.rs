@@ -13,6 +13,7 @@ use concepts::{
 use concepts::{FunctionFqn, ParamsParsingError, ResultParsingError};
 use concepts::{Params, SupportedFunctionReturnValue};
 use std::error::Error;
+use tracing::Span;
 
 #[async_trait]
 pub trait Worker: Send + Sync + 'static {
@@ -44,6 +45,7 @@ pub struct WorkerContext {
     pub version: Version,
     pub execution_deadline: DateTime<Utc>,
     pub can_be_retried: bool,
+    pub worker_span: Span,
 }
 
 #[derive(Debug, thiserror::Error)]

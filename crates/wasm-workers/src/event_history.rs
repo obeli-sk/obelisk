@@ -22,6 +22,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::instrument;
+use tracing::Level;
 use tracing::Span;
 use tracing::{debug, error, trace};
 use utils::time::ClockFn;
@@ -47,7 +48,8 @@ pub(crate) struct EventHistory<C: ClockFn> {
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     clock_fn: C,
     timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
-    business_span: Span,
+    #[allow(dead_code)] // FIXME: add logging methods
+    logging_span: Span,
     // TODO: optimize using start_from_idx: usize,
 }
 
@@ -100,7 +102,7 @@ impl<C: ClockFn> EventHistory<C> {
             },
             clock_fn,
             timeout_error_container,
-            business_span,
+            logging_span: business_span,
         }
     }
 
@@ -439,7 +441,7 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
-    #[instrument(skip(self, db_connection))]
+    #[instrument(level = tracing::Level::DEBUG, skip(self, db_connection))]
     async fn flush_non_blocking_event_cache<DB: DbConnection>(
         &mut self,
         db_connection: &DB,
@@ -480,7 +482,7 @@ impl<C: ClockFn> EventHistory<C> {
         Ok(())
     }
 
-    #[instrument(skip_all, fields(%version))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(%version))]
     async fn append_to_db<DB: DbConnection>(
         &mut self,
         event_call: EventCall,
@@ -547,7 +549,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: concepts::ExecutionMetadata::from_parent_span(&self.business_span),
+                    metadata: concepts::ExecutionMetadata::from_parent_span(&Span::current()),
                     scheduled_at: called_at,
                     retry_exp_backoff: self
                         .retry_config
@@ -608,7 +610,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: new_execution_id,
-                    metadata: concepts::ExecutionMetadata::from_linked_span(&self.business_span),
+                    metadata: concepts::ExecutionMetadata::from_linked_span(&Span::current()),
                     ffqn,
                     params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
@@ -705,7 +707,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: concepts::ExecutionMetadata::from_parent_span(&self.business_span),
+                    metadata: concepts::ExecutionMetadata::from_parent_span(&Span::current()),
                     scheduled_at: called_at,
                     retry_exp_backoff: self
                         .retry_config

@@ -108,7 +108,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         non_blocking_event_batching: u32,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
         fn_registry: Arc<dyn FunctionRegistry>,
-        business_span: Span,
+        logging_span: Span,
     ) -> Self {
         Self {
             execution_id,
@@ -123,7 +123,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 non_blocking_event_batching,
                 clock_fn.clone(),
                 timeout_error_container,
-                business_span,
+                logging_span,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -138,7 +138,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         self.event_history.flush(&self.db_pool.connection()).await
     }
 
-    #[instrument(skip_all, fields(%ffqn))]
+    #[instrument(level = tracing::Level::DEBUG, skip_all, fields(%ffqn))]
     pub(crate) async fn call_imported_fn(
         &mut self,
         ffqn: FunctionFqn,

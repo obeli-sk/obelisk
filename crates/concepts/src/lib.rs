@@ -1084,34 +1084,20 @@ impl ExecutionMetadata {
     }
 
     #[must_use]
-    pub fn root(span: &Span) -> Self {
-        let metadata = ExecutionMetadata(Some(hashbrown::HashMap::default()));
-        metadata
-            .fill(span, SpanKind::Business, false)
-            .fill(span, SpanKind::Technical, false)
+    pub fn from_parent_span(span: &Span) -> Self {
+        ExecutionMetadata(Some(hashbrown::HashMap::default())).fill(span, false)
     }
 
     #[must_use]
-    pub fn from_parent_span(business_span: &Span) -> Self {
-        ExecutionMetadata(Some(hashbrown::HashMap::default())).fill_both(business_span, false)
+    pub fn from_linked_span(span: &Span) -> Self {
+        ExecutionMetadata(Some(hashbrown::HashMap::default())).fill(span, true)
     }
 
     #[must_use]
-    pub fn from_linked_span(business_span: &Span) -> Self {
-        ExecutionMetadata(Some(hashbrown::HashMap::default())).fill_both(business_span, true)
-    }
-
-    fn fill_both(self, business_span: &Span, link_marker: bool) -> Self {
-        self.fill(business_span, SpanKind::Business, link_marker)
-            .fill(&Span::current(), SpanKind::Technical, link_marker)
-    }
-
-    #[must_use]
-    fn fill(mut self, span: &Span, kind: SpanKind, link_marker: bool) -> Self {
+    fn fill(mut self, span: &Span, link_marker: bool) -> Self {
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
         let mut metadata_view = ExecutionMetadataInjectorView {
             metadata: &mut self,
-            kind,
         };
         // retrieve the current context
         let span_ctx = span.context();
@@ -1125,14 +1111,11 @@ impl ExecutionMetadata {
         self
     }
 
-    pub fn enrich(&self, span: &Span, kind: SpanKind) {
+    pub fn enrich(&self, span: &Span) {
         use opentelemetry::trace::TraceContextExt as _;
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
-        let metadata_view = ExecutionMetadataExtractorView {
-            metadata: self,
-            kind,
-        };
+        let metadata_view = ExecutionMetadataExtractorView { metadata: self };
         let otel_context = opentelemetry::global::get_text_map_propagator(|propagator| {
             propagator.extract(&metadata_view)
         });
@@ -1145,28 +1128,13 @@ impl ExecutionMetadata {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpanKind {
-    Technical,
-    Business,
-}
-impl SpanKind {
-    fn prefix_with_separator(&self) -> &'static str {
-        match self {
-            Self::Business => "b:",
-            Self::Technical => "t:",
-        }
-    }
-}
-
 struct ExecutionMetadataInjectorView<'a> {
     metadata: &'a mut ExecutionMetadata,
-    kind: SpanKind,
 }
 
 impl<'a> opentelemetry::propagation::Injector for ExecutionMetadataInjectorView<'a> {
     fn set(&mut self, key: &str, value: String) {
-        let key = format!("{p}{key}", p = self.kind.prefix_with_separator());
+        let key = format!("tracing:{key}");
         let map = if let Some(map) = self.metadata.0.as_mut() {
             map
         } else {
@@ -1179,7 +1147,6 @@ impl<'a> opentelemetry::propagation::Injector for ExecutionMetadataInjectorView<
 
 struct ExecutionMetadataExtractorView<'a> {
     metadata: &'a ExecutionMetadata,
-    kind: SpanKind,
 }
 
 impl<'a> opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'a> {
@@ -1187,7 +1154,7 @@ impl<'a> opentelemetry::propagation::Extractor for ExecutionMetadataExtractorVie
         self.metadata
             .0
             .as_ref()
-            .and_then(|map| map.get(&format!("{p}{key}", p = self.kind.prefix_with_separator())))
+            .and_then(|map| map.get(&format!("tracing:{key}")))
             .map(std::string::String::as_str)
     }
 
@@ -1195,7 +1162,7 @@ impl<'a> opentelemetry::propagation::Extractor for ExecutionMetadataExtractorVie
         match &self.metadata.0.as_ref() {
             Some(map) => map
                 .keys()
-                .filter_map(|key| key.strip_prefix(self.kind.prefix_with_separator()))
+                .filter_map(|key| key.strip_prefix("tracing:"))
                 .collect(),
             None => vec![],
         }
