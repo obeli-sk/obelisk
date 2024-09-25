@@ -153,6 +153,8 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 * Ability to hotfix a set of workflows, with an approval system when non determinism is detected
 * Trace strings to their origin accross workflows and activities
 * Webhook functions: translating between HTTP and WIT defined parameters and return value
+* Distributed tracing context forwarding for outgoing HTTP as well as webhooks
+* Setting some of activity's error variants as permanent failures
 
 # Building from source
 Set up the development dependencies using nix flakes:
