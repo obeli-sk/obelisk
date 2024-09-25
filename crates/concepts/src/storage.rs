@@ -204,7 +204,7 @@ impl JoinSetResponse {
 
 pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     ffqn: FunctionFqn::new_static("", ""),
-    params: Params::default(),
+    params: Params::empty(),
     parent: None,
     scheduled_at: DateTime::from_timestamp_nanos(0),
     retry_exp_backoff: Duration::ZERO,

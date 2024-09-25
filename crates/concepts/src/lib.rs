@@ -533,14 +533,14 @@ pub enum ParamsFromJsonError {
 
 impl Params {
     #[must_use]
-    pub const fn default() -> Self {
+    pub const fn empty() -> Self {
         Self(ParamsInternal::Empty)
     }
 
     #[must_use]
     pub fn from_wasmtime(vals: Arc<[wasmtime::component::Val]>) -> Self {
         if vals.is_empty() {
-            Self::default()
+            Self::empty()
         } else {
             Self(ParamsInternal::Vals { vals })
         }
@@ -548,7 +548,7 @@ impl Params {
 
     pub fn from_json_value(value: Value) -> Result<Self, ParamsFromJsonError> {
         match value {
-            Value::Array(vec) if vec.is_empty() => Ok(Self::default()),
+            Value::Array(vec) if vec.is_empty() => Ok(Self::empty()),
             Value::Array(vec) => Ok(Self(ParamsInternal::JsonValues(vec))),
             _ => Err(ParamsFromJsonError::MustBeArray),
         }

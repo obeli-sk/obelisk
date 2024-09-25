@@ -354,7 +354,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             created_at,
             execution_id: self.execution_id,
             ffqn: HTTP_HANDLER_FFQN,
-            params: Params::default(),
+            params: Params::empty(),
             parent: None,
             metadata,
             scheduled_at: created_at,
