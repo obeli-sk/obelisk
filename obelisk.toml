@@ -112,6 +112,14 @@ routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 forward_stdout = "stderr"
 forward_stderr = "stderr"
 
+[[wasm_activity]]
+name = "sleep_activity"
+location.oci = "docker.io/getobelisk/example_activity_sleep:2024-09-25@sha256:c2b5041142fc9d8b4ede894f92162c812b7e0a38706cefc1cecc6c189cdea263"
+
+[[workflow]]
+name = "sleep_workflow"
+location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-09-25@sha256:791a09fba122affdbf77b35d8153af8f04a6b462662a52a176b7630cfa701c7e"
+
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:
 # [otlp]
