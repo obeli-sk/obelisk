@@ -7,7 +7,7 @@ use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
     FinishedExecutionError,
 };
-use concepts::{ConfigId, FinishedExecutionResult, FunctionMetadata};
+use concepts::{ConfigId, FinishedExecutionResult, FunctionMetadata, SpanKind};
 use derivative::Derivative;
 use std::marker::PhantomData;
 use std::{
@@ -239,7 +239,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 let run_id = locked_execution.run_id;
                 let span = info_span!(parent: None, "worker",
                     %execution_id, %run_id, ffqn = %locked_execution.ffqn, executor_id = %self.executor_id, config_id = %self.config.config_id);
-                locked_execution.metadata.enrich(&span);
+                locked_execution.metadata.enrich(&span, SpanKind::Technical);
                 tokio::spawn(
                     async move {
                         let res = Self::run_worker(
@@ -263,7 +263,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         Ok(ExecutionProgress { executions })
     }
 
-    #[instrument(skip_all)]
     async fn run_worker(
         worker: Arc<dyn Worker>,
         db_pool: P,
@@ -297,6 +296,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             version: locked_execution.version,
             execution_deadline,
             can_be_retried: can_be_retried.is_some(),
+            run_id: locked_execution.run_id,
         };
         let worker_result = worker.run(ctx).await;
         trace!(?worker_result, "Worker::run finished");

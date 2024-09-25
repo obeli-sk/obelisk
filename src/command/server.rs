@@ -152,7 +152,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             .create(CreateRequest {
                 created_at,
                 execution_id,
-                metadata: concepts::ExecutionMetadata::from_parent_span(&span),
+                metadata: concepts::ExecutionMetadata::root(&span),
                 ffqn,
                 params,
                 parent: None,
@@ -542,7 +542,7 @@ async fn run_internal(
 
 fn make_span<B>(request: &axum::http::Request<B>) -> Span {
     let headers = request.headers();
-    info_span!("incoming request", ?headers)
+    info_span!("incoming gRPC request", ?headers)
 }
 
 struct ServerInit {

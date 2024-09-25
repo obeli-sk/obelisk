@@ -59,7 +59,7 @@ pub mod injector {
             use tracing_opentelemetry::OpenTelemetrySpanExt as _;
             opentelemetry::global::get_text_map_propagator(|propagator| {
                 let context = Span::current().context();
-                propagator.inject_context(&context, &mut MetadataInjector(request.metadata_mut()))
+                propagator.inject_context(&context, &mut MetadataInjector(request.metadata_mut()));
             });
             Ok(request)
         }
@@ -81,18 +81,18 @@ pub mod extractor {
             self.0.get(key).and_then(|v| {
                 let s = v.to_str();
                 if let Err(ref error) = s {
-                    warn!(%error, ?v, "cannot convert header value to ASCII")
+                    warn!(%error, ?v, "cannot convert header value to ASCII");
                 };
                 s.ok()
             })
         }
 
         fn keys(&self) -> Vec<&str> {
-            self.0.keys().map(|k| k.as_str()).collect()
+            self.0.keys().map(http::HeaderName::as_str).collect()
         }
     }
 
-    /// Trace context propagation: associate the current span with the OTel trace of the given request,
+    /// Trace context propagation: associate the current span with the otel trace of the given request,
     /// if any and valid.
     pub fn accept_trace<B>(request: http::Request<B>) -> http::Request<B> {
         // Current context, if no or invalid data is received.

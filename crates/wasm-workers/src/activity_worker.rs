@@ -3,14 +3,14 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
 use crate::WasmFileError;
 use async_trait::async_trait;
-use concepts::{ConfigId, FunctionFqn, SupportedFunctionReturnValue};
+use concepts::{ConfigId, FunctionFqn, SpanKind, SupportedFunctionReturnValue};
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, info_span, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
@@ -98,6 +98,10 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Params: {params:?}", params = ctx.params);
         assert!(ctx.event_history.is_empty());
+        let business_span =
+            info_span!("activity", execution_id = %ctx.execution_id, run_id = %ctx.run_id);
+        ctx.metadata.enrich(&business_span, SpanKind::Business);
+        business_span.in_scope(|| info!("Started"));
         let mut store = crate::activity_ctx::store(
             &self.engine,
             ctx.execution_id,
@@ -106,6 +110,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             self.forward_stderr,
             &self.env_vars,
         );
+
         let instance = match self.instance_pre.instantiate_async(&mut store).await {
             Ok(instance) => instance,
             Err(err) => {
@@ -147,51 +152,58 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         let result_types = func.results(&mut store);
         let mut results = vec![Val::Bool(false); result_types.len()];
 
-        let call_function = async move {
-            if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
-                return WorkerResult::Err(WorkerError::IntermittentError {
-                    reason: StrVariant::Arc(Arc::from(format!("wasm function call error - {err}"))),
-                    err: Some(err.into()),
-                    version: ctx.version,
-                });
-            }; // guest panic exits here
-            let result = match SupportedFunctionReturnValue::new(
-                results.into_iter().zip(result_types.iter().cloned()),
-            ) {
-                Ok(result) => result,
-                Err(err) => {
-                    return WorkerResult::Err(WorkerError::FatalError(
-                        FatalError::ResultParsingError(err),
-                        ctx.version,
-                    ))
-                }
-            };
-            if let Err(err) = func.post_return_async(&mut store).await {
-                return WorkerResult::Err(WorkerError::IntermittentError {
-                    reason: StrVariant::Arc(Arc::from(format!(
-                        "wasm post function call error - {err}"
-                    ))),
-                    err: Some(err.into()),
-                    version: ctx.version,
-                });
-            }
-
-            // Interpret `SupportedFunctionResult::Fallible` Err variant as an retry request
-            if let Some(exec_err) = result.fallible_err() {
-                if ctx.can_be_retried {
-                    let reason = StrVariant::Arc(Arc::from(format!(
-                        "Execution returned an error result: `{exec_err:?}`"
-                    )));
+        let call_function = {
+            let business_span = business_span.clone();
+            async move {
+                if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
                     return WorkerResult::Err(WorkerError::IntermittentError {
-                        reason,
-                        err: None,
+                        reason: StrVariant::Arc(Arc::from(format!(
+                            "wasm function call error - {err}"
+                        ))),
+                        err: Some(err.into()),
+                        version: ctx.version,
+                    });
+                }; // guest panic exits here
+                let result = match SupportedFunctionReturnValue::new(
+                    results.into_iter().zip(result_types.iter().cloned()),
+                ) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        return WorkerResult::Err(WorkerError::FatalError(
+                            FatalError::ResultParsingError(err),
+                            ctx.version,
+                        ))
+                    }
+                };
+                if let Err(err) = func.post_return_async(&mut store).await {
+                    return WorkerResult::Err(WorkerError::IntermittentError {
+                        reason: StrVariant::Arc(Arc::from(format!(
+                            "wasm post function call error - {err}"
+                        ))),
+                        err: Some(err.into()),
                         version: ctx.version,
                     });
                 }
-                info!("Execution returned an error result, not able to retry");
-                // pass the result as is to be stored.
+
+                // Interpret `SupportedFunctionResult::Fallible` Err variant as an retry request
+                if let Some(exec_err) = result.fallible_err() {
+                    if ctx.can_be_retried {
+                        let reason = StrVariant::Arc(Arc::from(format!(
+                            "Execution returned an error result: `{exec_err:?}`"
+                        )));
+                        return WorkerResult::Err(WorkerError::IntermittentError {
+                            reason,
+                            err: None,
+                            version: ctx.version,
+                        });
+                    }
+                    // else: log and pass the result as is to be stored.
+                    business_span.in_scope(|| {
+                        info!("Execution returned an error result, not able to retry");
+                    });
+                }
+                WorkerResult::Ok(result, ctx.version)
             }
-            WorkerResult::Ok(result, ctx.version)
         };
         let started_at = (self.clock_fn)();
         let deadline_delta = ctx.execution_deadline - started_at;
@@ -200,15 +212,19 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
 
         tokio::select! { // future's liveness: Dropping the loser immediately.
             res = call_function => {
+                business_span
+                    .in_scope(||{
                 if let WorkerResult::Err(err) = &res {
                     info!(%err, duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an error");
                 } else {
-                    debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration,  execution_deadline = %ctx.execution_deadline, "Finished");
-                }
+                    info!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration,  execution_deadline = %ctx.execution_deadline, "Finished");
+                }});
                 return res;
             },
-            ()   = tokio::time::sleep(deadline_duration) => {
-                    debug!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.clock_fn)(), "Timed out");
+            ()  = tokio::time::sleep(deadline_duration) => {
+                    business_span.in_scope(||
+                        info!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.clock_fn)(), "Timed out")
+                    );
                     return WorkerResult::Err(WorkerError::IntermittentTimeout);
             }
         }
@@ -222,7 +238,7 @@ pub(crate) mod tests {
     use super::*;
     use assert_matches::assert_matches;
     use concepts::{
-        prefixed_ulid::ExecutorId,
+        prefixed_ulid::{ExecutorId, RunId},
         storage::{CreateRequest, DbConnection, DbPool, Version},
         ComponentType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
     };
@@ -393,6 +409,7 @@ pub(crate) mod tests {
                     version: Version::new(0),
                     execution_deadline,
                     can_be_retried: false,
+                    run_id: RunId::generate(),
                 };
                 tokio::spawn(async move { fibo_worker.run(ctx).await })
             })
@@ -414,7 +431,7 @@ pub(crate) mod tests {
         use super::*;
         use concepts::storage::ExecutionEventInner;
         use test_utils::sim_clock::SimClock;
-        use tracing::info;
+        use tracing::{debug, info};
 
         const EPOCH_MILLIS: u64 = 10;
 
@@ -562,6 +579,7 @@ pub(crate) mod tests {
                 version: Version::new(0),
                 execution_deadline: executed_at + TIMEOUT,
                 can_be_retried: false,
+                run_id: RunId::generate(),
             };
             let WorkerResult::Err(err) = worker.run(ctx).await else {
                 panic!()

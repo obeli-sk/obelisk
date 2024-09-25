@@ -7,8 +7,8 @@ use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::{
-    ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionRegistry, IfcFqnName,
-    StrVariant, SupportedFunctionReturnValue,
+    ExecutionId, FinishedExecutionError, FunctionRegistry, IfcFqnName, StrVariant,
+    SupportedFunctionReturnValue,
 };
 use concepts::{FunctionFqn, Params};
 use executor::worker::{FatalError, WorkerError, WorkerResult};
@@ -18,7 +18,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, instrument, trace};
+use tracing::{debug, error, instrument, trace, Span};
 use utils::time::ClockFn;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
@@ -95,7 +95,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
-        metadata: ExecutionMetadata,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         seed: u64,
@@ -109,12 +108,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         non_blocking_event_batching: u32,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
         fn_registry: Arc<dyn FunctionRegistry>,
+        business_span: Span,
     ) -> Self {
         Self {
             execution_id,
             event_history: EventHistory::new(
                 execution_id,
-                metadata,
                 event_history,
                 responses,
                 join_next_blocking_strategy,
@@ -124,6 +123,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 non_blocking_event_batching,
                 clock_fn.clone(),
                 timeout_error_container,
+                business_span,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -448,7 +448,6 @@ pub(crate) mod tests {
             let seed = ctx.execution_id.random_part();
             let mut workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id,
-                ctx.metadata,
                 ctx.event_history,
                 ctx.responses,
                 seed,
@@ -464,6 +463,7 @@ pub(crate) mod tests {
                     WorkerError::IntermittentTimeout,
                 ))),
                 self.fn_registry.clone(),
+                tracing::info_span!("workflow-test"),
             );
             for step in &self.steps {
                 let res = match step {

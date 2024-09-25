@@ -315,6 +315,7 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     execution_id: ExecutionId,
     version: Option<Version>,
+    request_span: Span,
     phantom_data: PhantomData<DB>,
 }
 
@@ -477,7 +478,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: concepts::ExecutionMetadata::from_parent_span(&Span::current()),
+                    metadata: concepts::ExecutionMetadata::from_parent_span(&self.request_span),
                     scheduled_at: created_at,
                     max_retries: self
                         .retry_config
@@ -596,7 +597,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
-                    metadata: concepts::ExecutionMetadata::from_linked_span(&Span::current()),
+                    metadata: concepts::ExecutionMetadata::from_linked_span(&self.request_span),
                     scheduled_at,
                     max_retries: self
                         .retry_config
@@ -651,7 +652,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 ffqn,
                 params: Params::from_wasmtime(Arc::from(params)),
                 parent: Some((self.execution_id, join_set_id)),
-                metadata: concepts::ExecutionMetadata::from_parent_span(&span),
+                metadata: concepts::ExecutionMetadata::from_parent_span(&self.request_span),
                 scheduled_at: created_at,
                 max_retries: self
                     .retry_config
@@ -751,6 +752,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             responses: Vec::new(),
             config_id,
             execution_id,
+            request_span: Span::current(),
             phantom_data: PhantomData,
         };
         let mut store = Store::new(engine, ctx);
@@ -806,7 +808,7 @@ struct RequestHandler<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPoo
 impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     RequestHandler<C, DB, P>
 {
-    #[instrument(skip_all, fields(execution_id = %self.execution_id))]
+    #[instrument(skip_all, name="incoming webhook request", fields(execution_id = %self.execution_id))]
     async fn handle_request(
         self,
         req: hyper::Request<hyper::body::Incoming>,

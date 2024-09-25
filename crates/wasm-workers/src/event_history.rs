@@ -13,7 +13,6 @@ use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
 use concepts::ConfigId;
-use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::{ExecutionId, StrVariant};
@@ -39,7 +38,6 @@ enum ProcessingStatus {
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct EventHistory<C: ClockFn> {
     execution_id: ExecutionId,
-    metadata: ExecutionMetadata,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     execution_deadline: DateTime<Utc>,
     retry_config: RetryConfig,
@@ -49,6 +47,7 @@ pub(crate) struct EventHistory<C: ClockFn> {
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     clock_fn: C,
     timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
+    business_span: Span,
     // TODO: optimize using start_from_idx: usize,
 }
 
@@ -65,7 +64,6 @@ impl<C: ClockFn> EventHistory<C> {
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         execution_id: ExecutionId,
-        metadata: ExecutionMetadata,
         event_history: Vec<HistoryEvent>,
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
@@ -75,11 +73,11 @@ impl<C: ClockFn> EventHistory<C> {
         non_blocking_event_batching: u32,
         clock_fn: C,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
+        business_span: Span,
     ) -> Self {
         let non_blocking_event_batch_size = non_blocking_event_batching as usize;
         EventHistory {
             execution_id,
-            metadata,
             event_history: event_history
                 .into_iter()
                 .map(|event| (event, Unprocessed))
@@ -102,6 +100,7 @@ impl<C: ClockFn> EventHistory<C> {
             },
             clock_fn,
             timeout_error_container,
+            business_span,
         }
     }
 
@@ -548,7 +547,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: concepts::ExecutionMetadata::from_parent_span(&Span::current()),
+                    metadata: concepts::ExecutionMetadata::from_parent_span(&self.business_span),
                     scheduled_at: called_at,
                     retry_exp_backoff: self
                         .retry_config
@@ -609,7 +608,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: new_execution_id,
-                    metadata: concepts::ExecutionMetadata::from_linked_span(&Span::current()),
+                    metadata: concepts::ExecutionMetadata::from_linked_span(&self.business_span),
                     ffqn,
                     params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
@@ -706,7 +705,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: concepts::ExecutionMetadata::from_parent_span(&Span::current()),
+                    metadata: concepts::ExecutionMetadata::from_parent_span(&self.business_span),
                     scheduled_at: called_at,
                     retry_exp_backoff: self
                         .retry_config
@@ -996,8 +995,7 @@ mod tests {
     use concepts::storage::{CreateRequest, DbPool};
     use concepts::storage::{DbConnection, JoinSetResponse, JoinSetResponseEvent, Version};
     use concepts::{
-        ConfigId, ExecutionId, ExecutionMetadata, FunctionFqn, FunctionRegistry, Params,
-        SupportedFunctionReturnValue,
+        ConfigId, ExecutionId, FunctionFqn, FunctionRegistry, Params, SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::worker::{WorkerError, WorkerResult};
@@ -1005,7 +1003,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
-    use tracing::info;
+    use tracing::{info, info_span};
     use utils::time::ClockFn;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::{WastVal, WastValWithType};
@@ -1023,7 +1021,6 @@ mod tests {
         let exec_log = db_connection.get(execution_id).await.unwrap();
         let event_history = EventHistory::new(
             execution_id,
-            ExecutionMetadata::empty(),
             exec_log.event_history().collect(),
             exec_log
                 .responses
@@ -1039,6 +1036,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(WorkerResult::Err(
                 WorkerError::IntermittentTimeout,
             ))),
+            info_span!("workflow-test"),
         );
         (event_history, exec_log.version)
     }

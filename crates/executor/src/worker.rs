@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use concepts::prefixed_ulid::RunId;
 use concepts::storage::HistoryEvent;
 use concepts::storage::Version;
 use concepts::ExecutionId;
@@ -34,6 +35,7 @@ pub enum WorkerResult {
 #[derive(Debug)]
 pub struct WorkerContext {
     pub execution_id: ExecutionId,
+    pub run_id: RunId,
     pub metadata: ExecutionMetadata,
     pub ffqn: FunctionFqn,
     pub params: Params,

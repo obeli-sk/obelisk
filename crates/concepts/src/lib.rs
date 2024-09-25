@@ -1084,38 +1084,59 @@ impl ExecutionMetadata {
     }
 
     #[must_use]
-    pub fn from_parent_span(span: &Span) -> Self {
-        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        let mut metadata = ExecutionMetadata(Some(hashbrown::HashMap::default()));
-        // retrieve the current context
-        let span_ctx = span.context();
-        // inject the current context through the amqp headers
-        opentelemetry::global::get_text_map_propagator(|propagator| {
-            propagator.inject_context(&span_ctx, &mut metadata);
-        });
+    pub fn root(span: &Span) -> Self {
+        let metadata = ExecutionMetadata(Some(hashbrown::HashMap::default()));
         metadata
+            .fill(span, SpanKind::Business, false)
+            .fill(span, SpanKind::Technical, false)
     }
 
     #[must_use]
-    pub fn from_linked_span(span: &Span) -> Self {
+    pub fn from_parent_span(business_span: &Span) -> Self {
+        ExecutionMetadata(Some(hashbrown::HashMap::default())).fill_both(business_span, false)
+    }
+
+    #[must_use]
+    pub fn from_linked_span(business_span: &Span) -> Self {
+        ExecutionMetadata(Some(hashbrown::HashMap::default())).fill_both(business_span, true)
+    }
+
+    fn fill_both(self, business_span: &Span, link_marker: bool) -> Self {
+        self.fill(business_span, SpanKind::Business, link_marker)
+            .fill(&Span::current(), SpanKind::Technical, link_marker)
+    }
+
+    #[must_use]
+    fn fill(mut self, span: &Span, kind: SpanKind, link_marker: bool) -> Self {
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        let mut metadata = ExecutionMetadata(Some(hashbrown::HashMap::default()));
+        let mut metadata_view = ExecutionMetadataInjectorView {
+            metadata: &mut self,
+            kind,
+        };
         // retrieve the current context
         let span_ctx = span.context();
         // inject the current context through the amqp headers
         opentelemetry::global::get_text_map_propagator(|propagator| {
-            propagator.inject_context(&span_ctx, &mut metadata);
+            propagator.inject_context(&span_ctx, &mut metadata_view);
         });
-        metadata.set(Self::LINKED_KEY, String::new());
-        metadata
+        if link_marker {
+            metadata_view.set(Self::LINKED_KEY, String::new());
+        }
+        self
     }
 
-    pub fn enrich(&self, span: &Span) {
+    pub fn enrich(&self, span: &Span, kind: SpanKind) {
         use opentelemetry::trace::TraceContextExt as _;
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-        let otel_context =
-            opentelemetry::global::get_text_map_propagator(|propagator| propagator.extract(self));
-        if self.get(Self::LINKED_KEY).is_some() {
+
+        let metadata_view = ExecutionMetadataExtractorView {
+            metadata: self,
+            kind,
+        };
+        let otel_context = opentelemetry::global::get_text_map_propagator(|propagator| {
+            propagator.extract(&metadata_view)
+        });
+        if metadata_view.get(Self::LINKED_KEY).is_some() {
             let linked_span_context = otel_context.span().span_context().clone();
             span.add_link(linked_span_context);
         } else {
@@ -1124,29 +1145,58 @@ impl ExecutionMetadata {
     }
 }
 
-impl opentelemetry::propagation::Injector for ExecutionMetadata {
-    fn set(&mut self, key: &str, value: String) {
-        let map = if let Some(map) = self.0.as_mut() {
-            map
-        } else {
-            self.0 = Some(hashbrown::HashMap::new());
-            assert_matches!(&mut self.0, Some(ref mut map) => map)
-        };
-        map.insert(key.to_string(), value);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpanKind {
+    Technical,
+    Business,
+}
+impl SpanKind {
+    fn prefix_with_separator(&self) -> &'static str {
+        match self {
+            Self::Business => "b:",
+            Self::Technical => "t:",
+        }
     }
 }
 
-impl opentelemetry::propagation::Extractor for ExecutionMetadata {
+struct ExecutionMetadataInjectorView<'a> {
+    metadata: &'a mut ExecutionMetadata,
+    kind: SpanKind,
+}
+
+impl<'a> opentelemetry::propagation::Injector for ExecutionMetadataInjectorView<'a> {
+    fn set(&mut self, key: &str, value: String) {
+        let key = format!("{p}{key}", p = self.kind.prefix_with_separator());
+        let map = if let Some(map) = self.metadata.0.as_mut() {
+            map
+        } else {
+            self.metadata.0 = Some(hashbrown::HashMap::new());
+            assert_matches!(&mut self.metadata.0, Some(ref mut map) => map)
+        };
+        map.insert(key, value);
+    }
+}
+
+struct ExecutionMetadataExtractorView<'a> {
+    metadata: &'a ExecutionMetadata,
+    kind: SpanKind,
+}
+
+impl<'a> opentelemetry::propagation::Extractor for ExecutionMetadataExtractorView<'a> {
     fn get(&self, key: &str) -> Option<&str> {
-        self.0
+        self.metadata
+            .0
             .as_ref()
-            .and_then(|map| map.get(key))
+            .and_then(|map| map.get(&format!("{p}{key}", p = self.kind.prefix_with_separator())))
             .map(std::string::String::as_str)
     }
 
     fn keys(&self) -> Vec<&str> {
-        match &self.0.as_ref() {
-            Some(map) => map.keys().map(std::string::String::as_str).collect(),
+        match &self.metadata.0.as_ref() {
+            Some(map) => map
+                .keys()
+                .filter_map(|key| key.strip_prefix(self.kind.prefix_with_separator()))
+                .collect(),
             None => vec![],
         }
     }
