@@ -346,6 +346,7 @@ pub(crate) mod tests {
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();
@@ -396,8 +397,9 @@ pub(crate) mod tests {
         let join_handles = (0..tasks)
             .map(|_| {
                 let fibo_worker = fibo_worker.clone();
+                let execution_id = ExecutionId::generate();
                 let ctx = WorkerContext {
-                    execution_id: ExecutionId::generate(),
+                    execution_id,
                     metadata: concepts::ExecutionMetadata::empty(),
                     ffqn: FIBO_ACTIVITY_FFQN,
                     params: Params::from_json_value(json!([fibo_input])).unwrap(),
@@ -408,6 +410,7 @@ pub(crate) mod tests {
                     can_be_retried: false,
                     run_id: RunId::generate(),
                     worker_span: info_span!("worker-test"),
+                    topmost_parent: execution_id,
                 };
                 tokio::spawn(async move { fibo_worker.run(ctx).await })
             })
@@ -514,6 +517,7 @@ pub(crate) mod tests {
                     max_retries: 0,
                     config_id: ConfigId::dummy(),
                     return_type: None,
+                    topmost_parent: execution_id,
                 })
                 .await
                 .unwrap();
@@ -567,6 +571,7 @@ pub(crate) mod tests {
             );
 
             let executed_at = now();
+            let execution_id = ExecutionId::generate();
             let ctx = WorkerContext {
                 execution_id: ExecutionId::generate(),
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -579,6 +584,7 @@ pub(crate) mod tests {
                 can_be_retried: false,
                 run_id: RunId::generate(),
                 worker_span: info_span!("worker-test"),
+                topmost_parent: execution_id,
             };
             let WorkerResult::Err(err) = worker.run(ctx).await else {
                 panic!()
@@ -654,6 +660,7 @@ pub(crate) mod tests {
                     max_retries: 1,
                     config_id: ConfigId::dummy(),
                     return_type: None,
+                    topmost_parent: execution_id,
                 })
                 .await
                 .unwrap();
@@ -761,6 +768,7 @@ pub(crate) mod tests {
                     max_retries: 1,
                     config_id: ConfigId::dummy(),
                     return_type: None,
+                    topmost_parent: execution_id,
                 })
                 .await
                 .unwrap();

@@ -212,6 +212,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     config_id: ConfigId::dummy(),
     return_type: None,
     metadata: ExecutionMetadata::empty(),
+    topmost_parent: ExecutionId::from_parts(0, 0),
 };
 pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
     event: HistoryEvent::JoinSet {
@@ -259,6 +260,7 @@ pub enum ExecutionEventInner {
         return_type: Option<TypeWrapper>,
         #[arbitrary(default)]
         metadata: ExecutionMetadata,
+        topmost_parent: ExecutionId,
     },
     // Created by an executor.
     // Either immediately followed by an execution request by an executor or
@@ -513,6 +515,7 @@ pub struct LockedExecution {
     pub max_retries: u32,
     pub parent: Option<(ExecutionId, JoinSetId)>,
     pub intermittent_event_count: u32,
+    pub topmost_parent: ExecutionId,
 }
 
 pub type LockPendingResponse = Vec<LockedExecution>;
@@ -538,6 +541,7 @@ pub struct CreateRequest {
     pub config_id: ConfigId,
     pub return_type: Option<TypeWrapper>,
     pub metadata: ExecutionMetadata,
+    pub topmost_parent: ExecutionId,
 }
 
 impl From<CreateRequest> for ExecutionEventInner {
@@ -552,6 +556,7 @@ impl From<CreateRequest> for ExecutionEventInner {
             config_id: value.config_id,
             return_type: value.return_type,
             metadata: value.metadata,
+            topmost_parent: value.topmost_parent,
         }
     }
 }

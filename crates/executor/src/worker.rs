@@ -46,6 +46,7 @@ pub struct WorkerContext {
     pub execution_deadline: DateTime<Utc>,
     pub can_be_retried: bool,
     pub worker_span: Span,
+    pub topmost_parent: ExecutionId,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -31,6 +31,7 @@ async fn diff_proptest() {
         max_retries: 0,
         config_id: ConfigId::dummy(),
         return_type: None,
+        topmost_parent: execution_id,
     };
     let mut append_requests = vec![];
     while append_requests.is_empty() {

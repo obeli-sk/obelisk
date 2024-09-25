@@ -216,6 +216,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             max_retries: 0,
             config_id: ConfigId::dummy(),
             return_type: None,
+            topmost_parent: execution_id,
         })
         .await
         .unwrap();
@@ -234,6 +235,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             max_retries: 0,
             config_id: ConfigId::dummy(),
             return_type: None,
+            topmost_parent: execution_id,
         })
         .await
         .unwrap_err();
@@ -494,6 +496,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
                 max_retries: MAX_RETRIES,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();
@@ -567,6 +570,7 @@ pub async fn append_batch_respond_to_parent(
             max_retries: 0,
             config_id: ConfigId::dummy(),
             return_type: None,
+            topmost_parent: parent_id,
         })
         .await
         .unwrap();
@@ -609,6 +613,7 @@ pub async fn append_batch_respond_to_parent(
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: parent_id,
             })
             .await
             .unwrap();
@@ -679,6 +684,7 @@ pub async fn append_batch_respond_to_parent(
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: parent_id,
             })
             .await
             .unwrap();
@@ -776,6 +782,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             max_retries: 0,
             config_id: ConfigId::dummy(),
             return_type: None,
+            topmost_parent: older_id,
         })
         .await
         .unwrap();
@@ -795,6 +802,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             max_retries: 0,
             config_id: ConfigId::dummy(),
             return_type: None,
+            topmost_parent: newer_id,
         })
         .await
         .unwrap();
@@ -814,6 +822,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             max_retries: 0,
             config_id: ConfigId::dummy(),
             return_type: None,
+            topmost_parent: newest_id,
         })
         .await
         .unwrap();
@@ -853,6 +862,7 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
             max_retries: 0,
             config_id: ConfigId::dummy(),
             return_type: None,
+            topmost_parent: execution_id,
         })
         .await
         .unwrap();
@@ -907,6 +917,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
             max_retries: 0,
             config_id: ConfigId::dummy(),
             return_type: Some(TypeWrapper::U8),
+            topmost_parent: execution_id,
         })
         .await
         .unwrap();
@@ -966,6 +977,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
             max_retries: 0,
             config_id: ConfigId::dummy(),
             return_type: None,
+            topmost_parent: execution_id,
         })
         .await
         .unwrap();

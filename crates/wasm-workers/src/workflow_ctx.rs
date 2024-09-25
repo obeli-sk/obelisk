@@ -109,6 +109,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
         fn_registry: Arc<dyn FunctionRegistry>,
         logging_span: Span,
+        topmost_parent: ExecutionId,
     ) -> Self {
         Self {
             execution_id,
@@ -124,6 +125,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 clock_fn.clone(),
                 timeout_error_container,
                 logging_span,
+                topmost_parent,
             ),
             rng: StdRng::seed_from_u64(seed),
             clock_fn,
@@ -464,6 +466,7 @@ pub(crate) mod tests {
                 ))),
                 self.fn_registry.clone(),
                 tracing::info_span!("workflow-test"),
+                ctx.execution_id,
             );
             for step in &self.steps {
                 let res = match step {
@@ -599,6 +602,7 @@ pub(crate) mod tests {
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();

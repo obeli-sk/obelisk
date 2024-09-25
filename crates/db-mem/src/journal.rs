@@ -86,6 +86,17 @@ impl ExecutionJournal {
         }
     }
 
+    #[must_use]
+    pub fn topmost_parent(&self) -> ExecutionId {
+        match self.execution_events.front().unwrap() {
+            ExecutionEvent {
+                event: ExecutionEventInner::Created { topmost_parent, .. },
+                ..
+            } => *topmost_parent,
+            _ => panic!("first event must be `Created`"),
+        }
+    }
+
     pub fn append(
         &mut self,
         created_at: DateTime<Utc>,

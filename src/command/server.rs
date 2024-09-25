@@ -165,6 +165,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                     .return_type
                     .as_ref()
                     .map(|rt| rt.type_wrapper.clone()),
+                topmost_parent: execution_id,
             })
             .await
             .to_status()?;

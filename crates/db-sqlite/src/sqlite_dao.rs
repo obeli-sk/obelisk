@@ -587,6 +587,7 @@ impl SqlitePool {
             config_id,
             return_type,
             metadata,
+            topmost_parent,
         } = event
         {
             Ok(CreateRequest {
@@ -601,6 +602,7 @@ impl SqlitePool {
                 config_id,
                 return_type,
                 metadata,
+                topmost_parent,
             })
         } else {
             error!("Cannt match `Created` event - {event:?}");
@@ -1009,6 +1011,7 @@ impl SqlitePool {
             max_retries,
             parent,
             metadata,
+            topmost_parent,
             ..
         }) = events.pop_front()
         else {
@@ -1047,6 +1050,7 @@ impl SqlitePool {
             max_retries,
             parent,
             intermittent_event_count,
+            topmost_parent,
         })
     }
 

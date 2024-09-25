@@ -183,6 +183,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 timeout_error_container.clone(),
                 self.fn_registry.clone(),
                 ctx.worker_span.clone(),
+                ctx.topmost_parent,
             );
             let mut store = Store::new(&self.engine, ctx);
             let instance = match self
@@ -536,6 +537,7 @@ pub(crate) mod tests {
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();
@@ -610,6 +612,7 @@ pub(crate) mod tests {
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();
@@ -746,6 +749,7 @@ pub(crate) mod tests {
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();
@@ -858,6 +862,7 @@ pub(crate) mod tests {
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();
@@ -955,6 +960,7 @@ pub(crate) mod tests {
                 max_retries: concurrency - 1, // response can conflict with next ChildExecutionRequest
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();
@@ -1026,6 +1032,7 @@ pub(crate) mod tests {
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();

@@ -50,6 +50,7 @@ pub(crate) struct EventHistory<C: ClockFn> {
     timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
     #[allow(dead_code)] // FIXME: add logging methods
     logging_span: Span,
+    topmost_parent: ExecutionId,
     // TODO: optimize using start_from_idx: usize,
 }
 
@@ -75,7 +76,8 @@ impl<C: ClockFn> EventHistory<C> {
         non_blocking_event_batching: u32,
         clock_fn: C,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
-        business_span: Span,
+        logging_span: Span,
+        topmost_parent: ExecutionId,
     ) -> Self {
         let non_blocking_event_batch_size = non_blocking_event_batching as usize;
         EventHistory {
@@ -102,7 +104,8 @@ impl<C: ClockFn> EventHistory<C> {
             },
             clock_fn,
             timeout_error_container,
-            logging_span: business_span,
+            logging_span,
+            topmost_parent,
         }
     }
 
@@ -559,6 +562,7 @@ impl<C: ClockFn> EventHistory<C> {
                         .child_max_retries(config_id.component_type, child_retry_config),
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
+                    topmost_parent: self.topmost_parent,
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
@@ -623,6 +627,7 @@ impl<C: ClockFn> EventHistory<C> {
                         .child_max_retries(config_id.component_type, child_retry_config),
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
+                    topmost_parent: self.topmost_parent,
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
@@ -717,6 +722,7 @@ impl<C: ClockFn> EventHistory<C> {
                         .child_max_retries(config_id.component_type, child_retry_config),
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
+                    topmost_parent: self.topmost_parent,
                 };
                 *version = db_connection
                     .append_batch_create_new_execution(
@@ -1039,6 +1045,7 @@ mod tests {
                 WorkerError::IntermittentTimeout,
             ))),
             info_span!("workflow-test"),
+            execution_id,
         );
         (event_history, exec_log.version)
     }
@@ -1072,6 +1079,7 @@ mod tests {
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();
@@ -1237,6 +1245,7 @@ mod tests {
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();
@@ -1413,6 +1422,7 @@ mod tests {
                 max_retries: 0,
                 config_id: ConfigId::dummy(),
                 return_type: None,
+                topmost_parent: execution_id,
             })
             .await
             .unwrap();
