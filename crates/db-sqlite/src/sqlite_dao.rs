@@ -349,7 +349,7 @@ pub struct SqliteConfig {
 }
 
 impl SqlitePool {
-    #[instrument(skip_all, name = "sqlite_new")]
+    #[instrument(level = Level::DEBUG, skip_all, name = "sqlite_new")]
     pub async fn new<P: AsRef<Path>>(path: P, config: SqliteConfig) -> Result<Self, DbError> {
         let path = path.as_ref().to_owned();
         let (init_tx, init_rx) = oneshot::channel();
@@ -465,7 +465,7 @@ impl SqlitePool {
         })
     }
 
-    #[instrument(level = Level::DEBUG, skip_all)]
+    #[instrument(level = Level::TRACE, skip_all)]
     pub async fn transaction_write<F, T>(&self, func: F) -> Result<T, DbError>
     where
         F: FnOnce(&mut rusqlite::Transaction) -> Result<T, DbError> + Send + 'static,
@@ -474,7 +474,7 @@ impl SqlitePool {
         self.transaction(func, true).await
     }
 
-    #[instrument(level = Level::DEBUG, skip_all)]
+    #[instrument(level = Level::TRACE, skip_all)]
     pub async fn transaction_read<F, T>(&self, func: F) -> Result<T, DbError>
     where
         F: FnOnce(&mut rusqlite::Transaction) -> Result<T, DbError> + Send + 'static,
@@ -524,7 +524,7 @@ impl SqlitePool {
             .map_err(|_recv_err| DbError::Connection(DbConnectionError::RecvError))?
     }
 
-    #[instrument(level = Level::DEBUG, skip_all)]
+    #[instrument(level = Level::TRACE, skip_all)]
     pub async fn conn_low_prio<F, T>(&self, func: F) -> Result<T, DbError>
     where
         F: FnOnce(&Connection) -> Result<T, DbError> + Send + 'static,
@@ -664,7 +664,7 @@ impl SqlitePool {
         Ok(())
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
+    #[instrument(level = Level::TRACE, skip_all, fields(execution_id = %req.execution_id))]
     fn create_inner(
         tx: &Transaction,
         req: CreateRequest,
@@ -708,7 +708,7 @@ impl SqlitePool {
         Ok((next_version, index_updated.pending_at))
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %pending_state, %next_version, purge, ?ffqn))]
+    #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %pending_state, %next_version, purge, ?ffqn))]
     fn update_index(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -823,7 +823,7 @@ impl SqlitePool {
         }
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %next_version, purge))]
+    #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %next_version, purge))]
     fn update_index_next_version(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -901,7 +901,7 @@ impl SqlitePool {
         .transpose()
     }
 
-    #[instrument(level = Level::DEBUG, skip_all, fields(%execution_id, %run_id, %executor_id))]
+    #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %run_id, %executor_id))]
     fn lock_inner(
         tx: &Transaction,
         created_at: DateTime<Utc>,
@@ -1070,7 +1070,7 @@ impl SqlitePool {
         .map_err(convert_err)
     }
 
-    #[instrument(level = Level::DEBUG, skip_all)]
+    #[instrument(level = Level::TRACE, skip_all)]
     fn append(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -1351,7 +1351,7 @@ impl SqlitePool {
         .map_err(convert_err)
     }
 
-    #[instrument(level = Level::DEBUG, skip_all)]
+    #[instrument(level = Level::TRACE, skip_all)]
     fn get_responses_with_offset(
         tx: &Transaction,
         execution_id: ExecutionId,
@@ -1428,7 +1428,7 @@ impl SqlitePool {
         Ok(execution_ids_versions)
     }
 
-    #[instrument(level = Level::DEBUG, skip_all)]
+    #[instrument(level = Level::TRACE, skip_all)]
     fn notify_pending(&self, pending_at: PendingAt, created_at: DateTime<Utc>) {
         Self::notify_pending_locked(
             pending_at,
@@ -1437,7 +1437,7 @@ impl SqlitePool {
         );
     }
 
-    #[instrument(level = Level::DEBUG, skip_all)]
+    #[instrument(level = Level::TRACE, skip_all)]
     fn notify_pending_all(
         &self,
         pending_ats: impl Iterator<Item = PendingAt>,
@@ -1475,7 +1475,7 @@ enum IndexAction {
 
 #[async_trait]
 impl DbConnection for SqlitePool {
-    #[instrument(skip_all, fields(execution_id = %req.execution_id))]
+    #[instrument(level = Level::DEBUG, skip_all, fields(execution_id = %req.execution_id))]
     async fn create(&self, req: CreateRequest) -> Result<AppendResponse, DbError> {
         debug!("create");
         trace!(?req, "create");
@@ -1489,7 +1489,7 @@ impl DbConnection for SqlitePool {
         Ok(version)
     }
 
-    #[instrument(level = Level::DEBUG, skip(self))]
+    #[instrument(level = Level::TRACE, skip(self))]
     async fn lock_pending(
         &self,
         batch_size: usize,
@@ -1531,7 +1531,7 @@ impl DbConnection for SqlitePool {
     }
 
     /// Specialized `append` which returns the event history.
-    #[instrument(skip(self))]
+    #[instrument(level = Level::DEBUG, skip(self))]
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
@@ -1558,7 +1558,7 @@ impl DbConnection for SqlitePool {
         .map_err(DbError::from)
     }
 
-    #[instrument(skip(self, req))]
+    #[instrument(level = Level::DEBUG, skip(self, req))]
     async fn append(
         &self,
         execution_id: ExecutionId,
@@ -1585,7 +1585,7 @@ impl DbConnection for SqlitePool {
         Ok(version)
     }
 
-    #[instrument(skip(self, batch))]
+    #[instrument(level = Level::DEBUG, skip(self, batch))]
     async fn append_batch(
         &self,
         created_at: DateTime<Utc>,
@@ -1632,7 +1632,7 @@ impl DbConnection for SqlitePool {
         Ok(version)
     }
 
-    #[instrument(skip(self, batch, child_req))]
+    #[instrument(level = Level::DEBUG, skip(self, batch, child_req))]
     async fn append_batch_create_new_execution(
         &self,
         created_at: DateTime<Utc>,
@@ -1659,7 +1659,7 @@ impl DbConnection for SqlitePool {
             )));
         }
 
-        #[instrument(level = Level::DEBUG, skip_all)]
+        #[instrument(level = Level::TRACE, skip_all)]
         fn append_batch_create_new_execution_inner(
             tx: &mut rusqlite::Transaction,
             created_at: DateTime<Utc>,
@@ -1707,7 +1707,7 @@ impl DbConnection for SqlitePool {
         Ok(version)
     }
 
-    #[instrument(skip(self, batch, parent_response_event))]
+    #[instrument(level = Level::DEBUG, skip(self, batch, parent_response_event))]
     async fn append_batch_respond_to_parent(
         &self,
         execution_id: ExecutionId,
@@ -1784,7 +1784,7 @@ impl DbConnection for SqlitePool {
         Ok(version)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(level = Level::DEBUG, skip(self))]
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
         trace!("get");
         self.transaction_read(move |tx| {
@@ -1836,7 +1836,7 @@ impl DbConnection for SqlitePool {
         .map_err(DbError::from)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(level = Level::DEBUG, skip(self))]
     async fn subscribe_to_next_responses(
         &self,
         execution_id: ExecutionId,
@@ -1870,7 +1870,7 @@ impl DbConnection for SqlitePool {
         }
     }
 
-    #[instrument(skip(self, response_event), fields(join_set_id = %response_event.join_set_id))]
+    #[instrument(level = Level::DEBUG, skip(self, response_event), fields(join_set_id = %response_event.join_set_id))]
     async fn append_response(
         &self,
         created_at: DateTime<Utc>,
@@ -1902,7 +1902,7 @@ impl DbConnection for SqlitePool {
     }
 
     /// Get currently expired locks and async timers (delay requests)
-    #[instrument(level = Level::DEBUG, skip(self))]
+    #[instrument(level = Level::TRACE, skip(self))]
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError> {
         trace!("get_expired_timers");
         self.conn_low_prio(
@@ -1958,7 +1958,7 @@ impl DbConnection for SqlitePool {
         .map_err(DbError::from)
     }
 
-    #[instrument(level = Level::DEBUG, skip(self))]
+    #[instrument(level = Level::TRACE, skip(self))]
     async fn subscribe_to_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
