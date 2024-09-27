@@ -1,6 +1,111 @@
 #[allow(dead_code)]
 pub mod obelisk {
     #[allow(dead_code)]
+    pub mod log {
+        #[allow(dead_code, clippy::all)]
+        pub mod log {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn trace(message: &str) {
+                unsafe {
+                    let vec0 = message;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "obelisk:log/log")]
+                    extern "C" {
+                        #[link_name = "trace"]
+                        fn wit_import(_: *mut u8, _: usize);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0.cast_mut(), len0);
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn debug(message: &str) {
+                unsafe {
+                    let vec0 = message;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "obelisk:log/log")]
+                    extern "C" {
+                        #[link_name = "debug"]
+                        fn wit_import(_: *mut u8, _: usize);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0.cast_mut(), len0);
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn info(message: &str) {
+                unsafe {
+                    let vec0 = message;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "obelisk:log/log")]
+                    extern "C" {
+                        #[link_name = "info"]
+                        fn wit_import(_: *mut u8, _: usize);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0.cast_mut(), len0);
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn warn(message: &str) {
+                unsafe {
+                    let vec0 = message;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "obelisk:log/log")]
+                    extern "C" {
+                        #[link_name = "warn"]
+                        fn wit_import(_: *mut u8, _: usize);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0.cast_mut(), len0);
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn error(message: &str) {
+                unsafe {
+                    let vec0 = message;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "obelisk:log/log")]
+                    extern "C" {
+                        #[link_name = "error"]
+                        fn wit_import(_: *mut u8, _: usize);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0.cast_mut(), len0);
+                }
+            }
+        }
+    }
+    #[allow(dead_code)]
     pub mod types {
         #[allow(dead_code, clippy::all)]
         pub mod time {
@@ -7329,70 +7434,72 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 6889] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xef4\x01A\x02\x01A\x1f\
-\x01B\x06\x01w\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\x0bnanosecondsy\x04\
-\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\x02in\x01\x01\0\x04\
-\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\0\x01B\x04\x01s\x04\
-\0\x0bjoin-set-id\x03\0\0\x01s\x04\0\x0cexecution-id\x03\0\x02\x03\x01\x17obelis\
-k:types/execution\x05\x01\x02\x03\0\0\x08duration\x02\x03\0\x01\x0bjoin-set-id\x01\
-B\x08\x02\x03\x02\x01\x02\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0b\
-join-set-id\x03\0\x02\x01@\x01\x05nanos\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\
-\x03\x04\0\x0cnew-join-set\x01\x05\x03\x01\x20obelisk:workflow/host-activities\x05\
-\x04\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fib\
-oa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x03\x01\x1etesting:fibo-workflow/workfl\
-ow\x05\x05\x01B\x04\x01@\x03\x0bjoin-set-ids\x01n}\x0aiterationsy\0s\x04\0\x0cfi\
-boa-submit\x01\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x10fiboa-await-next\x01\x01\x03\
-\x01*testing:fibo-workflow-obelisk-ext/workflow\x05\x06\x01B\x0a\x04\0\x08pollab\
-le\x03\x01\x01h\0\x01@\x01\x04self\x01\0\x7f\x04\0\x16[method]pollable.ready\x01\
-\x02\x01@\x01\x04self\x01\x01\0\x04\0\x16[method]pollable.block\x01\x03\x01p\x01\
-\x01py\x01@\x01\x02in\x04\0\x05\x04\0\x04poll\x01\x06\x03\x01\x12wasi:io/poll@0.\
-2.0\x05\x07\x02\x03\0\x05\x08pollable\x01B\x0f\x02\x03\x02\x01\x08\x04\0\x08poll\
-able\x03\0\0\x01w\x04\0\x07instant\x03\0\x02\x01w\x04\0\x08duration\x03\0\x04\x01\
-@\0\0\x03\x04\0\x03now\x01\x06\x01@\0\0\x05\x04\0\x0aresolution\x01\x07\x01i\x01\
-\x01@\x01\x04when\x03\0\x08\x04\0\x11subscribe-instant\x01\x09\x01@\x01\x04when\x05\
-\0\x08\x04\0\x12subscribe-duration\x01\x0a\x03\x01!wasi:clocks/monotonic-clock@0\
-.2.0\x05\x09\x01B\x04\x04\0\x05error\x03\x01\x01h\0\x01@\x01\x04self\x01\0s\x04\0\
-\x1d[method]error.to-debug-string\x01\x02\x03\x01\x13wasi:io/error@0.2.0\x05\x0a\
-\x02\x03\0\x07\x05error\x01B(\x02\x03\x02\x01\x0b\x04\0\x05error\x03\0\0\x02\x03\
-\x02\x01\x08\x04\0\x08pollable\x03\0\x02\x01i\x01\x01q\x02\x15last-operation-fai\
-led\x01\x04\0\x06closed\0\0\x04\0\x0cstream-error\x03\0\x05\x04\0\x0cinput-strea\
-m\x03\x01\x04\0\x0doutput-stream\x03\x01\x01h\x07\x01p}\x01j\x01\x0a\x01\x06\x01\
-@\x02\x04self\x09\x03lenw\0\x0b\x04\0\x19[method]input-stream.read\x01\x0c\x04\0\
-\"[method]input-stream.blocking-read\x01\x0c\x01j\x01w\x01\x06\x01@\x02\x04self\x09\
-\x03lenw\0\x0d\x04\0\x19[method]input-stream.skip\x01\x0e\x04\0\"[method]input-s\
-tream.blocking-skip\x01\x0e\x01i\x03\x01@\x01\x04self\x09\0\x0f\x04\0\x1e[method\
-]input-stream.subscribe\x01\x10\x01h\x08\x01@\x01\x04self\x11\0\x0d\x04\0![metho\
-d]output-stream.check-write\x01\x12\x01j\0\x01\x06\x01@\x02\x04self\x11\x08conte\
-nts\x0a\0\x13\x04\0\x1b[method]output-stream.write\x01\x14\x04\0.[method]output-\
-stream.blocking-write-and-flush\x01\x14\x01@\x01\x04self\x11\0\x13\x04\0\x1b[met\
-hod]output-stream.flush\x01\x15\x04\0$[method]output-stream.blocking-flush\x01\x15\
-\x01@\x01\x04self\x11\0\x0f\x04\0\x1f[method]output-stream.subscribe\x01\x16\x01\
-@\x02\x04self\x11\x03lenw\0\x13\x04\0\"[method]output-stream.write-zeroes\x01\x17\
-\x04\05[method]output-stream.blocking-write-zeroes-and-flush\x01\x17\x01@\x03\x04\
-self\x11\x03src\x09\x03lenw\0\x0d\x04\0\x1c[method]output-stream.splice\x01\x18\x04\
-\0%[method]output-stream.blocking-splice\x01\x18\x03\x01\x15wasi:io/streams@0.2.\
-0\x05\x0c\x02\x03\0\x06\x08duration\x02\x03\0\x08\x0cinput-stream\x02\x03\0\x08\x0d\
-output-stream\x01B\xc0\x01\x02\x03\x02\x01\x0d\x04\0\x08duration\x03\0\0\x02\x03\
-\x02\x01\x0e\x04\0\x0cinput-stream\x03\0\x02\x02\x03\x02\x01\x0f\x04\0\x0doutput\
--stream\x03\0\x04\x02\x03\x02\x01\x0b\x04\0\x08io-error\x03\0\x06\x02\x03\x02\x01\
-\x08\x04\0\x08pollable\x03\0\x08\x01q\x0a\x03get\0\0\x04head\0\0\x04post\0\0\x03\
-put\0\0\x06delete\0\0\x07connect\0\0\x07options\0\0\x05trace\0\0\x05patch\0\0\x05\
-other\x01s\0\x04\0\x06method\x03\0\x0a\x01q\x03\x04HTTP\0\0\x05HTTPS\0\0\x05othe\
-r\x01s\0\x04\0\x06scheme\x03\0\x0c\x01ks\x01k{\x01r\x02\x05rcode\x0e\x09info-cod\
-e\x0f\x04\0\x11DNS-error-payload\x03\0\x10\x01k}\x01r\x02\x08alert-id\x12\x0dale\
-rt-message\x0e\x04\0\x1aTLS-alert-received-payload\x03\0\x13\x01ky\x01r\x02\x0af\
-ield-name\x0e\x0afield-size\x15\x04\0\x12field-size-payload\x03\0\x16\x01kw\x01k\
-\x17\x01q'\x0bDNS-timeout\0\0\x09DNS-error\x01\x11\0\x15destination-not-found\0\0\
-\x17destination-unavailable\0\0\x19destination-IP-prohibited\0\0\x19destination-\
-IP-unroutable\0\0\x12connection-refused\0\0\x15connection-terminated\0\0\x12conn\
-ection-timeout\0\0\x17connection-read-timeout\0\0\x18connection-write-timeout\0\0\
-\x18connection-limit-reached\0\0\x12TLS-protocol-error\0\0\x15TLS-certificate-er\
-ror\0\0\x12TLS-alert-received\x01\x14\0\x13HTTP-request-denied\0\0\x1cHTTP-reque\
-st-length-required\0\0\x16HTTP-request-body-size\x01\x18\0\x1bHTTP-request-metho\
-d-invalid\0\0\x18HTTP-request-URI-invalid\0\0\x19HTTP-request-URI-too-long\0\0\x20\
-HTTP-request-header-section-size\x01\x15\0\x18HTTP-request-header-size\x01\x19\0\
-!HTTP-request-trailer-section-size\x01\x15\0\x19HTTP-request-trailer-size\x01\x17\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 6974] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc45\x01A\x02\x01A!\x01\
+B\x06\x01w\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\x0bnanosecondsy\x04\0\x08\
+datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\x02in\x01\x01\0\x04\0\x0b\
+schedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\0\x01B\x04\x01s\x04\0\x0b\
+join-set-id\x03\0\0\x01s\x04\0\x0cexecution-id\x03\0\x02\x03\x01\x17obelisk:type\
+s/execution\x05\x01\x02\x03\0\0\x08duration\x02\x03\0\x01\x0bjoin-set-id\x01B\x08\
+\x02\x03\x02\x01\x02\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin\
+-set-id\x03\0\x02\x01@\x01\x05nanos\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\
+\x04\0\x0cnew-join-set\x01\x05\x03\x01\x20obelisk:workflow/host-activities\x05\x04\
+\x01B\x06\x01@\x01\x07messages\x01\0\x04\0\x05trace\x01\0\x04\0\x05debug\x01\0\x04\
+\0\x04info\x01\0\x04\0\x04warn\x01\0\x04\0\x05error\x01\0\x03\x01\x0fobelisk:log\
+/log\x05\x05\x01B\x04\x01@\x03\x0bjoin-set-ids\x01n}\x0aiterationsy\0s\x04\0\x0c\
+fiboa-submit\x01\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x10fiboa-await-next\x01\x01\
+\x03\x01*testing:fibo-workflow-obelisk-ext/workflow\x05\x06\x01B\x04\x01@\x02\x01\
+n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-co\
+ncurrent\x01\0\x03\x01\x1etesting:fibo-workflow/workflow\x05\x07\x01B\x0a\x04\0\x08\
+pollable\x03\x01\x01h\0\x01@\x01\x04self\x01\0\x7f\x04\0\x16[method]pollable.rea\
+dy\x01\x02\x01@\x01\x04self\x01\x01\0\x04\0\x16[method]pollable.block\x01\x03\x01\
+p\x01\x01py\x01@\x01\x02in\x04\0\x05\x04\0\x04poll\x01\x06\x03\x01\x12wasi:io/po\
+ll@0.2.0\x05\x08\x02\x03\0\x06\x08pollable\x01B\x0f\x02\x03\x02\x01\x09\x04\0\x08\
+pollable\x03\0\0\x01w\x04\0\x07instant\x03\0\x02\x01w\x04\0\x08duration\x03\0\x04\
+\x01@\0\0\x03\x04\0\x03now\x01\x06\x01@\0\0\x05\x04\0\x0aresolution\x01\x07\x01i\
+\x01\x01@\x01\x04when\x03\0\x08\x04\0\x11subscribe-instant\x01\x09\x01@\x01\x04w\
+hen\x05\0\x08\x04\0\x12subscribe-duration\x01\x0a\x03\x01!wasi:clocks/monotonic-\
+clock@0.2.0\x05\x0a\x01B\x04\x04\0\x05error\x03\x01\x01h\0\x01@\x01\x04self\x01\0\
+s\x04\0\x1d[method]error.to-debug-string\x01\x02\x03\x01\x13wasi:io/error@0.2.0\x05\
+\x0b\x02\x03\0\x08\x05error\x01B(\x02\x03\x02\x01\x0c\x04\0\x05error\x03\0\0\x02\
+\x03\x02\x01\x09\x04\0\x08pollable\x03\0\x02\x01i\x01\x01q\x02\x15last-operation\
+-failed\x01\x04\0\x06closed\0\0\x04\0\x0cstream-error\x03\0\x05\x04\0\x0cinput-s\
+tream\x03\x01\x04\0\x0doutput-stream\x03\x01\x01h\x07\x01p}\x01j\x01\x0a\x01\x06\
+\x01@\x02\x04self\x09\x03lenw\0\x0b\x04\0\x19[method]input-stream.read\x01\x0c\x04\
+\0\"[method]input-stream.blocking-read\x01\x0c\x01j\x01w\x01\x06\x01@\x02\x04sel\
+f\x09\x03lenw\0\x0d\x04\0\x19[method]input-stream.skip\x01\x0e\x04\0\"[method]in\
+put-stream.blocking-skip\x01\x0e\x01i\x03\x01@\x01\x04self\x09\0\x0f\x04\0\x1e[m\
+ethod]input-stream.subscribe\x01\x10\x01h\x08\x01@\x01\x04self\x11\0\x0d\x04\0![\
+method]output-stream.check-write\x01\x12\x01j\0\x01\x06\x01@\x02\x04self\x11\x08\
+contents\x0a\0\x13\x04\0\x1b[method]output-stream.write\x01\x14\x04\0.[method]ou\
+tput-stream.blocking-write-and-flush\x01\x14\x01@\x01\x04self\x11\0\x13\x04\0\x1b\
+[method]output-stream.flush\x01\x15\x04\0$[method]output-stream.blocking-flush\x01\
+\x15\x01@\x01\x04self\x11\0\x0f\x04\0\x1f[method]output-stream.subscribe\x01\x16\
+\x01@\x02\x04self\x11\x03lenw\0\x13\x04\0\"[method]output-stream.write-zeroes\x01\
+\x17\x04\05[method]output-stream.blocking-write-zeroes-and-flush\x01\x17\x01@\x03\
+\x04self\x11\x03src\x09\x03lenw\0\x0d\x04\0\x1c[method]output-stream.splice\x01\x18\
+\x04\0%[method]output-stream.blocking-splice\x01\x18\x03\x01\x15wasi:io/streams@\
+0.2.0\x05\x0d\x02\x03\0\x07\x08duration\x02\x03\0\x09\x0cinput-stream\x02\x03\0\x09\
+\x0doutput-stream\x01B\xc0\x01\x02\x03\x02\x01\x0e\x04\0\x08duration\x03\0\0\x02\
+\x03\x02\x01\x0f\x04\0\x0cinput-stream\x03\0\x02\x02\x03\x02\x01\x10\x04\0\x0dou\
+tput-stream\x03\0\x04\x02\x03\x02\x01\x0c\x04\0\x08io-error\x03\0\x06\x02\x03\x02\
+\x01\x09\x04\0\x08pollable\x03\0\x08\x01q\x0a\x03get\0\0\x04head\0\0\x04post\0\0\
+\x03put\0\0\x06delete\0\0\x07connect\0\0\x07options\0\0\x05trace\0\0\x05patch\0\0\
+\x05other\x01s\0\x04\0\x06method\x03\0\x0a\x01q\x03\x04HTTP\0\0\x05HTTPS\0\0\x05\
+other\x01s\0\x04\0\x06scheme\x03\0\x0c\x01ks\x01k{\x01r\x02\x05rcode\x0e\x09info\
+-code\x0f\x04\0\x11DNS-error-payload\x03\0\x10\x01k}\x01r\x02\x08alert-id\x12\x0d\
+alert-message\x0e\x04\0\x1aTLS-alert-received-payload\x03\0\x13\x01ky\x01r\x02\x0a\
+field-name\x0e\x0afield-size\x15\x04\0\x12field-size-payload\x03\0\x16\x01kw\x01\
+k\x17\x01q'\x0bDNS-timeout\0\0\x09DNS-error\x01\x11\0\x15destination-not-found\0\
+\0\x17destination-unavailable\0\0\x19destination-IP-prohibited\0\0\x19destinatio\
+n-IP-unroutable\0\0\x12connection-refused\0\0\x15connection-terminated\0\0\x12co\
+nnection-timeout\0\0\x17connection-read-timeout\0\0\x18connection-write-timeout\0\
+\0\x18connection-limit-reached\0\0\x12TLS-protocol-error\0\0\x15TLS-certificate-\
+error\0\0\x12TLS-alert-received\x01\x14\0\x13HTTP-request-denied\0\0\x1cHTTP-req\
+uest-length-required\0\0\x16HTTP-request-body-size\x01\x18\0\x1bHTTP-request-met\
+hod-invalid\0\0\x18HTTP-request-URI-invalid\0\0\x19HTTP-request-URI-too-long\0\0\
+\x20HTTP-request-header-section-size\x01\x15\0\x18HTTP-request-header-size\x01\x19\
+\0!HTTP-request-trailer-section-size\x01\x15\0\x19HTTP-request-trailer-size\x01\x17\
 \0\x18HTTP-response-incomplete\0\0!HTTP-response-header-section-size\x01\x15\0\x19\
 HTTP-response-header-size\x01\x17\0\x17HTTP-response-body-size\x01\x18\0\"HTTP-r\
 esponse-trailer-section-size\x01\x15\0\x1aHTTP-response-trailer-size\x01\x17\0\x1d\
@@ -7461,11 +7568,11 @@ lf\xf8\0\0\xc6\0\x04\0![method]outgoing-response.headers\x01{\x01@\x01\x04self\x
 \x01\x1b\x01j\x01\x86\x01\0\x01k\x87\x01\x01@\x01\x04self\x83\x01\0\x88\x01\x04\0\
 $[method]future-incoming-response.get\x01\x89\x01\x01h\x07\x01k\x1b\x01@\x01\x03\
 err\x8a\x01\0\x8b\x01\x04\0\x0fhttp-error-code\x01\x8c\x01\x03\x01\x15wasi:http/\
-types@0.2.0\x05\x10\x02\x03\0\x09\x10incoming-request\x02\x03\0\x09\x11response-\
-outparam\x01B\x08\x02\x03\x02\x01\x11\x04\0\x10incoming-request\x03\0\0\x02\x03\x02\
-\x01\x12\x04\0\x11response-outparam\x03\0\x02\x01i\x01\x01i\x03\x01@\x02\x07requ\
+types@0.2.0\x05\x11\x02\x03\0\x0a\x10incoming-request\x02\x03\0\x0a\x11response-\
+outparam\x01B\x08\x02\x03\x02\x01\x12\x04\0\x10incoming-request\x03\0\0\x02\x03\x02\
+\x01\x13\x04\0\x11response-outparam\x03\0\x02\x01i\x01\x01i\x03\x01@\x02\x07requ\
 est\x04\x0cresponse-out\x05\x01\0\x04\0\x06handle\x01\x06\x04\x01\x20wasi:http/i\
-ncoming-handler@0.2.0\x05\x13\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\
+ncoming-handler@0.2.0\x05\x14\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\
 \0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.215.0\x10wit-\
 bindgen-rust\x060.30.0";
 #[inline(never)]

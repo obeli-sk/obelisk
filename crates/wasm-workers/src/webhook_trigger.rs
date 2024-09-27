@@ -1,9 +1,10 @@
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
+use crate::workflow_ctx::log_activities;
 use crate::workflow_ctx::{
-    obelisk, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT,
+    host_activities, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT,
 };
-use crate::workflow_worker::HOST_ACTIVITY_IFC_STRING;
+use crate::workflow_worker::PREFIX_OF_IGNORED_IMPORTS;
 use crate::WasmFileError;
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
@@ -27,7 +28,7 @@ use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, instrument, trace, Instrument, Level, Span};
+use tracing::{debug, error, info, instrument, trace, warn, Instrument, Level, Span};
 use utils::time::ClockFn;
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::ResourceTable;
@@ -141,7 +142,10 @@ pub fn component_to_instance<
     })?;
     // Mock imported functions
     for import in &wasm_component.exim.imports_hierarchy {
-        if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING
+        if import
+            .ifc_fqn
+            .deref()
+            .starts_with(PREFIX_OF_IGNORED_IMPORTS)
             || import
                 .ifc_fqn
                 .deref()
@@ -315,7 +319,7 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     execution_id: ExecutionId,
     version: Option<Version>,
-    /// Needed only to construct `ExecutionMetadata`
+    /// Needed to construct `ExecutionMetadata` and for logging
     request_span: Span,
     phantom_data: PhantomData<DB>,
 }
@@ -706,12 +710,20 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
     }
 
     fn add_to_linker(linker: &mut Linker<WebhookCtx<C, DB, P>>) -> Result<(), WasmFileError> {
-        obelisk::workflow::host_activities::add_to_linker(linker, |state: &mut Self| state).map_err(
-            |err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking host activities"),
-                err: err.into(),
-            },
+        host_activities::obelisk::workflow::host_activities::add_to_linker(
+            linker,
+            |state: &mut Self| state,
         )
+        .map_err(|err| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking host activities"),
+            err: err.into(),
+        })?;
+        log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking log activities"),
+                err: err.into(),
+            })?;
+        Ok(())
     }
 }
 
@@ -770,8 +782,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
 }
 
 #[async_trait::async_trait]
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activities::Host
-    for WebhookCtx<C, DB, P>
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
+    host_activities::obelisk::workflow::host_activities::Host for WebhookCtx<C, DB, P>
 {
     async fn sleep(&mut self, nanos: u64) -> wasmtime::Result<()> {
         tokio::time::sleep(Duration::from_nanos(nanos)).await;
@@ -783,6 +795,31 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
         Ok(join_set_id.to_string())
     }
 }
+
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::log::Host
+    for WebhookCtx<C, DB, P>
+{
+    fn trace(&mut self, message: String) -> () {
+        self.request_span.in_scope(|| trace!("> {}", message));
+    }
+
+    fn debug(&mut self, message: String) -> () {
+        self.request_span.in_scope(|| debug!("> {}", message));
+    }
+
+    fn info(&mut self, message: String) -> () {
+        self.request_span.in_scope(|| info!("> {}", message));
+    }
+
+    fn warn(&mut self, message: String) -> () {
+        self.request_span.in_scope(|| warn!("> {}", message));
+    }
+
+    fn error(&mut self, message: String) -> () {
+        self.request_span.in_scope(|| error!("> {}", message));
+    }
+}
+
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WasiView for WebhookCtx<C, DB, P> {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table

@@ -48,8 +48,6 @@ pub(crate) struct EventHistory<C: ClockFn> {
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     clock_fn: C,
     timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
-    #[allow(dead_code)] // FIXME: add logging methods
-    logging_span: Span,
     topmost_parent: ExecutionId,
     // TODO: optimize using start_from_idx: usize,
 }
@@ -76,7 +74,6 @@ impl<C: ClockFn> EventHistory<C> {
         non_blocking_event_batching: u32,
         clock_fn: C,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
-        logging_span: Span,
         topmost_parent: ExecutionId,
     ) -> Self {
         let non_blocking_event_batch_size = non_blocking_event_batching as usize;
@@ -104,7 +101,6 @@ impl<C: ClockFn> EventHistory<C> {
             },
             clock_fn,
             timeout_error_container,
-            logging_span,
             topmost_parent,
         }
     }
@@ -1011,7 +1007,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
-    use tracing::{info, info_span};
+    use tracing::info;
     use utils::time::ClockFn;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::{WastVal, WastValWithType};
@@ -1044,7 +1040,6 @@ mod tests {
             Arc::new(std::sync::Mutex::new(WorkerResult::Err(
                 WorkerError::IntermittentTimeout,
             ))),
-            info_span!("workflow-test"),
             execution_id,
         );
         (event_history, exec_log.version)

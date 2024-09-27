@@ -1,12 +1,13 @@
 package any:any;
 
 world any {
-    import testing:fibo/fibo;
+    export testing:fibo-workflow/workflow-nesting;
+    export testing:fibo-workflow/workflow;
+    import obelisk:log/log;
     import obelisk:workflow/host-activities;
     import testing:fibo-obelisk-ext/fibo;
-    export testing:fibo-workflow/workflow;
-    import testing:fibo-workflow/workflow;
-    import testing:fibo-workflow/workflow-nesting;
-    export testing:fibo-workflow/workflow-nesting;
     import testing:fibo-workflow-obelisk-ext/workflow;
+    import testing:fibo-workflow/workflow-nesting;
+    import testing:fibo-workflow/workflow;
+    import testing:fibo/fibo;
 }

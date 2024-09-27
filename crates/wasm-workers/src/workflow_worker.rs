@@ -52,7 +52,7 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
 }
 
-pub(crate) const HOST_ACTIVITY_IFC_STRING: &str = "obelisk:workflow/host-activities";
+pub(crate) const PREFIX_OF_IGNORED_IMPORTS: &str = "obelisk:";
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
     #[tracing::instrument(skip_all, fields(%config.config_id), err)]
@@ -71,7 +71,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
             WasmComponent::new(wasm_path, &engine).map_err(WasmFileError::DecodeError)?;
         // Mock imported functions
         for import in &wasm_component.exim.imports_hierarchy {
-            if import.ifc_fqn.deref() == HOST_ACTIVITY_IFC_STRING {
+            if import
+                .ifc_fqn
+                .deref()
+                .starts_with(PREFIX_OF_IGNORED_IMPORTS)
+            {
                 // Skip host-implemented functions
                 continue;
             }

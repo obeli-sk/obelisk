@@ -2,6 +2,7 @@
 mod bindings;
 
 use crate::bindings::exports::wasi::http::incoming_handler::Guest;
+use bindings::obelisk::log::log::info;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
@@ -57,6 +58,7 @@ impl Guest for Component {
             println!("hardcoded");
             "hardcoded: 1".to_string() // For performance testing - no activity is called
         };
+        info(&format!("Sending response {fibo_res}"));
         // Start sending the 200 OK response
         ResponseOutparam::set(outparam, Ok(resp));
         let out = body.write().expect("outgoing stream");

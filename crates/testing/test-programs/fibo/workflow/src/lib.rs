@@ -1,6 +1,8 @@
 mod bindings;
 
 bindings::export!(Component with_types_in bindings);
+use bindings::obelisk::log::log::info;
+
 struct Component;
 
 pub fn black_box<T>(dummy: T) -> T {
@@ -29,6 +31,7 @@ impl crate::bindings::exports::testing::fibo_workflow::workflow::Guest for Compo
     }
 
     fn fiboa_concurrent(n: u8, iterations: u32) -> u64 {
+        info(&format!("n={n}, iterations={iterations}"));
         let join_set_id = bindings::obelisk::workflow::host_activities::new_join_set();
         for _ in 0..iterations {
             crate::bindings::testing::fibo_obelisk_ext::fibo::fibo_submit(&join_set_id, n);

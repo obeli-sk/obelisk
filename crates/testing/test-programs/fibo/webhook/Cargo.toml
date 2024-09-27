@@ -15,6 +15,7 @@ wit-bindgen-rt = { workspace = true, features = ["bitflags"] }
 crate-type = ["cdylib"]
 
 [package.metadata.component.target.dependencies]
+"obelisk:log".path = "../../../../wasm-workers/host-wit/deps/log/"
 "obelisk:types".path = "../../../../wasm-workers/host-wit/deps/types/"
 "obelisk:workflow".path = "../../../../wasm-workers/host-wit/deps/workflow/"
 "testing:fibo-workflow-obelisk-ext".path = "../workflow/wit/ifc-ext"

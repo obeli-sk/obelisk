@@ -1,0 +1,9 @@
+package obelisk:log;
+
+interface log {
+    trace: func(message: string);
+    debug: func(message: string);
+    info: func(message: string);
+    warn: func(message: string);
+    error: func(message: string);
+}

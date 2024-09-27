@@ -2,6 +2,7 @@ use crate::event_history::{EventCall, EventHistory};
 use crate::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
 use assert_matches::assert_matches;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
@@ -72,14 +73,6 @@ impl WorkflowFunctionError {
     }
 }
 
-// Generate `host_activities::Host` trait
-wasmtime::component::bindgen!({
-    path: "host-wit/",
-    async: true,
-    interfaces: "import obelisk:workflow/host-activities;",
-    trappable_imports: true,
-});
-
 pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     execution_id: ExecutionId,
     event_history: EventHistory<C>,
@@ -88,6 +81,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     db_pool: P,
     pub(crate) version: Version,
     fn_registry: Arc<dyn FunctionRegistry>,
+    logging_span: Span,
     phantom_data: PhantomData<DB>,
 }
 
@@ -124,7 +118,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 non_blocking_event_batching,
                 clock_fn.clone(),
                 timeout_error_container,
-                logging_span,
                 topmost_parent,
             ),
             rng: StdRng::seed_from_u64(seed),
@@ -132,6 +125,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             db_pool,
             version,
             fn_registry,
+            logging_span,
             phantom_data: PhantomData,
         }
     }
@@ -197,12 +191,20 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
-        obelisk::workflow::host_activities::add_to_linker(linker, |state: &mut Self| state).map_err(
-            |err| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking host activities"),
-                err: err.into(),
-            },
+        host_activities::obelisk::workflow::host_activities::add_to_linker(
+            linker,
+            |state: &mut Self| state,
         )
+        .map_err(|err| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking host activities"),
+            err: err.into(),
+        })?;
+        log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking log activities"),
+                err: err.into(),
+            })?;
+        Ok(())
     }
 
     #[expect(clippy::too_many_lines)]
@@ -324,33 +326,83 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 }
 
-#[async_trait::async_trait]
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activities::Host
-    for WorkflowCtx<C, DB, P>
-{
-    // TODO: Apply jitter, should be configured on the component level
-    async fn sleep(&mut self, nanos: u64) -> wasmtime::Result<()> {
-        Ok(self.call_sleep(Duration::from_nanos(nanos)).await?)
-    }
+pub(crate) mod host_activities {
+    use super::*;
 
-    async fn new_join_set(&mut self) -> wasmtime::Result<String> {
-        let join_set_id =
-            JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
-        let res = self
-            .event_history
-            .apply(
-                EventCall::CreateJoinSet { join_set_id },
-                &self.db_pool.connection(),
-                &mut self.version,
-                self.fn_registry.as_ref(),
-            )
-            .await?;
-        Ok(
-            assert_matches!(res, SupportedFunctionReturnValue::Infallible(WastValWithType {
+    // Generate `obelisk::workflow::host_activities`
+    wasmtime::component::bindgen!({
+        path: "host-wit/",
+        async: true,
+        interfaces: "import obelisk:workflow/host-activities;",
+        trappable_imports: true,
+    });
+
+    #[async_trait]
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activities::Host
+        for WorkflowCtx<C, DB, P>
+    {
+        // TODO: Apply jitter, should be configured on the component level
+        async fn sleep(&mut self, nanos: u64) -> wasmtime::Result<()> {
+            Ok(self.call_sleep(Duration::from_nanos(nanos)).await?)
+        }
+
+        async fn new_join_set(&mut self) -> wasmtime::Result<String> {
+            let join_set_id =
+                JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+            let res = self
+                .event_history
+                .apply(
+                    EventCall::CreateJoinSet { join_set_id },
+                    &self.db_pool.connection(),
+                    &mut self.version,
+                    self.fn_registry.as_ref(),
+                )
+                .await?;
+            Ok(
+                assert_matches!(res, SupportedFunctionReturnValue::Infallible(WastValWithType {
             r#type: TypeWrapper::String,
             value: WastVal::String(join_set_id),
         }) => join_set_id),
-        )
+            )
+        }
+    }
+}
+
+pub(crate) mod log_activities {
+    use tracing::{info, warn};
+
+    use super::*;
+
+    // Generate `obelisk::log::log`
+    wasmtime::component::bindgen!({
+        path: "host-wit/",
+        async: false,
+        interfaces: "import obelisk:log/log;",
+        trappable_imports: false,
+    });
+
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::log::log::Host
+        for WorkflowCtx<C, DB, P>
+    {
+        fn trace(&mut self, message: String) -> () {
+            self.logging_span.in_scope(|| trace!("> {}", message));
+        }
+
+        fn debug(&mut self, message: String) -> () {
+            self.logging_span.in_scope(|| debug!("> {}", message));
+        }
+
+        fn info(&mut self, message: String) -> () {
+            self.logging_span.in_scope(|| info!("> {}", message));
+        }
+
+        fn warn(&mut self, message: String) -> () {
+            self.logging_span.in_scope(|| warn!("> {}", message));
+        }
+
+        fn error(&mut self, message: String) -> () {
+            self.logging_span.in_scope(|| error!("> {}", message));
+        }
     }
 }
 
