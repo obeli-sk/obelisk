@@ -524,7 +524,7 @@ pub(crate) mod tests {
                 let res = match step {
                     WorkflowStep::Sleep { millis } => {
                         workflow_ctx
-                            .call_sleep(Duration::from_millis(*u64::from(*millis)))
+                            .call_sleep(Duration::from_millis(u64::from(*millis)))
                             .await
                     }
                     WorkflowStep::Call { ffqn } => {
