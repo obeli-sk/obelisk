@@ -180,7 +180,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 EventCall::BlockingDelayRequest {
                     join_set_id,
                     delay_id,
-                    expires_at_if_new: (self.clock_fn)() + duration,
+                    expires_at_if_new: (self.clock_fn)() + duration, // FIXME: this can overflow when Duration is converted into TimeDelta
                 },
                 &self.db_pool.connection(),
                 &mut self.version,
@@ -387,7 +387,7 @@ pub(crate) mod tests {
     };
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
-    use tracing::{error, info};
+    use tracing::info;
     use utils::time::{now, ClockFn};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
@@ -396,7 +396,7 @@ pub(crate) mod tests {
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
     #[allow(dead_code)]
     enum WorkflowStep {
-        Sleep { millis: u64 },
+        Sleep { millis: u32 },
         Call { ffqn: FunctionFqn },
     }
 
@@ -472,7 +472,7 @@ pub(crate) mod tests {
                 let res = match step {
                     WorkflowStep::Sleep { millis } => {
                         workflow_ctx
-                            .call_sleep(Duration::from_millis(*millis))
+                            .call_sleep(Duration::from_millis(*millis as u64))
                             .await
                     }
                     WorkflowStep::Call { ffqn } => {
@@ -514,7 +514,7 @@ pub(crate) mod tests {
         let _guard = test_utils::set_up();
         let mut builder_a = madsim::runtime::Builder::from_env();
         builder_a.check = false;
-        error!("MADSIM_TEST_SEED={}", builder_a.seed);
+        info!("MADSIM_TEST_SEED={}", builder_a.seed);
         let mut builder_b = madsim::runtime::Builder::from_env(); // Builder: Clone would be useful
         builder_b.check = false;
         builder_b.seed = builder_a.seed;
