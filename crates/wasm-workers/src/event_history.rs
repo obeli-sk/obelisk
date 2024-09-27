@@ -13,6 +13,7 @@ use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
 use concepts::ConfigId;
+use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::{ExecutionId, StrVariant};
@@ -49,6 +50,7 @@ pub(crate) struct EventHistory<C: ClockFn> {
     clock_fn: C,
     timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
     topmost_parent: ExecutionId,
+    worker_span: Span,
     // TODO: optimize using start_from_idx: usize,
 }
 
@@ -74,6 +76,7 @@ impl<C: ClockFn> EventHistory<C> {
         non_blocking_event_batching: u32,
         clock_fn: C,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
+        worker_span: Span,
         topmost_parent: ExecutionId,
     ) -> Self {
         let non_blocking_event_batch_size = non_blocking_event_batching as usize;
@@ -101,6 +104,7 @@ impl<C: ClockFn> EventHistory<C> {
             },
             clock_fn,
             timeout_error_container,
+            worker_span,
             topmost_parent,
         }
     }
@@ -548,7 +552,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: concepts::ExecutionMetadata::from_parent_span(&Span::current()),
+                    metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
                     retry_exp_backoff: self
                         .retry_config
@@ -610,7 +614,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: new_execution_id,
-                    metadata: concepts::ExecutionMetadata::from_linked_span(&Span::current()),
+                    metadata: ExecutionMetadata::from_linked_span(&self.worker_span),
                     ffqn,
                     params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
@@ -708,7 +712,7 @@ impl<C: ClockFn> EventHistory<C> {
                     ffqn,
                     params,
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: concepts::ExecutionMetadata::from_parent_span(&Span::current()),
+                    metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
                     retry_exp_backoff: self
                         .retry_config
@@ -1007,7 +1011,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use test_utils::sim_clock::SimClock;
-    use tracing::info;
+    use tracing::{info, info_span};
     use utils::time::ClockFn;
     use val_json::type_wrapper::TypeWrapper;
     use val_json::wast_val::{WastVal, WastValWithType};
@@ -1040,6 +1044,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(WorkerResult::Err(
                 WorkerError::IntermittentTimeout,
             ))),
+            info_span!("worker-test"),
             execution_id,
         );
         (event_history, exec_log.version)

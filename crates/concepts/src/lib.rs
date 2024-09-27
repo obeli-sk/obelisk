@@ -1084,31 +1084,42 @@ impl ExecutionMetadata {
     }
 
     #[must_use]
-    pub fn from_parent_span(span: &Span) -> Self {
-        ExecutionMetadata(Some(hashbrown::HashMap::default())).fill(span, false)
+    pub fn from_parent_span(less_specific: &Span) -> Self {
+        ExecutionMetadata::create(less_specific, false)
     }
 
     #[must_use]
-    pub fn from_linked_span(span: &Span) -> Self {
-        ExecutionMetadata(Some(hashbrown::HashMap::default())).fill(span, true)
+    pub fn from_linked_span(less_specific: &Span) -> Self {
+        ExecutionMetadata::create(less_specific, true)
     }
 
+    /// Attempt to use `Span::current()` to fill the trace and parent span.
+    /// If that fails, which can happen due to interference with e.g.
+    /// the stdout layer of the subscriber, use the `span` which is guaranteed
+    /// to be on info level.
     #[must_use]
-    fn fill(mut self, span: &Span, link_marker: bool) -> Self {
+    #[allow(clippy::items_after_statements)]
+    fn create(span: &Span, link_marker: bool) -> Self {
         use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+        let mut metadata = Self(Some(hashbrown::HashMap::default()));
         let mut metadata_view = ExecutionMetadataInjectorView {
-            metadata: &mut self,
+            metadata: &mut metadata,
         };
-        // retrieve the current context
-        let span_ctx = span.context();
         // inject the current context through the amqp headers
-        opentelemetry::global::get_text_map_propagator(|propagator| {
-            propagator.inject_context(&span_ctx, &mut metadata_view);
-        });
+        fn inject(s: &Span, metadata_view: &mut ExecutionMetadataInjectorView) {
+            opentelemetry::global::get_text_map_propagator(|propagator| {
+                propagator.inject_context(&s.context(), metadata_view);
+            });
+        }
+        inject(&Span::current(), &mut metadata_view);
+        if metadata_view.is_empty() {
+            // The subscriber sent us a current span that is actually disabled
+            inject(span, &mut metadata_view);
+        }
         if link_marker {
             metadata_view.set(Self::LINKED_KEY, String::new());
         }
-        self
+        metadata
     }
 
     pub fn enrich(&self, span: &Span) {
@@ -1130,6 +1141,15 @@ impl ExecutionMetadata {
 
 struct ExecutionMetadataInjectorView<'a> {
     metadata: &'a mut ExecutionMetadata,
+}
+
+impl<'a> ExecutionMetadataInjectorView<'a> {
+    fn is_empty(&self) -> bool {
+        self.metadata
+            .0
+            .as_ref()
+            .is_some_and(hashbrown::HashMap::is_empty)
+    }
 }
 
 impl<'a> opentelemetry::propagation::Injector for ExecutionMetadataInjectorView<'a> {

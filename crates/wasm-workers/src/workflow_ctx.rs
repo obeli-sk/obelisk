@@ -103,7 +103,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         non_blocking_event_batching: u32,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
         fn_registry: Arc<dyn FunctionRegistry>,
-        span: Span,
+        worker_span: Span,
         topmost_parent: ExecutionId,
     ) -> Self {
         Self {
@@ -119,6 +119,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 non_blocking_event_batching,
                 clock_fn.clone(),
                 timeout_error_container,
+                worker_span.clone(),
                 topmost_parent,
             ),
             rng: StdRng::seed_from_u64(seed),
@@ -126,7 +127,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             db_pool,
             version,
             fn_registry,
-            component_logger: ComponentLogger { span },
+            component_logger: ComponentLogger { span: worker_span },
             phantom_data: PhantomData,
         }
     }

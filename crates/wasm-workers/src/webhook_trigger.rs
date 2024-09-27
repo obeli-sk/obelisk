@@ -486,7 +486,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: Some((self.execution_id, join_set_id)),
-                    metadata: ExecutionMetadata::from_parent_span(&Span::current()),
+                    metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
                     scheduled_at: created_at,
                     max_retries: self
                         .retry_config
@@ -606,7 +606,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
-                    metadata: ExecutionMetadata::from_linked_span(&Span::current()),
+                    metadata: ExecutionMetadata::from_linked_span(&self.component_logger.span),
                     scheduled_at,
                     max_retries: self
                         .retry_config
@@ -662,7 +662,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 ffqn,
                 params: Params::from_wasmtime(Arc::from(params)),
                 parent: Some((self.execution_id, join_set_id)),
-                metadata: ExecutionMetadata::from_parent_span(&Span::current()),
+                metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
                 scheduled_at: created_at,
                 max_retries: self
                     .retry_config
