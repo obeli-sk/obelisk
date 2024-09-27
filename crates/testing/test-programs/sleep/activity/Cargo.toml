@@ -18,6 +18,7 @@ crate-type = ["cdylib"]
 
 [package.metadata.component.target.dependencies]
 "testing:sleep".path = "wit/ifc"
+"obelisk:types".path = "../../../../wasm-workers/host-wit/deps/types/"
 
 [lints]
 rust.unused_imports = "allow"

@@ -171,7 +171,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         Ok(())
     }
 
-    async fn call_sleep(&mut self, millis: u32) -> Result<(), WorkflowFunctionError> {
+    async fn call_sleep(&mut self, duration: Duration) -> Result<(), WorkflowFunctionError> {
         let join_set_id =
             JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
         let delay_id = DelayId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
@@ -180,7 +180,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 EventCall::BlockingDelayRequest {
                     join_set_id,
                     delay_id,
-                    expires_at_if_new: (self.clock_fn)() + Duration::from_millis(u64::from(millis)),
+                    expires_at_if_new: (self.clock_fn)() + duration,
                 },
                 &self.db_pool.connection(),
                 &mut self.version,
@@ -329,8 +329,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activi
     for WorkflowCtx<C, DB, P>
 {
     // TODO: Apply jitter, should be configured on the component level
-    async fn sleep(&mut self, millis: u32) -> wasmtime::Result<()> {
-        Ok(self.call_sleep(millis).await?)
+    async fn sleep(&mut self, nanos: u64) -> wasmtime::Result<()> {
+        Ok(self.call_sleep(Duration::from_nanos(nanos)).await?)
     }
 
     async fn new_join_set(&mut self) -> wasmtime::Result<String> {
@@ -396,7 +396,7 @@ pub(crate) mod tests {
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
     #[allow(dead_code)]
     enum WorkflowStep {
-        Sleep { millis: u32 },
+        Sleep { millis: u64 },
         Call { ffqn: FunctionFqn },
     }
 
@@ -470,7 +470,11 @@ pub(crate) mod tests {
             );
             for step in &self.steps {
                 let res = match step {
-                    WorkflowStep::Sleep { millis } => workflow_ctx.call_sleep(*millis).await,
+                    WorkflowStep::Sleep { millis } => {
+                        workflow_ctx
+                            .call_sleep(Duration::from_millis(*millis))
+                            .await
+                    }
                     WorkflowStep::Call { ffqn } => {
                         workflow_ctx
                             .call_imported_fn(ffqn.clone(), &[], &mut [])

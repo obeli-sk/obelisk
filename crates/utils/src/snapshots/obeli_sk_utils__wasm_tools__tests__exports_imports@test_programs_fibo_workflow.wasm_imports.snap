@@ -7,7 +7,7 @@ expression: imports
     [],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "join-set-id"
     }
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": [

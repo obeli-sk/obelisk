@@ -1,6 +1,28 @@
 #[allow(dead_code)]
 pub mod obelisk {
     #[allow(dead_code)]
+    pub mod types {
+        #[allow(dead_code, clippy::all)]
+        pub mod time {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+            /// A duration of time, in nanoseconds.
+            /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
+            pub type Duration = u64;
+        }
+        #[allow(dead_code, clippy::all)]
+        pub mod execution {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+            use super::super::super::_rt;
+            pub type JoinSetId = _rt::String;
+        }
+    }
+    #[allow(dead_code)]
     pub mod workflow {
         #[allow(dead_code, clippy::all)]
         pub mod host_activities {
@@ -9,24 +31,26 @@ pub mod obelisk {
             static __FORCE_SECTION_REF: fn() =
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
+            pub type Duration = super::super::super::obelisk::types::time::Duration;
+            pub type JoinSetId = super::super::super::obelisk::types::execution::JoinSetId;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn sleep(millis: u32) {
+            pub fn sleep(nanos: Duration) {
                 unsafe {
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "obelisk:workflow/host-activities")]
                     extern "C" {
                         #[link_name = "sleep"]
-                        fn wit_import(_: i32);
+                        fn wit_import(_: i64);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: i32) {
+                    fn wit_import(_: i64) {
                         unreachable!()
                     }
-                    wit_import(_rt::as_i32(&millis));
+                    wit_import(_rt::as_i64(nanos));
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            pub fn new_join_set() -> _rt::String {
+            pub fn new_join_set() -> JoinSetId {
                 unsafe {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
@@ -246,102 +270,6 @@ pub mod testing {
                             Err(e)
                         }
                         _ => _rt::invalid_enum_discriminant(),
-                    }
-                }
-            }
-        }
-    }
-}
-#[allow(dead_code)]
-pub mod wasi {
-    #[allow(dead_code)]
-    pub mod clocks {
-        #[allow(dead_code, clippy::all)]
-        pub mod wall_clock {
-            #[used]
-            #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() =
-                super::super::super::__link_custom_section_describing_imports;
-            /// A time and date in seconds plus nanoseconds.
-            #[repr(C)]
-            #[derive(Clone, Copy)]
-            pub struct Datetime {
-                pub seconds: u64,
-                pub nanoseconds: u32,
-            }
-            impl ::core::fmt::Debug for Datetime {
-                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                    f.debug_struct("Datetime")
-                        .field("seconds", &self.seconds)
-                        .field("nanoseconds", &self.nanoseconds)
-                        .finish()
-                }
-            }
-            #[allow(unused_unsafe, clippy::all)]
-            /// Read the current value of the clock.
-            ///
-            /// This clock is not monotonic, therefore calling this function repeatedly
-            /// will not necessarily produce a sequence of non-decreasing values.
-            ///
-            /// The returned timestamps represent the number of seconds since
-            /// 1970-01-01T00:00:00Z, also known as [POSIX's Seconds Since the Epoch],
-            /// also known as [Unix Time].
-            ///
-            /// The nanoseconds field of the output is always less than 1000000000.
-            ///
-            /// [POSIX's Seconds Since the Epoch]: https://pubs.opengroup.org/onlinepubs/9699919799/xrat/V4_xbd_chap04.html#tag_21_04_16
-            /// [Unix Time]: https://en.wikipedia.org/wiki/Unix_time
-            pub fn now() -> Datetime {
-                unsafe {
-                    #[repr(align(8))]
-                    struct RetArea([::core::mem::MaybeUninit<u8>; 16]);
-                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 16]);
-                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
-                    #[cfg(target_arch = "wasm32")]
-                    #[link(wasm_import_module = "wasi:clocks/wall-clock@0.2.0")]
-                    extern "C" {
-                        #[link_name = "now"]
-                        fn wit_import(_: *mut u8);
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8) {
-                        unreachable!()
-                    }
-                    wit_import(ptr0);
-                    let l1 = *ptr0.add(0).cast::<i64>();
-                    let l2 = *ptr0.add(8).cast::<i32>();
-                    Datetime {
-                        seconds: l1 as u64,
-                        nanoseconds: l2 as u32,
-                    }
-                }
-            }
-            #[allow(unused_unsafe, clippy::all)]
-            /// Query the resolution of the clock.
-            ///
-            /// The nanoseconds field of the output is always less than 1000000000.
-            pub fn resolution() -> Datetime {
-                unsafe {
-                    #[repr(align(8))]
-                    struct RetArea([::core::mem::MaybeUninit<u8>; 16]);
-                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 16]);
-                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
-                    #[cfg(target_arch = "wasm32")]
-                    #[link(wasm_import_module = "wasi:clocks/wall-clock@0.2.0")]
-                    extern "C" {
-                        #[link_name = "resolution"]
-                        fn wit_import(_: *mut u8);
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8) {
-                        unreachable!()
-                    }
-                    wit_import(ptr0);
-                    let l1 = *ptr0.add(0).cast::<i64>();
-                    let l2 = *ptr0.add(8).cast::<i32>();
-                    Datetime {
-                        seconds: l1 as u64,
-                        nanoseconds: l2 as u32,
                     }
                 }
             }
@@ -725,63 +653,27 @@ mod _rt {
             core::hint::unreachable_unchecked()
         }
     }
-    pub fn as_i32<T: AsI32>(t: T) -> i32 {
-        t.as_i32()
+    pub fn as_i64<T: AsI64>(t: T) -> i64 {
+        t.as_i64()
     }
-    pub trait AsI32 {
-        fn as_i32(self) -> i32;
+    pub trait AsI64 {
+        fn as_i64(self) -> i64;
     }
-    impl<'a, T: Copy + AsI32> AsI32 for &'a T {
-        fn as_i32(self) -> i32 {
-            (*self).as_i32()
+    impl<'a, T: Copy + AsI64> AsI64 for &'a T {
+        fn as_i64(self) -> i64 {
+            (*self).as_i64()
         }
     }
-    impl AsI32 for i32 {
+    impl AsI64 for i64 {
         #[inline]
-        fn as_i32(self) -> i32 {
-            self as i32
+        fn as_i64(self) -> i64 {
+            self as i64
         }
     }
-    impl AsI32 for u32 {
+    impl AsI64 for u64 {
         #[inline]
-        fn as_i32(self) -> i32 {
-            self as i32
-        }
-    }
-    impl AsI32 for i16 {
-        #[inline]
-        fn as_i32(self) -> i32 {
-            self as i32
-        }
-    }
-    impl AsI32 for u16 {
-        #[inline]
-        fn as_i32(self) -> i32 {
-            self as i32
-        }
-    }
-    impl AsI32 for i8 {
-        #[inline]
-        fn as_i32(self) -> i32 {
-            self as i32
-        }
-    }
-    impl AsI32 for u8 {
-        #[inline]
-        fn as_i32(self) -> i32 {
-            self as i32
-        }
-    }
-    impl AsI32 for char {
-        #[inline]
-        fn as_i32(self) -> i32 {
-            self as i32
-        }
-    }
-    impl AsI32 for usize {
-        #[inline]
-        fn as_i32(self) -> i32 {
-            self as i32
+        fn as_i64(self) -> i64 {
+            self as i64
         }
     }
     #[cfg(target_arch = "wasm32")]
@@ -832,26 +724,27 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 844] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd2\x05\x01A\x02\x01\
-A\x0b\x01B\x04\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0e\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 912] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x96\x06\x01A\x02\x01\
+A\x0e\x01B\x04\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0e\
 get-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x05\x01@\x02\x0b\
 join-set-ids\x03urls\0s\x04\0\x15get-successful-submit\x01\0\x01j\x01s\x01s\x01@\
 \x01\x0bjoin-set-ids\0\x01\x04\0\x19get-successful-await-next\x01\x02\x03\x01!te\
-sting:http-obelisk-ext/http-get\x05\x01\x01B\x05\x01r\x02\x07secondsw\x0bnanosec\
-ondsy\x04\0\x08datetime\x03\0\0\x01@\0\0\x01\x04\0\x03now\x01\x02\x04\0\x0aresol\
-ution\x01\x02\x03\x01\x1cwasi:clocks/wall-clock@0.2.0\x05\x02\x02\x03\0\x02\x08d\
-atetime\x01B\x0a\x02\x03\x02\x01\x03\x04\0\x08datetime\x03\0\0\x01w\x04\0\x08dur\
-ation\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x01\0\x02in\x01\x03\0\x04\0\x0csch\
-eduled-at\x03\0\x04\x01@\x01\x06millisy\x01\0\x04\0\x05sleep\x01\x06\x01@\0\0s\x04\
-\0\x0cnew-join-set\x01\x07\x03\x01\x20obelisk:workflow/host-activities\x05\x04\x01\
-B\x0a\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-succ\
-essful\x01\x01\x01ps\x01j\x01\x02\x01s\x01@\x01\x04urls\x02\0\x03\x04\0\x1bget-s\
-uccessful-concurrently\x01\x04\x01@\x02\x03urls\x0bconcurrencyy\0\x03\x04\0\"get\
--successful-concurrently-stress\x01\x05\x04\x01\x1etesting:http-workflow/workflo\
-w\x05\x05\x04\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\
-\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.215.0\x10wit-bind\
-gen-rust\x060.30.0";
+sting:http-obelisk-ext/http-get\x05\x01\x01B\x06\x01w\x04\0\x08duration\x03\0\0\x01\
+r\x02\x07secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\
+\x02at\x01\x03\0\x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obeli\
+sk:types/time\x05\x02\x01B\x04\x01s\x04\0\x0bjoin-set-id\x03\0\0\x01s\x04\0\x0ce\
+xecution-id\x03\0\x02\x03\x01\x17obelisk:types/execution\x05\x03\x02\x03\0\x02\x08\
+duration\x02\x03\0\x03\x0bjoin-set-id\x01B\x08\x02\x03\x02\x01\x04\x04\0\x08dura\
+tion\x03\0\0\x02\x03\x02\x01\x05\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x05nano\
+s\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0cnew-join-set\x01\x05\x03\
+\x01\x20obelisk:workflow/host-activities\x05\x06\x01B\x0a\x01j\x01s\x01s\x01@\x01\
+\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-successful\x01\x01\x01ps\x01j\x01\
+\x02\x01s\x01@\x01\x04urls\x02\0\x03\x04\0\x1bget-successful-concurrently\x01\x04\
+\x01@\x02\x03urls\x0bconcurrencyy\0\x03\x04\0\"get-successful-concurrently-stres\
+s\x01\x05\x04\x01\x1etesting:http-workflow/workflow\x05\x07\x04\x01\x19testing:h\
+ttp-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cproce\
+ssed-by\x02\x0dwit-component\x070.215.0\x10wit-bindgen-rust\x060.30.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

@@ -508,8 +508,11 @@ pub(crate) mod tests {
                     created_at,
                     execution_id,
                     ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
-                    params: Params::from_json_value(json!([sleep_millis, sleep_iterations]))
-                        .unwrap(),
+                    params: Params::from_json_value(json!([
+                        sleep_millis * 1_000_000,
+                        sleep_iterations
+                    ]))
+                    .unwrap(),
                     parent: None,
                     metadata: concepts::ExecutionMetadata::empty(),
                     scheduled_at: created_at,
@@ -543,11 +546,11 @@ pub(crate) mod tests {
         }
 
         #[rstest::rstest]
-        #[case(1, 2000)] // many small sleeps
-        #[case(2000, 1)] // one long sleep
+        #[case(1, 2_000)] // 1ms * 2000 iterations
+        #[case(2_000, 1)] // 2s * 1 iteration
         #[tokio::test]
         async fn long_running_execution_should_timeout(
-            #[case] sleep_millis: u32,
+            #[case] sleep_millis: u64,
             #[case] sleep_iterations: u32,
         ) {
             const TIMEOUT: Duration = Duration::from_millis(200);
@@ -576,7 +579,11 @@ pub(crate) mod tests {
                 execution_id: ExecutionId::generate(),
                 metadata: concepts::ExecutionMetadata::empty(),
                 ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
-                params: Params::from_json_value(json!([sleep_millis, sleep_iterations])).unwrap(),
+                params: Params::from_json_value(json!([
+                    sleep_millis * 1_000_000,
+                    sleep_iterations
+                ]))
+                .unwrap(),
                 event_history: Vec::new(),
                 responses: Vec::new(),
                 version: Version::new(0),

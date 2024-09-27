@@ -773,8 +773,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activities::Host
     for WebhookCtx<C, DB, P>
 {
-    async fn sleep(&mut self, millis: u32) -> wasmtime::Result<()> {
-        tokio::time::sleep(Duration::from_millis(u64::from(millis))).await;
+    async fn sleep(&mut self, nanos: u64) -> wasmtime::Result<()> {
+        tokio::time::sleep(Duration::from_nanos(nanos)).await;
         Ok(())
     }
 

@@ -7,7 +7,7 @@ expression: imports
     [],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "join-set-id"
     }
   ],
   "testing:http-obelisk-ext/http-get.get-successful-await-next": [

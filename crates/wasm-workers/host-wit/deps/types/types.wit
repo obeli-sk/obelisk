@@ -1,0 +1,27 @@
+package obelisk:types;
+
+interface time {
+    /// A duration of time, in nanoseconds.
+    // Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
+    type duration = u64;
+
+    /// A time and date in seconds plus nanoseconds.
+    // Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
+    record datetime {
+        seconds: u64,
+        nanoseconds: u32,
+    }
+
+    variant schedule-at {
+        now,
+        at(datetime),
+        in(duration),
+    }
+}
+
+interface execution {
+
+    type join-set-id = string;
+
+    type execution-id = string;
+}

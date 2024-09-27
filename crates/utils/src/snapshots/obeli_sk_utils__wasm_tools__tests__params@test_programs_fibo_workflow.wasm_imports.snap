@@ -6,7 +6,7 @@ expression: imports
   "obelisk:workflow/host-activities.new-join-set": [
     {
       "params": [],
-      "return_type": "string"
+      "return_type": "join-set-id"
     },
     "obelisk:workflow/host-activities",
     "new-join-set"

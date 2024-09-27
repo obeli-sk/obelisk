@@ -1,0 +1,10 @@
+package obelisk:workflow;
+
+interface host-activities {
+    use obelisk:types/time.{duration};
+    use obelisk:types/execution.{join-set-id};
+
+    sleep: func(nanos: duration);
+    new-join-set: func() -> join-set-id;
+}
+

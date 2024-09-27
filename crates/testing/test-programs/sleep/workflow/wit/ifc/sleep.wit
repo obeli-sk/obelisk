@@ -1,8 +1,8 @@
 package testing:sleep-workflow;
 
 interface workflow {
-    use obelisk:workflow/host-activities.{duration};
-    sleep-host-activity: func(millis: u32);
-    sleep-activity: func(millis: u32);
+    use obelisk:types/time.{duration};
+    sleep-host-activity: func(millis: u64);
+    sleep-activity: func(millis: u64);
     reschedule: func(nanos: duration, iterations: u8);
 }

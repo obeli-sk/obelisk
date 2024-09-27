@@ -17,12 +17,12 @@ crate-type = ["cdylib"]
 [package.metadata.component.dependencies]
 
 [package.metadata.component.target.dependencies]
-"obelisk:workflow".path = "../../../../wasm-workers/host-wit/"
+"obelisk:types".path = "../../../../wasm-workers/host-wit/deps/types/"
+"obelisk:workflow".path = "../../../../wasm-workers/host-wit/deps/workflow/"
 "testing:fibo-obelisk-ext".path = "../activity/wit/ext"
 "testing:fibo-workflow-obelisk-ext".path = "wit/ifc-ext"
 "testing:fibo-workflow".path = "wit/ifc"
 "testing:fibo".path = "../activity/wit/ifc"
-"wasi:clocks".path = "../../../../wasm-workers/host-wit/deps/clocks"
 
 [lints]
 rust.unused_imports = "allow"

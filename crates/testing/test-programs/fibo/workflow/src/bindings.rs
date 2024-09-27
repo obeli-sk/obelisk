@@ -1,6 +1,28 @@
 #[allow(dead_code)]
 pub mod obelisk {
     #[allow(dead_code)]
+    pub mod types {
+        #[allow(dead_code, clippy::all)]
+        pub mod time {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+            /// A duration of time, in nanoseconds.
+            /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
+            pub type Duration = u64;
+        }
+        #[allow(dead_code, clippy::all)]
+        pub mod execution {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+            use super::super::super::_rt;
+            pub type JoinSetId = _rt::String;
+        }
+    }
+    #[allow(dead_code)]
     pub mod workflow {
         #[allow(dead_code, clippy::all)]
         pub mod host_activities {
@@ -9,24 +31,26 @@ pub mod obelisk {
             static __FORCE_SECTION_REF: fn() =
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
+            pub type Duration = super::super::super::obelisk::types::time::Duration;
+            pub type JoinSetId = super::super::super::obelisk::types::execution::JoinSetId;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn sleep(millis: u32) {
+            pub fn sleep(nanos: Duration) {
                 unsafe {
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "obelisk:workflow/host-activities")]
                     extern "C" {
                         #[link_name = "sleep"]
-                        fn wit_import(_: i32);
+                        fn wit_import(_: i64);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: i32) {
+                    fn wit_import(_: i64) {
                         unreachable!()
                     }
-                    wit_import(_rt::as_i32(&millis));
+                    wit_import(_rt::as_i64(nanos));
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            pub fn new_join_set() -> _rt::String {
+            pub fn new_join_set() -> JoinSetId {
                 unsafe {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
@@ -317,102 +341,6 @@ pub mod testing {
     }
 }
 #[allow(dead_code)]
-pub mod wasi {
-    #[allow(dead_code)]
-    pub mod clocks {
-        #[allow(dead_code, clippy::all)]
-        pub mod wall_clock {
-            #[used]
-            #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() =
-                super::super::super::__link_custom_section_describing_imports;
-            /// A time and date in seconds plus nanoseconds.
-            #[repr(C)]
-            #[derive(Clone, Copy)]
-            pub struct Datetime {
-                pub seconds: u64,
-                pub nanoseconds: u32,
-            }
-            impl ::core::fmt::Debug for Datetime {
-                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                    f.debug_struct("Datetime")
-                        .field("seconds", &self.seconds)
-                        .field("nanoseconds", &self.nanoseconds)
-                        .finish()
-                }
-            }
-            #[allow(unused_unsafe, clippy::all)]
-            /// Read the current value of the clock.
-            ///
-            /// This clock is not monotonic, therefore calling this function repeatedly
-            /// will not necessarily produce a sequence of non-decreasing values.
-            ///
-            /// The returned timestamps represent the number of seconds since
-            /// 1970-01-01T00:00:00Z, also known as [POSIX's Seconds Since the Epoch],
-            /// also known as [Unix Time].
-            ///
-            /// The nanoseconds field of the output is always less than 1000000000.
-            ///
-            /// [POSIX's Seconds Since the Epoch]: https://pubs.opengroup.org/onlinepubs/9699919799/xrat/V4_xbd_chap04.html#tag_21_04_16
-            /// [Unix Time]: https://en.wikipedia.org/wiki/Unix_time
-            pub fn now() -> Datetime {
-                unsafe {
-                    #[repr(align(8))]
-                    struct RetArea([::core::mem::MaybeUninit<u8>; 16]);
-                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 16]);
-                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
-                    #[cfg(target_arch = "wasm32")]
-                    #[link(wasm_import_module = "wasi:clocks/wall-clock@0.2.0")]
-                    extern "C" {
-                        #[link_name = "now"]
-                        fn wit_import(_: *mut u8);
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8) {
-                        unreachable!()
-                    }
-                    wit_import(ptr0);
-                    let l1 = *ptr0.add(0).cast::<i64>();
-                    let l2 = *ptr0.add(8).cast::<i32>();
-                    Datetime {
-                        seconds: l1 as u64,
-                        nanoseconds: l2 as u32,
-                    }
-                }
-            }
-            #[allow(unused_unsafe, clippy::all)]
-            /// Query the resolution of the clock.
-            ///
-            /// The nanoseconds field of the output is always less than 1000000000.
-            pub fn resolution() -> Datetime {
-                unsafe {
-                    #[repr(align(8))]
-                    struct RetArea([::core::mem::MaybeUninit<u8>; 16]);
-                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 16]);
-                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
-                    #[cfg(target_arch = "wasm32")]
-                    #[link(wasm_import_module = "wasi:clocks/wall-clock@0.2.0")]
-                    extern "C" {
-                        #[link_name = "resolution"]
-                        fn wit_import(_: *mut u8);
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8) {
-                        unreachable!()
-                    }
-                    wit_import(ptr0);
-                    let l1 = *ptr0.add(0).cast::<i64>();
-                    let l2 = *ptr0.add(8).cast::<i32>();
-                    Datetime {
-                        seconds: l1 as u64,
-                        nanoseconds: l2 as u32,
-                    }
-                }
-            }
-        }
-    }
-}
-#[allow(dead_code)]
 pub mod exports {
     #[allow(dead_code)]
     pub mod testing {
@@ -586,18 +514,6 @@ mod _rt {
         }
     }
     pub use alloc_crate::string::String;
-    pub use alloc_crate::vec::Vec;
-    pub unsafe fn string_lift(bytes: Vec<u8>) -> String {
-        if cfg!(debug_assertions) {
-            String::from_utf8(bytes).unwrap()
-        } else {
-            String::from_utf8_unchecked(bytes)
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    pub fn run_ctors_once() {
-        wit_bindgen_rt::run_ctors_once();
-    }
     pub fn as_i64<T: AsI64>(t: T) -> i64 {
         t.as_i64()
     }
@@ -620,6 +536,18 @@ mod _rt {
         fn as_i64(self) -> i64 {
             self as i64
         }
+    }
+    pub use alloc_crate::vec::Vec;
+    pub unsafe fn string_lift(bytes: Vec<u8>) -> String {
+        if cfg!(debug_assertions) {
+            String::from_utf8(bytes).unwrap()
+        } else {
+            String::from_utf8_unchecked(bytes)
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn run_ctors_once() {
+        wit_bindgen_rt::run_ctors_once();
     }
     extern crate alloc as alloc_crate;
 }
@@ -660,32 +588,34 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1188] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xaa\x08\x01A\x02\x01\
-A\x13\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:fibo/fib\
-o\x05\0\x01B\x05\x01r\x02\x07secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\0\x01\
-@\0\0\x01\x04\0\x03now\x01\x02\x04\0\x0aresolution\x01\x02\x03\x01\x1cwasi:clock\
-s/wall-clock@0.2.0\x05\x01\x02\x03\0\x01\x08datetime\x01B\x0a\x02\x03\x02\x01\x02\
-\x04\0\x08datetime\x03\0\0\x01w\x04\0\x08duration\x03\0\x02\x01q\x03\x03now\0\0\x02\
-at\x01\x01\0\x02in\x01\x03\0\x04\0\x0cscheduled-at\x03\0\x04\x01@\x01\x06millisy\
-\x01\0\x04\0\x05sleep\x01\x06\x01@\0\0s\x04\0\x0cnew-join-set\x01\x07\x03\x01\x20\
-obelisk:workflow/host-activities\x05\x03\x01B\x04\x01@\x02\x0bjoin-set-ids\x01n}\
-\0s\x04\0\x0bfibo-submit\x01\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x0ffibo-await-n\
-ext\x01\x01\x03\x01\x1dtesting:fibo-obelisk-ext/fibo\x05\x04\x01B\x04\x01@\x02\x01\
-n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-co\
-ncurrent\x01\0\x03\x01\x1etesting:fibo-workflow/workflow\x05\x05\x01B\x04\x01@\x01\
-\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14itera\
-tions-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x03\x01&testing:fibo-work\
-flow/workflow-nesting\x05\x06\x01B\x04\x01@\x03\x0bjoin-set-ids\x01n}\x0aiterati\
-onsy\0s\x04\0\x0cfiboa-submit\x01\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x10fiboa-a\
-wait-next\x01\x01\x03\x01*testing:fibo-workflow-obelisk-ext/workflow\x05\x07\x01\
-B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\
-\x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1etesting:fibo-workflow/workflow\x05\x08\
-\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06\
-fiboasy\x14iterations-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x04\x01&t\
-esting:fibo-workflow/workflow-nesting\x05\x09\x04\x01\x0bany:any/any\x04\0\x0b\x09\
-\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x07\
-0.215.0\x10wit-bindgen-rust\x060.30.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1256] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xee\x08\x01A\x02\x01\
+A\x16\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:fibo/fib\
+o\x05\0\x01B\x06\x01w\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\x0bnanoseco\
+ndsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\x02in\x01\x01\
+\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\x01\x01B\x04\
+\x01s\x04\0\x0bjoin-set-id\x03\0\0\x01s\x04\0\x0cexecution-id\x03\0\x02\x03\x01\x17\
+obelisk:types/execution\x05\x02\x02\x03\0\x01\x08duration\x02\x03\0\x02\x0bjoin-\
+set-id\x01B\x08\x02\x03\x02\x01\x03\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x04\
+\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x05nanos\x01\x01\0\x04\0\x05sleep\x01\x04\
+\x01@\0\0\x03\x04\0\x0cnew-join-set\x01\x05\x03\x01\x20obelisk:workflow/host-act\
+ivities\x05\x05\x01B\x04\x01@\x02\x0bjoin-set-ids\x01n}\0s\x04\0\x0bfibo-submit\x01\
+\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x0ffibo-await-next\x01\x01\x03\x01\x1dtesti\
+ng:fibo-obelisk-ext/fibo\x05\x06\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\
+\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x03\x01\x1e\
+testing:fibo-workflow/workflow\x05\x07\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo-\
+nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14iterations-per-fiboay\0w\x04\0\
+\x11fibo-start-fiboas\x01\x01\x03\x01&testing:fibo-workflow/workflow-nesting\x05\
+\x08\x01B\x04\x01@\x03\x0bjoin-set-ids\x01n}\x0aiterationsy\0s\x04\0\x0cfiboa-su\
+bmit\x01\0\x01@\x01\x0bjoin-set-ids\0w\x04\0\x10fiboa-await-next\x01\x01\x03\x01\
+*testing:fibo-workflow-obelisk-ext/workflow\x05\x09\x01B\x04\x01@\x02\x01n}\x0ai\
+terationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurren\
+t\x01\0\x04\x01\x1etesting:fibo-workflow/workflow\x05\x0a\x01B\x04\x01@\x01\x01n\
+}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14iterations\
+-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x04\x01&testing:fibo-workflow/\
+workflow-nesting\x05\x0b\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\
+\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.215.0\x10wit-bi\
+ndgen-rust\x060.30.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {
