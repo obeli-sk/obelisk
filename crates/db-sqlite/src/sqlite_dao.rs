@@ -1781,8 +1781,8 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)?
         };
         if let Some(response_subscriber) = response_subscriber {
-            debug!("Notifying response subscriber");
-            let _ = response_subscriber.send(event);
+            let notified = response_subscriber.send(event);
+            debug!("Notifying response subscriber: {notified:?}");
         }
         self.notify_pending_all(pending_ats.into_iter().flatten(), created_at);
         Ok(version)
