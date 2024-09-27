@@ -1,3 +1,4 @@
+use crate::component_logger::ComponentLogger;
 use crate::event_history::{EventCall, EventHistory};
 use crate::workflow_worker::JoinNextBlockingStrategy;
 use crate::WasmFileError;
@@ -81,7 +82,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     db_pool: P,
     pub(crate) version: Version,
     fn_registry: Arc<dyn FunctionRegistry>,
-    logging_span: Span,
+    component_logger: ComponentLogger,
     phantom_data: PhantomData<DB>,
 }
 
@@ -102,7 +103,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         non_blocking_event_batching: u32,
         timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
         fn_registry: Arc<dyn FunctionRegistry>,
-        logging_span: Span,
+        span: Span,
         topmost_parent: ExecutionId,
     ) -> Self {
         Self {
@@ -125,7 +126,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             db_pool,
             version,
             fn_registry,
-            logging_span,
+            component_logger: ComponentLogger { span },
             phantom_data: PhantomData,
         }
     }
@@ -327,7 +328,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 }
 
 pub(crate) mod host_activities {
-    use super::*;
+    use super::{
+        assert_matches, async_trait, ClockFn, DbConnection, DbPool, Duration, EventCall, JoinSetId,
+        SupportedFunctionReturnValue, TypeWrapper, WastVal, WastValWithType, WorkflowCtx,
+    };
 
     // Generate `obelisk::workflow::host_activities`
     wasmtime::component::bindgen!({
@@ -369,9 +373,7 @@ pub(crate) mod host_activities {
 }
 
 pub(crate) mod log_activities {
-    use tracing::{info, warn};
-
-    use super::*;
+    use super::{ClockFn, DbConnection, DbPool, WorkflowCtx};
 
     // Generate `obelisk::log::log`
     wasmtime::component::bindgen!({
@@ -384,24 +386,24 @@ pub(crate) mod log_activities {
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::log::log::Host
         for WorkflowCtx<C, DB, P>
     {
-        fn trace(&mut self, message: String) -> () {
-            self.logging_span.in_scope(|| trace!("> {}", message));
+        fn trace(&mut self, message: String) {
+            self.component_logger.trace(&message);
         }
 
-        fn debug(&mut self, message: String) -> () {
-            self.logging_span.in_scope(|| debug!("> {}", message));
+        fn debug(&mut self, message: String) {
+            self.component_logger.debug(&message);
         }
 
-        fn info(&mut self, message: String) -> () {
-            self.logging_span.in_scope(|| info!("> {}", message));
+        fn info(&mut self, message: String) {
+            self.component_logger.info(&message);
         }
 
-        fn warn(&mut self, message: String) -> () {
-            self.logging_span.in_scope(|| warn!("> {}", message));
+        fn warn(&mut self, message: String) {
+            self.component_logger.warn(&message);
         }
 
-        fn error(&mut self, message: String) -> () {
-            self.logging_span.in_scope(|| error!("> {}", message));
+        fn error(&mut self, message: String) {
+            self.component_logger.error(&message);
         }
     }
 }

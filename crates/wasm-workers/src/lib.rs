@@ -4,6 +4,7 @@ use utils::wasm_tools::{self};
 
 mod activity_ctx;
 pub mod activity_worker;
+mod component_logger;
 pub mod engines;
 pub mod epoch_ticker;
 mod event_history;

@@ -1,3 +1,4 @@
+use crate::component_logger::ComponentLogger;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::workflow_ctx::log_activities;
@@ -28,7 +29,7 @@ use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, instrument, trace, warn, Instrument, Level, Span};
+use tracing::{debug, error, info, instrument, trace, Instrument, Level, Span};
 use utils::time::ClockFn;
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::ResourceTable;
@@ -319,8 +320,7 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     execution_id: ExecutionId,
     version: Option<Version>,
-    /// Needed to construct `ExecutionMetadata` and for logging
-    request_span: Span,
+    component_logger: ComponentLogger,
     phantom_data: PhantomData<DB>,
 }
 
@@ -353,7 +353,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         }
         let created_at = (self.clock_fn)();
         // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
-        let metadata = concepts::ExecutionMetadata::from_parent_span(&self.request_span);
+        let metadata = concepts::ExecutionMetadata::from_parent_span(&self.component_logger.span);
         let create_request = CreateRequest {
             created_at,
             execution_id: self.execution_id,
@@ -772,7 +772,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             responses: Vec::new(),
             config_id,
             execution_id,
-            request_span,
+            component_logger: ComponentLogger { span: request_span },
             phantom_data: PhantomData,
         };
         let mut store = Store::new(engine, ctx);
@@ -799,24 +799,24 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::log::Host
     for WebhookCtx<C, DB, P>
 {
-    fn trace(&mut self, message: String) -> () {
-        self.request_span.in_scope(|| trace!("> {}", message));
+    fn trace(&mut self, message: String) {
+        self.component_logger.trace(&message);
     }
 
-    fn debug(&mut self, message: String) -> () {
-        self.request_span.in_scope(|| debug!("> {}", message));
+    fn debug(&mut self, message: String) {
+        self.component_logger.debug(&message);
     }
 
-    fn info(&mut self, message: String) -> () {
-        self.request_span.in_scope(|| info!("> {}", message));
+    fn info(&mut self, message: String) {
+        self.component_logger.info(&message);
     }
 
-    fn warn(&mut self, message: String) -> () {
-        self.request_span.in_scope(|| warn!("> {}", message));
+    fn warn(&mut self, message: String) {
+        self.component_logger.warn(&message);
     }
 
-    fn error(&mut self, message: String) -> () {
-        self.request_span.in_scope(|| error!("> {}", message));
+    fn error(&mut self, message: String) {
+        self.component_logger.error(&message);
     }
 }
 
