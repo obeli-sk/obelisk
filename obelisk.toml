@@ -123,7 +123,7 @@ location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-09-25@sha256:79
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:
 # [otlp]
-# level = "info"
+# level = "info,app=debug"
 # service_name = "obelisk-server"
 # otlp_endpoint = "http://localhost:4317"
 
@@ -131,14 +131,14 @@ location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-09-25@sha256:79
 # Comment the table to disable stdout logging.
 [log.stdout]
 ## Defaults:
-# level = "info"
+# level = "info,app=debug"
 # style = "plain_compact" # One of "plain","plain_compact","json"
 # span = "none" # One of "none","new","enter","exit","close","active","full"
 # target = false
 
 ## Sample (rolling) file configuration
 # [log.file]
-# level = "info,obelisk=debug"
+# level = "info,obeli=debug,app=trace"
 # style = "json"
 # span = "close"
 # target = true

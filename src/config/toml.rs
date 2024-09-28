@@ -396,13 +396,13 @@ impl From<WasmtimePoolingConfig> for wasm_workers::engines::PoolingOptions {
 #[cfg(feature = "otlp")]
 pub(crate) mod otlp {
     use super::{log, Deserialize};
-    use log::InfoEnvFilter;
+    use log::EnvFilter;
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct OtlpConfig {
         #[serde(default)]
-        pub(crate) level: InfoEnvFilter,
+        pub(crate) level: EnvFilter,
         #[serde(default = "default_service_name")]
         pub(crate) service_name: String,
         #[serde(default = "default_otlp_endpoint")]
@@ -412,7 +412,7 @@ pub(crate) mod otlp {
     impl Default for OtlpConfig {
         fn default() -> Self {
             Self {
-                level: InfoEnvFilter::default(),
+                level: EnvFilter::default(),
                 service_name: default_service_name(),
                 otlp_endpoint: default_otlp_endpoint(),
             }
@@ -510,7 +510,7 @@ pub(crate) mod log {
     #[derive(Default)]
     pub(crate) struct AppenderCommon {
         #[serde(default)]
-        pub(crate) level: InfoEnvFilter,
+        pub(crate) level: EnvFilter,
         #[serde(default)]
         pub(crate) span: SpanConfig,
         #[serde(default)]
@@ -518,8 +518,8 @@ pub(crate) mod log {
     }
 
     #[derive(Debug, serde_with::DeserializeFromStr)]
-    pub(crate) struct InfoEnvFilter(pub(crate) tracing_subscriber::EnvFilter);
-    impl FromStr for InfoEnvFilter {
+    pub(crate) struct EnvFilter(pub(crate) tracing_subscriber::EnvFilter);
+    impl FromStr for EnvFilter {
         type Err = tracing_subscriber::filter::ParseError;
 
         fn from_str(directives: &str) -> Result<Self, Self::Err> {
@@ -529,12 +529,11 @@ pub(crate) mod log {
                 .map(Self)
         }
     }
-    impl Default for InfoEnvFilter {
+    impl Default for EnvFilter {
         fn default() -> Self {
             Self(
                 tracing_subscriber::EnvFilter::builder()
-                    .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
-                    .parse("")
+                    .parse("info,app=trace")
                     .expect("empty directive must not fail to parse"),
             )
         }
