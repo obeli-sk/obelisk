@@ -524,7 +524,6 @@ pub(crate) mod log {
 
         fn from_str(directives: &str) -> Result<Self, Self::Err> {
             tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
                 .parse(directives)
                 .map(Self)
         }
