@@ -122,6 +122,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 ## Milestone 3: Triggers, external activities, Web UI - started
 - [x] HTTP webhook triggers able to start new executions (workflows and activities), able to wait for result before sending the response.
 - [x] Forward stdout and stderr (configurable) of activities and webhooks
+- [x] Support for distributed tracing, logging from components collected by OTLP
 - [ ] Expose filesystem with directory mapping for activities, webhooks
 - [ ] Expose network configuration for activities, webhooks
 - [ ] External activities - running external processes
