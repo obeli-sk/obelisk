@@ -680,11 +680,10 @@ impl ServerInit {
     }
 }
 
+type WebhookInstanceAndRoutes<DB, P> = (WebhookInstance<Now, DB, P>, Vec<WebhookRouteVerified>);
+
 async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    http_servers_to_webhooks: Vec<(
-        webhook::HttpServer,
-        Vec<(WebhookInstance<Now, DB, P>, Vec<WebhookRouteVerified>)>,
-    )>,
+    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstanceAndRoutes<DB, P>>)>,
     engines: &Engines,
     db_pool: P,
     component_registry: &mut ComponentConfigRegistry,
@@ -897,8 +896,7 @@ async fn fetch_and_verify_all(
 
 struct CompiledComponents<DB: DbConnection, P: DbPool<DB>> {
     executor_prespawns: Vec<ExecutorPreSpawn>,
-    webhooks_by_names:
-        hashbrown::HashMap<String, (WebhookInstance<Now, DB, P>, Vec<WebhookRouteVerified>)>,
+    webhooks_by_names: hashbrown::HashMap<String, WebhookInstanceAndRoutes<DB, P>>,
 }
 
 #[instrument(skip_all)]
@@ -910,20 +908,7 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     db_pool: &P,
     component_registry: &mut ComponentConfigRegistry,
 ) -> Result<CompiledComponents<DB, P>, anyhow::Error> {
-    let pre_spawns: Vec<
-        tokio::task::JoinHandle<
-            Result<
-                Either<
-                    ExecutorPreSpawn,
-                    (
-                        String,
-                        (WebhookInstance<Now, DB, P>, Vec<WebhookRouteVerified>),
-                    ),
-                >,
-                anyhow::Error,
-            >,
-        >,
-    > = wasm_activities
+    let pre_spawns: Vec<tokio::task::JoinHandle<Result<_, anyhow::Error>>> = wasm_activities
         .into_iter()
         .map(|activity| {
             let mut component_registry = component_registry.clone();
