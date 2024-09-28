@@ -208,7 +208,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                 WorkerResult::Ok(result, ctx.version)
             }
         };
-        let started_at = (self.clock_fn)();
+        let started_at = self.clock_fn.now();
         let deadline_delta = ctx.execution_deadline - started_at;
         let deadline_duration = deadline_delta.to_std().unwrap();
         let stopwatch_for_reporting = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
@@ -226,7 +226,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             },
             ()  = tokio::time::sleep(deadline_duration) => {
                 ctx.worker_span.in_scope(||
-                        info!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.clock_fn)(), "Timed out")
+                        info!(duration = ?stopwatch_for_reporting.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %self.clock_fn.now(), "Timed out")
                     );
                     return WorkerResult::Err(WorkerError::IntermittentTimeout);
             }
@@ -251,7 +251,7 @@ pub(crate) mod tests {
     use std::time::Duration;
     use test_utils::{env_or_default, sim_clock::SimClock};
     use tracing::info_span;
-    use utils::time::now;
+    use utils::time::Now;
     use val_json::{
         type_wrapper::TypeWrapper,
         wast_val::{WastVal, WastValWithType},
@@ -335,7 +335,7 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let db_connection = db_pool.connection();
-        let exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn()).await;
+        let exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.clone()).await;
         // Create an execution.
         let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
@@ -396,10 +396,10 @@ pub(crate) mod tests {
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             activity_config(ConfigId::dummy()),
             engine,
-            now,
+            Now,
         )
         .unwrap();
-        let execution_deadline = now() + lock_expiry;
+        let execution_deadline = Now.now() + lock_expiry;
         // create executions
         let join_handles = (0..tasks)
             .map(|_| {
@@ -468,7 +468,7 @@ pub(crate) mod tests {
                 db_pool.clone(),
                 executor::expired_timers_watcher::TimersWatcherConfig {
                     tick_sleep: TICK_SLEEP,
-                    clock_fn: now,
+                    clock_fn: Now,
                 },
             );
             let engine =
@@ -483,7 +483,7 @@ pub(crate) mod tests {
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                     activity_config(ConfigId::dummy()),
                     engine,
-                    now,
+                    Now,
                 )
                 .unwrap(),
             );
@@ -497,7 +497,7 @@ pub(crate) mod tests {
             let exec_task = ExecTask::spawn_new(
                 worker,
                 exec_config,
-                now,
+                Now,
                 db_pool.clone(),
                 None,
                 ExecutorId::generate(),
@@ -508,7 +508,7 @@ pub(crate) mod tests {
             let stopwatch = std::time::Instant::now();
             let execution_id = ExecutionId::generate();
             info!("Testing {execution_id}");
-            let created_at = now();
+            let created_at = Now.now();
             let db_connection = db_pool.connection();
             db_connection
                 .create(CreateRequest {
@@ -575,12 +575,12 @@ pub(crate) mod tests {
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
                     activity_config(ConfigId::dummy()),
                     engine,
-                    now,
+                    Now,
                 )
                 .unwrap(),
             );
 
-            let executed_at = now();
+            let executed_at = Now.now();
             let execution_id = ExecutionId::generate();
             let ctx = WorkerContext {
                 execution_id: ExecutionId::generate(),
@@ -627,7 +627,7 @@ pub(crate) mod tests {
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                     activity_config(ConfigId::dummy()),
                     engine,
-                    sim_clock.get_clock_fn(),
+                    sim_clock.clone(),
                 )
                 .unwrap(),
             );
@@ -641,7 +641,7 @@ pub(crate) mod tests {
             let exec_task = ExecTask::new(
                 worker,
                 exec_config,
-                sim_clock.get_clock_fn(),
+                sim_clock.clone(),
                 db_pool.clone(),
                 ffqns,
             );
@@ -737,7 +737,7 @@ pub(crate) mod tests {
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
                     activity_config(ConfigId::dummy()),
                     engine,
-                    sim_clock.get_clock_fn(),
+                    sim_clock.clone(),
                 )
                 .unwrap(),
             );
@@ -751,7 +751,7 @@ pub(crate) mod tests {
             let exec_task = ExecTask::new(
                 worker,
                 exec_config,
-                sim_clock.get_clock_fn(),
+                sim_clock.clone(),
                 db_pool.clone(),
                 ffqns,
             );

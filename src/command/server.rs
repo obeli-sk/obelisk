@@ -1,6 +1,8 @@
 use super::grpc;
 use crate::config::config_holder::ConfigHolder;
 use crate::config::toml::webhook;
+use crate::config::toml::webhook::WebhookComponentVerified;
+use crate::config::toml::webhook::WebhookRouteVerified;
 use crate::config::toml::ActivityConfigVerified;
 use crate::config::toml::ObeliskConfig;
 use crate::config::toml::WasmActivityToml;
@@ -42,6 +44,7 @@ use executor::expired_timers_watcher;
 use executor::expired_timers_watcher::TimersWatcherConfig;
 use executor::worker::Worker;
 use hashbrown::HashSet;
+use itertools::Either;
 use serde::Deserialize;
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -63,12 +66,14 @@ use tracing::warn;
 use tracing::Instrument;
 use tracing::Span;
 use tracing::{debug, info, trace};
-use utils::time::now;
+use utils::time::ClockFn;
+use utils::time::Now;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::webhook_trigger;
 use wasm_workers::webhook_trigger::MethodAwareRouter;
+use wasm_workers::webhook_trigger::WebhookInstance;
 use wasm_workers::workflow_worker::WorkflowWorker;
 
 const EPOCH_MILLIS: u64 = 10;
@@ -145,7 +150,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             )));
         }
         let db_connection = self.db_pool.connection();
-        let created_at = now();
+        let created_at = Now.now();
         span.record("config_id", tracing::field::display(&component.config_id));
         // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
         let metadata = concepts::ExecutionMetadata::from_parent_span(&span);
@@ -586,7 +591,7 @@ impl ServerInit {
             db_pool.clone(),
             TimersWatcherConfig {
                 tick_sleep: Duration::from_millis(100),
-                clock_fn: now,
+                clock_fn: Now,
             },
         );
         let verified_config = fetch_and_verify_all(
@@ -599,17 +604,56 @@ impl ServerInit {
         )
         .await?;
         debug!("Verified config: {verified_config:#?}");
-        let exec_join_handles = spawn_tasks(
+        // Compile
+        let mut compiled_components = compile_all(
             &engines,
             verified_config.wasm_activities,
             verified_config.workflows,
+            verified_config.webhooks_by_names,
             &db_pool,
             &mut component_registry,
         )
         .await?;
-        // TODO: spawn webhooks in parallel to other tasks
+
+        // Associate webhooks with http servers
+        let http_servers_to_webhooks = {
+            verified_config
+                .http_servers_to_webhook_names
+                .into_iter()
+                .map(|(http_server, webhook_names)| {
+                    let instances_and_routes = webhook_names
+                        .into_iter()
+                        .map(|name| {
+                            compiled_components
+                                .webhooks_by_names
+                                .remove(&name)
+                                .expect("all webhooks must be verified")
+                        })
+                        .collect::<Vec<_>>();
+                    (http_server, instances_and_routes)
+                })
+                .collect()
+        };
+
+        // Spawn executors
+        let exec_join_handles = compiled_components
+            .executor_prespawns
+            .into_iter()
+            .map(|pre_spawn| {
+                ExecTask::spawn_new(
+                    pre_spawn.worker,
+                    pre_spawn.exec_config,
+                    Now,
+                    db_pool.clone(),
+                    pre_spawn.task_limiter,
+                    pre_spawn.executor_id,
+                    pre_spawn.component_name,
+                )
+            })
+            .collect();
+
         let http_servers_handles: Vec<AbortOnDropHandle> = start_webhooks(
-            verified_config.http_servers_to_webhooks,
+            http_servers_to_webhooks,
             &engines,
             db_pool.clone(),
             &mut component_registry,
@@ -637,7 +681,10 @@ impl ServerInit {
 }
 
 async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::WebhookComponentVerified>)>,
+    http_servers_to_webhooks: Vec<(
+        webhook::HttpServer,
+        Vec<(WebhookInstance<Now, DB, P>, Vec<WebhookRouteVerified>)>,
+    )>,
     engines: &Engines,
     db_pool: P,
     component_registry: &mut ComponentConfigRegistry,
@@ -646,30 +693,13 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     let engine = &engines.webhook_engine;
     for (http_server, webhooks) in http_servers_to_webhooks {
         let mut router = MethodAwareRouter::default();
-        for webhook in webhooks {
-            let config_id = webhook.config_id;
-            let instance = webhook_trigger::component_to_instance(
-                webhook.wasm_path,
-                engine,
-                config_id.clone(),
-                webhook.forward_stdout,
-                webhook.forward_stderr,
-                Arc::from(webhook.env_vars),
-                webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
-            )?;
-            let imports = instance.imported_functions().to_vec();
-            component_registry.insert(Component {
-                config_id,
-                config_store: webhook.config_store,
-                exports: None,
-                imports,
-            })?;
-            for route in webhook.routes {
+        for (webhook_instance, routes) in webhooks {
+            for route in routes {
                 if route.methods.is_empty() {
-                    router.add(None, &route.route, instance.clone());
+                    router.add(None, &route.route, webhook_instance.clone());
                 } else {
                     for method in route.methods {
-                        router.add(Some(method), &route.route, instance.clone());
+                        router.add(Some(method), &route.route, webhook_instance.clone());
                     }
                 }
             }
@@ -694,7 +724,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                 engine.clone(),
                 router,
                 db_pool.clone(),
-                now,
+                Now,
                 fn_registry.clone(),
                 http_server.request_timeout.into(),
             ))
@@ -710,7 +740,8 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 struct VerifiedConfig {
     wasm_activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
-    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<webhook::WebhookComponentVerified>)>,
+    webhooks_by_names: hashbrown::HashMap<String, WebhookComponentVerified>,
+    http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<String>)>,
 }
 
 #[instrument(skip_all)]
@@ -757,9 +788,8 @@ async fn fetch_and_verify_all(
         }
     }
     let http_servers_to_webhook_names = {
-        let mut server_names_to_webhook_names = {
-            let mut map: hashbrown::HashMap<std::string::String, Vec<String>> =
-                hashbrown::HashMap::default();
+        let mut remaining_server_names_to_webhook_names = {
+            let mut map: hashbrown::HashMap<String, Vec<String>> = hashbrown::HashMap::default();
             for webhook in &webhooks {
                 map.entry(webhook.http_server.clone())
                     .or_default()
@@ -767,10 +797,10 @@ async fn fetch_and_verify_all(
             }
             map
         };
-        let http_servers = {
+        let http_servers_to_webhook_names = {
             let mut vec = Vec::new();
             for http_server in http_servers {
-                let webhooks = server_names_to_webhook_names
+                let webhooks = remaining_server_names_to_webhook_names
                     .remove(&http_server.name)
                     .unwrap_or_default();
                 vec.push((http_server, webhooks));
@@ -778,13 +808,15 @@ async fn fetch_and_verify_all(
             vec
         };
         // Each webhook must be associated with an `http_server`.
-        if !server_names_to_webhook_names.is_empty() {
+        if !remaining_server_names_to_webhook_names.is_empty() {
             bail!(
                 "No matching `http_server` found for some `webhook` configurations: {:?}",
-                server_names_to_webhook_names.keys().collect::<Vec<_>>()
+                remaining_server_names_to_webhook_names
+                    .keys()
+                    .collect::<Vec<_>>()
             );
         }
-        http_servers
+        http_servers_to_webhook_names
     };
     // Download WASM files from OCI registries if needed.
     // TODO: Switch to `JoinSet` when madsim supports it.
@@ -855,14 +887,7 @@ async fn fetch_and_verify_all(
                 let (k, v) = webhook??;
                 webhooks_by_names.insert(k, v);
             }
-            let http_servers_to_webhooks = {
-                http_servers_to_webhook_names.into_iter().map(|(http_server, webhook_names) | {
-                    let verified_webhooks = webhook_names.into_iter()
-                        .map(|name| webhooks_by_names.remove(&name).expect("all webhooks must be verified")).collect::<Vec<_>>();
-                    (http_server, verified_webhooks)
-                }).collect()
-            };
-            Ok(VerifiedConfig {wasm_activities, workflows, http_servers_to_webhooks})
+            Ok(VerifiedConfig {wasm_activities, workflows, webhooks_by_names, http_servers_to_webhook_names})
         },
         _ = tokio::signal::ctrl_c() => {
             anyhow::bail!("cancelled while resolving the WASM files")
@@ -870,64 +895,35 @@ async fn fetch_and_verify_all(
     }
 }
 
+struct CompiledComponents<DB: DbConnection, P: DbPool<DB>> {
+    executor_prespawns: Vec<ExecutorPreSpawn>,
+    webhooks_by_names:
+        hashbrown::HashMap<String, (WebhookInstance<Now, DB, P>, Vec<WebhookRouteVerified>)>,
+}
+
 #[instrument(skip_all)]
-async fn spawn_tasks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     engines: &Engines,
     wasm_activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
+    webhooks_by_names: hashbrown::HashMap<String, WebhookComponentVerified>,
     db_pool: &P,
     component_registry: &mut ComponentConfigRegistry,
-) -> Result<Vec<ExecutorTaskHandle>, anyhow::Error> {
-    let pre_spawns = prespawn_all(
-        wasm_activities,
-        workflows,
-        component_registry,
-        engines,
-        db_pool,
-    );
-
-    // Abort/cancel safety:
-    // If an error happens or Ctrl-C is pressed the whole process will shut down.
-    let pre_spawns = futures_util::future::join_all(pre_spawns);
-    let pre_spawns = tokio::select! {
-        results_of_results = pre_spawns => {
-            let mut pre_spawns = Vec::with_capacity(results_of_results.len());
-            for handle in results_of_results {
-                pre_spawns.push(handle??);
-            }
-            pre_spawns
-        },
-        _ = tokio::signal::ctrl_c() => {
-            anyhow::bail!("cancelled while compiling the components")
-        }
-    };
-    // Start all executors
-    Ok(pre_spawns
-        .into_iter()
-        .map(|pre_spawn| {
-            ExecTask::spawn_new(
-                pre_spawn.worker,
-                pre_spawn.exec_config,
-                now,
-                db_pool.clone(),
-                pre_spawn.task_limiter,
-                pre_spawn.executor_id,
-                pre_spawn.component_name,
-            )
-        })
-        .collect())
-}
-
-/// Compile WASM components in parallel.
-#[instrument(skip_all)]
-fn prespawn_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    activities: Vec<ActivityConfigVerified>,
-    workflows: Vec<WorkflowConfigVerified>,
-    component_registry: &mut ComponentConfigRegistry,
-    engines: &Engines,
-    db_pool: &P,
-) -> Vec<tokio::task::JoinHandle<Result<ExecutorPreSpawn, anyhow::Error>>> {
-    activities
+) -> Result<CompiledComponents<DB, P>, anyhow::Error> {
+    let pre_spawns: Vec<
+        tokio::task::JoinHandle<
+            Result<
+                Either<
+                    ExecutorPreSpawn,
+                    (
+                        String,
+                        (WebhookInstance<Now, DB, P>, Vec<WebhookRouteVerified>),
+                    ),
+                >,
+                anyhow::Error,
+            >,
+        >,
+    > = wasm_activities
         .into_iter()
         .map(|activity| {
             let mut component_registry = component_registry.clone();
@@ -936,8 +932,10 @@ fn prespawn_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             #[cfg_attr(madsim, allow(deprecated))]
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
+                    // TODO: use instrument instead
                     let executor_id = ExecutorId::generate();
                     prespawn_activity(activity, &mut component_registry, &engines, executor_id)
+                        .map(Either::Left)
                 })
             })
         })
@@ -957,10 +955,66 @@ fn prespawn_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                         &engines,
                         executor_id,
                     )
+                    .map(Either::Left)
                 })
             })
         }))
-        .collect()
+        .chain(webhooks_by_names.into_iter().map(|(name, webhook)| {
+            let component_registry = component_registry.clone();
+            let engines = engines.clone();
+            let span = tracing::Span::current();
+            #[cfg_attr(madsim, allow(deprecated))]
+            tokio::task::spawn_blocking(move || {
+                span.in_scope(|| {
+                    let config_id = webhook.config_id;
+                    let instance = webhook_trigger::component_to_instance(
+                        webhook.wasm_path,
+                        &engines.webhook_engine,
+                        config_id.clone(),
+                        webhook.forward_stdout,
+                        webhook.forward_stderr,
+                        Arc::from(webhook.env_vars),
+                        webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
+                    )?;
+                    component_registry.insert(Component {
+                        config_id,
+                        config_store: webhook.config_store,
+                        exports: None,
+                        imports: instance.imported_functions().to_vec(),
+                    })?;
+                    Ok(Either::Right((name, (instance, webhook.routes))))
+                })
+            })
+        }))
+        .collect();
+
+    // Abort/cancel safety:
+    // If an error happens or Ctrl-C is pressed the whole process will shut down.
+    let pre_spawns = futures_util::future::join_all(pre_spawns);
+    tokio::select! {
+        results_of_results = pre_spawns => {
+            let mut executor_prespawns = Vec::with_capacity(results_of_results.len());
+            let mut webhooks_by_names = hashbrown::HashMap::new();
+            for handle in results_of_results {
+                match handle?? {
+                    Either::Left(executor_prespawn) => {
+                        executor_prespawns.push(executor_prespawn);
+                    },
+                    Either::Right((k, v)) => {
+                        let old = webhooks_by_names.insert(k, v);
+                        assert!(old.is_none());
+                    },
+                }
+            }
+            Ok(CompiledComponents {
+                executor_prespawns,
+                webhooks_by_names,
+            })
+        },
+        _ = tokio::signal::ctrl_c() => {
+            anyhow::bail!("cancelled while compiling the components")
+        }
+    }
 }
 
 #[instrument(skip_all, fields(
@@ -981,7 +1035,7 @@ fn prespawn_activity(
         activity.wasm_path,
         activity.activity_config,
         engines.activity_engine.clone(),
-        now,
+        Now,
     )?);
     register_worker_and_prespawn(
         worker,
@@ -1012,7 +1066,7 @@ fn prespawn_workflow<DB: DbConnection + 'static>(
         workflow.workflow_config,
         engines.workflow_engine.clone(),
         db_pool.clone(),
-        now,
+        Now,
         component_registry.get_fn_registry(),
     )?);
     register_worker_and_prespawn(

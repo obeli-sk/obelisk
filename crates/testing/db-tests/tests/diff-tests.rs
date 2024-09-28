@@ -11,7 +11,8 @@ use db_tests::SOME_FFQN;
 use std::time::Duration;
 use test_utils::arbitrary::UnstructuredHolder;
 use test_utils::set_up;
-use utils::time::now;
+use utils::time::ClockFn as _;
+use utils::time::Now;
 
 #[tokio::test]
 async fn diff_proptest() {
@@ -20,13 +21,13 @@ async fn diff_proptest() {
     let mut unstructured = unstructured_holder.unstructured();
     let execution_id = ExecutionId::generate();
     let create_req = CreateRequest {
-        created_at: now(),
+        created_at: Now.now(),
         execution_id,
         ffqn: SOME_FFQN,
         params: Params::default(),
         parent: None,
         metadata: concepts::ExecutionMetadata::empty(),
-        scheduled_at: now(),
+        scheduled_at: Now.now(),
         retry_exp_backoff: Duration::ZERO,
         max_retries: 0,
         config_id: ConfigId::dummy(),
@@ -38,7 +39,7 @@ async fn diff_proptest() {
         append_requests = (0..unstructured.int_in_range(5..=10).unwrap())
             .map(|_| AppendRequest {
                 event: unstructured.arbitrary().unwrap(),
-                created_at: now(),
+                created_at: Now.now(),
             })
             .filter_map(|req| {
                 // filter out Create requests

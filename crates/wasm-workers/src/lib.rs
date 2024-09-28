@@ -142,7 +142,7 @@ pub(crate) mod tests {
         use hyper::Method;
         use std::{net::SocketAddr, sync::Arc, time::Duration};
         use tokio::net::TcpListener;
-        use utils::time::now;
+        use utils::time::Now;
 
         #[rstest::rstest(path => [
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
@@ -162,7 +162,7 @@ pub(crate) mod tests {
                     env_vars: Arc::from([]),
                 },
                 engine,
-                now,
+                Now,
             )
             .unwrap();
         }
@@ -178,7 +178,7 @@ pub(crate) mod tests {
             get_workflow_worker(
                 path,
                 db_pool,
-                now,
+                Now,
                 JoinNextBlockingStrategy::default(),
                 0,
                 fn_registry_dummy(&[]),
@@ -215,7 +215,7 @@ pub(crate) mod tests {
                 engine,
                 router,
                 db_pool.clone(),
-                now,
+                Now,
                 fn_registry_dummy(&[]),
                 Duration::from_secs(1),
             ));

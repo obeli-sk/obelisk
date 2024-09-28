@@ -2348,6 +2348,7 @@ dependencies = [
  "futures-util",
  "hashbrown 0.14.5",
  "http 1.1.0",
+ "itertools 0.13.0",
  "madsim-tokio",
  "obeli-sk-concepts",
  "obeli-sk-db-sqlite",

@@ -149,8 +149,8 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     clock_fn: clock_fn.clone(),
                 };
                 loop {
-                    let _ = task.tick(clock_fn()).await;
-                    let executed_at = clock_fn();
+                    let _ = task.tick(clock_fn.now()).await;
+                    let executed_at = clock_fn.now();
                     task.db_pool
                         .connection()
                         .subscribe_to_pending(executed_at, ffqns.clone(), task.config.tick_sleep)
@@ -305,7 +305,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         };
         let worker_result = worker.run(ctx).await;
         trace!(?worker_result, "Worker::run finished");
-        let result_obtained_at = clock_fn();
+        let result_obtained_at = clock_fn.now();
         match Self::worker_result_to_execution_event(
             locked_execution.execution_id,
             worker_result,
@@ -580,8 +580,8 @@ mod tests {
     use simple_worker::FFQN_SOME;
     use std::{fmt::Debug, future::Future, ops::Deref, sync::Arc};
     use test_utils::set_up;
-    use test_utils::sim_clock::SimClock;
-    use utils::time::now;
+    use test_utils::sim_clock::{ConstClock, SimClock};
+    use utils::time::Now;
 
     pub(crate) const FFQN_CHILD: FunctionFqn = FunctionFqn::new_static("pkg/ifc", "fn-child");
 
@@ -614,20 +614,18 @@ mod tests {
 
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based_mem() {
-        let created_at = now();
-        let clock_fn = move || created_at;
+        let created_at = Now.now();
         let (_guard, db_pool) = Database::Memory.set_up().await;
-        execute_simple_lifecycle_tick_based(db_pool.clone(), clock_fn).await;
+        execute_simple_lifecycle_tick_based(db_pool.clone(), ConstClock(created_at)).await;
         db_pool.close().await.unwrap();
     }
 
     #[cfg(not(madsim))]
     #[tokio::test]
     async fn execute_simple_lifecycle_tick_based_sqlite() {
-        let created_at = now();
-        let clock_fn = move || created_at;
+        let created_at = Now.now();
         let (_guard, db_pool) = Database::Sqlite.set_up().await;
-        execute_simple_lifecycle_tick_based(db_pool.clone(), clock_fn).await;
+        execute_simple_lifecycle_tick_based(db_pool.clone(), ConstClock(created_at)).await;
         db_pool.close().await.unwrap();
     }
 
@@ -640,7 +638,7 @@ mod tests {
         clock_fn: C,
     ) {
         set_up();
-        let created_at = clock_fn();
+        let created_at = clock_fn.now();
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
@@ -680,8 +678,8 @@ mod tests {
     #[tokio::test]
     async fn stochastic_execute_simple_lifecycle_task_based_mem() {
         set_up();
-        let created_at = now();
-        let clock_fn = move || created_at;
+        let created_at = Now.now();
+        let clock_fn = ConstClock(created_at);
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
@@ -833,7 +831,7 @@ mod tests {
                 executed_at: sim_clock.now(),
                 retry_exp_backoff,
             },
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             db_pool.clone(),
             exec_config.clone(),
             worker,
@@ -869,7 +867,7 @@ mod tests {
         // noop until `retry_exp_backoff` expires
         assert!(tick_fn(
             exec_config.clone(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             db_pool.clone(),
             worker.clone(),
             sim_clock.now(),
@@ -881,7 +879,7 @@ mod tests {
         sim_clock.move_time_forward(retry_exp_backoff).await;
         tick_fn(
             exec_config,
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             db_pool.clone(),
             worker,
             sim_clock.now(),
@@ -914,8 +912,8 @@ mod tests {
     #[tokio::test]
     async fn worker_error_should_not_be_retried_if_no_retries_are_set() {
         set_up();
-        let created_at = now();
-        let clock_fn = move || created_at;
+        let created_at = Now.now();
+        let clock_fn = ConstClock(created_at);
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let exec_config = ExecConfig {
             batch_size: 1,
@@ -1008,7 +1006,7 @@ mod tests {
                 tick_sleep: Duration::ZERO,
                 config_id: ConfigId::dummy(),
             },
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             db_pool.clone(),
             parent_worker,
             sim_clock.now(),
@@ -1082,7 +1080,7 @@ mod tests {
                 tick_sleep: Duration::ZERO,
                 config_id: ConfigId::dummy(),
             },
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             db_pool.clone(),
             child_worker,
             sim_clock.now(),
@@ -1205,7 +1203,7 @@ mod tests {
         let executor = ExecTask::new(
             worker,
             exec_config,
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             db_pool.clone(),
             ffqns,
         );

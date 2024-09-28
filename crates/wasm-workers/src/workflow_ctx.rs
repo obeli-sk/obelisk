@@ -176,7 +176,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 EventCall::BlockingDelayRequest {
                     join_set_id,
                     delay_id,
-                    expires_at_if_new: (self.clock_fn)() + duration, // FIXME: this can overflow when Duration is converted into TimeDelta
+                    expires_at_if_new: self.clock_fn.now() + duration, // FIXME: this can overflow when Duration is converted into TimeDelta
                 },
                 &self.db_pool.connection(),
                 &mut self.version,
@@ -443,7 +443,7 @@ pub(crate) mod tests {
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
     use tracing::info;
-    use utils::time::{now, ClockFn};
+    use utils::time::{ClockFn, Now};
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const FFQN_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
@@ -591,7 +591,7 @@ pub(crate) mod tests {
                 .map(std::result::Result::unwrap)
                 .collect::<Vec<_>>()
         };
-        let created_at = now();
+        let created_at = Now.now();
         info!(now = %created_at, "Generated steps: {steps:?}");
         let execution_id = ExecutionId::generate();
         let sim_clock = SimClock::new(created_at);
@@ -608,7 +608,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             expired_timers_watcher::TimersWatcherConfig {
                 tick_sleep: TICK_SLEEP,
-                clock_fn: sim_clock.get_clock_fn(),
+                clock_fn: sim_clock.clone(),
             },
         );
         let created_at = sim_clock.now();
@@ -626,7 +626,7 @@ pub(crate) mod tests {
             let worker = Arc::new(WorkflowWorkerMock::new(
                 FFQN_MOCK,
                 steps,
-                sim_clock.get_clock_fn(),
+                sim_clock.clone(),
                 db_pool.clone(),
                 fn_registry.clone(),
             ));
@@ -639,7 +639,7 @@ pub(crate) mod tests {
             ExecTask::spawn_new(
                 worker,
                 exec_config,
-                sim_clock.get_clock_fn(),
+                sim_clock.clone(),
                 db_pool.clone(),
                 None,
                 concepts::prefixed_ulid::ExecutorId::generate(),
@@ -710,7 +710,7 @@ pub(crate) mod tests {
                         let worker = Arc::new(WorkflowWorkerMock::new(
                             child_log.ffqn().clone(),
                             vec![],
-                            sim_clock.get_clock_fn(),
+                            sim_clock.clone(),
                             db_pool.clone(),
                             fn_registry.clone(),
                         ));
@@ -723,7 +723,7 @@ pub(crate) mod tests {
                         let exec_task = ExecTask::new(
                             worker,
                             exec_config,
-                            sim_clock.get_clock_fn(),
+                            sim_clock.clone(),
                             db_pool.clone(),
                             Arc::new([child_log.ffqn().clone()]),
                         );

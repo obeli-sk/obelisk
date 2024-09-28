@@ -59,7 +59,7 @@ pub enum WebhookServerError {
 pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     #[derivative(Debug = "ignore")]
     proxy_pre: Arc<ProxyPre<WebhookCtx<C, DB, P>>>,
-    config_id: ConfigId,
+    pub config_id: ConfigId,
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
@@ -351,7 +351,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         if let Some(found) = &self.version {
             return Ok(found.clone());
         }
-        let created_at = (self.clock_fn)();
+        let created_at = self.clock_fn.now();
         // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
         let metadata = concepts::ExecutionMetadata::from_parent_span(&self.component_logger.span);
         let create_request = CreateRequest {
@@ -473,7 +473,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
                 };
                 // Write to db
-                let created_at = (self.clock_fn)();
+                let created_at = self.clock_fn.now();
                 let child_exec_req = ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id,
@@ -591,7 +591,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 else {
                     return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
                 };
-                let created_at = (self.clock_fn)();
+                let created_at = self.clock_fn.now();
 
                 let event = HistoryEvent::Schedule {
                     execution_id: new_execution_id,
@@ -643,7 +643,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             let span = Span::current();
             span.record("version", tracing::field::display(&version));
             let child_execution_id = ExecutionId::generate();
-            let created_at = (self.clock_fn)();
+            let created_at = self.clock_fn.now();
             let Some((function_metadata, config_id, default_retry_config)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
             else {
@@ -1068,7 +1068,7 @@ mod tests {
                 let sim_clock = SimClock::default();
                 let (guard, db_pool) = Database::Memory.set_up().await;
                 let activity_exec_task =
-                    spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn()).await;
+                    spawn_activity_fibo(db_pool.clone(), sim_clock.clone()).await;
                 let fn_registry = fn_registry_dummy(&[
                     FunctionFqn::new_static(FIBOA.0, FIBOA.1),
                     FunctionFqn::new_static(FIBO.0, FIBO.1),
@@ -1077,7 +1077,7 @@ mod tests {
                     Engines::get_webhook_engine(EngineConfig::on_demand_testing().await).unwrap();
                 let workflow_exec_task = spawn_workflow_fibo(
                     db_pool.clone(),
-                    sim_clock.get_clock_fn(),
+                    sim_clock.clone(),
                     JoinNextBlockingStrategy::Await,
                     0,
                     fn_registry.clone(),
@@ -1109,7 +1109,7 @@ mod tests {
                         engine,
                         router,
                         db_pool.clone(),
-                        sim_clock.get_clock_fn(),
+                        sim_clock.clone(),
                         fn_registry,
                         Duration::from_secs(1),
                     ))

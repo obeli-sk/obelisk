@@ -273,7 +273,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
             Ok((result, store.into_data()))
         };
-        let started_at = (self.clock_fn)();
+        let started_at = self.clock_fn.now();
         let deadline_duration = (ctx.execution_deadline - started_at).to_std().unwrap();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! { // future's liveness: Dropping the loser immediately.
@@ -346,7 +346,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 // not flushing the workflow_ctx as it would introduce locking.
                 let worker_result = std::mem::replace(&mut *timeout_error_container.lock().unwrap(), WorkerResult::Err(WorkerError::IntermittentTimeout));
                 ctx.worker_span.in_scope(||
-                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %(self.clock_fn)(), "Timing out with {worker_result:?}")
+                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %self.clock_fn.now(), "Timing out with {worker_result:?}")
                 );
                 worker_result
             }
@@ -516,7 +516,7 @@ pub(crate) mod tests {
         let fn_registry = fn_registry_dummy(&[FIBO_ACTIVITY_FFQN]);
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             join_next_blocking_strategy,
             batching,
             fn_registry,
@@ -562,8 +562,7 @@ pub(crate) mod tests {
         .unwrap();
 
         info!("Execution should call the activity and finish");
-        let activity_exec_task =
-            spawn_activity_fibo(db_pool.clone(), sim_clock.get_clock_fn()).await;
+        let activity_exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.clone()).await;
 
         let res = db_connection
             .wait_for_finished_result(execution_id, None)
@@ -591,7 +590,7 @@ pub(crate) mod tests {
         let fn_registry = fn_registry_dummy(&[]);
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             join_next_blocking_strategy,
             batching,
             fn_registry,
@@ -724,7 +723,7 @@ pub(crate) mod tests {
 
         let workflow_exec_task = spawn_workflow_sleep(
             db_pool.clone(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             join_next_blocking_strategy,
             batching,
             empty_fn_registry.clone(),
@@ -734,7 +733,7 @@ pub(crate) mod tests {
             db_pool.clone(),
             expired_timers_watcher::TimersWatcherConfig {
                 tick_sleep: TICK_SLEEP,
-                clock_fn: sim_clock.get_clock_fn(),
+                clock_fn: sim_clock.clone(),
             },
         );
         let execution_id = ExecutionId::generate();
@@ -780,7 +779,7 @@ pub(crate) mod tests {
         // Restart worker
         let workflow_exec_task = spawn_workflow_sleep(
             db_pool.clone(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             join_next_blocking_strategy,
             batching,
             empty_fn_registry,
@@ -828,14 +827,14 @@ pub(crate) mod tests {
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
         )
         .await;
 
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             join_next_blocking_strategy,
             batching,
             fn_registry,
@@ -927,13 +926,13 @@ pub(crate) mod tests {
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
         )
         .await;
         let workflow_exec_task = spawn_workflow(
             db_pool.clone(),
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             join_next_strategy,
             batching,
             fn_registry,
@@ -1012,7 +1011,7 @@ pub(crate) mod tests {
         let worker = get_workflow_worker(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             join_next_strategy,
             batching,
             fn_registry,
@@ -1048,7 +1047,7 @@ pub(crate) mod tests {
                 tick_sleep: TICK_SLEEP,
                 config_id: ConfigId::dummy(),
             },
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             db_pool.clone(),
             Arc::new([RESCHEDULE_FFQN]),
         );

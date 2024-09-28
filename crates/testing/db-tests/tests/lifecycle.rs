@@ -16,7 +16,8 @@ use std::time::Duration;
 use test_utils::set_up;
 use test_utils::sim_clock::SimClock;
 use tracing::{debug, info};
-use utils::time::now;
+use utils::time::ClockFn;
+use utils::time::Now;
 use val_json::type_wrapper::TypeWrapper;
 
 #[tokio::test]
@@ -1001,7 +1002,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
             execution_id,
             version,
             AppendRequest {
-                created_at: now(),
+                created_at: Now.now(),
                 event: ExecutionEventInner::HistoryEvent {
                     event: HistoryEvent::JoinSetRequest {
                         join_set_id,

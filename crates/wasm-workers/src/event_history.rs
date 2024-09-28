@@ -123,7 +123,7 @@ impl<C: ClockFn> EventHistory<C> {
             return Ok(accept_resp);
         }
         // not found in the history, persisting the request
-        let called_at = (self.clock_fn)();
+        let called_at = self.clock_fn.now();
         let lock_expires_at =
             if self.join_next_blocking_strategy == JoinNextBlockingStrategy::Interrupt {
                 called_at
@@ -426,7 +426,7 @@ impl<C: ClockFn> EventHistory<C> {
         &mut self,
         db_connection: &DB,
     ) -> Result<(), DbError> {
-        self.flush_non_blocking_event_cache(db_connection, (self.clock_fn)())
+        self.flush_non_blocking_event_cache(db_connection, self.clock_fn.now())
             .await
     }
 
@@ -1088,7 +1088,7 @@ mod tests {
             &db_connection,
             execution_id,
             sim_clock.now(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
             batching,
         )
@@ -1165,7 +1165,7 @@ mod tests {
             &db_connection,
             execution_id,
             sim_clock.now(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             second_run_strategy,
             batching,
         )
@@ -1254,7 +1254,7 @@ mod tests {
             &db_connection,
             execution_id,
             sim_clock.now(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             join_next_blocking_strategy,
             batching,
         )
@@ -1295,7 +1295,7 @@ mod tests {
             &db_connection,
             execution_id,
             sim_clock.now(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             join_next_blocking_strategy,
             batching,
         )
@@ -1431,7 +1431,7 @@ mod tests {
             &db_connection,
             execution_id,
             sim_clock.now(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
             batching,
         )
@@ -1491,7 +1491,7 @@ mod tests {
             &db_connection,
             execution_id,
             sim_clock.now(),
-            sim_clock.get_clock_fn(),
+            sim_clock.clone(),
             second_run_strategy,
             batching,
         )
