@@ -9,6 +9,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         .extern_path(".google.protobuf.Any", "::prost_wkt_types::Any")
         .build_server(true)
         .build_client(true)
-        .compile(&["proto/obelisk.proto"], &[] as &[&str])?;
+        .compile_protos(&["proto/obelisk.proto"], &[] as &[&str])?;
     Ok(())
 }
