@@ -85,7 +85,7 @@ pub(crate) enum Component {
         path: PathBuf,
         /// OCI reference. Example: docker.io/repo/image:tag
         #[arg(required(true))]
-        image_name: oci_distribution::Reference,
+        image_name: oci_client::Reference,
     },
 }
 

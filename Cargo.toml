@@ -31,8 +31,8 @@ docker_credential.workspace = true
 futures-util.workspace = true
 hashbrown.workspace = true
 http.workspace = true
-oci-distribution = { workspace = true }
-oci-wasm = { workspace = true }
+oci-client.workspace = true
+oci-wasm.workspace = true
 prost-wkt-types.workspace = true
 prost.workspace = true
 serde_json.workspace = true
@@ -188,10 +188,10 @@ insta = { version = "1.40.0", features = ["json"] }
 itertools = "0.13"
 lazy_static = "1.5"
 madsim = "0.2.30"
-oci-distribution = { version = "0.11.0", default-features = false, features = [
+oci-client = { version = "0.12.0", default-features = false, features = [
     "rustls-tls",
 ] }
-oci-wasm = { version = "0.0.4", default-features = false, features = [
+oci-wasm = { version = "0.0.5", default-features = false, features = [
     "rustls-tls",
 ] }
 prost = "0.13.3"

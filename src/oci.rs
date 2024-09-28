@@ -1,6 +1,6 @@
 use anyhow::{bail, ensure, Context};
 use concepts::{ContentDigest, Digest};
-use oci_distribution::Reference;
+use oci_client::Reference;
 use oci_wasm::{WasmClient, WasmConfig};
 use std::{
     path::{Path, PathBuf},
@@ -9,9 +9,7 @@ use std::{
 use tracing::{debug, info, info_span, instrument, Instrument};
 
 fn get_client() -> WasmClient {
-    WasmClient::new(oci_distribution::Client::new(
-        oci_distribution::client::ClientConfig::default(),
-    ))
+    WasmClient::new(oci_client::Client::default())
 }
 
 fn digest_to_metadata_file(metadata_dir: &Path, metadata_file: &Digest) -> PathBuf {
@@ -121,9 +119,7 @@ pub(crate) async fn pull_to_cache_dir(
     Ok((actual_hash, wasm_path))
 }
 
-fn get_oci_auth(
-    reference: &Reference,
-) -> Result<oci_distribution::secrets::RegistryAuth, anyhow::Error> {
+fn get_oci_auth(reference: &Reference) -> Result<oci_client::secrets::RegistryAuth, anyhow::Error> {
     /// Translate the registry into a key for the auth lookup.
     fn get_docker_config_auth_key(reference: &Reference) -> &str {
         match reference.resolve_registry() {
@@ -134,9 +130,7 @@ fn get_oci_auth(
     let server_url = get_docker_config_auth_key(reference);
     match docker_credential::get_credential(server_url) {
         Ok(docker_credential::DockerCredential::UsernamePassword(username, password)) => {
-            return Ok(oci_distribution::secrets::RegistryAuth::Basic(
-                username, password,
-            ));
+            return Ok(oci_client::secrets::RegistryAuth::Basic(username, password));
         }
         Ok(docker_credential::DockerCredential::IdentityToken(_)) => {
             bail!("identity tokens not supported")
@@ -145,7 +139,7 @@ fn get_oci_auth(
             debug!("Failed to look up OCI credentials with key `{server_url}`: {err}");
         }
     }
-    Ok(oci_distribution::secrets::RegistryAuth::Anonymous)
+    Ok(oci_client::secrets::RegistryAuth::Anonymous)
 }
 
 pub(crate) async fn push(file: &PathBuf, reference: &Reference) -> Result<(), anyhow::Error> {

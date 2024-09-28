@@ -114,7 +114,7 @@ impl ConfigStore {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ComponentLocation {
     Path(PathBuf),
-    Oci(#[serde_as(as = "serde_with::DisplayFromStr")] oci_distribution::Reference),
+    Oci(#[serde_as(as = "serde_with::DisplayFromStr")] oci_client::Reference),
 }
 
 impl ComponentLocation {
