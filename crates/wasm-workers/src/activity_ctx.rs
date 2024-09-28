@@ -1,6 +1,9 @@
+use crate::component_logger::ComponentLogger;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
+use crate::workflow_ctx::log_activities;
 use concepts::{ConfigId, ExecutionId};
+use tracing::Span;
 use wasmtime::Engine;
 use wasmtime::{component::ResourceTable, Store};
 use wasmtime_wasi::{self, WasiCtx, WasiCtxBuilder, WasiView};
@@ -10,6 +13,7 @@ pub struct ActivityCtx {
     table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
+    component_logger: ComponentLogger,
 }
 
 impl WasiView for ActivityCtx {
@@ -39,6 +43,7 @@ pub fn store(
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: &[EnvVar],
+    worker_span: Span,
 ) -> Store<ActivityCtx> {
     let mut wasi_ctx = WasiCtxBuilder::new();
     if let Some(stdout) = forward_stdout {
@@ -56,6 +61,29 @@ pub fn store(
         table: ResourceTable::new(),
         wasi_ctx: wasi_ctx.build(),
         http_ctx: WasiHttpCtx::new(),
+        component_logger: ComponentLogger { span: worker_span },
     };
     Store::new(engine, ctx)
+}
+
+impl log_activities::obelisk::log::log::Host for ActivityCtx {
+    fn trace(&mut self, message: String) {
+        self.component_logger.trace(&message);
+    }
+
+    fn debug(&mut self, message: String) {
+        self.component_logger.debug(&message);
+    }
+
+    fn info(&mut self, message: String) {
+        self.component_logger.info(&message);
+    }
+
+    fn warn(&mut self, message: String) {
+        self.component_logger.warn(&message);
+    }
+
+    fn error(&mut self, message: String) {
+        self.component_logger.error(&message);
+    }
 }

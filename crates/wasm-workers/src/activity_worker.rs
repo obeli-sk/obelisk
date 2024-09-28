@@ -1,6 +1,7 @@
 use crate::activity_ctx::ActivityCtx;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
+use crate::workflow_ctx::log_activities;
 use crate::WasmFileError;
 use async_trait::async_trait;
 use concepts::{ConfigId, FunctionFqn, SupportedFunctionReturnValue};
@@ -61,6 +62,11 @@ impl<C: ClockFn> ActivityWorker<C> {
         wasmtime_wasi::add_to_linker_async(&mut linker).map_err(linking_err)?;
         // wasi-http
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(linking_err)?;
+        // obelisk:log
+        log_activities::obelisk::log::log::add_to_linker(&mut linker, |state: &mut ActivityCtx| {
+            state
+        })
+        .map_err(linking_err)?;
 
         // Attempt to pre-instantiate to catch missing imports
         let instance_pre = linker
@@ -105,6 +111,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             self.forward_stdout,
             self.forward_stderr,
             &self.env_vars,
+            ctx.worker_span.clone(),
         );
 
         let instance = match self.instance_pre.instantiate_async(&mut store).await {
