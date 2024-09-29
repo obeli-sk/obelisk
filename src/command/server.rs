@@ -917,7 +917,6 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             #[cfg_attr(madsim, allow(deprecated))]
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
-                    // TODO: use instrument instead
                     let executor_id = ExecutorId::generate();
                     prespawn_activity(activity, &mut component_registry, &engines, executor_id)
                         .map(Either::Left)
@@ -952,7 +951,7 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     let config_id = webhook.config_id;
-                    let instance = webhook_trigger::component_to_instance(
+                    let instance = webhook_trigger::prespawn_webhook_instance(
                         webhook.wasm_path,
                         &engines.webhook_engine,
                         config_id.clone(),

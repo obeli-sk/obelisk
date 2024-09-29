@@ -114,7 +114,7 @@ impl<T> Default for MethodAwareRouter<T> {
 }
 
 #[instrument(skip_all, fields(%config_id), err)]
-pub fn component_to_instance<
+pub fn prespawn_webhook_instance<
     C: ClockFn + 'static,
     DB: DbConnection + 'static,
     P: DbPool<DB> + 'static,
@@ -1085,7 +1085,7 @@ mod tests {
                 .await;
 
                 let router = {
-                    let instance = webhook_trigger::component_to_instance(
+                    let instance = webhook_trigger::prespawn_webhook_instance(
                         test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
                         &engine,
                         ConfigId::dummy(),

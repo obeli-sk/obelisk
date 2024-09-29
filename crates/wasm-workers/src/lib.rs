@@ -193,7 +193,7 @@ pub(crate) mod tests {
         async fn webhook(path: &str) {
             let engine =
                 Engines::get_webhook_engine(EngineConfig::on_demand_testing().await).unwrap();
-            let instance = webhook_trigger::component_to_instance(
+            let instance = webhook_trigger::prespawn_webhook_instance(
                 path,
                 &engine,
                 ConfigId::dummy(),
