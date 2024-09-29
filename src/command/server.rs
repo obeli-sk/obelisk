@@ -536,9 +536,10 @@ async fn run_internal(
         )
         .serve_with_shutdown(api_listening_addr, async move {
             info!("Serving gRPC requests at {api_listening_addr}");
-            if let Err(err) = tokio::signal::ctrl_c().await {
-                error!("Error while listening to ctrl-c - {err:?}");
-            }
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to listen for SIGINT event");
+            warn!("Received SIGINT");
         })
         .await
         .with_context(|| format!("grpc server error listening on {api_listening_addr}"));
@@ -888,7 +889,9 @@ async fn fetch_and_verify_all(
             }
             Ok(VerifiedConfig {wasm_activities, workflows, webhooks_by_names, http_servers_to_webhook_names})
         },
-        _ = tokio::signal::ctrl_c() => {
+        sigint = tokio::signal::ctrl_c() => {
+            sigint.expect("failed to listen for SIGINT event");
+            warn!("Received SIGINT");
             anyhow::bail!("cancelled while resolving the WASM files")
         }
     }
@@ -995,7 +998,9 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                 webhooks_by_names,
             })
         },
-        _ = tokio::signal::ctrl_c() => {
+        sigint = tokio::signal::ctrl_c() => {
+            sigint.expect("failed to listen for SIGINT event");
+            warn!("Received SIGINT");
             anyhow::bail!("cancelled while compiling the components")
         }
     }
