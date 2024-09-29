@@ -1,6 +1,5 @@
 use crate::executor::Append;
 use chrono::{DateTime, Utc};
-use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::DbConnection;
 use concepts::storage::DbError;
 use concepts::storage::DbPool;
@@ -20,8 +19,7 @@ use std::{
 };
 use tokio::task::AbortHandle;
 use tracing::Level;
-use tracing::Span;
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, error, info, instrument, trace, warn};
 use utils::time::ClockFn;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::WastVal;
@@ -43,18 +41,17 @@ pub(crate) struct TickProgress {
 pub struct TaskHandle {
     is_closing: Arc<AtomicBool>,
     abort_handle: AbortHandle,
-    span: Span,
 }
 
 impl TaskHandle {
-    #[instrument(skip_all, parent = &self.span)]
+    #[instrument(level = Level::DEBUG, skip_all, name = "expired_timers_watcher.close")]
     pub async fn close(&self) {
         trace!("Gracefully closing");
         self.is_closing.store(true, Ordering::Relaxed);
         while !self.abort_handle.is_finished() {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        info!("Gracefully closed");
+        info!("Gracefully closed expired_timers_watcher");
     }
 }
 
@@ -63,10 +60,8 @@ impl Drop for TaskHandle {
         if self.abort_handle.is_finished() {
             return;
         }
-        self.span.in_scope(|| {
-            warn!("Aborting the task");
-            self.abort_handle.abort();
-        });
+        warn!("Aborting the expired_timers_watcher");
+        self.abort_handle.abort();
     }
 }
 
@@ -74,16 +69,12 @@ pub fn spawn_new<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB>
     db_pool: P,
     config: TimersWatcherConfig<C>,
 ) -> TaskHandle {
-    let executor_id = ExecutorId::generate();
-    let span = info_span!(parent: None, "expired_timers_watcher",
-        executor = %executor_id,
-    );
     let is_closing = Arc::new(AtomicBool::default());
     let tick_sleep = config.tick_sleep;
     let abort_handle = tokio::spawn({
         let is_closing = is_closing.clone();
         async move {
-            info!("Spawned");
+            debug!("Spawned expired_timers_watcher");
             let mut old_err = None;
             while !is_closing.load(Ordering::Relaxed) {
                 let executed_at = config.clock_fn.now();
@@ -92,13 +83,11 @@ pub fn spawn_new<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB>
                 tokio::time::sleep(tick_sleep).await;
             }
         }
-        .instrument(span.clone())
     })
     .abort_handle();
     TaskHandle {
         is_closing,
         abort_handle,
-        span,
     }
 }
 
