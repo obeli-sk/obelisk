@@ -60,32 +60,32 @@ impl ExecutionProgress {
 }
 
 pub struct ExecutorTaskHandle {
-    span: Span,
     is_closing: Arc<AtomicBool>,
     abort_handle: AbortHandle,
+    config_id: ConfigId,
+    executor_id: ExecutorId,
 }
 
 impl ExecutorTaskHandle {
-    #[instrument(skip_all, parent = &self.span)]
+    #[instrument(level = Level::DEBUG, name = "executor.close", skip_all, fields(executor_id= %self.executor_id, config_id=%self.config_id))]
     pub async fn close(&self) {
         trace!("Gracefully closing");
         self.is_closing.store(true, Ordering::Relaxed);
         while !self.abort_handle.is_finished() {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        info!("Gracefully closed");
+        debug!("Gracefully closed");
     }
 }
 
 impl Drop for ExecutorTaskHandle {
+    #[instrument(level = Level::DEBUG, name = "executor.drop", skip_all, fields(executor_id= %self.executor_id, config_id=%self.config_id))]
     fn drop(&mut self) {
         if self.abort_handle.is_finished() {
             return;
         }
-        self.span.in_scope(|| {
-            warn!("Aborting the task");
-            self.abort_handle.abort();
-        });
+        warn!(executor_id= %self.executor_id, config_id=%self.config_id, "Aborting the executor task");
+        self.abort_handle.abort();
     }
 }
 
@@ -125,48 +125,41 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         db_pool: P,
         task_limiter: Option<Arc<tokio::sync::Semaphore>>,
         executor_id: ExecutorId,
-        component_name: impl AsRef<str>,
     ) -> ExecutorTaskHandle {
-        let span = info_span!(parent: None, "executor",
-            component_name = component_name.as_ref(),
-            %executor_id,
-            config_id = %config.config_id,
-        );
         let is_closing = Arc::new(AtomicBool::default());
         let is_closing_inner = is_closing.clone();
         let ffqns = extract_ffqns(worker.as_ref());
-        let abort_handle = tokio::spawn(
-            async move {
-                info!("Spawned");
-                let task = Self {
-                    worker,
-                    config,
-                    task_limiter,
-                    executor_id,
-                    db_pool,
-                    phantom_data: PhantomData,
-                    ffqns: ffqns.clone(),
-                    clock_fn: clock_fn.clone(),
-                };
-                loop {
-                    let _ = task.tick(clock_fn.now()).await;
-                    let executed_at = clock_fn.now();
-                    task.db_pool
-                        .connection()
-                        .subscribe_to_pending(executed_at, ffqns.clone(), task.config.tick_sleep)
-                        .await;
-                    if is_closing_inner.load(Ordering::Relaxed) {
-                        return;
-                    }
+        let config_id = config.config_id.clone();
+        let abort_handle = tokio::spawn(async move {
+            debug!(%executor_id, config_id = %config.config_id, "Spawned executor");
+            let task = Self {
+                worker,
+                config,
+                task_limiter,
+                executor_id,
+                db_pool,
+                phantom_data: PhantomData,
+                ffqns: ffqns.clone(),
+                clock_fn: clock_fn.clone(),
+            };
+            loop {
+                let _ = task.tick(clock_fn.now()).await;
+                let executed_at = clock_fn.now();
+                task.db_pool
+                    .connection()
+                    .subscribe_to_pending(executed_at, ffqns.clone(), task.config.tick_sleep)
+                    .await;
+                if is_closing_inner.load(Ordering::Relaxed) {
+                    return;
                 }
             }
-            .instrument(span.clone()),
-        )
+        })
         .abort_handle();
         ExecutorTaskHandle {
-            span,
             is_closing,
             abort_handle,
+            config_id,
+            executor_id,
         }
     }
 
@@ -198,7 +191,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         self.tick(executed_at).await
     }
 
-    #[instrument(level = Level::DEBUG, skip_all)]
+    #[instrument(level = Level::DEBUG, name = "executor.tick" skip_all, fields(executor_id = %self.executor_id, config_id = %self.config.config_id))]
     async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
         let locked_executions = {
             let db_connection = self.db_pool.connection();
@@ -218,7 +211,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 )
                 .await
                 .map_err(|err| {
-                    warn!("lock_pending error {err:?}");
+                    warn!(executor_id = %self.executor_id, config_id = %self.config.config_id, "lock_pending error {err:?}");
                 })?;
             // Drop permits if too many were allocated.
             while permits.len() > locked_executions.len() {
@@ -229,7 +222,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         };
         let execution_deadline = executed_at + self.config.lock_expiry;
 
-        let mut executions = Vec::new();
+        let mut executions = Vec::with_capacity(locked_executions.len());
         for (locked_execution, permit) in locked_executions {
             let execution_id = locked_execution.execution_id;
             let join_handle = {
@@ -699,7 +692,6 @@ mod tests {
             db_pool.clone(),
             None,
             ExecutorId::generate(),
-            "test",
         );
 
         let execution_log = create_and_tick(

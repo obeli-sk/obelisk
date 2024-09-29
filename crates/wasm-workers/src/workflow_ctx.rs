@@ -643,7 +643,6 @@ pub(crate) mod tests {
                 db_pool.clone(),
                 None,
                 concepts::prefixed_ulid::ExecutorId::generate(),
-                "test",
             )
         };
         // Create an execution.

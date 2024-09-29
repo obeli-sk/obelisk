@@ -441,7 +441,6 @@ pub(crate) mod tests {
             db_pool,
             None,
             ExecutorId::generate(),
-            "test",
         )
     }
 
@@ -703,7 +702,6 @@ pub(crate) mod tests {
             db_pool,
             None,
             ExecutorId::generate(),
-            "test",
         )
     }
 

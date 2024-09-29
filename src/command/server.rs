@@ -648,7 +648,6 @@ impl ServerInit {
                     db_pool.clone(),
                     pre_spawn.task_limiter,
                     pre_spawn.executor_id,
-                    pre_spawn.component_name,
                 )
             })
             .collect();
@@ -1075,7 +1074,6 @@ fn register_worker_and_prespawn(
     component_registry: &mut ComponentConfigRegistry,
     executor_id: ExecutorId,
 ) -> Result<ExecutorPreSpawn, anyhow::Error> {
-    let component_name = config_store.name().to_string();
     let component = Component {
         config_id: exec_config.config_id.clone(),
         config_store,
@@ -1088,7 +1086,6 @@ fn register_worker_and_prespawn(
         exec_config,
         task_limiter: None,
         executor_id,
-        component_name,
     })
 }
 
@@ -1097,7 +1094,6 @@ struct ExecutorPreSpawn {
     exec_config: ExecConfig,
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_id: ExecutorId,
-    component_name: String,
 }
 
 #[derive(Default, Debug, Clone)]

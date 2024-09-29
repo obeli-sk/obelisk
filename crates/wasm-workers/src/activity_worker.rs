@@ -313,7 +313,6 @@ pub(crate) mod tests {
             db_pool,
             None,
             ExecutorId::generate(),
-            "test",
         )
     }
 
@@ -501,7 +500,6 @@ pub(crate) mod tests {
                 db_pool.clone(),
                 None,
                 ExecutorId::generate(),
-                "test",
             );
 
             // Create an execution.
