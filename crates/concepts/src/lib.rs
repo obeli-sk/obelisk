@@ -776,6 +776,25 @@ pub mod prefixed_ulid {
 }
 
 #[derive(
+    Debug,
+    Clone,
+    Copy,
+    strum::Display,
+    PartialEq,
+    Eq,
+    strum::EnumString,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum ConfigIdType {
+    WasmActivity,
+    Workflow,
+    WebhookComponent,
+}
+
+#[derive(
     derive_more::Debug,
     Clone,
     PartialEq,
@@ -785,17 +804,17 @@ pub mod prefixed_ulid {
     serde_with::DeserializeFromStr,
     derive_more::Display,
 )]
-#[display("{component_type}:{name}:{hash}")]
+#[display("{config_id_type}:{name}:{hash}")]
 #[debug("{}", self)]
 pub struct ConfigId {
-    pub component_type: ComponentType,
+    pub config_id_type: ConfigIdType,
     pub name: StrVariant,
     pub hash: StrVariant,
     _private: PhantomData<()>,
 }
 impl ConfigId {
     pub fn new(
-        component_type: ComponentType,
+        component_type: ConfigIdType,
         name: StrVariant,
         hash: StrVariant,
     ) -> Result<Self, ConfigIdErrror> {
@@ -806,21 +825,22 @@ impl ConfigId {
             return Err(ConfigIdErrror::InvalidName { invalid, name });
         }
         Ok(Self {
-            component_type,
+            config_id_type: component_type,
             name,
             hash,
             _private: PhantomData,
         })
     }
     #[must_use]
-    pub fn component_type(&self) -> ComponentType {
-        self.component_type
+    pub fn component_type(&self) -> ConfigIdType {
+        self.config_id_type
     }
 
     #[must_use]
     pub const fn dummy() -> Self {
+        // TODO: rename to `dummy_activity`
         Self {
-            component_type: ComponentType::WasmActivity,
+            config_id_type: ConfigIdType::WasmActivity,
             name: StrVariant::empty(),
             hash: StrVariant::empty(),
             _private: PhantomData,
@@ -852,7 +872,7 @@ impl FromStr for ConfigId {
         let (name, hash) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
         let component_type = component_type.parse()?;
         Ok(Self {
-            component_type,
+            config_id_type: component_type,
             name: StrVariant::from(name.to_string()),
             hash: StrVariant::from(hash.to_string()),
             _private: PhantomData,
@@ -934,7 +954,6 @@ impl Digest {
 }
 
 #[derive(Debug, thiserror::Error)]
-
 pub enum DigestParseErrror {
     #[error("cannot parse ContentDigest - delimiter ':' not found")]
     DelimiterNotFound,
@@ -986,7 +1005,6 @@ impl FromStr for Digest {
 pub enum ComponentType {
     WasmActivity,
     Workflow,
-    WebhookComponent,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1062,13 +1080,17 @@ pub struct ComponentRetryConfig {
     pub retry_exp_backoff: Duration,
 }
 
-// TODO: consider making the workflow worker generic over this type
 #[async_trait]
 pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)>;
+    ) -> Option<(
+        FunctionMetadata,
+        ConfigId,
+        ComponentRetryConfig,
+        ComponentType,
+    )>;
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, derive_more::Display, PartialEq, Eq)]

@@ -237,7 +237,7 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::{ExecutorId, RunId},
         storage::{CreateRequest, DbConnection, DbPool, Version},
-        ComponentType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
+        ConfigIdType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -280,7 +280,7 @@ pub(crate) mod tests {
     ) -> ExecutorTaskHandle {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
         let config_id = ConfigId::new(
-            ComponentType::WasmActivity,
+            ConfigIdType::WasmActivity,
             wasm_file_name(wasm_path),
             StrVariant::Static("dummy hash"),
         )

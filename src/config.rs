@@ -4,6 +4,7 @@ pub(crate) mod toml;
 use crate::oci;
 use anyhow::Context;
 use concepts::ConfigId;
+use concepts::ConfigIdType;
 use concepts::ContentDigest;
 use concepts::StrVariant;
 use concepts::{ComponentType, FunctionMetadata};
@@ -19,6 +20,8 @@ pub struct Component {
     // Uniqueness is not guaranteed.
     // The id is not persisted, only appears in logs and traces and gRPC responses.
     pub config_id: ConfigId,
+    #[allow(clippy::struct_field_names)]
+    pub component_type: ComponentType,
     pub config_store: ConfigStore,
     pub imports: Vec<FunctionMetadata>,
     pub exports: Option<Vec<FunctionMetadata>>,
@@ -51,14 +54,6 @@ pub(crate) enum ConfigStore {
 }
 
 impl ConfigStore {
-    fn as_component_type(&self) -> ComponentType {
-        match self {
-            Self::WasmActivityV1 { .. } => ComponentType::WasmActivity,
-            Self::WasmWorkflowV1 { .. } => ComponentType::Workflow,
-            Self::WebhookComponentV1 { .. } => ComponentType::WebhookComponent,
-        }
-    }
-
     pub(crate) fn common(&self) -> &ConfigStoreCommon {
         match self {
             Self::WasmActivityV1 { common, .. }
@@ -101,8 +96,13 @@ impl ConfigStore {
             self.hash(&mut hasher);
             StrVariant::from(format!("{:x}", hasher.finish()))
         };
+        let config_id_type = match self {
+            Self::WasmActivityV1 { .. } => ConfigIdType::WasmActivity,
+            Self::WasmWorkflowV1 { .. } => ConfigIdType::Workflow,
+            Self::WebhookComponentV1 { .. } => ConfigIdType::WebhookComponent,
+        };
         Ok(ConfigId::new(
-            self.as_component_type(),
+            config_id_type,
             StrVariant::from(self.name().to_string()),
             hash,
         )?)

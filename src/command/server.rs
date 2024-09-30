@@ -29,6 +29,7 @@ use concepts::storage::ExecutionEventInner;
 use concepts::storage::ExecutionLog;
 use concepts::storage::PendingState;
 use concepts::ComponentRetryConfig;
+use concepts::ComponentType;
 use concepts::ConfigId;
 use concepts::ExecutionId;
 use concepts::FunctionFqn;
@@ -266,7 +267,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         for component in components {
             let res_component = grpc::Component {
                 name: component.config_store.name().to_string(),
-                r#type: component.config_id.component_type.to_string(),
+                r#type: component.config_id.config_id_type.to_string(),
                 config_id: Some(component.config_id.into()),
                 digest: component.config_store.common().content_digest.to_string(),
                 exports: match component.exports {
@@ -1053,6 +1054,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P
             config_store,
             exports: Some(worker.exported_functions().to_vec()),
             imports: worker.imported_functions().to_vec(),
+            component_type: ComponentType::WasmActivity,
         };
         (
             ExecutorPreSpawn {
@@ -1076,6 +1078,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P
             config_store,
             exports: Some(worker.exported_functions().to_vec()),
             imports: worker.imported_functions().to_vec(),
+            component_type: ComponentType::Workflow,
         };
         (
             ExecutorPreSpawn {
@@ -1117,8 +1120,15 @@ struct ComponentConfigRegistry {
 
 #[derive(Default, Debug)]
 struct ComponentConfigRegistryInner {
-    exported_ffqns:
-        hashbrown::HashMap<FunctionFqn, (ConfigId, FunctionMetadata, ComponentRetryConfig)>,
+    exported_ffqns: hashbrown::HashMap<
+        FunctionFqn,
+        (
+            ConfigId,
+            FunctionMetadata,
+            ComponentRetryConfig,
+            ComponentType,
+        ),
+    >,
     ids_to_components: hashbrown::HashMap<ConfigId, Component>,
 }
 
@@ -1133,7 +1143,7 @@ impl ComponentConfigRegistry {
             bail!("component {} is already inserted", component.config_id);
         }
         for exported_ffqn in component.exports.iter().flatten().map(|f| &f.ffqn) {
-            if let Some((offending_id, _, _)) = self.inner.exported_ffqns.get(exported_ffqn) {
+            if let Some((offending_id, _, _, _)) = self.inner.exported_ffqns.get(exported_ffqn) {
                 bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
             }
         }
@@ -1150,7 +1160,8 @@ impl ComponentConfigRegistry {
                         ComponentRetryConfig {
                             max_retries: component.config_store.default_max_retries(),
                             retry_exp_backoff: component.config_store.default_retry_exp_backoff()
-                        }
+                        },
+                        component.component_type,
                     ),
                 )
                 .is_none());
@@ -1195,11 +1206,18 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)> {
+    ) -> Option<(
+        FunctionMetadata,
+        ConfigId,
+        ComponentRetryConfig,
+        ComponentType,
+    )> {
         self.inner
             .exported_ffqns
             .get(ffqn)
-            .map(|(id, metadata, retry)| (metadata.clone(), id.clone(), *retry))
+            .map(|(id, metadata, retry, component_type)| {
+                (metadata.clone(), id.clone(), *retry, *component_type)
+            })
     }
 }
 

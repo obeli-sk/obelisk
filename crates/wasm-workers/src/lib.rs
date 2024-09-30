@@ -91,12 +91,20 @@ pub(crate) mod tests {
 
     use async_trait::async_trait;
     use concepts::{
-        ComponentRetryConfig, ConfigId, FunctionFqn, FunctionMetadata, FunctionRegistry,
-        ParameterTypes,
+        ComponentRetryConfig, ComponentType, ConfigId, FunctionFqn, FunctionMetadata,
+        FunctionRegistry, ParameterTypes,
     };
 
     pub(crate) struct TestingFnRegistry(
-        hashbrown::HashMap<FunctionFqn, (FunctionMetadata, ConfigId, ComponentRetryConfig)>,
+        hashbrown::HashMap<
+            FunctionFqn,
+            (
+                FunctionMetadata,
+                ConfigId,
+                ComponentRetryConfig,
+                ComponentType,
+            ),
+        >,
     );
 
     #[async_trait]
@@ -104,7 +112,12 @@ pub(crate) mod tests {
         async fn get_by_exported_function(
             &self,
             ffqn: &FunctionFqn,
-        ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)> {
+        ) -> Option<(
+            FunctionMetadata,
+            ConfigId,
+            ComponentRetryConfig,
+            ComponentType,
+        )> {
             self.0.get(ffqn).cloned()
         }
     }
@@ -123,6 +136,7 @@ pub(crate) mod tests {
                     },
                     component_id.clone(),
                     ComponentRetryConfig::default(),
+                    ComponentType::WasmActivity,
                 ),
             );
         }

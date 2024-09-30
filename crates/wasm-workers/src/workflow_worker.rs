@@ -394,7 +394,7 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::ExecutorId,
         storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState},
-        ComponentType, FinishedExecutionError,
+        ConfigIdType, FinishedExecutionError,
     };
     use concepts::{ExecutionId, Params};
     use db_tests::Database;
@@ -430,7 +430,7 @@ pub(crate) mod tests {
         let workflow_engine =
             Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
         let config_id = ConfigId::new(
-            ComponentType::Workflow,
+            ConfigIdType::Workflow,
             wasm_file_name(wasm_path),
             StrVariant::Static("dummy hash"),
         )

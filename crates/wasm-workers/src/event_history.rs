@@ -42,7 +42,7 @@ pub(crate) struct EventHistory<C: ClockFn> {
     execution_id: ExecutionId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     execution_deadline: DateTime<Utc>,
-    retry_config: RetryConfig,
+    retry_config: ChildRetryConfigOverride,
     event_history: Vec<(HistoryEvent, ProcessingStatus)>,
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     non_blocking_event_batch_size: usize,
@@ -92,7 +92,7 @@ impl<C: ClockFn> EventHistory<C> {
                 .collect(),
             join_next_blocking_strategy,
             execution_deadline,
-            retry_config: RetryConfig {
+            retry_config: ChildRetryConfigOverride {
                 child_activity_max_retries,
                 child_activity_retry_exp_backoff,
             },
@@ -498,14 +498,28 @@ impl<C: ClockFn> EventHistory<C> {
         async fn component_active_get_exported_function(
             fn_registry: &dyn FunctionRegistry,
             ffqn: &FunctionFqn,
-        ) -> Result<(FunctionMetadata, ConfigId, ComponentRetryConfig), WorkflowFunctionError>
-        {
-            fn_registry
+            retry_config_override: ChildRetryConfigOverride,
+        ) -> Result<
+            (
+                FunctionMetadata,
+                ConfigId,
+                /* retry_exp_backoff: */ Duration,
+                /* max_retries: */ u32,
+            ),
+            WorkflowFunctionError,
+        > {
+            let (fn_metadata, config_id, child_retry_config, component_type) = fn_registry
                 .get_by_exported_function(ffqn)
                 .await
                 .ok_or_else(|| WorkflowFunctionError::FunctionMetadataNotFound {
                     ffqn: ffqn.clone(),
-                })
+                })?;
+            let retry_exp_backoff =
+                retry_config_override.child_retry_exp_backoff(component_type, child_retry_config);
+            let max_retries =
+                retry_config_override.child_max_retries(component_type, child_retry_config);
+
+            Ok((fn_metadata, config_id, retry_exp_backoff, max_retries))
         }
 
         trace!(%version, "append_to_db");
@@ -544,8 +558,10 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type,
                     },
                     config_id,
-                    child_retry_config,
-                ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
+                    retry_exp_backoff,
+                    max_retries,
+                ) = component_active_get_exported_function(fn_registry, &ffqn, self.retry_config)
+                    .await?;
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: child_execution_id,
@@ -554,12 +570,8 @@ impl<C: ClockFn> EventHistory<C> {
                     parent: Some((self.execution_id, join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
-                    retry_exp_backoff: self
-                        .retry_config
-                        .child_retry_exp_backoff(config_id.component_type, child_retry_config),
-                    max_retries: self
-                        .retry_config
-                        .child_max_retries(config_id.component_type, child_retry_config),
+                    retry_exp_backoff,
+                    max_retries,
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.topmost_parent,
@@ -609,8 +621,10 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type,
                     },
                     config_id,
-                    child_retry_config,
-                ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
+                    retry_exp_backoff,
+                    max_retries,
+                ) = component_active_get_exported_function(fn_registry, &ffqn, self.retry_config)
+                    .await?;
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: new_execution_id,
@@ -619,12 +633,8 @@ impl<C: ClockFn> EventHistory<C> {
                     params,
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
                     scheduled_at,
-                    retry_exp_backoff: self
-                        .retry_config
-                        .child_retry_exp_backoff(config_id.component_type, child_retry_config),
-                    max_retries: self
-                        .retry_config
-                        .child_max_retries(config_id.component_type, child_retry_config),
+                    retry_exp_backoff,
+                    max_retries,
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.topmost_parent,
@@ -704,8 +714,10 @@ impl<C: ClockFn> EventHistory<C> {
                         return_type,
                     },
                     config_id,
-                    child_retry_config,
-                ) = component_active_get_exported_function(fn_registry, &ffqn).await?;
+                    retry_exp_backoff,
+                    max_retries,
+                ) = component_active_get_exported_function(fn_registry, &ffqn, self.retry_config)
+                    .await?;
                 let child = CreateRequest {
                     created_at: called_at,
                     execution_id: child_execution_id,
@@ -714,12 +726,8 @@ impl<C: ClockFn> EventHistory<C> {
                     parent: Some((self.execution_id, join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
-                    retry_exp_backoff: self
-                        .retry_config
-                        .child_retry_exp_backoff(config_id.component_type, child_retry_config),
-                    max_retries: self
-                        .retry_config
-                        .child_max_retries(config_id.component_type, child_retry_config),
+                    retry_exp_backoff,
+                    max_retries,
                     config_id,
                     return_type: return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.topmost_parent,
@@ -777,13 +785,13 @@ impl<C: ClockFn> EventHistory<C> {
     }
 }
 
-#[derive(Clone)]
-struct RetryConfig {
+#[derive(Clone, Copy)]
+struct ChildRetryConfigOverride {
     child_activity_max_retries: Option<u32>,
     child_activity_retry_exp_backoff: Option<Duration>,
 }
 
-impl RetryConfig {
+impl ChildRetryConfigOverride {
     fn child_max_retries(
         &self,
         component_type: ComponentType,
@@ -794,7 +802,6 @@ impl RetryConfig {
                 .child_activity_max_retries
                 .unwrap_or(child_config.max_retries),
             ComponentType::Workflow => 0,
-            ComponentType::WebhookComponent => unreachable!("webhook can only be invoked via HTTP"),
         }
     }
 
@@ -808,7 +815,6 @@ impl RetryConfig {
                 .child_activity_retry_exp_backoff
                 .unwrap_or(child_config.retry_exp_backoff),
             ComponentType::Workflow => Duration::ZERO,
-            ComponentType::WebhookComponent => unreachable!("webhook can only be invoked via HTTP"),
         }
     }
 }

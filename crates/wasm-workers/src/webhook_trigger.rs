@@ -289,7 +289,6 @@ impl RetryConfigOverride {
                 .activity_max_retries_override
                 .unwrap_or(component_default),
             ComponentType::Workflow => 0,
-            ComponentType::WebhookComponent => unreachable!("webhook can only be invoked via HTTP"),
         }
     }
 
@@ -303,7 +302,6 @@ impl RetryConfigOverride {
                 .activity_retry_exp_backoff_override
                 .unwrap_or(component_default),
             ComponentType::Workflow => Duration::ZERO,
-            ComponentType::WebhookComponent => unreachable!("webhook can only be invoked via HTTP"),
         }
     }
 }
@@ -467,7 +465,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let child_execution_id = ExecutionId::generate();
-                let Some((function_metadata, config_id, default_retry_config)) =
+                let Some((function_metadata, config_id, child_retry_config, component_type)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
                 else {
                     return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
@@ -490,11 +488,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     scheduled_at: created_at,
                     max_retries: self
                         .retry_config
-                        .max_retries(config_id.component_type, default_retry_config.max_retries),
-                    retry_exp_backoff: self.retry_config.retry_exp_backoff(
-                        config_id.component_type,
-                        default_retry_config.retry_exp_backoff,
-                    ),
+                        .max_retries(component_type, child_retry_config.max_retries),
+                    retry_exp_backoff: self
+                        .retry_config
+                        .retry_exp_backoff(component_type, child_retry_config.retry_exp_backoff),
                     config_id,
                     return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.execution_id,
@@ -586,7 +583,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let new_execution_id = ExecutionId::generate();
-                let Some((function_metadata, config_id, default_retry_config)) =
+                let Some((function_metadata, config_id, default_retry_config, component_type)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
                 else {
                     return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
@@ -610,11 +607,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     scheduled_at,
                     max_retries: self
                         .retry_config
-                        .max_retries(config_id.component_type, default_retry_config.max_retries),
-                    retry_exp_backoff: self.retry_config.retry_exp_backoff(
-                        config_id.component_type,
-                        default_retry_config.retry_exp_backoff,
-                    ),
+                        .max_retries(component_type, default_retry_config.max_retries),
+                    retry_exp_backoff: self
+                        .retry_config
+                        .retry_exp_backoff(component_type, default_retry_config.retry_exp_backoff),
                     config_id,
                     return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.execution_id,
@@ -644,7 +640,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             span.record("version", tracing::field::display(&version));
             let child_execution_id = ExecutionId::generate();
             let created_at = self.clock_fn.now();
-            let Some((function_metadata, config_id, default_retry_config)) =
+            let Some((function_metadata, config_id, default_retry_config, component_type)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
             else {
                 return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
@@ -666,11 +662,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 scheduled_at: created_at,
                 max_retries: self
                     .retry_config
-                    .max_retries(config_id.component_type, default_retry_config.max_retries),
-                retry_exp_backoff: self.retry_config.retry_exp_backoff(
-                    config_id.component_type,
-                    default_retry_config.retry_exp_backoff,
-                ),
+                    .max_retries(component_type, default_retry_config.max_retries),
+                retry_exp_backoff: self
+                    .retry_config
+                    .retry_exp_backoff(component_type, default_retry_config.retry_exp_backoff),
                 config_id,
                 return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
                 topmost_parent: self.execution_id,
