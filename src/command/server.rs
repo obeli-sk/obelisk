@@ -74,7 +74,7 @@ use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::webhook_trigger;
 use wasm_workers::webhook_trigger::MethodAwareRouter;
 use wasm_workers::webhook_trigger::WebhookInstance;
-use wasm_workers::workflow_worker::WorkflowWorker;
+use wasm_workers::workflow_worker::WorkflowWorkerPre;
 
 const EPOCH_MILLIS: u64 = 10;
 
@@ -571,7 +571,6 @@ impl ServerInit {
             .await
             .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
 
-        let mut component_registry = ComponentConfigRegistry::default();
         let engines = {
             let codegen_cache_config_file_holder = Engines::write_codegen_config(codegen_cache)
                 .await
@@ -602,20 +601,15 @@ impl ServerInit {
         .await?;
         debug!("Verified config: {verified_config:#?}");
         // Compile
-        let mut compiled_components = compile_all(
+        let (mut compiled_components, component_registry_ro) = compile_all(
             &engines,
             verified_config.wasm_activities,
             verified_config.workflows,
             verified_config.webhooks_by_names,
             &db_pool,
-            &mut component_registry,
         )
         .await?;
-        // Switch to Read only registries
-        let fn_registry = component_registry.get_fn_registry();
-        let component_registry_ro = component_registry.get_read_only();
-        drop(component_registry);
-        // TODO: typecheck imports
+        // TODO: typecheck imports of workflows and webhooks, including the extended functions
 
         // Associate webhooks with http servers
         let http_servers_to_webhooks = {
@@ -637,20 +631,13 @@ impl ServerInit {
                 .collect()
         };
 
+        let component_registry_arc: Arc<dyn FunctionRegistry> =
+            Arc::from(component_registry_ro.clone());
         // Spawn executors
         let exec_join_handles = compiled_components
             .executor_prespawns
             .into_iter()
-            .map(|pre_spawn| {
-                ExecTask::spawn_new(
-                    pre_spawn.worker,
-                    pre_spawn.exec_config,
-                    Now,
-                    db_pool.clone(),
-                    pre_spawn.task_limiter,
-                    pre_spawn.executor_id,
-                )
-            })
+            .map(|pre_spawn| pre_spawn.spawn(db_pool.clone(), &component_registry_arc))
             .collect();
 
         // Start TCP listeners
@@ -658,7 +645,7 @@ impl ServerInit {
             http_servers_to_webhooks,
             &engines,
             db_pool.clone(),
-            fn_registry,
+            component_registry_arc.clone(),
         )
         .await?;
         Ok((
@@ -684,7 +671,11 @@ impl ServerInit {
     }
 }
 
-type WebhookInstanceAndRoutes<DB, P> = (WebhookInstance<Now, DB, P>, Vec<WebhookRouteVerified>);
+type WebhookInstanceAndRoutes<DB, P> = (
+    WebhookInstance<Now, DB, P>,
+    Vec<WebhookRouteVerified>,
+    Component,
+);
 
 async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstanceAndRoutes<DB, P>>)>,
@@ -696,7 +687,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     let engine = &engines.webhook_engine;
     for (http_server, webhooks) in http_servers_to_webhooks {
         let mut router = MethodAwareRouter::default();
-        for (webhook_instance, routes) in webhooks {
+        for (webhook_instance, routes, _) in webhooks {
             for route in routes {
                 if route.methods.is_empty() {
                     router.add(None, &route.route, webhook_instance.clone());
@@ -899,8 +890,8 @@ async fn fetch_and_verify_all(
     }
 }
 
-struct CompiledComponents<DB: DbConnection, P: DbPool<DB>> {
-    executor_prespawns: Vec<ExecutorPreSpawn>,
+struct CompiledComponents<DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
+    executor_prespawns: Vec<ExecutorPreSpawn<DB, P>>,
     webhooks_by_names: hashbrown::HashMap<String, WebhookInstanceAndRoutes<DB, P>>,
 }
 
@@ -911,25 +902,22 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<String, WebhookComponentVerified>,
     db_pool: &P,
-    component_registry: &mut ComponentConfigRegistry,
-) -> Result<CompiledComponents<DB, P>, anyhow::Error> {
+) -> Result<(CompiledComponents<DB, P>, ComponentConfigRegistryRO), anyhow::Error> {
+    let mut component_registry = ComponentConfigRegistry::default();
     let pre_spawns: Vec<tokio::task::JoinHandle<Result<_, anyhow::Error>>> = wasm_activities
         .into_iter()
         .map(|activity| {
-            let mut component_registry = component_registry.clone();
             let engines = engines.clone();
             let span = tracing::Span::current();
             #[cfg_attr(madsim, allow(deprecated))]
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     let executor_id = ExecutorId::generate();
-                    prespawn_activity(activity, &mut component_registry, &engines, executor_id)
-                        .map(Either::Left)
+                    prespawn_activity(activity, &engines, executor_id).map(Either::Left)
                 })
             })
         })
         .chain(workflows.into_iter().map(|workflow| {
-            let mut component_registry = component_registry.clone();
             let engines = engines.clone();
             let db_pool = db_pool.clone();
             let span = tracing::Span::current();
@@ -937,19 +925,11 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     let executor_id = ExecutorId::generate();
-                    prespawn_workflow(
-                        workflow,
-                        db_pool,
-                        &mut component_registry,
-                        &engines,
-                        executor_id,
-                    )
-                    .map(Either::Left)
+                    prespawn_workflow(workflow, db_pool, &engines, executor_id).map(Either::Left)
                 })
             })
         }))
         .chain(webhooks_by_names.into_iter().map(|(name, webhook)| {
-            let component_registry = component_registry.clone();
             let engines = engines.clone();
             let span = tracing::Span::current();
             #[cfg_attr(madsim, allow(deprecated))]
@@ -965,13 +945,13 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                         Arc::from(webhook.env_vars),
                         webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
                     )?;
-                    component_registry.insert(Component {
+                    let component = Component {
                         config_id,
                         config_store: webhook.config_store,
                         exports: None,
                         imports: instance.imported_functions().to_vec(),
-                    })?;
-                    Ok(Either::Right((name, (instance, webhook.routes))))
+                    };
+                    Ok(Either::Right((name, (instance, webhook.routes, component))))
                 })
             })
         }))
@@ -986,19 +966,20 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             let mut webhooks_by_names = hashbrown::HashMap::new();
             for handle in results_of_results {
                 match handle?? {
-                    Either::Left(executor_prespawn) => {
+                    Either::Left((executor_prespawn, component)) => {
+                        component_registry.insert(component)?;
                         executor_prespawns.push(executor_prespawn);
                     },
-                    Either::Right((k, v)) => {
-                        let old = webhooks_by_names.insert(k, v);
+                    Either::Right((webhook_name, webhook_instance)) => {
+                        let old = webhooks_by_names.insert(webhook_name, webhook_instance);
                         assert!(old.is_none());
                     },
                 }
             }
-            Ok(CompiledComponents {
+            Ok((CompiledComponents {
                 executor_prespawns,
                 webhooks_by_names,
-            })
+            }, component_registry.into_read_only()))
         },
         sigint = tokio::signal::ctrl_c() => {
             sigint.expect("failed to listen for SIGINT event");
@@ -1014,12 +995,11 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     name = activity.config_store.name(),
     wasm_path = ?activity.wasm_path,
 ))]
-fn prespawn_activity(
+fn prespawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     activity: ActivityConfigVerified,
-    component_registry: &mut ComponentConfigRegistry,
     engines: &Engines,
     executor_id: ExecutorId,
-) -> Result<ExecutorPreSpawn, anyhow::Error> {
+) -> Result<(ExecutorPreSpawn<DB, P>, Component), anyhow::Error> {
     debug!("Instantiating activity");
     trace!(?activity, "Full configuration");
     let worker = Arc::new(ActivityWorker::new_with_config(
@@ -1028,11 +1008,10 @@ fn prespawn_activity(
         engines.activity_engine.clone(),
         Now,
     )?);
-    register_worker_and_prespawn(
+    ExecutorPreSpawn::new_activity(
         worker,
         activity.config_store,
         activity.exec_config,
-        component_registry,
         executor_id,
     )
 }
@@ -1043,65 +1022,102 @@ fn prespawn_activity(
     name = workflow.config_store.name(),
     wasm_path = ?workflow.wasm_path,
 ))]
-fn prespawn_workflow<DB: DbConnection + 'static>(
+fn prespawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     workflow: WorkflowConfigVerified,
-    db_pool: impl DbPool<DB> + 'static,
-    component_registry: &mut ComponentConfigRegistry,
+    db_pool: P,
     engines: &Engines,
     executor_id: ExecutorId,
-) -> Result<ExecutorPreSpawn, anyhow::Error> {
+) -> Result<(ExecutorPreSpawn<DB, P>, Component), anyhow::Error> {
     debug!("Instantiating workflow");
     trace!(?workflow, "Full configuration");
-    let worker = Arc::new(WorkflowWorker::new_with_config(
+    let worker = WorkflowWorkerPre::new_with_config(
         workflow.wasm_path,
         workflow.workflow_config,
         engines.workflow_engine.clone(),
         db_pool.clone(),
         Now,
-        component_registry.get_fn_registry(),
-    )?);
-    register_worker_and_prespawn(
+    )?;
+    ExecutorPreSpawn::new_workflow(
         worker,
         workflow.config_store,
         workflow.exec_config,
-        component_registry,
         executor_id,
     )
 }
 
-// Wrap the activity or workflow worker with type erased `ExecutorPreSpawn`.
-fn register_worker_and_prespawn(
-    worker: Arc<dyn Worker>,
-    config_store: ConfigStore,
-    exec_config: ExecConfig,
-    component_registry: &mut ComponentConfigRegistry,
-    executor_id: ExecutorId,
-) -> Result<ExecutorPreSpawn, anyhow::Error> {
-    let component = Component {
-        config_id: exec_config.config_id.clone(),
-        config_store,
-        exports: Some(worker.exported_functions().to_vec()),
-        imports: worker.imported_functions().to_vec(),
-    };
-    component_registry.insert(component)?;
-    Ok(ExecutorPreSpawn {
-        worker,
-        exec_config,
-        task_limiter: None,
-        executor_id,
-    })
-}
-
-struct ExecutorPreSpawn {
-    worker: Arc<dyn Worker>,
+struct ExecutorPreSpawn<DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
+    worker: Either<Arc<dyn Worker>, WorkflowWorkerPre<Now, DB, P>>,
     exec_config: ExecConfig,
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_id: ExecutorId,
 }
 
-#[derive(Default, Debug, Clone)]
+impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P> {
+    fn new_activity(
+        worker: Arc<dyn Worker>,
+        config_store: ConfigStore,
+        exec_config: ExecConfig,
+        executor_id: ExecutorId,
+    ) -> Result<(ExecutorPreSpawn<DB, P>, Component), anyhow::Error> {
+        let component = Component {
+            config_id: exec_config.config_id.clone(),
+            config_store,
+            exports: Some(worker.exported_functions().to_vec()),
+            imports: worker.imported_functions().to_vec(),
+        };
+        Ok((
+            ExecutorPreSpawn {
+                worker: Either::Left(worker),
+                exec_config,
+                task_limiter: None,
+                executor_id,
+            },
+            component,
+        ))
+    }
+
+    fn new_workflow(
+        worker: WorkflowWorkerPre<Now, DB, P>,
+        config_store: ConfigStore,
+        exec_config: ExecConfig,
+        executor_id: ExecutorId,
+    ) -> Result<(ExecutorPreSpawn<DB, P>, Component), anyhow::Error> {
+        let component = Component {
+            config_id: exec_config.config_id.clone(),
+            config_store,
+            exports: Some(worker.exported_functions().to_vec()),
+            imports: worker.imported_functions().to_vec(),
+        };
+        Ok((
+            ExecutorPreSpawn {
+                worker: Either::Right(worker),
+                exec_config,
+                task_limiter: None,
+                executor_id,
+            },
+            component,
+        ))
+    }
+
+    fn spawn(self, db_pool: P, fn_registry: &Arc<dyn FunctionRegistry>) -> ExecutorTaskHandle {
+        let worker = match self.worker {
+            Either::Left(activity) => activity,
+            Either::Right(workflow_pre) => Arc::from(workflow_pre.into_worker(fn_registry.clone())),
+        };
+        ExecTask::spawn_new(
+            worker,
+            self.exec_config,
+            Now,
+            db_pool,
+            self.task_limiter,
+            self.executor_id,
+        )
+    }
+}
+
+#[derive(Default, Debug)]
 struct ComponentConfigRegistry {
-    inner: Arc<std::sync::RwLock<ComponentConfigRegistryInner>>,
+    inner: ComponentConfigRegistryInner,
 }
 
 #[derive(Default, Debug)]
@@ -1112,23 +1128,24 @@ struct ComponentConfigRegistryInner {
 }
 
 impl ComponentConfigRegistry {
-    fn insert(&self, component: Component) -> Result<(), anyhow::Error> {
-        let mut write_guad = self.inner.write().unwrap();
+    fn insert(&mut self, component: Component) -> Result<(), anyhow::Error> {
         // check for conflicts
-        if write_guad
+        if self
+            .inner
             .ids_to_components
             .contains_key(&component.config_id)
         {
             bail!("component {} is already inserted", component.config_id);
         }
         for exported_ffqn in component.exports.iter().flatten().map(|f| &f.ffqn) {
-            if let Some((offending_id, _, _)) = write_guad.exported_ffqns.get(exported_ffqn) {
+            if let Some((offending_id, _, _)) = self.inner.exported_ffqns.get(exported_ffqn) {
                 bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
             }
         }
         // insert
         for exported_fn in component.exports.iter().flatten() {
-            assert!(write_guad
+            assert!(self
+                .inner
                 .exported_ffqns
                 .insert(
                     exported_fn.ffqn.clone(),
@@ -1143,60 +1160,48 @@ impl ComponentConfigRegistry {
                 )
                 .is_none());
         }
-        assert!(write_guad
+        assert!(self
+            .inner
             .ids_to_components
             .insert(component.config_id.clone(), component)
             .is_none());
         Ok(())
     }
 
-    fn get_fn_registry(&self) -> Arc<dyn FunctionRegistry> {
-        Arc::from(self.clone())
-    }
-
-    fn get_read_only(&self) -> ComponentConfigRegistryRO {
+    fn into_read_only(self) -> ComponentConfigRegistryRO {
         ComponentConfigRegistryRO {
-            inner: self.inner.clone(),
+            inner: Arc::new(self.inner),
         }
     }
 }
 
 #[derive(Default, Debug, Clone)]
 struct ComponentConfigRegistryRO {
-    inner: Arc<std::sync::RwLock<ComponentConfigRegistryInner>>,
+    inner: Arc<ComponentConfigRegistryInner>,
 }
 
 impl ComponentConfigRegistryRO {
     fn find_by_exported_ffqn(&self, ffqn: &FunctionFqn) -> Option<(Component, FunctionMetadata)> {
-        let read_guard = self.inner.read().unwrap();
-        read_guard.exported_ffqns.get(ffqn).map(|(id, meta, ..)| {
+        self.inner.exported_ffqns.get(ffqn).map(|(id, meta, ..)| {
             (
-                read_guard.ids_to_components.get(id).unwrap().clone(),
+                self.inner.ids_to_components.get(id).unwrap().clone(),
                 meta.clone(),
             )
         })
     }
 
     fn list(&self) -> Vec<Component> {
-        self.inner
-            .read()
-            .unwrap()
-            .ids_to_components
-            .values()
-            .cloned()
-            .collect()
+        self.inner.ids_to_components.values().cloned().collect()
     }
 }
 
 #[async_trait]
-impl FunctionRegistry for ComponentConfigRegistry {
+impl FunctionRegistry for ComponentConfigRegistryRO {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
     ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)> {
         self.inner
-            .read()
-            .unwrap()
             .exported_ffqns
             .get(ffqn)
             .map(|(id, metadata, retry)| (metadata.clone(), id.clone(), *retry))

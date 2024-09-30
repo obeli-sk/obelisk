@@ -48,13 +48,25 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     exim: ExIm,
     db_pool: P,
     clock_fn: C,
+    exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     fn_registry: Arc<dyn FunctionRegistry>,
+}
+
+#[derive(Clone)]
+pub struct WorkflowWorkerPre<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+    config: WorkflowConfig,
+    engine: Arc<Engine>,
+    linker: wasmtime::component::Linker<WorkflowCtx<C, DB, P>>,
+    component: wasmtime::component::Component,
+    exim: ExIm,
+    db_pool: P,
+    clock_fn: C,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
 }
 
 pub(crate) const PREFIX_OF_IGNORED_IMPORTS: &str = "obelisk:";
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerPre<C, DB, P> {
     #[tracing::instrument(skip_all, fields(%config.config_id), err)]
     pub fn new_with_config(
         wasm_path: impl AsRef<Path>,
@@ -62,7 +74,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
         engine: Arc<Engine>,
         db_pool: P,
         clock_fn: C,
-        fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Result<Self, WasmFileError> {
         let wasm_path = wasm_path.as_ref();
         let mut linker = wasmtime::component::Linker::new(&engine);
@@ -137,9 +148,30 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorker<C, DB, P> {
             exim: wasm_component.exim,
             db_pool,
             clock_fn,
-            fn_registry,
             exported_ffqn_to_index,
         })
+    }
+
+    pub fn into_worker(self, fn_registry: Arc<dyn FunctionRegistry>) -> WorkflowWorker<C, DB, P> {
+        WorkflowWorker {
+            config: self.config,
+            engine: self.engine,
+            linker: self.linker,
+            component: self.component,
+            exim: self.exim,
+            db_pool: self.db_pool,
+            clock_fn: self.clock_fn,
+            exported_ffqn_to_index: self.exported_ffqn_to_index,
+            fn_registry,
+        }
+    }
+
+    pub fn exported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.exports_flat
+    }
+
+    pub fn imported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.imports_flat
     }
 }
 
@@ -404,7 +436,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         let worker = Arc::new(
-            WorkflowWorker::new_with_config(
+            WorkflowWorkerPre::new_with_config(
                 wasm_path,
                 WorkflowConfig {
                     config_id: config_id.clone(),
@@ -416,9 +448,9 @@ pub(crate) mod tests {
                 workflow_engine,
                 db_pool.clone(),
                 clock_fn.clone(),
-                fn_registry,
             )
-            .unwrap(),
+            .unwrap()
+            .into_worker(fn_registry),
         );
 
         let exec_config = ExecConfig {
@@ -645,7 +677,7 @@ pub(crate) mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Arc<WorkflowWorker<C, DB, P>> {
         Arc::new(
-            WorkflowWorker::new_with_config(
+            WorkflowWorkerPre::new_with_config(
                 path,
                 WorkflowConfig {
                     config_id: ConfigId::dummy(),
@@ -657,9 +689,9 @@ pub(crate) mod tests {
                 Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap(),
                 db_pool,
                 clock_fn,
-                fn_registry,
             )
-            .unwrap(),
+            .unwrap()
+            .into_worker(fn_registry),
         )
     }
 
