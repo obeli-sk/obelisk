@@ -671,11 +671,7 @@ impl ServerInit {
     }
 }
 
-type WebhookInstanceAndRoutes<DB, P> = (
-    WebhookInstance<Now, DB, P>,
-    Vec<WebhookRouteVerified>,
-    Component,
-);
+type WebhookInstanceAndRoutes<DB, P> = (WebhookInstance<Now, DB, P>, Vec<WebhookRouteVerified>);
 
 async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstanceAndRoutes<DB, P>>)>,
@@ -687,7 +683,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     let engine = &engines.webhook_engine;
     for (http_server, webhooks) in http_servers_to_webhooks {
         let mut router = MethodAwareRouter::default();
-        for (webhook_instance, routes, _) in webhooks {
+        for (webhook_instance, routes) in webhooks {
             for route in routes {
                 if route.methods.is_empty() {
                     router.add(None, &route.route, webhook_instance.clone());
@@ -944,13 +940,7 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                         Arc::from(webhook.env_vars),
                         webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
                     )?;
-                    let component = Component {
-                        config_id,
-                        config_store: webhook.config_store,
-                        exports: None,
-                        imports: instance.imported_functions().to_vec(),
-                    };
-                    Ok(Either::Right((name, (instance, webhook.routes, component))))
+                    Ok(Either::Right((name, (instance, webhook.routes))))
                 })
             })
         }))

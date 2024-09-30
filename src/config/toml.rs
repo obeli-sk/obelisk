@@ -657,7 +657,6 @@ pub(crate) mod webhook {
                     .map(WebhookRouteVerified::try_from)
                     .collect::<Result<Vec<_>, _>>()
                     .with_context(|| format!("cannot parse webhook `{}`", config_store.name()))?,
-                config_store,
                 forward_stdout: self.forward_stdout.into(),
                 forward_stderr: self.forward_stderr.into(),
                 env_vars: self.env_vars,
@@ -684,7 +683,6 @@ pub(crate) mod webhook {
     #[derive(Debug)]
     pub(crate) struct WebhookComponentVerified {
         pub(crate) config_id: ConfigId,
-        pub(crate) config_store: ConfigStore,
         pub(crate) wasm_path: PathBuf,
         pub(crate) routes: Vec<WebhookRouteVerified>,
         pub(crate) forward_stdout: Option<wasm_workers::std_output_stream::StdOutput>,

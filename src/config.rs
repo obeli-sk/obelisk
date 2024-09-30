@@ -21,7 +21,7 @@ pub struct Component {
     pub config_id: ConfigId,
     pub config_store: ConfigStore,
     pub imports: Vec<FunctionMetadata>,
-    pub exports: Option<Vec<FunctionMetadata>>, // None for webhooks
+    pub exports: Option<Vec<FunctionMetadata>>,
 }
 
 #[derive(Debug, Clone, Hash)]
