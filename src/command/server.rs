@@ -1008,12 +1008,12 @@ fn prespawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         engines.activity_engine.clone(),
         Now,
     )?);
-    ExecutorPreSpawn::new_activity(
+    Ok(ExecutorPreSpawn::new_activity(
         worker,
         activity.config_store,
         activity.exec_config,
         executor_id,
-    )
+    ))
 }
 
 #[instrument(skip_all, fields(
@@ -1037,12 +1037,12 @@ fn prespawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool.clone(),
         Now,
     )?;
-    ExecutorPreSpawn::new_workflow(
+    Ok(ExecutorPreSpawn::new_workflow(
         worker,
         workflow.config_store,
         workflow.exec_config,
         executor_id,
-    )
+    ))
 }
 
 struct ExecutorPreSpawn<DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
@@ -1058,14 +1058,14 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P
         config_store: ConfigStore,
         exec_config: ExecConfig,
         executor_id: ExecutorId,
-    ) -> Result<(ExecutorPreSpawn<DB, P>, Component), anyhow::Error> {
+    ) -> (ExecutorPreSpawn<DB, P>, Component) {
         let component = Component {
             config_id: exec_config.config_id.clone(),
             config_store,
             exports: Some(worker.exported_functions().to_vec()),
             imports: worker.imported_functions().to_vec(),
         };
-        Ok((
+        (
             ExecutorPreSpawn {
                 worker: Either::Left(worker),
                 exec_config,
@@ -1073,7 +1073,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P
                 executor_id,
             },
             component,
-        ))
+        )
     }
 
     fn new_workflow(
@@ -1081,14 +1081,14 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P
         config_store: ConfigStore,
         exec_config: ExecConfig,
         executor_id: ExecutorId,
-    ) -> Result<(ExecutorPreSpawn<DB, P>, Component), anyhow::Error> {
+    ) -> (ExecutorPreSpawn<DB, P>, Component) {
         let component = Component {
             config_id: exec_config.config_id.clone(),
             config_store,
             exports: Some(worker.exported_functions().to_vec()),
             imports: worker.imported_functions().to_vec(),
         };
-        Ok((
+        (
             ExecutorPreSpawn {
                 worker: Either::Right(worker),
                 exec_config,
@@ -1096,7 +1096,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P
                 executor_id,
             },
             component,
-        ))
+        )
     }
 
     fn spawn(self, db_pool: P, fn_registry: &Arc<dyn FunctionRegistry>) -> ExecutorTaskHandle {
