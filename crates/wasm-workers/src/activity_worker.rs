@@ -129,13 +129,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             }
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
-        let Some(fn_export_index) = self.exported_ffqn_to_index.get(&ctx.ffqn) else {
-            error!("Cannot find exported index of {ffqn}", ffqn = ctx.ffqn);
-            return WorkerResult::Err(WorkerError::FatalError(
-                FatalError::UncategorizedError("cannot find exported index of function"),
-                ctx.version,
-            ));
-        };
+        let fn_export_index = self.exported_ffqn_to_index.get(&ctx.ffqn).expect("executor only calls `run` with ffqns that are exported");
         let Some(func) = instance.get_func(&mut store, fn_export_index) else {
             error!("Cannot unwrap value from `get_func`");
             return WorkerResult::Err(WorkerError::FatalError(
