@@ -81,15 +81,15 @@ const EPOCH_MILLIS: u64 = 10;
 #[derive(Debug)]
 struct GrpcServer<DB: DbConnection, P: DbPool<DB>> {
     db_pool: P,
-    component_registry: ComponentConfigRegistry,
+    component_registry_ro: ComponentConfigRegistryRO,
     phantom_data: PhantomData<DB>,
 }
 
 impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
-    fn new(db_pool: P, component_registry: ComponentConfigRegistry) -> Self {
+    fn new(db_pool: P, component_registry_ro: ComponentConfigRegistryRO) -> Self {
         Self {
             db_pool,
-            component_registry,
+            component_registry_ro,
             phantom_data: PhantomData,
         }
     }
@@ -134,7 +134,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         };
 
         // Check that ffqn exists
-        let Some((component, fn_meta)) = self.component_registry.find_by_exported_ffqn(&ffqn)
+        let Some((component, fn_meta)) = self.component_registry_ro.find_by_exported_ffqn(&ffqn)
         else {
             return Err(tonic::Status::not_found("function not found"));
         };
@@ -261,7 +261,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         &self,
         _request: tonic::Request<grpc::ListComponentsRequest>,
     ) -> TonicRespResult<grpc::ListComponentsResponse> {
-        let components = self.component_registry.list();
+        let components = self.component_registry_ro.list();
         let mut res_components = Vec::with_capacity(components.len());
         for component in components {
             let res_component = grpc::Component {
@@ -499,7 +499,7 @@ async fn run_internal(
 
     let api_listening_addr = config.api_listening_addr;
 
-    let init = ServerInit::new(
+    let (init, component_registry_ro) = ServerInit::new(
         db_file,
         config,
         codegen_cache.as_deref(),
@@ -508,10 +508,7 @@ async fn run_internal(
     )
     .await?;
 
-    let grpc_server = Arc::new(GrpcServer::new(
-        init.db_pool.clone(),
-        init.component_registry.clone(),
-    ));
+    let grpc_server = Arc::new(GrpcServer::new(init.db_pool.clone(), component_registry_ro));
     let grpc_server_res = tonic::transport::Server::builder()
         .layer(
             tower::ServiceBuilder::new()
@@ -555,7 +552,6 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 
 struct ServerInit {
     db_pool: SqlitePool,
-    component_registry: ComponentConfigRegistry,
     exec_join_handles: Vec<ExecutorTaskHandle>,
     timers_watcher: expired_timers_watcher::TaskHandle,
     #[expect(dead_code)] // http servers will be aborted automatically
@@ -570,7 +566,7 @@ impl ServerInit {
         codegen_cache: Option<&Path>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-    ) -> Result<ServerInit, anyhow::Error> {
+    ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
         let db_pool = SqlitePool::new(&db_file, config.sqlite.as_config())
             .await
             .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
@@ -615,6 +611,11 @@ impl ServerInit {
             &mut component_registry,
         )
         .await?;
+        // Switch to Read only registries
+        let fn_registry = component_registry.get_fn_registry();
+        let component_registry_ro = component_registry.get_read_only();
+        drop(component_registry);
+        // TODO: typecheck imports
 
         // Associate webhooks with http servers
         let http_servers_to_webhooks = {
@@ -652,20 +653,23 @@ impl ServerInit {
             })
             .collect();
 
+        // Start TCP listeners
         let http_servers_handles: Vec<AbortOnDropHandle> = start_webhooks(
             http_servers_to_webhooks,
             &engines,
             db_pool.clone(),
-            &mut component_registry,
+            fn_registry,
         )
         .await?;
-        Ok(ServerInit {
-            db_pool,
-            component_registry,
-            exec_join_handles,
-            timers_watcher,
-            http_servers_handles,
-        })
+        Ok((
+            ServerInit {
+                db_pool,
+                exec_join_handles,
+                timers_watcher,
+                http_servers_handles,
+            },
+            component_registry_ro,
+        ))
     }
 
     async fn close(self) -> Result<(), anyhow::Error> {
@@ -686,7 +690,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstanceAndRoutes<DB, P>>)>,
     engines: &Engines,
     db_pool: P,
-    component_registry: &mut ComponentConfigRegistry,
+    fn_registry: Arc<dyn FunctionRegistry>,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
     let mut abort_handles = Vec::with_capacity(http_servers_to_webhooks.len());
     let engine = &engines.webhook_engine;
@@ -716,7 +720,6 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
             "HTTP server `{}` is listening on {server_addr}",
             http_server.name,
         );
-        let fn_registry = component_registry.get_fn_registry();
         let server = AbortOnDropHandle(
             tokio::spawn(webhook_trigger::server(
                 tcp_listener,
@@ -1147,6 +1150,23 @@ impl ComponentConfigRegistry {
         Ok(())
     }
 
+    fn get_fn_registry(&self) -> Arc<dyn FunctionRegistry> {
+        Arc::from(self.clone())
+    }
+
+    fn get_read_only(&self) -> ComponentConfigRegistryRO {
+        ComponentConfigRegistryRO {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+#[derive(Default, Debug, Clone)]
+struct ComponentConfigRegistryRO {
+    inner: Arc<std::sync::RwLock<ComponentConfigRegistryInner>>,
+}
+
+impl ComponentConfigRegistryRO {
     fn find_by_exported_ffqn(&self, ffqn: &FunctionFqn) -> Option<(Component, FunctionMetadata)> {
         let read_guard = self.inner.read().unwrap();
         read_guard.exported_ffqns.get(ffqn).map(|(id, meta, ..)| {
@@ -1165,10 +1185,6 @@ impl ComponentConfigRegistry {
             .values()
             .cloned()
             .collect()
-    }
-
-    fn get_fn_registry(&self) -> Arc<dyn FunctionRegistry> {
-        Arc::from(self.clone())
     }
 }
 
