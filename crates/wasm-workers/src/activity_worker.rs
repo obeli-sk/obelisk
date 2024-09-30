@@ -11,7 +11,7 @@ use executor::worker::{Worker, WorkerError};
 use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{error, info, trace};
+use tracing::{info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
@@ -129,14 +129,14 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             }
         };
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
-        let fn_export_index = self.exported_ffqn_to_index.get(&ctx.ffqn).expect("executor only calls `run` with ffqns that are exported");
-        let Some(func) = instance.get_func(&mut store, fn_export_index) else {
-            error!("Cannot unwrap value from `get_func`");
-            return WorkerResult::Err(WorkerError::FatalError(
-                FatalError::UncategorizedError("cannot unwrap value from `get_func`"),
-                ctx.version,
-            ));
-        };
+        let fn_export_index = self
+            .exported_ffqn_to_index
+            .get(&ctx.ffqn)
+            .expect("executor only calls `run` with ffqns that are exported");
+        let func = instance
+            .get_func(&mut store, fn_export_index)
+            .expect("exported function must be found");
+
         let params = match ctx.params.as_vals(func.params(&store)) {
             Ok(params) => params,
             Err(err) => {
