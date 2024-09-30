@@ -729,8 +729,7 @@ async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
 }
 
 #[derive(Debug)]
-// TODO: Rename to ConfigVerified
-struct VerifiedConfig {
+struct ConfigVerified {
     wasm_activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<String, WebhookComponentVerified>,
@@ -745,7 +744,7 @@ async fn fetch_and_verify_all(
     webhooks: Vec<webhook::WebhookComponent>,
     wasm_cache_dir: Arc<Path>,
     metadata_dir: Arc<Path>,
-) -> Result<VerifiedConfig, anyhow::Error> {
+) -> Result<ConfigVerified, anyhow::Error> {
     // Check for name clashes which might make for confusing traces.
     {
         let mut seen = HashSet::new();
@@ -880,7 +879,7 @@ async fn fetch_and_verify_all(
                 let (k, v) = webhook??;
                 webhooks_by_names.insert(k, v);
             }
-            Ok(VerifiedConfig {wasm_activities, workflows, webhooks_by_names, http_servers_to_webhook_names})
+            Ok(ConfigVerified {wasm_activities, workflows, webhooks_by_names, http_servers_to_webhook_names})
         },
         sigint = tokio::signal::ctrl_c() => {
             sigint.expect("failed to listen for SIGINT event");
