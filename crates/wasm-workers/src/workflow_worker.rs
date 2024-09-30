@@ -7,11 +7,12 @@ use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::error::Error;
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::ComponentExportIndex;
@@ -52,16 +53,13 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     fn_registry: Arc<dyn FunctionRegistry>,
 }
 
-#[derive(Clone)]
 pub struct WorkflowWorkerPre<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
-    linker: wasmtime::component::Linker<WorkflowCtx<C, DB, P>>,
-    component: wasmtime::component::Component,
-    exim: ExIm,
     db_pool: P,
     clock_fn: C,
-    exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
+    wasm_component: WasmComponent,
+    phantom_data: PhantomData<DB>,
 }
 
 pub(crate) const PREFIX_OF_IGNORED_IMPORTS: &str = "obelisk:";
@@ -76,12 +74,25 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerPre<C, DB, P> {
         clock_fn: C,
     ) -> Result<Self, WasmFileError> {
         let wasm_path = wasm_path.as_ref();
-        let mut linker = wasmtime::component::Linker::new(&engine);
-
         let wasm_component =
             WasmComponent::new(wasm_path, &engine).map_err(WasmFileError::DecodeError)?;
+        Ok(Self {
+            config,
+            engine,
+            wasm_component,
+            db_pool,
+            clock_fn,
+            phantom_data: PhantomData,
+        })
+    }
+
+    pub fn into_worker(
+        self,
+        fn_registry: Arc<dyn FunctionRegistry>,
+    ) -> Result<WorkflowWorker<C, DB, P>, WasmFileError> {
+        let mut linker = wasmtime::component::Linker::new(&self.engine);
         // Mock imported functions
-        for import in &wasm_component.exim.imports_hierarchy {
+        for import in &self.wasm_component.exim.imports_hierarchy {
             if import
                 .ifc_fqn
                 .deref()
@@ -133,45 +144,34 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerPre<C, DB, P> {
                     }
                 }
             } else {
-                trace!("Skipping interface {ifc_fqn}", ifc_fqn = import.ifc_fqn);
+                warn!("Skipping interface {ifc_fqn}", ifc_fqn = import.ifc_fqn);
             }
         }
         WorkflowCtx::add_to_linker(&mut linker)?;
-        let exported_ffqn_to_index = wasm_component
+        let exported_ffqn_to_index = self
+            .wasm_component
             .index_exported_functions()
             .map_err(WasmFileError::DecodeError)?;
-        Ok(Self {
-            config,
-            engine,
+
+        Ok(WorkflowWorker {
+            config: self.config,
+            engine: self.engine,
             linker,
-            component: wasm_component.component,
-            exim: wasm_component.exim,
-            db_pool,
-            clock_fn,
+            component: self.wasm_component.component,
+            exim: self.wasm_component.exim,
+            db_pool: self.db_pool,
+            clock_fn: self.clock_fn,
             exported_ffqn_to_index,
+            fn_registry,
         })
     }
 
-    pub fn into_worker(self, fn_registry: Arc<dyn FunctionRegistry>) -> WorkflowWorker<C, DB, P> {
-        WorkflowWorker {
-            config: self.config,
-            engine: self.engine,
-            linker: self.linker,
-            component: self.component,
-            exim: self.exim,
-            db_pool: self.db_pool,
-            clock_fn: self.clock_fn,
-            exported_ffqn_to_index: self.exported_ffqn_to_index,
-            fn_registry,
-        }
-    }
-
     pub fn exported_functions(&self) -> &[FunctionMetadata] {
-        &self.exim.exports_flat
+        &self.wasm_component.exim.exports_flat
     }
 
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
-        &self.exim.imports_flat
+        &self.wasm_component.exim.imports_flat
     }
 }
 
@@ -450,7 +450,8 @@ pub(crate) mod tests {
                 clock_fn.clone(),
             )
             .unwrap()
-            .into_worker(fn_registry),
+            .into_worker(fn_registry)
+            .unwrap(),
         );
 
         let exec_config = ExecConfig {
@@ -691,7 +692,8 @@ pub(crate) mod tests {
                 clock_fn,
             )
             .unwrap()
-            .into_worker(fn_registry),
+            .into_worker(fn_registry)
+            .unwrap(),
         )
     }
 

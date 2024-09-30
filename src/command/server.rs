@@ -638,7 +638,7 @@ impl ServerInit {
             .executor_prespawns
             .into_iter()
             .map(|pre_spawn| pre_spawn.spawn(db_pool.clone(), &component_registry_arc))
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
         // Start TCP listeners
         let http_servers_handles: Vec<AbortOnDropHandle> = start_webhooks(
@@ -1098,19 +1098,25 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P
         )
     }
 
-    fn spawn(self, db_pool: P, fn_registry: &Arc<dyn FunctionRegistry>) -> ExecutorTaskHandle {
+    fn spawn(
+        self,
+        db_pool: P,
+        fn_registry: &Arc<dyn FunctionRegistry>,
+    ) -> Result<ExecutorTaskHandle, anyhow::Error> {
         let worker = match self.worker {
             Either::Left(activity) => activity,
-            Either::Right(workflow_pre) => Arc::from(workflow_pre.into_worker(fn_registry.clone())),
+            Either::Right(workflow_pre) => {
+                Arc::from(workflow_pre.into_worker(fn_registry.clone())?)
+            }
         };
-        ExecTask::spawn_new(
+        Ok(ExecTask::spawn_new(
             worker,
             self.exec_config,
             Now,
             db_pool,
             self.task_limiter,
             self.executor_id,
-        )
+        ))
     }
 }
 
