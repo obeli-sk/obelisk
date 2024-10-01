@@ -131,6 +131,8 @@ pub enum DecodeError {
     EmptyPackage,
     #[error("empty interface")]
     EmptyInterface,
+    #[error("invalid package `{0}`, {SUFFIX_PKG_EXT} is reserved")]
+    ReservedPackageSuffix(String),
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +169,15 @@ impl ExIm {
             engine,
             exported_ffqns_to_wit_parsed_meta,
         )?;
+        // Verify that there is no -obelisk-ext export
+        for PackageIfcFns { ifc_fqn, fns: _ } in &exports_hierarchy {
+            if ifc_fqn.package_name().ends_with(SUFFIX_PKG_EXT) {
+                return Err(DecodeError::ReservedPackageSuffix(
+                    ifc_fqn.package_name().to_string(),
+                ));
+            }
+        }
+
         let exports_flat_noext = Self::flatten(&exports_hierarchy);
         Self::enrich_exports_with_extensions(&mut exports_hierarchy);
         let exports_flat = Self::flatten(&exports_hierarchy);
@@ -293,7 +304,6 @@ impl ExIm {
             extensions.push((obelisk_extended_ifc, extension_fns));
         }
         for (obelisk_extended_ifc, extension_fns) in extensions {
-            // FIXME: verify that there is no clash with -obelisk-ext
             exports_hierarchy.push(PackageIfcFns {
                 ifc_fqn: obelisk_extended_ifc,
                 fns: extension_fns,
