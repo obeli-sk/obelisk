@@ -75,8 +75,8 @@ impl<C: ClockFn> WorkflowWorkerPre<C> {
         Ok(Self {
             config,
             engine,
-            wasm_component,
             clock_fn,
+            wasm_component,
         })
     }
 

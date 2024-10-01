@@ -1139,6 +1139,7 @@ struct ComponentConfigRegistryInner {
 }
 
 impl ComponentConfigRegistry {
+    #[expect(clippy::too_many_lines)]
     fn insert(&mut self, component: Component) -> Result<(), anyhow::Error> {
         // verify that the component or its exports are not already present
         if self
@@ -1181,7 +1182,7 @@ impl ComponentConfigRegistry {
         let return_type_string = Some(ReturnType {
             type_wrapper: TypeWrapper::String,
             wit_type: Some(
-                format!("string"), // TODO: StrVariant
+                "string".to_string(), // TODO: StrVariant
             ),
         });
         let param_type_join_set = ParameterType {
@@ -1281,9 +1282,9 @@ impl ComponentConfigRegistry {
         let additional_import_whitelist =
             |import: &FunctionMetadata, component_type| match component_type {
                 ComponentType::WasmActivity => {
-                    if import.ffqn.ifc_fqn.namespace() == "wasi" {
-                        true
-                    } else if import.ffqn.ifc_fqn.deref() == "obelisk:log/log" {
+                    if import.ffqn.ifc_fqn.namespace() == "wasi"
+                        || import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
+                    {
                         // TODO: check function
                         true
                     } else {
@@ -1292,10 +1293,9 @@ impl ComponentConfigRegistry {
                 }
                 ComponentType::Workflow => {
                     // logging + host activities
-                    if import.ffqn.ifc_fqn.deref() == "obelisk:log/log" {
-                        // TODO: check function
-                        true
-                    } else if import.ffqn.ifc_fqn.deref() == "obelisk:workflow/host-activities" {
+                    if import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
+                        || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/host-activities"
+                    {
                         // TODO: check function
                         true
                     } else {
