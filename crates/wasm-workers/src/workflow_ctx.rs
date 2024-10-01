@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, instrument, trace, Span};
 use utils::time::ClockFn;
+use utils::wasm_tools::SUFFIX_PKG_EXT;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 use wasmtime::component::{Linker, Val};
@@ -409,7 +410,6 @@ pub(crate) mod log_activities {
     }
 }
 
-pub(crate) const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
 pub(crate) const SUFFIX_FN_SUBMIT: &str = "-submit";
 pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
 pub(crate) const SUFFIX_FN_SCHEDULE: &str = "-schedule";

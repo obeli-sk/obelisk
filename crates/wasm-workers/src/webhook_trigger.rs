@@ -3,7 +3,7 @@ use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
 use crate::workflow_ctx::log_activities;
 use crate::workflow_ctx::{
-    host_activities, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT, SUFFIX_PKG_EXT,
+    host_activities, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
 };
 use crate::workflow_worker::PREFIX_OF_IGNORED_IMPORTS;
 use crate::WasmFileError;
@@ -31,7 +31,7 @@ use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, instrument, trace, Instrument, Level, Span};
 use utils::time::ClockFn;
-use utils::wasm_tools::{ExIm, WasmComponent};
+use utils::wasm_tools::{ExIm, WasmComponent, SUFFIX_PKG_EXT};
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};

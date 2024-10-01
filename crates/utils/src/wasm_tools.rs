@@ -12,6 +12,8 @@ use wasmtime::{
 };
 use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
 
+pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
+
 #[derive(derivative::Derivative)]
 #[derivative(Debug)]
 pub struct WasmComponent {
@@ -213,7 +215,7 @@ impl ExIm {
         for PackageIfcFns { ifc_fqn, fns } in exports_hierarchy.iter() {
             let obelisk_extended_ifc = IfcFqnName::from_parts(
                 ifc_fqn.namespace(),
-                &format!("{}-obelisk-ext", ifc_fqn.package_name()),
+                &format!("{}{SUFFIX_PKG_EXT}", ifc_fqn.package_name()),
                 ifc_fqn.ifc_name(),
                 ifc_fqn.version(),
             );
