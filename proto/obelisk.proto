@@ -17,6 +17,7 @@ service FunctionRepository {
 message ListComponentsRequest {
     optional FunctionName function = 1;
     optional ConfigId config_id = 2;
+    bool extensions = 3;
 }
 
 message ListComponentsResponse {

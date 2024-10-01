@@ -79,6 +79,8 @@ pub(crate) enum Component {
     List {
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
+        #[arg(short, long)]
+        extensions: bool,
     },
     /// Push a WASM file to an OCI registry.
     Push {

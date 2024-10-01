@@ -54,13 +54,17 @@ async fn main() -> Result<(), anyhow::Error> {
                     FunctionMetadataVerbosity::from(verbosity),
                     extensions,
                 ),
-                ClientSubcommand::Component(args::Component::List { verbosity }) => {
+                ClientSubcommand::Component(args::Component::List {
+                    verbosity,
+                    extensions,
+                }) => {
                     let client = get_fn_repository_client(api_url).await?;
                     command::component::list_components(
                         client,
                         None,
                         None,
                         FunctionMetadataVerbosity::from(verbosity),
+                        extensions,
                     )
                     .await
                 }

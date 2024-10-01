@@ -39,6 +39,7 @@ pub(crate) async fn list_components(
     config_id: Option<&ConfigId>,
     ffqn: Option<&FunctionFqn>,
     verbosity: FunctionMetadataVerbosity,
+    extensions: bool,
 ) -> anyhow::Result<()> {
     let components = client
         .list_components(tonic::Request::new(super::grpc::ListComponentsRequest {
@@ -46,6 +47,7 @@ pub(crate) async fn list_components(
             config_id: config_id.map(|config_id| grpc::ConfigId {
                 id: config_id.to_string(),
             }),
+            extensions,
         }))
         .await
         .to_anyhow()?

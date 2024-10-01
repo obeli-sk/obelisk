@@ -70,6 +70,7 @@ use tracing::Span;
 use tracing::{debug, info, trace};
 use utils::time::ClockFn;
 use utils::time::Now;
+use utils::wasm_tools::SUFFIX_PKG_EXT;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
@@ -261,9 +262,10 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     #[instrument(skip_all)]
     async fn list_components(
         &self,
-        _request: tonic::Request<grpc::ListComponentsRequest>,
+        request: tonic::Request<grpc::ListComponentsRequest>,
     ) -> TonicRespResult<grpc::ListComponentsResponse> {
-        let components = self.component_registry_ro.list();
+        let request = request.into_inner();
+        let components = self.component_registry_ro.list(request.extensions);
         let mut res_components = Vec::with_capacity(components.len());
         for component in components {
             let res_component = grpc::Component {
@@ -1142,12 +1144,6 @@ impl ComponentConfigRegistry {
             bail!("component {} is already inserted", component.config_id);
         }
         for exported_ffqn in component.exports.iter().map(|f| &f.ffqn) {
-            if exported_ffqn.ifc_fqn.ifc_name().ends_with("-obelisk-ext") {
-                bail!(
-                    "exported interface name must not end with `-obelisk-ext`, cannot insert {}",
-                    component.config_id
-                );
-            }
             if let Some((offending_id, _, _, _)) = self.inner.exported_ffqns.get(exported_ffqn) {
                 bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
             }
@@ -1264,8 +1260,28 @@ impl ComponentConfigRegistryRO {
         })
     }
 
-    fn list(&self) -> Vec<Component> {
-        self.inner.ids_to_components.values().cloned().collect()
+    fn list(&self, extensions: bool) -> Vec<Component> {
+        self.inner
+            .ids_to_components
+            .values()
+            .cloned()
+            .map(|mut component| {
+                if !extensions {
+                    component.exports = component
+                        .exports
+                        .into_iter()
+                        .filter(|fn_metadata| {
+                            !fn_metadata
+                                .ffqn
+                                .ifc_fqn
+                                .package_name()
+                                .ends_with(SUFFIX_PKG_EXT)
+                        })
+                        .collect();
+                }
+                component
+            })
+            .collect()
     }
 }
 
