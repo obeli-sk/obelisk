@@ -114,11 +114,11 @@ forward_stderr = "stderr"
 
 [[wasm_activity]]
 name = "sleep_activity"
-location.oci = "docker.io/getobelisk/example_activity_sleep:2024-09-25@sha256:c2b5041142fc9d8b4ede894f92162c812b7e0a38706cefc1cecc6c189cdea263"
+location.oci = "docker.io/getobelisk/example_activity_sleep:2024-10-01@sha256:2bd5d55bb11eafa3b6d7755be25da9f34064c986e5753485acda699667d47c63"
 
 [[workflow]]
 name = "sleep_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-09-25@sha256:791a09fba122affdbf77b35d8153af8f04a6b462662a52a176b7630cfa701c7e"
+location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-10-01@sha256:eebe0007f93cbabfd5de3e7cd10af29c2e5d1d47135873e4a0c4b49b93519556"
 
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:
