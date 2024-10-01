@@ -44,15 +44,16 @@ async fn main() -> Result<(), anyhow::Error> {
             clean_cache,
             clean_codegen_cache,
             config,
-        }) => command::server::verify(
-            ProjectDirs::from("com", "obelisk", "obelisk"),
-            config,
-            clean_db,
-            clean_cache,
-            clean_codegen_cache,
-        )
-        .await
-        .map(|_| ()),
+        }) => {
+            command::server::verify(
+                ProjectDirs::from("com", "obelisk", "obelisk"),
+                config,
+                clean_db,
+                clean_cache,
+                clean_codegen_cache,
+            )
+            .await
+        }
         Subcommand::Client(Client { api_url, command }) => {
             match command {
                 ClientSubcommand::Component(args::Component::Inspect {

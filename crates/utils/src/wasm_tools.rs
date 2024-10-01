@@ -196,6 +196,7 @@ impl ExIm {
         })
     }
 
+    #[expect(clippy::too_many_lines)]
     fn enrich_exports_with_extensions(exports_hierarchy: &mut Vec<PackageIfcFns>) {
         // initialize values for reuse
         let return_type_string = Some(ReturnType {
@@ -238,7 +239,7 @@ impl ExIm {
                     (fn_metadata.parameter_types, fn_metadata.return_type),
                 );
             };
-            for (fun, (param_types, return_type)) in fns.iter() {
+            for (fun, (param_types, return_type)) in fns {
                 let exported_fn_metadata = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: ifc_fqn.clone(),

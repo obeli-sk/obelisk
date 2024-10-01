@@ -424,13 +424,13 @@ pub(crate) async fn verify(
     let config_holder = ConfigHolder::new(project_dirs, config);
     let mut config = config_holder.load_config().await?;
     let _guard = init::init(&mut config);
-    verify_internal(
+    Box::pin(verify_internal(
         config,
         clean_db,
         clean_cache,
         clean_codegen_cache,
         config_holder,
-    )
+    ))
     .await?;
     Ok(())
 }
@@ -533,7 +533,6 @@ async fn verify_internal(
     .await
 }
 
-#[expect(clippy::too_many_lines)]
 async fn run_internal(
     config: ObeliskConfig,
     clean_db: bool,
@@ -542,13 +541,13 @@ async fn run_internal(
     config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
     let api_listening_addr = config.api_listening_addr;
-    let verified = verify_internal(
+    let verified = Box::pin(verify_internal(
         config,
         clean_db,
         clean_cache,
         clean_codegen_cache,
         config_holder,
-    )
+    ))
     .await?;
     let (init, component_registry_ro) = ServerInit::new(verified).await?;
     let grpc_server = Arc::new(GrpcServer::new(init.db_pool.clone(), component_registry_ro));
@@ -1203,7 +1202,6 @@ struct ComponentConfigRegistryInner {
 }
 
 impl ComponentConfigRegistry {
-    #[expect(clippy::too_many_lines)]
     fn insert(&mut self, component: Component) -> Result<(), anyhow::Error> {
         // verify that the component or its exports are not already present
         if self
@@ -1337,17 +1335,13 @@ impl ComponentConfigRegistryRO {
             .cloned()
             .map(|mut component| {
                 if !extensions {
-                    component.exports = component
-                        .exports
-                        .into_iter()
-                        .filter(|fn_metadata| {
-                            !fn_metadata
-                                .ffqn
-                                .ifc_fqn
-                                .package_name()
-                                .ends_with(SUFFIX_PKG_EXT)
-                        })
-                        .collect();
+                    component.exports.retain(|fn_metadata| {
+                        !fn_metadata
+                            .ffqn
+                            .ifc_fqn
+                            .package_name()
+                            .ends_with(SUFFIX_PKG_EXT)
+                    });
                 }
                 component
             })
