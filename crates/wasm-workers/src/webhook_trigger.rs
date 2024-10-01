@@ -1004,26 +1004,27 @@ pub enum HandleRequestError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::MethodAwareRouter;
     use hyper::{Method, Uri};
 
     #[cfg(not(madsim))] // Due to TCP server/client
-    mod nosim {
+    pub(crate) mod nosim {
         use super::*;
-        use crate::activity_worker::tests::FIBO_10_OUTPUT;
+        use crate::activity_worker::tests::{compile_activity, FIBO_10_OUTPUT};
         use crate::engines::{EngineConfig, Engines};
+        use crate::tests::TestingFnRegistry;
         use crate::webhook_trigger::RetryConfigOverride;
+        use crate::workflow_worker::tests::compile_workflow;
         use crate::{
             activity_worker::tests::spawn_activity_fibo,
-            tests::fn_registry_dummy,
             webhook_trigger,
             workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
         };
         use assert_matches::assert_matches;
         use concepts::{
             storage::{DbConnection, DbPool},
-            ExecutionId, FunctionFqn,
+            ExecutionId,
         };
         use concepts::{ConfigId, SupportedFunctionReturnValue};
         use db_tests::{Database, DbGuard, DbPoolEnum};
@@ -1032,11 +1033,10 @@ mod tests {
         use std::str::FromStr;
         use std::sync::Arc;
         use std::time::Duration;
-        use test_programs_fibo_activity_builder::exports::testing::fibo::fibo::FIBO;
-        use test_programs_fibo_workflow_builder::exports::testing::fibo_workflow::workflow::FIBOA;
         use test_utils::sim_clock::SimClock;
         use tokio::net::TcpListener;
         use tracing::info;
+        use utils::wasm_tools::WasmComponent;
         use val_json::type_wrapper::TypeWrapper;
         use val_json::wast_val::{WastVal, WastValWithType};
 
@@ -1045,6 +1045,12 @@ mod tests {
             fn drop(&mut self) {
                 self.0.abort();
             }
+        }
+
+        pub(crate) async fn compile_webhook(wasm_path: &str) -> WasmComponent {
+            let engine =
+                Engines::get_webhook_engine(EngineConfig::on_demand_testing().await).unwrap();
+            WasmComponent::new(wasm_path, &engine).unwrap()
         }
 
         struct SetUpFiboWebhook {
@@ -1064,9 +1070,15 @@ mod tests {
                 let (guard, db_pool) = Database::Memory.set_up().await;
                 let activity_exec_task =
                     spawn_activity_fibo(db_pool.clone(), sim_clock.clone()).await;
-                let fn_registry = fn_registry_dummy(&[
-                    FunctionFqn::new_static(FIBOA.0, FIBOA.1),
-                    FunctionFqn::new_static(FIBO.0, FIBO.1),
+                let fn_registry = TestingFnRegistry::new_from_components(vec![
+                    compile_activity(
+                        test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
+                    )
+                    .await,
+                    compile_workflow(
+                        test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
+                    )
+                    .await,
                 ]);
                 let engine =
                     Engines::get_webhook_engine(EngineConfig::on_demand_testing().await).unwrap();

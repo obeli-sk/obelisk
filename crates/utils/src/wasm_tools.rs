@@ -1,6 +1,7 @@
 use crate::wit_printer::WitPrinter;
 use concepts::{
-    FnName, FunctionFqn, FunctionMetadata, IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, ReturnType
+    FnName, FunctionFqn, FunctionMetadata, IfcFqnName, PackageIfcFns, ParameterType,
+    ParameterTypes, ReturnType,
 };
 use indexmap::{indexmap, IndexMap};
 use std::{path::Path, sync::Arc};

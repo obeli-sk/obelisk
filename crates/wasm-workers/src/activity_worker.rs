@@ -241,7 +241,8 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::{ExecutorId, RunId},
         storage::{CreateRequest, DbConnection, DbPool, Version},
-        ConfigIdType, ExecutionId, FunctionFqn, Params, SupportedFunctionReturnValue,
+        ComponentType, ConfigIdType, ExecutionId, FunctionFqn, Params,
+        SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -275,6 +276,23 @@ pub(crate) mod tests {
             forward_stderr: None,
             env_vars: Arc::from([]),
         }
+    }
+
+    pub(crate) async fn compile_activity(
+        wasm_path: &str,
+    ) -> (WasmComponent, ConfigId, ComponentType) {
+        let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
+        let config_id = ConfigId::new(
+            ConfigIdType::WasmActivity,
+            wasm_file_name(wasm_path),
+            StrVariant::Static("dummy hash"),
+        )
+        .unwrap();
+        (
+            WasmComponent::new(wasm_path, &engine).unwrap(),
+            config_id,
+            ComponentType::WasmActivity,
+        )
     }
 
     pub(crate) async fn spawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(

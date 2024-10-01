@@ -1164,6 +1164,7 @@ impl WorkerCompiled {
         )
     }
 
+    #[instrument(skip_all, fields(config_id = %self.exec_config.config_id), err)]
     fn into_linked(
         self,
         fn_registry: &Arc<dyn FunctionRegistry>,

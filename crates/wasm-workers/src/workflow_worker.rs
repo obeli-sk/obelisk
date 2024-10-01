@@ -14,7 +14,7 @@ use std::{fmt::Debug, sync::Arc};
 use tracing::{debug, error, info, instrument, trace, warn};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
-use wasmtime::component::ComponentExportIndex;
+use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
 
@@ -39,19 +39,6 @@ pub struct WorkflowConfig {
     pub non_blocking_event_batching: u32,
 }
 
-#[derive(Clone)]
-pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
-    config: WorkflowConfig,
-    engine: Arc<Engine>,
-    linker: wasmtime::component::Linker<WorkflowCtx<C, DB, P>>,
-    component: wasmtime::component::Component,
-    exim: ExIm,
-    db_pool: P,
-    clock_fn: C,
-    exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
-    fn_registry: Arc<dyn FunctionRegistry>,
-}
-
 pub struct WorkflowWorkerCompiled<C: ClockFn> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
@@ -62,12 +49,23 @@ pub struct WorkflowWorkerCompiled<C: ClockFn> {
 pub struct WorkflowWorkerLinked<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
-    linker: wasmtime::component::Linker<WorkflowCtx<C, DB, P>>,
-    component: wasmtime::component::Component,
     exim: ExIm,
     clock_fn: C,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
     fn_registry: Arc<dyn FunctionRegistry>,
+    instance_pre: InstancePre<WorkflowCtx<C, DB, P>>,
+}
+
+#[derive(Clone)]
+pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+    config: WorkflowConfig,
+    engine: Arc<Engine>,
+    exim: ExIm,
+    db_pool: P,
+    clock_fn: C,
+    exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
+    fn_registry: Arc<dyn FunctionRegistry>,
+    instance_pre: InstancePre<WorkflowCtx<C, DB, P>>,
 }
 
 pub(crate) const PREFIX_OF_IGNORED_IMPORTS: &str = "obelisk:";
@@ -146,6 +144,15 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
             }
         }
         WorkflowCtx::add_to_linker(&mut linker)?;
+
+        // Attempt to pre-instantiate to catch missing imports
+        let instance_pre = linker
+            .instantiate_pre(&self.wasm_component.wasmtime_component)
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("preinstantiation error"),
+                err: err.into(),
+            })?;
+
         let exported_ffqn_to_index = self
             .wasm_component
             .index_exported_functions()
@@ -154,12 +161,11 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
         Ok(WorkflowWorkerLinked {
             config: self.config,
             engine: self.engine,
-            linker,
-            component: self.wasm_component.wasmtime_component,
             exim: self.wasm_component.exim,
             clock_fn: self.clock_fn,
             exported_ffqn_to_index,
             fn_registry,
+            instance_pre,
         })
     }
 
@@ -181,13 +187,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerLinked<C, DB, P>
         WorkflowWorker {
             config: self.config,
             engine: self.engine,
-            linker: self.linker,
-            component: self.component,
             exim: self.exim,
             db_pool,
             clock_fn: self.clock_fn,
             exported_ffqn_to_index: self.exported_ffqn_to_index,
             fn_registry: self.fn_registry,
+            instance_pre: self.instance_pre,
         }
     }
 }
@@ -239,11 +244,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 ctx.topmost_parent,
             );
             let mut store = Store::new(&self.engine, ctx);
-            let instance = match self
-                .linker
-                .instantiate_async(&mut store, &self.component)
-                .await
-            {
+            let instance = match self.instance_pre.instantiate_async(&mut store).await {
                 Ok(instance) => instance,
                 Err(err) => {
                     let reason = err.to_string();
@@ -402,16 +403,16 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         activity_worker::tests::{
-            spawn_activity_fibo, wasm_file_name, FIBO_10_INPUT, FIBO_10_OUTPUT, FIBO_ACTIVITY_FFQN,
+            compile_activity, spawn_activity_fibo, wasm_file_name, FIBO_10_INPUT, FIBO_10_OUTPUT,
         },
         engines::{EngineConfig, Engines},
-        tests::fn_registry_dummy,
+        tests::{fn_registry_dummy, TestingFnRegistry},
     };
     use assert_matches::assert_matches;
     use concepts::{
         prefixed_ulid::ExecutorId,
         storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState},
-        ConfigIdType, FinishedExecutionError,
+        ComponentType, ConfigIdType,
     };
     use concepts::{ExecutionId, Params};
     use db_tests::Database;
@@ -435,6 +436,23 @@ pub(crate) mod tests {
         FunctionFqn::new_static_tuple(test_programs_sleep_workflow_builder::exports::testing::sleep_workflow::workflow::SLEEP_HOST_ACTIVITY); // sleep-host-activity: func(millis: u64);
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
+
+    pub(crate) async fn compile_workflow(
+        wasm_path: &str,
+    ) -> (WasmComponent, ConfigId, ComponentType) {
+        let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
+        let config_id = ConfigId::new(
+            ConfigIdType::Workflow,
+            wasm_file_name(wasm_path),
+            StrVariant::Static("dummy hash"),
+        )
+        .unwrap();
+        (
+            WasmComponent::new(wasm_path, &engine).unwrap(),
+            config_id,
+            ComponentType::Workflow,
+        )
+    }
 
     async fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         db_pool: P,
@@ -470,7 +488,7 @@ pub(crate) mod tests {
             .unwrap()
             .into_worker(db_pool.clone()),
         );
-
+        info!("Instantiated worker");
         let exec_config = ExecConfig {
             batch_size: 1,
             lock_expiry: Duration::from_secs(3),
@@ -555,7 +573,12 @@ pub(crate) mod tests {
     ) {
         const INPUT_ITERATIONS: u32 = 1;
         let _guard = test_utils::set_up();
-        let fn_registry = fn_registry_dummy(&[FIBO_ACTIVITY_FFQN]);
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)
+                .await,
+        ]);
         let workflow_exec_task = spawn_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone(),
@@ -618,67 +641,21 @@ pub(crate) mod tests {
         activity_exec_task.close().await;
     }
 
-    #[rstest]
     #[tokio::test]
-    async fn fibo_workflow_with_no_activity_should_fail(
-        #[values(JoinNextBlockingStrategy::Interrupt, JoinNextBlockingStrategy::Await)]
-        join_next_blocking_strategy: JoinNextBlockingStrategy,
-        #[values(0, 10)] batching: u32,
-    ) {
-        const INPUT_ITERATIONS: u32 = 1;
+    #[should_panic(expected = "LinkingError { context: preinstantiation error")]
+    async fn fibo_workflow_with_missing_imports_should_fail() {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let _guard = test_utils::set_up();
         let fn_registry = fn_registry_dummy(&[]);
-        let workflow_exec_task = spawn_workflow_fibo(
+        spawn_workflow_fibo(
             db_pool.clone(),
             sim_clock.clone(),
-            join_next_blocking_strategy,
-            batching,
+            JoinNextBlockingStrategy::Interrupt,
+            0,
             fn_registry,
         )
         .await;
-        // Create an execution.
-        let execution_id = ExecutionId::from_parts(0, 0);
-        let created_at = sim_clock.now();
-        let db_connection = db_pool.connection();
-
-        let params = Params::from_json_value(json!([FIBO_10_INPUT, INPUT_ITERATIONS])).unwrap();
-        db_connection
-            .create(CreateRequest {
-                created_at,
-                execution_id,
-                ffqn: FIBO_WORKFLOW_FFQN,
-                params,
-                parent: None,
-                metadata: concepts::ExecutionMetadata::empty(),
-                scheduled_at: created_at,
-                retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
-                config_id: ConfigId::dummy(),
-                return_type: None,
-                topmost_parent: execution_id,
-            })
-            .await
-            .unwrap();
-        info!("Should end as Failed");
-        let finished_result = db_connection
-            .wait_for_finished_result(execution_id, None)
-            .await
-            .unwrap();
-        let finished_result = finished_result.unwrap_err();
-        let finished_result = assert_matches!(
-            finished_result,
-            FinishedExecutionError::PermanentFailure( reason) => reason.to_string()
-        );
-        assert_eq!(
-            "attempted to submit an execution with no active component, \
-                function metadata not found for testing:fibo/fibo.fibo",
-            finished_result
-        );
-
-        workflow_exec_task.close().await;
-        drop(db_connection);
         db_pool.close().await.unwrap();
     }
 
@@ -761,14 +738,19 @@ pub(crate) mod tests {
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = Database::Memory.set_up().await;
 
-        let empty_fn_registry = fn_registry_dummy(&[]);
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW)
+                .await,
+        ]);
 
         let workflow_exec_task = spawn_workflow_sleep(
             db_pool.clone(),
             sim_clock.clone(),
             join_next_blocking_strategy,
             batching,
-            empty_fn_registry.clone(),
+            fn_registry.clone(),
         )
         .await;
         let timers_watcher_task = expired_timers_watcher::spawn_new(
@@ -824,7 +806,7 @@ pub(crate) mod tests {
             sim_clock.clone(),
             join_next_blocking_strategy,
             batching,
-            empty_fn_registry,
+            fn_registry,
         )
         .await;
         let res = db_connection
@@ -863,8 +845,15 @@ pub(crate) mod tests {
         let (_guard, db_pool) = Database::Memory.set_up().await;
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
-        let fn_registry = fn_registry_dummy(&[
-            crate::activity_worker::tests::wasmtime_nosim::HTTP_GET_SUCCESSFUL_ACTIVITY,
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(
+                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            )
+            .await,
+            compile_workflow(
+                test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+            )
+            .await,
         ]);
         let activity_exec_task = spawn_activity(
             db_pool.clone(),
@@ -961,8 +950,15 @@ pub(crate) mod tests {
         let created_at = sim_clock.now();
         let (_guard, db_pool) = db.set_up().await;
         let db_connection = db_pool.connection();
-        let fn_registry = fn_registry_dummy(&[
-            crate::activity_worker::tests::wasmtime_nosim::HTTP_GET_SUCCESSFUL_ACTIVITY,
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(
+                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            )
+            .await,
+            compile_workflow(
+                test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+            )
+            .await,
         ]);
 
         let activity_exec_task = spawn_activity(
@@ -1049,7 +1045,12 @@ pub(crate) mod tests {
         let _guard = test_utils::set_up();
         let sim_clock = SimClock::default();
         let (_guard, db_pool) = db.set_up().await;
-        let fn_registry = fn_registry_dummy(&[RESCHEDULE_FFQN]);
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY)
+                .await,
+            compile_workflow(test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW)
+                .await,
+        ]);
         let worker = get_workflow_worker(
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             db_pool.clone(),

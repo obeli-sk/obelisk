@@ -91,12 +91,14 @@ pub(crate) mod tests {
 
     use async_trait::async_trait;
     use concepts::{
-        ComponentRetryConfig, ComponentType, ConfigId, FunctionFqn, FunctionMetadata,
-        FunctionRegistry, PackageIfcFns, ParameterTypes,
+        ComponentRetryConfig, ComponentType, ConfigId, FnName, FunctionFqn, FunctionMetadata,
+        FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterTypes, ReturnType,
     };
+    use indexmap::IndexMap;
+    use utils::wasm_tools::WasmComponent;
 
-    pub(crate) struct TestingFnRegistry(
-        hashbrown::HashMap<
+    pub(crate) struct TestingFnRegistry {
+        ffqn_to_fn_details: hashbrown::HashMap<
             FunctionFqn,
             (
                 FunctionMetadata,
@@ -105,7 +107,55 @@ pub(crate) mod tests {
                 ComponentType,
             ),
         >,
-    );
+        export_hierarchy: Vec<PackageIfcFns>,
+    }
+
+    impl TestingFnRegistry {
+        pub(crate) fn new_from_components(
+            wasm_components: Vec<(WasmComponent, ConfigId, ComponentType)>,
+        ) -> Arc<dyn FunctionRegistry> {
+            let mut ffqn_to_fn_details = hashbrown::HashMap::new();
+            let mut export_hierarchy: hashbrown::HashMap<
+                IfcFqnName,
+                IndexMap<FnName, (ParameterTypes, Option<ReturnType>)>,
+            > = hashbrown::HashMap::new();
+            for (wasm_component, config_id, component_type) in wasm_components {
+                for exported_function in wasm_component.exim.exports_flat {
+                    let ffqn = exported_function.ffqn;
+                    ffqn_to_fn_details.insert(
+                        ffqn.clone(),
+                        (
+                            FunctionMetadata {
+                                ffqn: ffqn.clone(),
+                                parameter_types: exported_function.parameter_types.clone(),
+                                return_type: exported_function.return_type.clone(),
+                            },
+                            config_id.clone(),
+                            ComponentRetryConfig::default(),
+                            component_type,
+                        ),
+                    );
+
+                    let index_map = export_hierarchy.entry(ffqn.ifc_fqn.clone()).or_default();
+                    index_map.insert(
+                        ffqn.function_name.clone(),
+                        (
+                            exported_function.parameter_types,
+                            exported_function.return_type,
+                        ),
+                    );
+                }
+            }
+            let export_hierarchy = export_hierarchy
+                .into_iter()
+                .map(|(ifc_fqn, fns)| PackageIfcFns { ifc_fqn, fns })
+                .collect();
+            Arc::from(TestingFnRegistry {
+                ffqn_to_fn_details,
+                export_hierarchy,
+            })
+        }
+    }
 
     #[async_trait]
     impl FunctionRegistry for TestingFnRegistry {
@@ -118,15 +168,23 @@ pub(crate) mod tests {
             ComponentRetryConfig,
             ComponentType,
         )> {
-            self.0.get(ffqn).cloned()
+            self.ffqn_to_fn_details.get(ffqn).cloned()
+        }
+
+        fn all_exports(&self) -> &[PackageIfcFns] {
+            &self.export_hierarchy
         }
     }
 
     pub(crate) fn fn_registry_dummy(ffqns: &[FunctionFqn]) -> Arc<dyn FunctionRegistry> {
         let component_id = ConfigId::dummy();
-        let mut map = hashbrown::HashMap::new();
+        let mut ffqn_to_fn_details = hashbrown::HashMap::new();
+        let mut export_hierarchy: hashbrown::HashMap<
+            IfcFqnName,
+            IndexMap<FnName, (ParameterTypes, Option<ReturnType>)>,
+        > = hashbrown::HashMap::new();
         for ffqn in ffqns {
-            map.insert(
+            ffqn_to_fn_details.insert(
                 ffqn.clone(),
                 (
                     FunctionMetadata {
@@ -139,100 +197,54 @@ pub(crate) mod tests {
                     ComponentType::WasmActivity,
                 ),
             );
+            let index_map = export_hierarchy.entry(ffqn.ifc_fqn.clone()).or_default();
+            index_map.insert(
+                ffqn.function_name.clone(),
+                (ParameterTypes::default(), None),
+            );
         }
-        Arc::new(TestingFnRegistry(map))
+        let export_hierarchy = export_hierarchy
+            .into_iter()
+            .map(|(ifc_fqn, fns)| PackageIfcFns { ifc_fqn, fns })
+            .collect();
+        Arc::new(TestingFnRegistry {
+            ffqn_to_fn_details,
+            export_hierarchy,
+        })
     }
 
     mod populate_codegen_cache {
         use crate::{
-            activity_worker::{ActivityConfig, ActivityWorker},
-            engines::{EngineConfig, Engines},
-            tests::fn_registry_dummy,
-            webhook_trigger::{self, MethodAwareRouter, RetryConfigOverride},
-            workflow_worker::{tests::get_workflow_worker, JoinNextBlockingStrategy},
+            activity_worker::tests::compile_activity, workflow_worker::tests::compile_workflow,
         };
-        use concepts::ConfigId;
-        use db_tests::Database;
-        use hyper::Method;
-        use std::{net::SocketAddr, sync::Arc, time::Duration};
-        use tokio::net::TcpListener;
-        use utils::time::Now;
 
-        #[rstest::rstest(path => [
+        #[rstest::rstest(wasm_path => [
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
             test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
             test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
             ])]
         #[tokio::test]
-        async fn activity(path: &str) {
-            let engine =
-                Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
-            ActivityWorker::new_with_config(
-                path,
-                ActivityConfig {
-                    config_id: ConfigId::dummy(),
-                    forward_stdout: None,
-                    forward_stderr: None,
-                    env_vars: Arc::from([]),
-                },
-                engine,
-                Now,
-            )
-            .unwrap();
+        async fn fibo(wasm_path: &str) {
+            compile_activity(wasm_path).await;
         }
 
-        #[rstest::rstest(path => [
+        #[rstest::rstest(wasm_path => [
             test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW,
             test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
             test_programs_sleep_workflow_builder::TEST_PROGRAMS_SLEEP_WORKFLOW,
             ])]
         #[tokio::test]
-        async fn workflow(path: &str) {
-            let (_guard, db_pool) = Database::Memory.set_up().await;
-            get_workflow_worker(
-                path,
-                db_pool,
-                Now,
-                JoinNextBlockingStrategy::default(),
-                0,
-                fn_registry_dummy(&[]),
-            )
-            .await;
+        async fn workflow(wasm_path: &str) {
+            compile_workflow(wasm_path).await;
         }
 
-        #[rstest::rstest(path => [
+        #[cfg(not(madsim))]
+        #[rstest::rstest(wasm_path => [
             test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK
             ])]
         #[tokio::test]
-        async fn webhook(path: &str) {
-            let engine =
-                Engines::get_webhook_engine(EngineConfig::on_demand_testing().await).unwrap();
-            let instance = webhook_trigger::prespawn_webhook_instance(
-                path,
-                &engine,
-                ConfigId::dummy(),
-                None,
-                None,
-                Arc::from([]),
-                RetryConfigOverride::default(),
-            )
-            .unwrap();
-
-            let (_guard, db_pool) = Database::Memory.set_up().await;
-            let mut router = MethodAwareRouter::default();
-            router.add(Some(Method::GET), "/fibo/:N/:ITERATIONS", instance);
-            let tcp_listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
-                .await
-                .unwrap();
-            drop(webhook_trigger::server(
-                tcp_listener,
-                engine,
-                router,
-                db_pool.clone(),
-                Now,
-                fn_registry_dummy(&[]),
-                Duration::from_secs(1),
-            ));
+        async fn webhook(wasm_path: &str) {
+            crate::webhook_trigger::tests::nosim::compile_webhook(wasm_path).await;
         }
     }
 }
