@@ -1,6 +1,6 @@
 use crate::wit_printer::WitPrinter;
 use concepts::{
-    FnName, FunctionFqn, FunctionMetadata, IfcFqnName, ParameterType, ParameterTypes, ReturnType,
+    FnName, FunctionFqn, FunctionMetadata, IfcFqnName, PackageIfcFns, ParameterType, ParameterTypes, ReturnType
 };
 use indexmap::{indexmap, IndexMap};
 use std::{path::Path, sync::Arc};
@@ -142,12 +142,6 @@ pub struct ExIm {
     pub exports_flat_noext: Vec<FunctionMetadata>,
     pub exports_flat: Vec<FunctionMetadata>,
     pub imports_flat: Vec<FunctionMetadata>,
-}
-
-#[derive(Debug, Clone)]
-pub struct PackageIfcFns {
-    pub ifc_fqn: IfcFqnName,
-    pub fns: IndexMap<FnName, (ParameterTypes, Option<ReturnType>)>,
 }
 
 impl ExIm {

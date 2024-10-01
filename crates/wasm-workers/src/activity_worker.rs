@@ -4,7 +4,7 @@ use crate::std_output_stream::StdOutput;
 use crate::workflow_ctx::log_activities;
 use crate::WasmFileError;
 use async_trait::async_trait;
-use concepts::{ConfigId, FunctionFqn, SupportedFunctionReturnValue};
+use concepts::{ConfigId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue};
 use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
@@ -87,6 +87,10 @@ impl<C: ClockFn> ActivityWorker<C> {
             env_vars: config.env_vars,
             instance_pre,
         })
+    }
+
+    pub fn exports_hierarchy(&self) -> &[PackageIfcFns] {
+        &self.exim.exports_hierarchy
     }
 }
 

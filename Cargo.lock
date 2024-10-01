@@ -2399,6 +2399,7 @@ dependencies = [
  "derive_more",
  "getrandom",
  "hashbrown 0.14.5",
+ "indexmap 2.5.0",
  "madsim",
  "madsim-tokio",
  "obeli-sk-val-json",

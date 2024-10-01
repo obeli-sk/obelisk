@@ -2,6 +2,8 @@ use ::serde::{Deserialize, Serialize};
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use derivative::Derivative;
+pub use indexmap;
+use indexmap::IndexMap;
 use opentelemetry::propagation::{Extractor, Injector};
 pub use prefixed_ulid::ExecutionId;
 use serde_json::Value;
@@ -22,7 +24,6 @@ use val_json::{
     wast_val_ser::params,
 };
 use wasmtime::component::{Type, Val};
-
 pub mod storage;
 
 pub type FinishedExecutionResult = Result<SupportedFunctionReturnValue, FinishedExecutionError>;
@@ -1099,6 +1100,12 @@ impl Display for ParameterTypes {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PackageIfcFns {
+    pub ifc_fqn: IfcFqnName,
+    pub fns: IndexMap<FnName, (ParameterTypes, Option<ReturnType>)>,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ComponentRetryConfig {
     pub max_retries: u32,
@@ -1116,6 +1123,8 @@ pub trait FunctionRegistry: Send + Sync {
         ComponentRetryConfig,
         ComponentType,
     )>;
+
+    fn all_exports(&self) -> &[PackageIfcFns];
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, derive_more::Display, PartialEq, Eq)]

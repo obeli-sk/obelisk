@@ -92,7 +92,7 @@ pub(crate) mod tests {
     use async_trait::async_trait;
     use concepts::{
         ComponentRetryConfig, ComponentType, ConfigId, FunctionFqn, FunctionMetadata,
-        FunctionRegistry, ParameterTypes,
+        FunctionRegistry, PackageIfcFns, ParameterTypes,
     };
 
     pub(crate) struct TestingFnRegistry(

@@ -2,7 +2,7 @@ use crate::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::WasmFileError;
 use async_trait::async_trait;
 use concepts::storage::{DbConnection, DbPool};
-use concepts::{ConfigId, FunctionFqn, FunctionMetadata, StrVariant};
+use concepts::{ConfigId, FunctionFqn, FunctionMetadata, PackageIfcFns, StrVariant};
 use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
@@ -11,7 +11,7 @@ use std::ops::Deref;
 use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::ComponentExportIndex;
@@ -52,16 +52,27 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     fn_registry: Arc<dyn FunctionRegistry>,
 }
 
-pub struct WorkflowWorkerPre<C: ClockFn> {
+pub struct WorkflowWorkerCompiled<C: ClockFn> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
     clock_fn: C,
     wasm_component: WasmComponent,
 }
 
+pub struct WorkflowWorkerLinked<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+    config: WorkflowConfig,
+    engine: Arc<Engine>,
+    linker: wasmtime::component::Linker<WorkflowCtx<C, DB, P>>,
+    component: wasmtime::component::Component,
+    exim: ExIm,
+    clock_fn: C,
+    exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
+    fn_registry: Arc<dyn FunctionRegistry>,
+}
+
 pub(crate) const PREFIX_OF_IGNORED_IMPORTS: &str = "obelisk:";
 
-impl<C: ClockFn> WorkflowWorkerPre<C> {
+impl<C: ClockFn> WorkflowWorkerCompiled<C> {
     #[tracing::instrument(skip_all, fields(%config.config_id), err)]
     pub fn new_with_config(
         wasm_path: impl AsRef<Path>,
@@ -80,23 +91,14 @@ impl<C: ClockFn> WorkflowWorkerPre<C> {
         })
     }
 
-    pub fn into_worker<DB: DbConnection, P: DbPool<DB>>(
+    #[instrument(skip_all, fields(config_id = %self.config.config_id))]
+    pub fn into_linked<DB: DbConnection, P: DbPool<DB>>(
         self,
         fn_registry: Arc<dyn FunctionRegistry>,
-        db_pool: P,
-    ) -> Result<WorkflowWorker<C, DB, P>, WasmFileError> {
+    ) -> Result<WorkflowWorkerLinked<C, DB, P>, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
         // Mock imported functions
-        // FIXME: mock available exported functions instead of current component imports
-        for import in &self.wasm_component.exim.imports_hierarchy {
-            if import
-                .ifc_fqn
-                .deref()
-                .starts_with(PREFIX_OF_IGNORED_IMPORTS)
-            {
-                // Skip host-implemented functions
-                continue;
-            }
+        for import in fn_registry.all_exports() {
             trace!(
                 ifc_fqn = %import.ifc_fqn,
                 "Adding imported interface to the linker",
@@ -149,13 +151,12 @@ impl<C: ClockFn> WorkflowWorkerPre<C> {
             .index_exported_functions()
             .map_err(WasmFileError::DecodeError)?;
 
-        Ok(WorkflowWorker {
+        Ok(WorkflowWorkerLinked {
             config: self.config,
             engine: self.engine,
             linker,
             component: self.wasm_component.wasmtime_component,
             exim: self.wasm_component.exim,
-            db_pool,
             clock_fn: self.clock_fn,
             exported_ffqn_to_index,
             fn_registry,
@@ -166,8 +167,28 @@ impl<C: ClockFn> WorkflowWorkerPre<C> {
         &self.wasm_component.exim.exports_flat
     }
 
+    pub fn exports_hierarchy(&self) -> &[PackageIfcFns] {
+        &self.wasm_component.exim.exports_hierarchy
+    }
+
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
         &self.wasm_component.exim.imports_flat
+    }
+}
+
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerLinked<C, DB, P> {
+    pub fn into_worker(self, db_pool: P) -> WorkflowWorker<C, DB, P> {
+        WorkflowWorker {
+            config: self.config,
+            engine: self.engine,
+            linker: self.linker,
+            component: self.component,
+            exim: self.exim,
+            db_pool,
+            clock_fn: self.clock_fn,
+            exported_ffqn_to_index: self.exported_ffqn_to_index,
+            fn_registry: self.fn_registry,
+        }
     }
 }
 
@@ -432,7 +453,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         let worker = Arc::new(
-            WorkflowWorkerPre::new_with_config(
+            WorkflowWorkerCompiled::new_with_config(
                 wasm_path,
                 WorkflowConfig {
                     config_id: config_id.clone(),
@@ -445,8 +466,9 @@ pub(crate) mod tests {
                 clock_fn.clone(),
             )
             .unwrap()
-            .into_worker(fn_registry, db_pool.clone())
-            .unwrap(),
+            .into_linked(fn_registry)
+            .unwrap()
+            .into_worker(db_pool.clone()),
         );
 
         let exec_config = ExecConfig {
@@ -673,7 +695,7 @@ pub(crate) mod tests {
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Arc<WorkflowWorker<C, DB, P>> {
         Arc::new(
-            WorkflowWorkerPre::new_with_config(
+            WorkflowWorkerCompiled::new_with_config(
                 path,
                 WorkflowConfig {
                     config_id: ConfigId::dummy(),
@@ -686,8 +708,9 @@ pub(crate) mod tests {
                 clock_fn,
             )
             .unwrap()
-            .into_worker(fn_registry, db_pool.clone())
-            .unwrap(),
+            .into_linked(fn_registry)
+            .unwrap()
+            .into_worker(db_pool),
         )
     }
 

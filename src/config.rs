@@ -6,6 +6,7 @@ use anyhow::Context;
 use concepts::ConfigId;
 use concepts::ConfigIdType;
 use concepts::ContentDigest;
+use concepts::PackageIfcFns;
 use concepts::StrVariant;
 use concepts::{ComponentType, FunctionMetadata};
 use serde_with::serde_as;
@@ -25,6 +26,7 @@ pub struct Component {
     pub config_store: ConfigStore,
     pub imports: Vec<FunctionMetadata>,
     pub exports: Vec<FunctionMetadata>,
+    pub exports_hierarchy: Vec<PackageIfcFns>,
 }
 
 #[derive(Debug, Clone, Hash)]
