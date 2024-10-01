@@ -708,7 +708,7 @@ impl ServerInit {
             .workers_linked
             .into_iter()
             .map(|pre_spawn| pre_spawn.spawn(db_pool.clone()))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect();
 
         // Start TCP listeners
         let http_servers_handles: Vec<AbortOnDropHandle> = start_webhooks(
@@ -1190,21 +1190,21 @@ struct WorkerLinked {
     executor_id: ExecutorId,
 }
 impl WorkerLinked {
-    fn spawn(self, db_pool: SqlitePool) -> Result<ExecutorTaskHandle, anyhow::Error> {
+    fn spawn(self, db_pool: SqlitePool) -> ExecutorTaskHandle {
         let worker = match self.worker {
             Either::Left(activity) => activity,
             Either::Right(workflow_linked) => {
                 Arc::from(workflow_linked.into_worker(db_pool.clone()))
             }
         };
-        Ok(ExecTask::spawn_new(
+        ExecTask::spawn_new(
             worker,
             self.exec_config,
             Now,
             db_pool,
             self.task_limiter,
             self.executor_id,
-        ))
+        )
     }
 }
 
