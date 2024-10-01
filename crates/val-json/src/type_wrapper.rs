@@ -1,3 +1,4 @@
+pub use indexmap;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;

@@ -1,6 +1,7 @@
 use ::serde::{Deserialize, Serialize};
 use assert_matches::assert_matches;
 use async_trait::async_trait;
+use derivative::Derivative;
 use opentelemetry::propagation::{Extractor, Injector};
 pub use prefixed_ulid::ExecutionId;
 use serde_json::Value;
@@ -154,6 +155,11 @@ impl<T> Name<T> {
             value: StrVariant::Arc(value),
             phantom_data: PhantomData,
         }
+    }
+
+    #[must_use]
+    pub fn new_string(value: String) -> Self {
+        Self::new_arc(Arc::from(value))
     }
 
     #[must_use]
@@ -438,6 +444,20 @@ pub struct FunctionMetadata {
     pub ffqn: FunctionFqn,
     pub parameter_types: ParameterTypes,
     pub return_type: Option<ReturnType>,
+}
+impl Display for FunctionMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{ffqn}: func{params}",
+            ffqn = self.ffqn,
+            params = self.parameter_types
+        )?;
+        if let Some(return_type) = &self.return_type {
+            write!(f, " -> {return_type}")?;
+        }
+        Ok(())
+    }
 }
 
 mod serde_params {
@@ -1007,9 +1027,11 @@ pub enum ComponentType {
     Workflow,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Derivative, Eq)]
+#[derivative(PartialEq)]
 pub struct ReturnType {
     pub type_wrapper: TypeWrapper,
+    #[derivative(PartialEq = "ignore")]
     pub wit_type: Option<String>,
 }
 
@@ -1028,11 +1050,14 @@ impl Display for ReturnType {
 )]
 pub struct ParameterTypes(pub Vec<ParameterType>);
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Derivative, Eq)]
+#[derivative(PartialEq)]
 pub struct ParameterType {
-    pub name: Option<String>,
-    pub wit_type: Option<String>,
     pub type_wrapper: TypeWrapper,
+    #[derivative(PartialEq = "ignore")]
+    pub name: Option<String>,
+    #[derivative(PartialEq = "ignore")]
+    pub wit_type: Option<String>,
 }
 
 impl Debug for ParameterTypes {

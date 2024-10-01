@@ -6,9 +6,9 @@ expression: exports
   "testing:http-workflow/workflow.get": [
     [
       {
+        "type_wrapper": "String",
         "name": "url",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       }
     ],
     {
@@ -24,9 +24,9 @@ expression: exports
   "testing:http-workflow/workflow.get-successful": [
     [
       {
+        "type_wrapper": "String",
         "name": "url",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       }
     ],
     {
@@ -42,11 +42,11 @@ expression: exports
   "testing:http-workflow/workflow.get-successful-concurrently": [
     [
       {
-        "name": "urls",
-        "wit_type": "list<string>",
         "type_wrapper": {
           "List": "String"
-        }
+        },
+        "name": "urls",
+        "wit_type": "list<string>"
       }
     ],
     {
@@ -64,14 +64,14 @@ expression: exports
   "testing:http-workflow/workflow.get-successful-concurrently-stress": [
     [
       {
+        "type_wrapper": "String",
         "name": "url",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       },
       {
+        "type_wrapper": "U32",
         "name": "concurrency",
-        "wit_type": "u32",
-        "type_wrapper": "U32"
+        "wit_type": "u32"
       }
     ],
     {

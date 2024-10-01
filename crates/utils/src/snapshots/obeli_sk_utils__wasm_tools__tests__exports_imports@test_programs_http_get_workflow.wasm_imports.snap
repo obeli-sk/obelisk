@@ -13,9 +13,9 @@ expression: imports
   "testing:http-obelisk-ext/http-get.get-successful-await-next": [
     [
       {
+        "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       }
     ],
     {
@@ -31,14 +31,14 @@ expression: imports
   "testing:http-obelisk-ext/http-get.get-successful-submit": [
     [
       {
+        "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       },
       {
+        "type_wrapper": "String",
         "name": "url",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       }
     ],
     {
@@ -49,9 +49,9 @@ expression: imports
   "testing:http/http-get.get": [
     [
       {
+        "type_wrapper": "String",
         "name": "url",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       }
     ],
     {
@@ -67,9 +67,9 @@ expression: imports
   "testing:http/http-get.get-successful": [
     [
       {
+        "type_wrapper": "String",
         "name": "url",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       }
     ],
     {

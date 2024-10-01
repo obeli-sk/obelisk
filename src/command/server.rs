@@ -32,10 +32,13 @@ use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
 use concepts::ConfigId;
 use concepts::ExecutionId;
+use concepts::FnName;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
+use concepts::IfcFqnName;
 use concepts::ParameterType;
+use concepts::ParameterTypes;
 use concepts::Params;
 use concepts::ReturnType;
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -49,6 +52,7 @@ use itertools::Either;
 use serde::Deserialize;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -69,6 +73,8 @@ use tracing::Span;
 use tracing::{debug, info, trace};
 use utils::time::ClockFn;
 use utils::time::Now;
+use val_json::type_wrapper::indexmap::indexmap;
+use val_json::type_wrapper::TypeWrapper;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
@@ -568,10 +574,6 @@ impl ServerInit {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
     ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
-        let db_pool = SqlitePool::new(&db_file, config.sqlite.as_config())
-            .await
-            .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
-
         let engines = {
             let codegen_cache_config_file_holder = Engines::write_codegen_config(codegen_cache)
                 .await
@@ -582,15 +584,6 @@ impl ServerInit {
                 codegen_cache_config_file_holder,
             )?
         };
-        let _epoch_ticker =
-            EpochTicker::spawn_new(engines.weak_refs(), Duration::from_millis(EPOCH_MILLIS));
-        let timers_watcher = expired_timers_watcher::spawn_new(
-            db_pool.clone(),
-            TimersWatcherConfig {
-                tick_sleep: Duration::from_millis(100),
-                clock_fn: Now,
-            },
-        );
         let verified_config = fetch_and_verify_all(
             config.wasm_activities,
             config.workflows,
@@ -601,16 +594,29 @@ impl ServerInit {
         )
         .await?;
         debug!("Verified config: {verified_config:#?}");
-        // Compile
-        let (mut compiled_components, component_registry_ro) = compile_all(
+        // Compile and type check
+        let (mut compiled_components, component_registry_ro) = compile_and_type_check(
             &engines,
             verified_config.wasm_activities,
             verified_config.workflows,
             verified_config.webhooks_by_names,
-            &db_pool,
         )
         .await?;
-        // TODO: typecheck imports of workflows and webhooks, including the extended functions
+
+        // Start components requiring a databaase
+        let _epoch_ticker =
+            EpochTicker::spawn_new(engines.weak_refs(), Duration::from_millis(EPOCH_MILLIS));
+        let db_pool = SqlitePool::new(&db_file, config.sqlite.as_config())
+            .await
+            .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
+
+        let timers_watcher = expired_timers_watcher::spawn_new(
+            db_pool.clone(),
+            TimersWatcherConfig {
+                tick_sleep: Duration::from_millis(100),
+                clock_fn: Now,
+            },
+        );
 
         // Associate webhooks with http servers
         let http_servers_to_webhooks = {
@@ -672,12 +678,15 @@ impl ServerInit {
     }
 }
 
-type WebhookInstanceAndRoutes<DB, P> = (WebhookInstance<Now, DB, P>, Vec<WebhookRouteVerified>);
+type WebhookInstanceAndRoutes = (
+    WebhookInstance<Now, SqlitePool, SqlitePool>,
+    Vec<WebhookRouteVerified>,
+);
 
-async fn start_webhooks<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
-    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstanceAndRoutes<DB, P>>)>,
+async fn start_webhooks(
+    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstanceAndRoutes>)>,
     engines: &Engines,
-    db_pool: P,
+    db_pool: SqlitePool,
     fn_registry: Arc<dyn FunctionRegistry>,
 ) -> Result<Vec<AbortOnDropHandle>, anyhow::Error> {
     let mut abort_handles = Vec::with_capacity(http_servers_to_webhooks.len());
@@ -886,19 +895,18 @@ async fn fetch_and_verify_all(
     }
 }
 
-struct CompiledComponents<DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
-    executor_prespawns: Vec<ExecutorPreSpawn<DB, P>>,
-    webhooks_by_names: hashbrown::HashMap<String, WebhookInstanceAndRoutes<DB, P>>,
+struct CompiledComponents {
+    executor_prespawns: Vec<ExecutorPreSpawn>,
+    webhooks_by_names: hashbrown::HashMap<String, WebhookInstanceAndRoutes>,
 }
 
 #[instrument(skip_all)]
-async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+async fn compile_and_type_check(
     engines: &Engines,
     wasm_activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<String, WebhookComponentVerified>,
-    db_pool: &P,
-) -> Result<(CompiledComponents<DB, P>, ComponentConfigRegistryRO), anyhow::Error> {
+) -> Result<(CompiledComponents, ComponentConfigRegistryRO), anyhow::Error> {
     let mut component_registry = ComponentConfigRegistry::default();
     let pre_spawns: Vec<tokio::task::JoinHandle<Result<_, anyhow::Error>>> = wasm_activities
         .into_iter()
@@ -915,13 +923,12 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         })
         .chain(workflows.into_iter().map(|workflow| {
             let engines = engines.clone();
-            let db_pool = db_pool.clone();
             let span = tracing::Span::current();
             #[cfg_attr(madsim, allow(deprecated))]
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     let executor_id = ExecutorId::generate();
-                    prespawn_workflow(workflow, db_pool, &engines, executor_id).map(Either::Left)
+                    prespawn_workflow(workflow, &engines, executor_id).map(Either::Left)
                 })
             })
         }))
@@ -966,10 +973,11 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
                     },
                 }
             }
+            let component_registry = component_registry.type_check()?;
             Ok((CompiledComponents {
                 executor_prespawns,
                 webhooks_by_names,
-            }, component_registry.into_read_only()))
+            }, component_registry))
         },
         sigint = tokio::signal::ctrl_c() => {
             sigint.expect("failed to listen for SIGINT event");
@@ -985,11 +993,11 @@ async fn compile_all<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     name = activity.config_store.name(),
     wasm_path = ?activity.wasm_path,
 ))]
-fn prespawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+fn prespawn_activity(
     activity: ActivityConfigVerified,
     engines: &Engines,
     executor_id: ExecutorId,
-) -> Result<(ExecutorPreSpawn<DB, P>, Component), anyhow::Error> {
+) -> Result<(ExecutorPreSpawn, Component), anyhow::Error> {
     debug!("Instantiating activity");
     trace!(?activity, "Full configuration");
     let worker = Arc::new(ActivityWorker::new_with_config(
@@ -1012,19 +1020,17 @@ fn prespawn_activity<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     name = workflow.config_store.name(),
     wasm_path = ?workflow.wasm_path,
 ))]
-fn prespawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
+fn prespawn_workflow(
     workflow: WorkflowConfigVerified,
-    db_pool: P,
     engines: &Engines,
     executor_id: ExecutorId,
-) -> Result<(ExecutorPreSpawn<DB, P>, Component), anyhow::Error> {
+) -> Result<(ExecutorPreSpawn, Component), anyhow::Error> {
     debug!("Instantiating workflow");
     trace!(?workflow, "Full configuration");
     let worker = WorkflowWorkerPre::new_with_config(
         workflow.wasm_path,
         workflow.workflow_config,
         engines.workflow_engine.clone(),
-        db_pool.clone(),
         Now,
     )?;
     Ok(ExecutorPreSpawn::new_workflow(
@@ -1035,20 +1041,20 @@ fn prespawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     ))
 }
 
-struct ExecutorPreSpawn<DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
-    worker: Either<Arc<dyn Worker>, WorkflowWorkerPre<Now, DB, P>>,
+struct ExecutorPreSpawn {
+    worker: Either<Arc<dyn Worker>, WorkflowWorkerPre<Now>>,
     exec_config: ExecConfig,
     task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_id: ExecutorId,
 }
 
-impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P> {
+impl ExecutorPreSpawn {
     fn new_activity(
         worker: Arc<dyn Worker>,
         config_store: ConfigStore,
         exec_config: ExecConfig,
         executor_id: ExecutorId,
-    ) -> (ExecutorPreSpawn<DB, P>, Component) {
+    ) -> (ExecutorPreSpawn, Component) {
         let component = Component {
             config_id: exec_config.config_id.clone(),
             config_store,
@@ -1068,11 +1074,11 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P
     }
 
     fn new_workflow(
-        worker: WorkflowWorkerPre<Now, DB, P>,
+        worker: WorkflowWorkerPre<Now>,
         config_store: ConfigStore,
         exec_config: ExecConfig,
         executor_id: ExecutorId,
-    ) -> (ExecutorPreSpawn<DB, P>, Component) {
+    ) -> (ExecutorPreSpawn, Component) {
         let component = Component {
             config_id: exec_config.config_id.clone(),
             config_store,
@@ -1091,7 +1097,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P
         )
     }
 
-    fn spawn(
+    fn spawn<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
         self,
         db_pool: P,
         fn_registry: &Arc<dyn FunctionRegistry>,
@@ -1099,7 +1105,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> ExecutorPreSpawn<DB, P
         let worker = match self.worker {
             Either::Left(activity) => activity,
             Either::Right(workflow_pre) => {
-                Arc::from(workflow_pre.into_worker(fn_registry.clone())?)
+                Arc::from(workflow_pre.into_worker(fn_registry.clone(), db_pool.clone())?)
             }
         };
         Ok(ExecTask::spawn_new(
@@ -1134,7 +1140,7 @@ struct ComponentConfigRegistryInner {
 
 impl ComponentConfigRegistry {
     fn insert(&mut self, component: Component) -> Result<(), anyhow::Error> {
-        // check for conflicts
+        // verify that the component or its exports are not already present
         if self
             .inner
             .ids_to_components
@@ -1143,20 +1149,26 @@ impl ComponentConfigRegistry {
             bail!("component {} is already inserted", component.config_id);
         }
         for exported_ffqn in component.exports.iter().flatten().map(|f| &f.ffqn) {
+            if exported_ffqn.ifc_fqn.ifc_name().ends_with("-obelisk-ext") {
+                bail!(
+                    "exported interface name must not end with `-obelisk-ext`, cannot insert {}",
+                    component.config_id
+                );
+            }
             if let Some((offending_id, _, _, _)) = self.inner.exported_ffqns.get(exported_ffqn) {
                 bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
             }
         }
-        // insert
-        for exported_fn in component.exports.iter().flatten() {
+
+        let mut insert = |fn_metadata: FunctionMetadata| {
             assert!(self
                 .inner
                 .exported_ffqns
                 .insert(
-                    exported_fn.ffqn.clone(),
+                    fn_metadata.ffqn.clone(),
                     (
                         component.config_id.clone(),
-                        exported_fn.clone(),
+                        fn_metadata,
                         ComponentRetryConfig {
                             max_retries: component.config_store.default_max_retries(),
                             retry_exp_backoff: component.config_store.default_retry_exp_backoff()
@@ -1165,6 +1177,94 @@ impl ComponentConfigRegistry {
                     ),
                 )
                 .is_none());
+        };
+        let return_type_string = Some(ReturnType {
+            type_wrapper: TypeWrapper::String,
+            wit_type: Some(
+                format!("string"), // TODO: StrVariant
+            ),
+        });
+        let param_type_join_set = ParameterType {
+            type_wrapper: TypeWrapper::String,
+            name: Some("join-set-id".to_string()),
+            wit_type: Some("string".to_string()), // TODO: StrVariant
+        };
+        let param_type_scheduled_at = ParameterType {
+            type_wrapper: TypeWrapper::Variant(indexmap! {
+                Box::from("now") => None,
+                Box::from("at") => Some(TypeWrapper::Record(indexmap! {
+                    Box::from("seconds") => TypeWrapper::U64,
+                    Box::from("nanoseconds") => TypeWrapper::U32,
+                })),
+                Box::from("in") => Some(TypeWrapper::U64),
+            }),
+            name: Some("scheduled-at".to_string()),
+            wit_type: Some("/* use obelisk:types/time.{schedule-at} */ schedule-at".to_string()), // TODO: StrVariant
+        };
+        // insert exported functions
+        for exported_fn_metadata in component.exports.iter().flatten() {
+            // insert the exported function
+            insert(exported_fn_metadata.clone());
+            // insert `-obelisk-ext` functions
+            let exported_ifc_fqn = &exported_fn_metadata.ffqn.ifc_fqn;
+            let obelisk_extended_ifc = IfcFqnName::from_parts(
+                exported_ifc_fqn.namespace(),
+                &format!("{}-obelisk-ext", exported_ifc_fqn.package_name()),
+                exported_ifc_fqn.ifc_name(),
+                exported_ifc_fqn.version(),
+            );
+
+            // -submit(join-set-id: string, original params) -> string (execution id)
+            let fn_submit = FunctionMetadata {
+                ffqn: FunctionFqn {
+                    ifc_fqn: obelisk_extended_ifc.clone(),
+                    function_name: FnName::new_string(format!(
+                        "{}-submit",
+                        exported_fn_metadata.ffqn.function_name
+                    )),
+                },
+                parameter_types: {
+                    let mut params =
+                        Vec::with_capacity(exported_fn_metadata.parameter_types.len() + 1);
+                    params.push(param_type_join_set.clone());
+                    params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
+                    ParameterTypes(params)
+                },
+                return_type: return_type_string.clone(),
+            };
+            insert(fn_submit);
+            // -await-next(join-set-id: string) -> original return type
+            let fn_await_next = FunctionMetadata {
+                ffqn: FunctionFqn {
+                    ifc_fqn: obelisk_extended_ifc.clone(),
+                    function_name: FnName::new_string(format!(
+                        "{}-await-next",
+                        exported_fn_metadata.ffqn.function_name
+                    )),
+                },
+                parameter_types: ParameterTypes(vec![param_type_join_set.clone()]),
+                return_type: exported_fn_metadata.return_type.clone(),
+            };
+            insert(fn_await_next);
+            // -schedule(schedule: schedule-at, original params) -> string (execution id)
+            let fn_schedule = FunctionMetadata {
+                ffqn: FunctionFqn {
+                    ifc_fqn: obelisk_extended_ifc,
+                    function_name: FnName::new_string(format!(
+                        "{}-schedule",
+                        exported_fn_metadata.ffqn.function_name
+                    )),
+                },
+                parameter_types: {
+                    let mut params =
+                        Vec::with_capacity(exported_fn_metadata.parameter_types.len() + 1);
+                    params.push(param_type_scheduled_at.clone());
+                    params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
+                    ParameterTypes(params)
+                },
+                return_type: return_type_string.clone(),
+            };
+            insert(fn_schedule);
         }
         assert!(self
             .inner
@@ -1174,9 +1274,71 @@ impl ComponentConfigRegistry {
         Ok(())
     }
 
-    fn into_read_only(self) -> ComponentConfigRegistryRO {
-        ComponentConfigRegistryRO {
-            inner: Arc::new(self.inner),
+    /// Type check imported fns with available exports.
+    // TODO: webhooks as well
+    fn type_check(self) -> Result<ComponentConfigRegistryRO, anyhow::Error> {
+        let mut errors = Vec::new();
+        let additional_import_whitelist =
+            |import: &FunctionMetadata, component_type| match component_type {
+                ComponentType::WasmActivity => {
+                    if import.ffqn.ifc_fqn.namespace() == "wasi" {
+                        true
+                    } else if import.ffqn.ifc_fqn.deref() == "obelisk:log/log" {
+                        // TODO: check function
+                        true
+                    } else {
+                        false
+                    }
+                }
+                ComponentType::Workflow => {
+                    // logging + host activities
+                    if import.ffqn.ifc_fqn.deref() == "obelisk:log/log" {
+                        // TODO: check function
+                        true
+                    } else if import.ffqn.ifc_fqn.deref() == "obelisk:workflow/host-activities" {
+                        // TODO: check function
+                        true
+                    } else {
+                        false
+                    }
+                }
+            };
+        for (examined_config_id, examined_component) in &self.inner.ids_to_components {
+            for imported_fn_metadata in &examined_component.imports {
+                if let Some((exported_config_id, exported_fn_metadata, _, _)) =
+                    self.inner.exported_ffqns.get(&imported_fn_metadata.ffqn)
+                {
+                    // check parameters
+                    if imported_fn_metadata.parameter_types != exported_fn_metadata.parameter_types
+                    {
+                        error!("Parameter types do not match: {examined_config_id} imports {import} , {exported_config_id} exports {export}",
+                            import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format
+                            export = serde_json::to_string(exported_fn_metadata).unwrap(),
+                        );
+                        errors.push(format!("parameter types do not match: {examined_config_id} imports {imported_fn_metadata} , {exported_config_id} exports {exported_fn_metadata}"));
+                    }
+                    if imported_fn_metadata.return_type != exported_fn_metadata.return_type {
+                        error!("Return types do not match: {examined_config_id} imports {import} , {exported_config_id} exports {export}",
+                            import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format
+                            export = serde_json::to_string(exported_fn_metadata).unwrap(),
+                        );
+                        errors.push(format!("return types do not match: {examined_config_id} imports {imported_fn_metadata} , {exported_config_id} exports {exported_fn_metadata}"));
+                    }
+                } else if !additional_import_whitelist(
+                    imported_fn_metadata,
+                    examined_component.component_type,
+                ) {
+                    errors.push(format!("function imported by {examined_config_id} not found: {imported_fn_metadata}"));
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(ComponentConfigRegistryRO {
+                inner: Arc::new(self.inner),
+            })
+        } else {
+            let errors = errors.join("\n");
+            bail!("component resolution error: \n{errors}")
         }
     }
 }

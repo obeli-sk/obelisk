@@ -7,7 +7,6 @@ use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::error::Error;
-use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::Path;
 use std::time::Duration;
@@ -53,24 +52,21 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     fn_registry: Arc<dyn FunctionRegistry>,
 }
 
-pub struct WorkflowWorkerPre<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
+pub struct WorkflowWorkerPre<C: ClockFn> {
     config: WorkflowConfig,
     engine: Arc<Engine>,
-    db_pool: P,
     clock_fn: C,
     wasm_component: WasmComponent,
-    phantom_data: PhantomData<DB>,
 }
 
 pub(crate) const PREFIX_OF_IGNORED_IMPORTS: &str = "obelisk:";
 
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerPre<C, DB, P> {
+impl<C: ClockFn> WorkflowWorkerPre<C> {
     #[tracing::instrument(skip_all, fields(%config.config_id), err)]
     pub fn new_with_config(
         wasm_path: impl AsRef<Path>,
         config: WorkflowConfig,
         engine: Arc<Engine>,
-        db_pool: P,
         clock_fn: C,
     ) -> Result<Self, WasmFileError> {
         let wasm_path = wasm_path.as_ref();
@@ -80,18 +76,18 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerPre<C, DB, P> {
             config,
             engine,
             wasm_component,
-            db_pool,
             clock_fn,
-            phantom_data: PhantomData,
         })
     }
 
-    pub fn into_worker(
+    pub fn into_worker<DB: DbConnection, P: DbPool<DB>>(
         self,
         fn_registry: Arc<dyn FunctionRegistry>,
+        db_pool: P,
     ) -> Result<WorkflowWorker<C, DB, P>, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
         // Mock imported functions
+        // FIXME: mock available exported functions instead of current component imports
         for import in &self.wasm_component.exim.imports_hierarchy {
             if import
                 .ifc_fqn
@@ -159,7 +155,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerPre<C, DB, P> {
             linker,
             component: self.wasm_component.component,
             exim: self.wasm_component.exim,
-            db_pool: self.db_pool,
+            db_pool,
             clock_fn: self.clock_fn,
             exported_ffqn_to_index,
             fn_registry,
@@ -446,11 +442,10 @@ pub(crate) mod tests {
                     non_blocking_event_batching,
                 },
                 workflow_engine,
-                db_pool.clone(),
                 clock_fn.clone(),
             )
             .unwrap()
-            .into_worker(fn_registry)
+            .into_worker(fn_registry, db_pool.clone())
             .unwrap(),
         );
 
@@ -688,11 +683,10 @@ pub(crate) mod tests {
                     non_blocking_event_batching,
                 },
                 Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap(),
-                db_pool,
                 clock_fn,
             )
             .unwrap()
-            .into_worker(fn_registry)
+            .into_worker(fn_registry, db_pool.clone())
             .unwrap(),
         )
     }

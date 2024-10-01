@@ -6,9 +6,9 @@ expression: imports
   "obelisk:log/log.trace": [
     [
       {
+        "type_wrapper": "String",
         "name": "message",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       }
     ],
     null
@@ -23,9 +23,9 @@ expression: imports
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": [
     [
       {
+        "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       }
     ],
     {
@@ -36,14 +36,14 @@ expression: imports
   "testing:fibo-obelisk-ext/fibo.fibo-submit": [
     [
       {
+        "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       },
       {
+        "type_wrapper": "U8",
         "name": "n",
-        "wit_type": "u8",
-        "type_wrapper": "U8"
+        "wit_type": "u8"
       }
     ],
     {
@@ -54,9 +54,9 @@ expression: imports
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": [
     [
       {
+        "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       }
     ],
     {
@@ -67,19 +67,19 @@ expression: imports
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [
     [
       {
+        "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string",
-        "type_wrapper": "String"
+        "wit_type": "string"
       },
       {
+        "type_wrapper": "U8",
         "name": "n",
-        "wit_type": "u8",
-        "type_wrapper": "U8"
+        "wit_type": "u8"
       },
       {
+        "type_wrapper": "U32",
         "name": "iterations",
-        "wit_type": "u32",
-        "type_wrapper": "U32"
+        "wit_type": "u32"
       }
     ],
     {
@@ -90,9 +90,9 @@ expression: imports
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     [
       {
+        "type_wrapper": "U8",
         "name": "n",
-        "wit_type": "u8",
-        "type_wrapper": "U8"
+        "wit_type": "u8"
       }
     ],
     {
@@ -103,9 +103,9 @@ expression: imports
   "testing:fibo/fibo.fibo": [
     [
       {
+        "type_wrapper": "U8",
         "name": "n",
-        "wit_type": "u8",
-        "type_wrapper": "U8"
+        "wit_type": "u8"
       }
     ],
     {
