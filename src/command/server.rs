@@ -276,10 +276,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 r#type: component.config_id.config_id_type.to_string(),
                 config_id: Some(component.config_id.into()),
                 digest: component.config_store.common().content_digest.to_string(),
-                exports: match component.exports {
-                    Some(exports) => inspect_fns(exports, true),
-                    None => Vec::new(),
-                },
+                exports: inspect_fns(component.exports, true),
                 imports: inspect_fns(component.imports, true),
             };
             res_components.push(res_component);
@@ -1058,7 +1055,7 @@ impl ExecutorPreSpawn {
         let component = Component {
             config_id: exec_config.config_id.clone(),
             config_store,
-            exports: Some(worker.exported_functions().to_vec()),
+            exports: worker.exported_functions().to_vec(),
             imports: worker.imported_functions().to_vec(),
             component_type: ComponentType::WasmActivity,
         };
@@ -1082,7 +1079,7 @@ impl ExecutorPreSpawn {
         let component = Component {
             config_id: exec_config.config_id.clone(),
             config_store,
-            exports: Some(worker.exported_functions().to_vec()),
+            exports: worker.exported_functions().to_vec(),
             imports: worker.imported_functions().to_vec(),
             component_type: ComponentType::Workflow,
         };
@@ -1149,7 +1146,7 @@ impl ComponentConfigRegistry {
         {
             bail!("component {} is already inserted", component.config_id);
         }
-        for exported_ffqn in component.exports.iter().flatten().map(|f| &f.ffqn) {
+        for exported_ffqn in component.exports.iter().map(|f| &f.ffqn) {
             if exported_ffqn.ifc_fqn.ifc_name().ends_with("-obelisk-ext") {
                 bail!(
                     "exported interface name must not end with `-obelisk-ext`, cannot insert {}",
@@ -1203,7 +1200,7 @@ impl ComponentConfigRegistry {
             wit_type: Some("/* use obelisk:types/time.{schedule-at} */ schedule-at".to_string()), // TODO: StrVariant
         };
         // insert exported functions
-        for exported_fn_metadata in component.exports.iter().flatten() {
+        for exported_fn_metadata in &component.exports {
             // insert the exported function
             insert(exported_fn_metadata.clone());
             // insert `-obelisk-ext` functions

@@ -24,7 +24,7 @@ pub struct Component {
     pub component_type: ComponentType,
     pub config_store: ConfigStore,
     pub imports: Vec<FunctionMetadata>,
-    pub exports: Option<Vec<FunctionMetadata>>,
+    pub exports: Vec<FunctionMetadata>,
 }
 
 #[derive(Debug, Clone, Hash)]
