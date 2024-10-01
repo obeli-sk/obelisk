@@ -98,7 +98,7 @@ forward_stderr = "stderr"
 
 [[workflow]]
 name = "http_get_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-08-12-1@sha256:d591785af59e5b0809b87a6e32bae7f590f0ea459a53d4bbcb8dc3e4322ddce3"
+location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-10-01@sha256:d105fb7edfec4fe4422882288cf1742076884fecd54236bfd85acb8d4009a428"
 
 [[http_server]]
 name = "external"
