@@ -19,29 +19,17 @@ pub(crate) fn inspect<P: AsRef<Path>>(
     };
     let wasm_component = WasmComponent::new(wasm_path, &engine)?;
     println!("Exports:");
-    inspect_fns(wasm_component.exported_functions(), true);
+    inspect_fns(wasm_component.exported_functions());
     if verbosity > FunctionMetadataVerbosity::ExportsOnly {
         println!("Imports:");
-        inspect_fns(wasm_component.imported_functions(), true);
+        inspect_fns(wasm_component.imported_functions());
     }
     Ok(())
 }
 
-fn inspect_fns(functions: &[FunctionMetadata], show_params: bool) {
-    for FunctionMetadata {
-        ffqn,
-        parameter_types,
-        return_type,
-    } in functions
-    {
-        print!("\t{ffqn}");
-        if show_params {
-            print!(" : func{parameter_types}");
-            if let Some(return_type) = return_type {
-                print!(" -> {return_type}");
-            }
-        }
-        println!();
+fn inspect_fns(functions: &[FunctionMetadata]) {
+    for fn_metadata in functions {
+        println!("\t{fn_metadata}");
     }
 }
 
