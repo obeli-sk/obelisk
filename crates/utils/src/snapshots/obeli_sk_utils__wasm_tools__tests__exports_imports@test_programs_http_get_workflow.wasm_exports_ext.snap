@@ -1,0 +1,367 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: exports
+---
+{
+  "testing:http-workflow-obelisk-ext/workflow.get-await-next": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": {
+        "Result": {
+          "ok": "String",
+          "err": "String"
+        }
+      },
+      "wit_type": "result<string, string>"
+    }
+  ],
+  "testing:http-workflow-obelisk-ext/workflow.get-schedule": [
+    [
+      {
+        "type_wrapper": {
+          "Variant": {
+            "at": {
+              "Record": {
+                "nanoseconds": "U32",
+                "seconds": "U64"
+              }
+            },
+            "in": "U64",
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+      },
+      {
+        "type_wrapper": "String",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:http-workflow-obelisk-ext/workflow.get-submit": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "String",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-await-next": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": {
+        "Result": {
+          "ok": "String",
+          "err": "String"
+        }
+      },
+      "wit_type": "result<string, string>"
+    }
+  ],
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-await-next": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": {
+        "Result": {
+          "ok": {
+            "List": "String"
+          },
+          "err": "String"
+        }
+      },
+      "wit_type": "result<list<string>, string>"
+    }
+  ],
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-schedule": [
+    [
+      {
+        "type_wrapper": {
+          "Variant": {
+            "at": {
+              "Record": {
+                "nanoseconds": "U32",
+                "seconds": "U64"
+              }
+            },
+            "in": "U64",
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+      },
+      {
+        "type_wrapper": {
+          "List": "String"
+        },
+        "name": "urls",
+        "wit_type": "list<string>"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": {
+        "Result": {
+          "ok": {
+            "List": "String"
+          },
+          "err": "String"
+        }
+      },
+      "wit_type": "result<list<string>, string>"
+    }
+  ],
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-schedule": [
+    [
+      {
+        "type_wrapper": {
+          "Variant": {
+            "at": {
+              "Record": {
+                "nanoseconds": "U32",
+                "seconds": "U64"
+              }
+            },
+            "in": "U64",
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+      },
+      {
+        "type_wrapper": "String",
+        "name": "url",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "concurrency",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "String",
+        "name": "url",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "concurrency",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-submit": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": {
+          "List": "String"
+        },
+        "name": "urls",
+        "wit_type": "list<string>"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-schedule": [
+    [
+      {
+        "type_wrapper": {
+          "Variant": {
+            "at": {
+              "Record": {
+                "nanoseconds": "U32",
+                "seconds": "U64"
+              }
+            },
+            "in": "U64",
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+      },
+      {
+        "type_wrapper": "String",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "String",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:http-workflow/workflow.get": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": {
+        "Result": {
+          "ok": "String",
+          "err": "String"
+        }
+      },
+      "wit_type": "result<string, string>"
+    }
+  ],
+  "testing:http-workflow/workflow.get-successful": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "url",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": {
+        "Result": {
+          "ok": "String",
+          "err": "String"
+        }
+      },
+      "wit_type": "result<string, string>"
+    }
+  ],
+  "testing:http-workflow/workflow.get-successful-concurrently": [
+    [
+      {
+        "type_wrapper": {
+          "List": "String"
+        },
+        "name": "urls",
+        "wit_type": "list<string>"
+      }
+    ],
+    {
+      "type_wrapper": {
+        "Result": {
+          "ok": {
+            "List": "String"
+          },
+          "err": "String"
+        }
+      },
+      "wit_type": "result<list<string>, string>"
+    }
+  ],
+  "testing:http-workflow/workflow.get-successful-concurrently-stress": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "url",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "concurrency",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": {
+        "Result": {
+          "ok": {
+            "List": "String"
+          },
+          "err": "String"
+        }
+      },
+      "wit_type": "result<list<string>, string>"
+    }
+  ]
+}

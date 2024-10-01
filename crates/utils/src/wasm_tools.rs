@@ -537,14 +537,14 @@ mod tests {
     #[test]
     #[case(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)]
     #[case(test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW)]
-    fn exports_imports(#[case] wasm_path: &str, #[values(false, true)] extensions: bool) {
+    fn exports_imports(#[case] wasm_path: &str) {
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
         test_utils::set_up();
         let engine = engine();
         let component = WasmComponent::new(&wasm_path, &engine).unwrap();
         let exports = component
-            .exported_functions(extensions)
+            .exported_functions(false)
             .iter()
             .map(
                 |FunctionMetadata {
@@ -554,7 +554,23 @@ mod tests {
                  }| (ffqn.to_string(), (parameter_types, return_type)),
             )
             .collect::<hashbrown::HashMap<_, _>>();
-        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports")}, {insta::assert_json_snapshot!(exports)});
+
+        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports_noext")}, {insta::assert_json_snapshot!(exports)});
+
+        let exports = component
+            .exported_functions(true)
+            .iter()
+            .map(
+                |FunctionMetadata {
+                     ffqn,
+                     parameter_types,
+                     return_type,
+                 }| (ffqn.to_string(), (parameter_types, return_type)),
+            )
+            .collect::<hashbrown::HashMap<_, _>>();
+
+        insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_exports_ext")}, {insta::assert_json_snapshot!(exports)});
+
         let imports = component
             .imported_functions()
             .iter()

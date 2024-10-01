@@ -1,0 +1,446 @@
+---
+source: crates/utils/src/wasm_tools.rs
+expression: exports
+---
+{
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-await-next": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-schedule": [
+    [
+      {
+        "type_wrapper": {
+          "Variant": {
+            "at": {
+              "Record": {
+                "nanoseconds": "U32",
+                "seconds": "U64"
+              }
+            },
+            "in": "U64",
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+      },
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-submit": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-await-next": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-schedule": [
+    [
+      {
+        "type_wrapper": {
+          "Variant": {
+            "at": {
+              "Record": {
+                "nanoseconds": "U32",
+                "seconds": "U64"
+              }
+            },
+            "in": "U64",
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+      },
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "fiboas",
+        "wit_type": "u32"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations-per-fiboa",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-submit": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "fiboas",
+        "wit_type": "u32"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations-per-fiboa",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-schedule": [
+    [
+      {
+        "type_wrapper": {
+          "Variant": {
+            "at": {
+              "Record": {
+                "nanoseconds": "U32",
+                "seconds": "U64"
+              }
+            },
+            "in": "U64",
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+      },
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-schedule": [
+    [
+      {
+        "type_wrapper": {
+          "Variant": {
+            "at": {
+              "Record": {
+                "nanoseconds": "U32",
+                "seconds": "U64"
+              }
+            },
+            "in": "U64",
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+      },
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow.fibow-schedule": [
+    [
+      {
+        "type_wrapper": {
+          "Variant": {
+            "at": {
+              "Record": {
+                "nanoseconds": "U32",
+                "seconds": "U64"
+              }
+            },
+            "in": "U64",
+            "now": null
+          }
+        },
+        "name": "scheduled-at",
+        "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
+      },
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": [
+    [
+      {
+        "type_wrapper": "String",
+        "name": "join-set-id",
+        "wit_type": "string"
+      },
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "String",
+      "wit_type": "string"
+    }
+  ],
+  "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
+    [
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ],
+  "testing:fibo-workflow/workflow-nesting.fibo-start-fiboas": [
+    [
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "fiboas",
+        "wit_type": "u32"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations-per-fiboa",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ],
+  "testing:fibo-workflow/workflow.fiboa": [
+    [
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ],
+  "testing:fibo-workflow/workflow.fiboa-concurrent": [
+    [
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ],
+  "testing:fibo-workflow/workflow.fibow": [
+    [
+      {
+        "type_wrapper": "U8",
+        "name": "n",
+        "wit_type": "u8"
+      },
+      {
+        "type_wrapper": "U32",
+        "name": "iterations",
+        "wit_type": "u32"
+      }
+    ],
+    {
+      "type_wrapper": "U64",
+      "wit_type": "u64"
+    }
+  ]
+}
