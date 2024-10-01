@@ -72,6 +72,8 @@ pub(crate) enum Component {
         path: PathBuf,
         #[arg(short, long, action = clap::ArgAction::Count)]
         verbosity: u8,
+        #[arg(short, long)]
+        extensions: bool,
     },
     /// List components.
     List {

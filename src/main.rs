@@ -45,12 +45,18 @@ async fn main() -> Result<(), anyhow::Error> {
         }
         Subcommand::Client(Client { api_url, command }) => {
             match command {
-                ClientSubcommand::Component(args::Component::Inspect { path, verbosity }) => {
-                    command::component::inspect(path, FunctionMetadataVerbosity::from(verbosity))
-                }
+                ClientSubcommand::Component(args::Component::Inspect {
+                    path,
+                    verbosity,
+                    extensions,
+                }) => command::component::inspect(
+                    path,
+                    FunctionMetadataVerbosity::from(verbosity),
+                    extensions,
+                ),
                 ClientSubcommand::Component(args::Component::List { verbosity }) => {
                     let client = get_fn_repository_client(api_url).await?;
-                    command::component::find_components(
+                    command::component::list_components(
                         client,
                         None,
                         None,

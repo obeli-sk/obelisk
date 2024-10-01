@@ -32,13 +32,10 @@ use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
 use concepts::ConfigId;
 use concepts::ExecutionId;
-use concepts::FnName;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
-use concepts::IfcFqnName;
 use concepts::ParameterType;
-use concepts::ParameterTypes;
 use concepts::Params;
 use concepts::ReturnType;
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -73,8 +70,6 @@ use tracing::Span;
 use tracing::{debug, info, trace};
 use utils::time::ClockFn;
 use utils::time::Now;
-use val_json::type_wrapper::indexmap::indexmap;
-use val_json::type_wrapper::TypeWrapper;
 use wasm_workers::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
@@ -1158,15 +1153,17 @@ impl ComponentConfigRegistry {
             }
         }
 
-        let mut insert = |fn_metadata: FunctionMetadata| {
+        // insert exported functions
+        for exported_fn_metadata in &component.exports {
+            // insert the exported function
             assert!(self
                 .inner
                 .exported_ffqns
                 .insert(
-                    fn_metadata.ffqn.clone(),
+                    exported_fn_metadata.ffqn.clone(),
                     (
                         component.config_id.clone(),
-                        fn_metadata,
+                        exported_fn_metadata.clone(),
                         ComponentRetryConfig {
                             max_retries: component.config_store.default_max_retries(),
                             retry_exp_backoff: component.config_store.default_retry_exp_backoff()
@@ -1175,94 +1172,6 @@ impl ComponentConfigRegistry {
                     ),
                 )
                 .is_none());
-        };
-        let return_type_string = Some(ReturnType {
-            type_wrapper: TypeWrapper::String,
-            wit_type: Some(
-                "string".to_string(), // TODO: StrVariant
-            ),
-        });
-        let param_type_join_set = ParameterType {
-            type_wrapper: TypeWrapper::String,
-            name: Some("join-set-id".to_string()),
-            wit_type: Some("string".to_string()), // TODO: StrVariant
-        };
-        let param_type_scheduled_at = ParameterType {
-            type_wrapper: TypeWrapper::Variant(indexmap! {
-                Box::from("now") => None,
-                Box::from("at") => Some(TypeWrapper::Record(indexmap! {
-                    Box::from("seconds") => TypeWrapper::U64,
-                    Box::from("nanoseconds") => TypeWrapper::U32,
-                })),
-                Box::from("in") => Some(TypeWrapper::U64),
-            }),
-            name: Some("scheduled-at".to_string()),
-            wit_type: Some("/* use obelisk:types/time.{schedule-at} */ schedule-at".to_string()), // TODO: StrVariant
-        };
-        // insert exported functions
-        for exported_fn_metadata in &component.exports {
-            // insert the exported function
-            insert(exported_fn_metadata.clone());
-            // insert `-obelisk-ext` functions
-            let exported_ifc_fqn = &exported_fn_metadata.ffqn.ifc_fqn;
-            let obelisk_extended_ifc = IfcFqnName::from_parts(
-                exported_ifc_fqn.namespace(),
-                &format!("{}-obelisk-ext", exported_ifc_fqn.package_name()),
-                exported_ifc_fqn.ifc_name(),
-                exported_ifc_fqn.version(),
-            );
-
-            // -submit(join-set-id: string, original params) -> string (execution id)
-            let fn_submit = FunctionMetadata {
-                ffqn: FunctionFqn {
-                    ifc_fqn: obelisk_extended_ifc.clone(),
-                    function_name: FnName::new_string(format!(
-                        "{}-submit",
-                        exported_fn_metadata.ffqn.function_name
-                    )),
-                },
-                parameter_types: {
-                    let mut params =
-                        Vec::with_capacity(exported_fn_metadata.parameter_types.len() + 1);
-                    params.push(param_type_join_set.clone());
-                    params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
-                    ParameterTypes(params)
-                },
-                return_type: return_type_string.clone(),
-            };
-            insert(fn_submit);
-            // -await-next(join-set-id: string) -> original return type
-            let fn_await_next = FunctionMetadata {
-                ffqn: FunctionFqn {
-                    ifc_fqn: obelisk_extended_ifc.clone(),
-                    function_name: FnName::new_string(format!(
-                        "{}-await-next",
-                        exported_fn_metadata.ffqn.function_name
-                    )),
-                },
-                parameter_types: ParameterTypes(vec![param_type_join_set.clone()]),
-                return_type: exported_fn_metadata.return_type.clone(),
-            };
-            insert(fn_await_next);
-            // -schedule(schedule: schedule-at, original params) -> string (execution id)
-            let fn_schedule = FunctionMetadata {
-                ffqn: FunctionFqn {
-                    ifc_fqn: obelisk_extended_ifc,
-                    function_name: FnName::new_string(format!(
-                        "{}-schedule",
-                        exported_fn_metadata.ffqn.function_name
-                    )),
-                },
-                parameter_types: {
-                    let mut params =
-                        Vec::with_capacity(exported_fn_metadata.parameter_types.len() + 1);
-                    params.push(param_type_scheduled_at.clone());
-                    params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
-                    ParameterTypes(params)
-                },
-                return_type: return_type_string.clone(),
-            };
-            insert(fn_schedule);
         }
         assert!(self
             .inner

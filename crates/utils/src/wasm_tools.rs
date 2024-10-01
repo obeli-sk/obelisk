@@ -2,7 +2,7 @@ use crate::wit_printer::WitPrinter;
 use concepts::{
     FnName, FunctionFqn, FunctionMetadata, IfcFqnName, ParameterType, ParameterTypes, ReturnType,
 };
-use indexmap::IndexMap;
+use indexmap::{indexmap, IndexMap};
 use std::{path::Path, sync::Arc};
 use tracing::{debug, error, trace};
 use val_json::{type_wrapper::TypeConversionError, type_wrapper::TypeWrapper};
@@ -71,8 +71,12 @@ impl WasmComponent {
     }
 
     #[must_use]
-    pub fn exported_functions(&self) -> &[FunctionMetadata] {
-        &self.exim.exports_flat
+    pub fn exported_functions(&self, extensions: bool) -> &[FunctionMetadata] {
+        if extensions {
+            &self.exim.exports_flat
+        } else {
+            &self.exim.exports_flat_noext
+        }
     }
 
     #[must_use]
@@ -84,7 +88,7 @@ impl WasmComponent {
         &self,
     ) -> Result<hashbrown::HashMap<FunctionFqn, ComponentExportIndex>, DecodeError> {
         let mut exported_ffqn_to_index = hashbrown::HashMap::new();
-        for FunctionMetadata { ffqn, .. } in self.exported_functions() {
+        for FunctionMetadata { ffqn, .. } in &self.exim.exports_flat_noext {
             let Some((_, ifc_export_index)) =
                 self.wasmtime_component.export_index(None, &ffqn.ifc_fqn)
             else {
@@ -131,6 +135,7 @@ pub enum DecodeError {
 pub struct ExIm {
     pub exports_hierarchy: Vec<PackageIfcFns>,
     pub imports_hierarchy: Vec<PackageIfcFns>,
+    pub exports_flat_noext: Vec<FunctionMetadata>,
     pub exports_flat: Vec<FunctionMetadata>,
     pub imports_flat: Vec<FunctionMetadata>,
 }
@@ -155,35 +160,154 @@ impl ExIm {
         >,
     ) -> Result<ExIm, DecodeError> {
         let component_type = component.component_type();
-        let exports_hierarchy = enrich_function_params(
+        let mut exports_hierarchy = enrich_function_params(
             component_type.exports(engine),
             engine,
             exported_ffqns_to_wit_parsed_meta,
         )?;
-        let exports = Self::flatten(&exports_hierarchy);
+        let exports_flat_noext = Self::flatten(&exports_hierarchy);
+        Self::enrich_exports_with_extensions(&mut exports_hierarchy);
+        let exports_flat = Self::flatten(&exports_hierarchy);
         let imports_hierarchy = enrich_function_params(
             component_type.imports(engine),
             engine,
             imported_ffqns_to_wit_parsed_meta,
         )?;
-        let imports = Self::flatten(&imports_hierarchy);
+        let imports_flat = Self::flatten(&imports_hierarchy);
         Ok(Self {
             exports_hierarchy,
             imports_hierarchy,
-            exports_flat: exports,
-            imports_flat: imports,
+            exports_flat_noext,
+            exports_flat,
+            imports_flat,
         })
+    }
+
+    fn enrich_exports_with_extensions(exports_hierarchy: &mut Vec<PackageIfcFns>) {
+        // initialize values for reuse
+        let return_type_string = Some(ReturnType {
+            type_wrapper: TypeWrapper::String,
+            wit_type: Some(
+                "string".to_string(), // TODO: StrVariant
+            ),
+        });
+        let param_type_join_set = ParameterType {
+            type_wrapper: TypeWrapper::String,
+            name: Some("join-set-id".to_string()),
+            wit_type: Some("string".to_string()), // TODO: StrVariant
+        };
+        let param_type_scheduled_at = ParameterType {
+            type_wrapper: TypeWrapper::Variant(indexmap! {
+                Box::from("now") => None,
+                Box::from("at") => Some(TypeWrapper::Record(indexmap! {
+                    Box::from("seconds") => TypeWrapper::U64,
+                    Box::from("nanoseconds") => TypeWrapper::U32,
+                })),
+                Box::from("in") => Some(TypeWrapper::U64),
+            }),
+            name: Some("scheduled-at".to_string()),
+            wit_type: Some("/* use obelisk:types/time.{schedule-at} */ schedule-at".to_string()), // TODO: StrVariant
+        };
+
+        let mut extensions = Vec::with_capacity(exports_hierarchy.len());
+        for PackageIfcFns { ifc_fqn, fns } in exports_hierarchy.iter() {
+            let obelisk_extended_ifc = IfcFqnName::from_parts(
+                ifc_fqn.namespace(),
+                &format!("{}-obelisk-ext", ifc_fqn.package_name()),
+                ifc_fqn.ifc_name(),
+                ifc_fqn.version(),
+            );
+            let mut extension_fns = IndexMap::new();
+            let mut insert = |fn_metadata: FunctionMetadata| {
+                //(fun, (param_types, return_type))
+                extension_fns.insert(
+                    fn_metadata.ffqn.function_name,
+                    (fn_metadata.parameter_types, fn_metadata.return_type),
+                );
+            };
+            for (fun, (param_types, return_type)) in fns.iter() {
+                let exported_fn_metadata = FunctionMetadata {
+                    ffqn: FunctionFqn {
+                        ifc_fqn: ifc_fqn.clone(),
+                        function_name: fun.clone(),
+                    },
+                    parameter_types: param_types.clone(),
+                    return_type: return_type.clone(),
+                };
+
+                // -submit(join-set-id: string, original params) -> string (execution id)
+                let fn_submit = FunctionMetadata {
+                    ffqn: FunctionFqn {
+                        ifc_fqn: obelisk_extended_ifc.clone(),
+                        function_name: FnName::new_string(format!(
+                            "{}-submit",
+                            exported_fn_metadata.ffqn.function_name
+                        )),
+                    },
+                    parameter_types: {
+                        let mut params =
+                            Vec::with_capacity(exported_fn_metadata.parameter_types.len() + 1);
+                        params.push(param_type_join_set.clone());
+                        params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
+                        ParameterTypes(params)
+                    },
+                    return_type: return_type_string.clone(),
+                };
+                insert(fn_submit);
+
+                // -await-next(join-set-id: string) -> original return type
+                let fn_await_next = FunctionMetadata {
+                    ffqn: FunctionFqn {
+                        ifc_fqn: obelisk_extended_ifc.clone(),
+                        function_name: FnName::new_string(format!(
+                            "{}-await-next",
+                            exported_fn_metadata.ffqn.function_name
+                        )),
+                    },
+                    parameter_types: ParameterTypes(vec![param_type_join_set.clone()]),
+                    return_type: exported_fn_metadata.return_type.clone(),
+                };
+                insert(fn_await_next);
+                // -schedule(schedule: schedule-at, original params) -> string (execution id)
+                let fn_schedule = FunctionMetadata {
+                    ffqn: FunctionFqn {
+                        ifc_fqn: obelisk_extended_ifc.clone(),
+                        function_name: FnName::new_string(format!(
+                            "{}-schedule",
+                            exported_fn_metadata.ffqn.function_name
+                        )),
+                    },
+                    parameter_types: {
+                        let mut params =
+                            Vec::with_capacity(exported_fn_metadata.parameter_types.len() + 1);
+                        params.push(param_type_scheduled_at.clone());
+                        params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
+                        ParameterTypes(params)
+                    },
+                    return_type: return_type_string.clone(),
+                };
+                insert(fn_schedule);
+            }
+            extensions.push((obelisk_extended_ifc, extension_fns));
+        }
+        for (obelisk_extended_ifc, extension_fns) in extensions {
+            // FIXME: verify that there is no clash with -obelisk-ext
+            exports_hierarchy.push(PackageIfcFns {
+                ifc_fqn: obelisk_extended_ifc,
+                fns: extension_fns,
+            });
+        }
     }
 
     fn flatten(input: &[PackageIfcFns]) -> Vec<FunctionMetadata> {
         input
             .iter()
-            .flat_map(|ifc| {
-                ifc.fns
+            .flat_map(|pif| {
+                pif.fns
                     .iter()
                     .map(|(fun, (param_types, return_type))| FunctionMetadata {
                         ffqn: FunctionFqn {
-                            ifc_fqn: ifc.ifc_fqn.clone(),
+                            ifc_fqn: pif.ifc_fqn.clone(),
                             function_name: fun.clone(),
                         },
                         parameter_types: param_types.clone(),
@@ -401,14 +525,14 @@ mod tests {
     #[test]
     #[case(test_programs_fibo_workflow_builder::TEST_PROGRAMS_FIBO_WORKFLOW)]
     #[case(test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW)]
-    fn exports_imports(#[case] wasm_path: &str) {
+    fn exports_imports(#[case] wasm_path: &str, #[values(false, true)] extensions: bool) {
         let wasm_path = PathBuf::from(wasm_path);
         let wasm_file = wasm_path.file_name().unwrap().to_string_lossy();
         test_utils::set_up();
         let engine = engine();
         let component = WasmComponent::new(&wasm_path, &engine).unwrap();
         let exports = component
-            .exported_functions()
+            .exported_functions(extensions)
             .iter()
             .map(
                 |FunctionMetadata {

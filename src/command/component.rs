@@ -10,6 +10,7 @@ use wasmtime::Engine;
 pub(crate) fn inspect<P: AsRef<Path>>(
     wasm_path: P,
     verbosity: FunctionMetadataVerbosity,
+    extensions: bool,
 ) -> anyhow::Result<()> {
     let wasm_path = wasm_path.as_ref();
     let engine = {
@@ -19,7 +20,7 @@ pub(crate) fn inspect<P: AsRef<Path>>(
     };
     let wasm_component = WasmComponent::new(wasm_path, &engine)?;
     println!("Exports:");
-    inspect_fns(wasm_component.exported_functions());
+    inspect_fns(wasm_component.exported_functions(extensions));
     if verbosity > FunctionMetadataVerbosity::ExportsOnly {
         println!("Imports:");
         inspect_fns(wasm_component.imported_functions());
@@ -33,7 +34,7 @@ fn inspect_fns(functions: &[FunctionMetadata]) {
     }
 }
 
-pub(crate) async fn find_components(
+pub(crate) async fn list_components(
     mut client: FunctionRepositoryClient,
     config_id: Option<&ConfigId>,
     ffqn: Option<&FunctionFqn>,
