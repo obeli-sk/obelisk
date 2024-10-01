@@ -153,7 +153,7 @@ impl<C: ClockFn> WorkflowWorkerPre<C> {
             config: self.config,
             engine: self.engine,
             linker,
-            component: self.wasm_component.component,
+            component: self.wasm_component.wasmtime_component,
             exim: self.wasm_component.exim,
             db_pool,
             clock_fn: self.clock_fn,

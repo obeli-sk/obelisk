@@ -70,7 +70,7 @@ impl<C: ClockFn> ActivityWorker<C> {
 
         // Attempt to pre-instantiate to catch missing imports
         let instance_pre = linker
-            .instantiate_pre(&wasm_component.component)
+            .instantiate_pre(&wasm_component.wasmtime_component)
             .map_err(linking_err)?;
 
         let exported_ffqn_to_index = wasm_component

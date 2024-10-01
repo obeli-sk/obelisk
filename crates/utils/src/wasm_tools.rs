@@ -16,7 +16,7 @@ use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
 #[derivative(Debug)]
 pub struct WasmComponent {
     #[derivative(Debug = "ignore")]
-    pub component: Component,
+    pub wasmtime_component: Component,
     pub exim: ExIm,
 }
 
@@ -28,7 +28,7 @@ impl WasmComponent {
             DecodeError::CannotReadComponent(err.to_string())
         })?;
         trace!("Decoding using wasmtime");
-        let component = {
+        let wasmtime_component = {
             let stopwatch = std::time::Instant::now();
             let component = Component::from_file(engine, wasm_path).map_err(|err| {
                 error!("Cannot read component {wasm_path:?} - {err:?}");
@@ -59,12 +59,15 @@ impl WasmComponent {
             (exported_ffqns_to_wit_meta, imported_ffqns_to_wit_meta)
         };
         let exim = ExIm::decode(
-            &component,
+            &wasmtime_component,
             engine,
             exported_ffqns_to_wit_meta,
             imported_ffqns_to_wit_meta,
         )?;
-        Ok(Self { component, exim })
+        Ok(Self {
+            wasmtime_component,
+            exim,
+        })
     }
 
     #[must_use]
@@ -82,7 +85,8 @@ impl WasmComponent {
     ) -> Result<hashbrown::HashMap<FunctionFqn, ComponentExportIndex>, DecodeError> {
         let mut exported_ffqn_to_index = hashbrown::HashMap::new();
         for FunctionMetadata { ffqn, .. } in self.exported_functions() {
-            let Some((_, ifc_export_index)) = self.component.export_index(None, &ffqn.ifc_fqn)
+            let Some((_, ifc_export_index)) =
+                self.wasmtime_component.export_index(None, &ffqn.ifc_fqn)
             else {
                 error!("Cannot find exported interface `{}`", ffqn.ifc_fqn);
                 return Err(DecodeError::CannotReadComponent(format!(
@@ -90,7 +94,7 @@ impl WasmComponent {
                 )));
             };
             let Some((_, fn_export_index)) = self
-                .component
+                .wasmtime_component
                 .export_index(Some(&ifc_export_index), &ffqn.function_name)
             else {
                 error!("Cannot find exported function {ffqn}");
@@ -171,7 +175,6 @@ impl ExIm {
         })
     }
 
-    // FIXME: Vec<PIF>
     fn flatten(input: &[PackageIfcFns]) -> Vec<FunctionMetadata> {
         input
             .iter()
@@ -191,8 +194,9 @@ impl ExIm {
     }
 }
 
+// Attempt to merge parameter names obtained using the wit-parser passed as `ffqns_to_wit_parsed_meta`
 fn enrich_function_params<'a>(
-    iterator: impl ExactSizeIterator<Item = (&'a str, ComponentItem)> + 'a,
+    iterator: impl ExactSizeIterator<Item = (&'a str /* ifc_fqn */, ComponentItem)> + 'a,
     engine: &Engine,
     mut ffqns_to_wit_parsed_meta: hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {

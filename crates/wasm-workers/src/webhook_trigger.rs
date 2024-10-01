@@ -142,6 +142,7 @@ pub fn prespawn_webhook_instance<
         }
     })?;
     // Mock imported functions
+    // FIXME: mock available exported functions instead of current component imports
     for import in &wasm_component.exim.imports_hierarchy {
         if import
             .ifc_fqn
@@ -201,13 +202,12 @@ pub fn prespawn_webhook_instance<
         }
     }
     WebhookCtx::add_to_linker(&mut linker)?;
-    let instance =
-        linker
-            .instantiate_pre(&wasm_component.component)
-            .map_err(|err: wasmtime::Error| WasmFileError::LinkingError {
-                context: StrVariant::Static("linking error while creating instantiate_pre"),
-                err: err.into(),
-            })?;
+    let instance = linker
+        .instantiate_pre(&wasm_component.wasmtime_component)
+        .map_err(|err: wasmtime::Error| WasmFileError::LinkingError {
+            context: StrVariant::Static("linking error while creating instantiate_pre"),
+            err: err.into(),
+        })?;
     let instance =
         ProxyPre::new(instance).map_err(|err: wasmtime::Error| WasmFileError::LinkingError {
             context: StrVariant::Static("linking error while creating ProxyPre instance"),
