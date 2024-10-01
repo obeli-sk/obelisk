@@ -25,16 +25,12 @@ async fn main() -> Result<(), anyhow::Error> {
             clean_codegen_cache,
             config,
         }) => {
-            let config_holder =
-                ConfigHolder::new(ProjectDirs::from("com", "obelisk", "obelisk"), config);
-            let config = config_holder.load_config().await?;
-
             Box::pin(command::server::run(
+                ProjectDirs::from("com", "obelisk", "obelisk"),
                 config,
                 clean_db,
                 clean_cache,
                 clean_codegen_cache,
-                config_holder,
             ))
             .await
         }
@@ -43,6 +39,20 @@ async fn main() -> Result<(), anyhow::Error> {
             println!("Generated {path:?}");
             Ok(())
         }
+        Subcommand::Server(Server::Verify {
+            clean_db,
+            clean_cache,
+            clean_codegen_cache,
+            config,
+        }) => command::server::verify(
+            ProjectDirs::from("com", "obelisk", "obelisk"),
+            config,
+            clean_db,
+            clean_cache,
+            clean_codegen_cache,
+        )
+        .await
+        .map(|_| ()),
         Subcommand::Client(Client { api_url, command }) => {
             match command {
                 ClientSubcommand::Component(args::Component::Inspect {

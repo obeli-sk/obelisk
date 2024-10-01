@@ -44,6 +44,20 @@ pub(crate) enum Server {
         config: Option<PathBuf>,
     },
     GenerateConfig,
+    /// Read the configuration, compile the components, verify their imports and exit
+    Verify {
+        /// Clean the sqlite database
+        #[arg(long)]
+        clean_db: bool,
+        /// Clean the codegen and OCI cache directories
+        #[arg(long)]
+        clean_cache: bool,
+        /// Clean the codegen cache
+        #[arg(long)]
+        clean_codegen_cache: bool,
+        #[arg(long, short)]
+        config: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, clap::Args)]

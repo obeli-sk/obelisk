@@ -38,7 +38,9 @@ use concepts::FunctionRegistry;
 use concepts::ParameterType;
 use concepts::Params;
 use concepts::ReturnType;
+use db_sqlite::sqlite_dao::SqliteConfig;
 use db_sqlite::sqlite_dao::SqlitePool;
+use directories::ProjectDirs;
 use executor::executor::ExecutorTaskHandle;
 use executor::executor::{ExecConfig, ExecTask};
 use executor::expired_timers_watcher;
@@ -391,13 +393,16 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
 }
 
 pub(crate) async fn run(
-    mut config: ObeliskConfig,
+    project_dirs: Option<ProjectDirs>,
+    config: Option<PathBuf>,
     clean_db: bool,
     clean_all_cache: bool,
     clean_codegen_cache: bool,
-    config_holder: ConfigHolder,
 ) -> anyhow::Result<()> {
+    let config_holder = ConfigHolder::new(project_dirs, config);
+    let mut config = config_holder.load_config().await?;
     let _guard = init::init(&mut config);
+
     Box::pin(run_internal(
         config,
         clean_db,
@@ -409,16 +414,36 @@ pub(crate) async fn run(
     Ok(())
 }
 
-#[expect(clippy::too_many_lines)]
-async fn run_internal(
+pub(crate) async fn verify(
+    project_dirs: Option<ProjectDirs>,
+    config: Option<PathBuf>,
+    clean_db: bool,
+    clean_cache: bool,
+    clean_codegen_cache: bool,
+) -> Result<(), anyhow::Error> {
+    let config_holder = ConfigHolder::new(project_dirs, config);
+    let mut config = config_holder.load_config().await?;
+    let _guard = init::init(&mut config);
+    verify_internal(
+        config,
+        clean_db,
+        clean_cache,
+        clean_codegen_cache,
+        config_holder,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn verify_internal(
     config: ObeliskConfig,
     clean_db: bool,
     clean_cache: bool,
     clean_codegen_cache: bool,
     config_holder: ConfigHolder,
-) -> anyhow::Result<()> {
+) -> Result<ServerVerified, anyhow::Error> {
     debug!("Using toml config: {config:#?}");
-    let db_file = &config
+    let db_file = config
         .sqlite
         .get_sqlite_file(config_holder.project_dirs.as_ref())
         .await?;
@@ -444,7 +469,7 @@ async fn run_internal(
         }
     };
     if clean_db {
-        tokio::fs::remove_file(db_file)
+        tokio::fs::remove_file(&db_file)
             .await
             .or_else(ignore_not_found)
             .with_context(|| format!("cannot delete database file `{db_file:?}`"))?;
@@ -498,17 +523,34 @@ async fn run_internal(
         .await
         .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
 
-    let api_listening_addr = config.api_listening_addr;
-
-    let (init, component_registry_ro) = ServerInit::new(
-        db_file,
+    ServerVerified::new(
         config,
         codegen_cache.as_deref(),
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
+        db_file,
+    )
+    .await
+}
+
+#[expect(clippy::too_many_lines)]
+async fn run_internal(
+    config: ObeliskConfig,
+    clean_db: bool,
+    clean_cache: bool,
+    clean_codegen_cache: bool,
+    config_holder: ConfigHolder,
+) -> anyhow::Result<()> {
+    let api_listening_addr = config.api_listening_addr;
+    let verified = verify_internal(
+        config,
+        clean_db,
+        clean_cache,
+        clean_codegen_cache,
+        config_holder,
     )
     .await?;
-
+    let (init, component_registry_ro) = ServerInit::new(verified).await?;
     let grpc_server = Arc::new(GrpcServer::new(init.db_pool.clone(), component_registry_ro));
     let grpc_server_res = tonic::transport::Server::builder()
         .layer(
@@ -551,23 +593,24 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
     info_span!("incoming gRPC request", ?headers)
 }
 
-struct ServerInit {
-    db_pool: SqlitePool,
-    exec_join_handles: Vec<ExecutorTaskHandle>,
-    timers_watcher: expired_timers_watcher::TaskHandle,
-    #[expect(dead_code)] // http servers will be aborted automatically
-    http_servers_handles: Vec<AbortOnDropHandle>,
+struct ServerVerified {
+    component_registry_ro: ComponentConfigRegistryRO,
+    compiled_components: CompiledComponents,
+    http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<String>)>,
+    engines: Engines,
+    sqlite_config: SqliteConfig,
+    db_file: PathBuf,
 }
 
-impl ServerInit {
-    #[instrument(name = "init", skip_all)]
+impl ServerVerified {
+    #[instrument(name = "verify", skip_all)]
     async fn new(
-        db_file: impl AsRef<Path> + Debug,
         config: ObeliskConfig,
         codegen_cache: Option<&Path>,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-    ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
+        db_file: PathBuf,
+    ) -> Result<Self, anyhow::Error> {
         let engines = {
             let codegen_cache_config_file_holder = Engines::write_codegen_config(codegen_cache)
                 .await
@@ -578,7 +621,8 @@ impl ServerInit {
                 codegen_cache_config_file_holder,
             )?
         };
-        let verified_config = fetch_and_verify_all(
+        let sqlite_config = config.sqlite.as_config();
+        let config = fetch_and_verify_all(
             config.wasm_activities,
             config.workflows,
             config.http_servers,
@@ -587,22 +631,46 @@ impl ServerInit {
             metadata_dir,
         )
         .await?;
-        debug!("Verified config: {verified_config:#?}");
-        // Compile and type check
-        let (mut compiled_components, component_registry_ro) = compile_and_type_check(
+        debug!("Verified config: {config:#?}");
+        let (compiled_components, component_registry_ro) = compile_and_verify(
             &engines,
-            verified_config.wasm_activities,
-            verified_config.workflows,
-            verified_config.webhooks_by_names,
+            config.wasm_activities,
+            config.workflows,
+            config.webhooks_by_names,
         )
         .await?;
+        info!("Server configuration was verified");
+        Ok(Self {
+            compiled_components,
+            component_registry_ro,
+            http_servers_to_webhook_names: config.http_servers_to_webhook_names,
+            engines,
+            sqlite_config,
+            db_file,
+        })
+    }
+}
 
-        // Start components requiring a databaase
-        let _epoch_ticker =
-            EpochTicker::spawn_new(engines.weak_refs(), Duration::from_millis(EPOCH_MILLIS));
-        let db_pool = SqlitePool::new(&db_file, config.sqlite.as_config())
+struct ServerInit {
+    db_pool: SqlitePool,
+    exec_join_handles: Vec<ExecutorTaskHandle>,
+    timers_watcher: expired_timers_watcher::TaskHandle,
+    #[expect(dead_code)] // http servers will be aborted automatically
+    http_servers_handles: Vec<AbortOnDropHandle>,
+}
+
+impl ServerInit {
+    async fn new(
+        mut verified: ServerVerified,
+    ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
+        // Start components requiring a database
+        let _epoch_ticker = EpochTicker::spawn_new(
+            verified.engines.weak_refs(),
+            Duration::from_millis(EPOCH_MILLIS),
+        );
+        let db_pool = SqlitePool::new(&verified.db_file, verified.sqlite_config)
             .await
-            .with_context(|| format!("cannot open sqlite file `{db_file:?}`"))?;
+            .with_context(|| format!("cannot open sqlite file `{:?}`", verified.db_file))?;
 
         let timers_watcher = expired_timers_watcher::spawn_new(
             db_pool.clone(),
@@ -614,14 +682,15 @@ impl ServerInit {
 
         // Associate webhooks with http servers
         let http_servers_to_webhooks = {
-            verified_config
+            verified
                 .http_servers_to_webhook_names
                 .into_iter()
                 .map(|(http_server, webhook_names)| {
                     let instances_and_routes = webhook_names
                         .into_iter()
                         .map(|name| {
-                            compiled_components
+                            verified
+                                .compiled_components
                                 .webhooks_by_names
                                 .remove(&name)
                                 .expect("all webhooks must be verified")
@@ -633,9 +702,10 @@ impl ServerInit {
         };
 
         let component_registry_arc: Arc<dyn FunctionRegistry> =
-            Arc::from(component_registry_ro.clone());
+            Arc::from(verified.component_registry_ro.clone());
         // Spawn executors
-        let exec_join_handles = compiled_components
+        let exec_join_handles = verified
+            .compiled_components
             .executor_prespawns
             .into_iter()
             .map(|pre_spawn| pre_spawn.spawn(db_pool.clone(), &component_registry_arc))
@@ -644,7 +714,7 @@ impl ServerInit {
         // Start TCP listeners
         let http_servers_handles: Vec<AbortOnDropHandle> = start_webhooks(
             http_servers_to_webhooks,
-            &engines,
+            &verified.engines,
             db_pool.clone(),
             component_registry_arc.clone(),
         )
@@ -656,7 +726,7 @@ impl ServerInit {
                 timers_watcher,
                 http_servers_handles,
             },
-            component_registry_ro,
+            verified.component_registry_ro,
         ))
     }
 
@@ -895,7 +965,7 @@ struct CompiledComponents {
 }
 
 #[instrument(skip_all)]
-async fn compile_and_type_check(
+async fn compile_and_verify(
     engines: &Engines,
     wasm_activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,

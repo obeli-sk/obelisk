@@ -1,6 +1,6 @@
 use std::{error::Error, fmt::Debug, path::Path, rc::Rc, sync::Arc};
 use tempfile::NamedTempFile;
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, instrument, trace, warn};
 use wasmtime::{Engine, EngineWeak};
 
 #[derive(thiserror::Error, Debug)]
@@ -240,7 +240,7 @@ impl Engines {
         }
         Ok(if let Some(codegen_cache) = codegen_cache {
             let codegen_cache_config_file = tempfile::NamedTempFile::new()?;
-            info!("Setting codegen cache to {codegen_cache:?}");
+            debug!("Setting codegen cache to {codegen_cache:?}");
             let codegen_cache = codegen_cache.canonicalize()?;
             let content = format!(
                 r#"[cache]
