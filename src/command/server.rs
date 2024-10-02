@@ -31,6 +31,7 @@ use concepts::storage::PendingState;
 use concepts::ComponentRetryConfig;
 use concepts::ComponentType;
 use concepts::ConfigId;
+use concepts::ConfigIdType;
 use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
@@ -1024,6 +1025,7 @@ async fn compile_and_verify(
     let pre_spawns = futures_util::future::join_all(pre_spawns);
     tokio::select! {
         results_of_results = pre_spawns => {
+            let mut webhook_imports: hashbrown::HashMap<ConfigId, Vec<FunctionMetadata>> = hashbrown::HashMap::new();
             let mut workers_compiled = Vec::with_capacity(results_of_results.len());
             let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
             for handle in results_of_results {
@@ -1032,13 +1034,15 @@ async fn compile_and_verify(
                         component_registry.insert(component)?;
                         workers_compiled.push(worker_compiled);
                     },
-                    Either::Right((webhook_name, webhook_instance)) => {
-                        let old = webhooks_compiled_by_names.insert(webhook_name, webhook_instance);
+                    Either::Right((webhook_name, (webhook_compiled, routes))) => {
+                        webhook_imports.insert(webhook_compiled.config_id.clone(), webhook_compiled.imports().to_vec());
+                        let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
+
                         assert!(old.is_none());
                     },
                 }
             }
-            let component_registry_ro = component_registry.type_check()?;
+            let component_registry_ro = component_registry.verify_imports(webhook_imports)?;
             let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
             let workers_linked = workers_compiled.into_iter().map(|worker| worker.link(&fn_registry)).collect::<Result<Vec<_>,_>>()?;
             let webhooks_by_names = webhooks_compiled_by_names
@@ -1277,62 +1281,20 @@ impl ComponentConfigRegistry {
         Ok(())
     }
 
-    /// Type check imported fns with available exports.
-    // TODO: webhooks as well
-    fn type_check(self) -> Result<ComponentConfigRegistryRO, anyhow::Error> {
+    /// Verify that each imported function can be matched by looking at the available exports.
+    /// This is a best effort to give function-level error messages.
+    /// WASI imports and host functions are not validated at the moment, those errors
+    /// are caught by wasmtime while pre-instantiation with a message containing the missing interface.
+    fn verify_imports(
+        self,
+        webhook_imports: hashbrown::HashMap<ConfigId, Vec<FunctionMetadata>>,
+    ) -> Result<ComponentConfigRegistryRO, anyhow::Error> {
         let mut errors = Vec::new();
-        let additional_import_whitelist =
-            |import: &FunctionMetadata, component_type| match component_type {
-                ComponentType::WasmActivity => {
-                    if import.ffqn.ifc_fqn.namespace() == "wasi"
-                        || import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
-                    {
-                        // TODO: check function
-                        true
-                    } else {
-                        false
-                    }
-                }
-                ComponentType::Workflow => {
-                    // logging + host activities
-                    if import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
-                        || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/host-activities"
-                    {
-                        // TODO: check function
-                        true
-                    } else {
-                        false
-                    }
-                }
-            };
-        for (examined_config_id, examined_component) in &self.inner.ids_to_components {
-            for imported_fn_metadata in &examined_component.imports {
-                if let Some((exported_config_id, exported_fn_metadata, _, _)) =
-                    self.inner.exported_ffqns.get(&imported_fn_metadata.ffqn)
-                {
-                    // check parameters
-                    if imported_fn_metadata.parameter_types != exported_fn_metadata.parameter_types
-                    {
-                        error!("Parameter types do not match: {examined_config_id} imports {import} , {exported_config_id} exports {export}",
-                            import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format
-                            export = serde_json::to_string(exported_fn_metadata).unwrap(),
-                        );
-                        errors.push(format!("parameter types do not match: {examined_config_id} imports {imported_fn_metadata} , {exported_config_id} exports {exported_fn_metadata}"));
-                    }
-                    if imported_fn_metadata.return_type != exported_fn_metadata.return_type {
-                        error!("Return types do not match: {examined_config_id} imports {import} , {exported_config_id} exports {export}",
-                            import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format
-                            export = serde_json::to_string(exported_fn_metadata).unwrap(),
-                        );
-                        errors.push(format!("return types do not match: {examined_config_id} imports {imported_fn_metadata} , {exported_config_id} exports {exported_fn_metadata}"));
-                    }
-                } else if !additional_import_whitelist(
-                    imported_fn_metadata,
-                    examined_component.component_type,
-                ) {
-                    errors.push(format!("function imported by {examined_config_id} not found: {imported_fn_metadata}"));
-                }
-            }
+        for (config_id, examined_component) in &self.inner.ids_to_components {
+            self.verify_imports_component(config_id, &examined_component.imports, &mut errors);
+        }
+        for (config_id, imports) in webhook_imports {
+            self.verify_imports_component(&config_id, &imports, &mut errors);
         }
         if errors.is_empty() {
             Ok(ComponentConfigRegistryRO {
@@ -1341,6 +1303,60 @@ impl ComponentConfigRegistry {
         } else {
             let errors = errors.join("\n");
             bail!("component resolution error: \n{errors}")
+        }
+    }
+
+    fn additional_import_whitelist(import: &FunctionMetadata, config_id: &ConfigId) -> bool {
+        match config_id.config_id_type {
+            ConfigIdType::ActivityWasm => {
+                // wasi + log
+                import.ffqn.ifc_fqn.namespace() == "wasi"
+                    || import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
+            }
+            ConfigIdType::Workflow => {
+                // host activities + log
+                import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
+                    || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/host-activities"
+            }
+            ConfigIdType::WebhookWasm => {
+                // wasi + host activities + log
+                import.ffqn.ifc_fqn.namespace() == "wasi"
+                    || import.ffqn.ifc_fqn.deref() == "obelisk:log/log"
+                    || import.ffqn.ifc_fqn.deref() == "obelisk:workflow/host-activities"
+            }
+        }
+    }
+
+    fn verify_imports_component(
+        &self,
+        config_id: &ConfigId,
+        imports: &[FunctionMetadata],
+        errors: &mut Vec<String>,
+    ) {
+        for imported_fn_metadata in imports {
+            if let Some((exported_config_id, exported_fn_metadata, _, _)) =
+                self.inner.exported_ffqns.get(&imported_fn_metadata.ffqn)
+            {
+                // check parameters
+                if imported_fn_metadata.parameter_types != exported_fn_metadata.parameter_types {
+                    error!("Parameter types do not match: {config_id} imports {import} , {exported_config_id} exports {export}",
+                        import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format
+                        export = serde_json::to_string(exported_fn_metadata).unwrap(),
+                    );
+                    errors.push(format!("parameter types do not match: {config_id} imports {imported_fn_metadata} , {exported_config_id} exports {exported_fn_metadata}"));
+                }
+                if imported_fn_metadata.return_type != exported_fn_metadata.return_type {
+                    error!("Return types do not match: {config_id} imports {import} , {exported_config_id} exports {export}",
+                        import = serde_json::to_string(imported_fn_metadata).unwrap(), // TODO: print in WIT format
+                        export = serde_json::to_string(exported_fn_metadata).unwrap(),
+                    );
+                    errors.push(format!("return types do not match: {config_id} imports {imported_fn_metadata} , {exported_config_id} exports {exported_fn_metadata}"));
+                }
+            } else if !Self::additional_import_whitelist(imported_fn_metadata, config_id) {
+                errors.push(format!(
+                    "function imported by {config_id} not found: {imported_fn_metadata}"
+                ));
+            }
         }
     }
 }

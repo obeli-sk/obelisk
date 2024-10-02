@@ -57,7 +57,7 @@ pub enum WebhookServerError {
 }
 
 pub struct WebhookCompiled {
-    config_id: ConfigId,
+    pub config_id: ConfigId,
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
@@ -85,6 +85,11 @@ impl WebhookCompiled {
             retry_config,
             wasm_component,
         })
+    }
+
+    #[must_use]
+    pub fn imports(&self) -> &[FunctionMetadata] {
+        &self.wasm_component.exim.imports_flat
     }
 
     #[instrument(skip_all, fields(config_id = %self.config_id), err)]
@@ -196,7 +201,7 @@ impl WebhookCompiled {
 }
 
 #[derive(Derivative)]
-#[derivative(Clone(bound = ""))]
+#[derivative(Clone(bound = ""))] // Clone only because of potentially registering 2 paths via `route-recognizer`
 #[derivative(Debug)]
 pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     #[derivative(Debug = "ignore")]
