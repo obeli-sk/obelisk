@@ -660,6 +660,7 @@ pub(crate) mod webhook {
                 forward_stdout: self.forward_stdout.into(),
                 forward_stderr: self.forward_stderr.into(),
                 env_vars: self.env_vars,
+                config_store,
             })
         }
     }
@@ -688,6 +689,7 @@ pub(crate) mod webhook {
         pub(crate) forward_stdout: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) forward_stderr: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) env_vars: Vec<EnvVar>,
+        pub(crate) config_store: ConfigStore,
     }
 
     #[derive(Debug)]

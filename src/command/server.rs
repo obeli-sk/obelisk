@@ -275,7 +275,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let mut res_components = Vec::with_capacity(components.len());
         for component in components {
             let res_component = grpc::Component {
-                name: component.config_store.name().to_string(),
+                name: component.config_id.name.to_string(),
                 r#type: component.config_id.config_id_type.to_string(),
                 config_id: Some(component.config_id.into()),
                 digest: component.config_store.common().content_digest.to_string(),
@@ -1019,7 +1019,10 @@ async fn compile_and_verify(
                         Arc::from(webhook.env_vars),
                         webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
                     )?;
-                    Ok(Either::Right((name, (webhook_compiled, webhook.routes))))
+                    Ok(Either::Right((
+                        name,
+                        (webhook_compiled, webhook.routes, webhook.config_store),
+                    )))
                 })
             })
         }))
@@ -1030,7 +1033,6 @@ async fn compile_and_verify(
     let pre_spawns = futures_util::future::join_all(pre_spawns);
     tokio::select! {
         results_of_results = pre_spawns => {
-            let mut webhook_imports: hashbrown::HashMap<ConfigId, Vec<FunctionMetadata>> = hashbrown::HashMap::new();
             let mut workers_compiled = Vec::with_capacity(results_of_results.len());
             let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
             for handle in results_of_results {
@@ -1039,15 +1041,16 @@ async fn compile_and_verify(
                         component_registry.insert(component)?;
                         workers_compiled.push(worker_compiled);
                     },
-                    Either::Right((webhook_name, (webhook_compiled, routes))) => {
-                        webhook_imports.insert(webhook_compiled.config_id.clone(), webhook_compiled.imports().to_vec());
+                    Either::Right((webhook_name, (webhook_compiled, routes, config_store))) => {
+                        let component = ComponentConfig { config_id: webhook_compiled.config_id.clone(), config_store, imports: webhook_compiled.imports().to_vec(), importable: None };
+                        component_registry.insert(component)?;
                         let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
 
                         assert!(old.is_none());
                     },
                 }
             }
-            let component_registry_ro = component_registry.verify_imports(webhook_imports)?;
+            let component_registry_ro = component_registry.verify_imports()?;
             let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
             let workers_linked = workers_compiled.into_iter().map(|worker| worker.link(&fn_registry)).collect::<Result<Vec<_>,_>>()?;
             let webhooks_by_names = webhooks_compiled_by_names
@@ -1297,16 +1300,10 @@ impl ComponentConfigRegistry {
     /// This is a best effort to give function-level error messages.
     /// WASI imports and host functions are not validated at the moment, those errors
     /// are caught by wasmtime while pre-instantiation with a message containing the missing interface.
-    fn verify_imports(
-        self,
-        webhook_imports: hashbrown::HashMap<ConfigId, Vec<FunctionMetadata>>,
-    ) -> Result<ComponentConfigRegistryRO, anyhow::Error> {
+    fn verify_imports(self) -> Result<ComponentConfigRegistryRO, anyhow::Error> {
         let mut errors = Vec::new();
         for (config_id, examined_component) in &self.inner.ids_to_components {
             self.verify_imports_component(config_id, &examined_component.imports, &mut errors);
-        }
-        for (config_id, imports) in webhook_imports {
-            self.verify_imports_component(&config_id, &imports, &mut errors);
         }
         if errors.is_empty() {
             Ok(ComponentConfigRegistryRO {

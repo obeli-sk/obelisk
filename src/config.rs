@@ -16,14 +16,14 @@ use tracing::instrument;
 use wasm_workers::workflow_worker::JoinNextBlockingStrategy;
 
 #[derive(Debug, Clone)]
-pub struct ComponentConfig {
+pub(crate) struct ComponentConfig {
     // Identifier for given configuration.
     // Uniqueness is not guaranteed.
     // The id is not persisted, only appears in logs and traces and gRPC responses.
-    pub config_id: ConfigId,
-    pub config_store: ConfigStore,
-    pub imports: Vec<FunctionMetadata>,
-    pub importable: Option<ComponentConfigImportable>,
+    pub(crate) config_id: ConfigId,
+    pub(crate) config_store: ConfigStore,
+    pub(crate) imports: Vec<FunctionMetadata>,
+    pub(crate) importable: Option<ComponentConfigImportable>,
 }
 
 #[derive(Debug, Clone)]
