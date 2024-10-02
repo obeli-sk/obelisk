@@ -44,6 +44,7 @@ pub struct ExecTask<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
 #[derivative(Debug)]
 pub struct ExecutionProgress {
     #[derivative(Debug = "ignore")]
+    #[allow(dead_code)]
     executions: Vec<(ExecutionId, JoinHandle<()>)>,
 }
 
