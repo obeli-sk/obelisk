@@ -8,7 +8,7 @@ use crate::config::toml::ObeliskConfig;
 use crate::config::toml::WasmActivityToml;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::WorkflowToml;
-use crate::config::Component;
+use crate::config::ComponentConfig;
 use crate::config::ConfigStore;
 use crate::grpc_util::extractor::accept_trace;
 use crate::grpc_util::grpc_mapping::PendingStatusExt as _;
@@ -1072,7 +1072,7 @@ fn prespawn_activity(
     activity: ActivityConfigVerified,
     engines: &Engines,
     executor_id: ExecutorId,
-) -> Result<(WorkerCompiled, Component), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     debug!("Instantiating activity");
     trace!(?activity, "Full configuration");
     let worker = ActivityWorker::new_with_config(
@@ -1099,7 +1099,7 @@ fn prespawn_workflow(
     workflow: WorkflowConfigVerified,
     engines: &Engines,
     executor_id: ExecutorId,
-) -> Result<(WorkerCompiled, Component), anyhow::Error> {
+) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {
     debug!("Instantiating workflow");
     trace!(?workflow, "Full configuration");
     let worker = WorkflowWorkerCompiled::new_with_config(
@@ -1129,8 +1129,8 @@ impl WorkerCompiled {
         config_store: ConfigStore,
         exec_config: ExecConfig,
         executor_id: ExecutorId,
-    ) -> (WorkerCompiled, Component) {
-        let component = Component {
+    ) -> (WorkerCompiled, ComponentConfig) {
+        let component = ComponentConfig {
             config_id: exec_config.config_id.clone(),
             config_store,
             exports: worker.exported_functions().to_vec(),
@@ -1154,8 +1154,8 @@ impl WorkerCompiled {
         config_store: ConfigStore,
         exec_config: ExecConfig,
         executor_id: ExecutorId,
-    ) -> (WorkerCompiled, Component) {
-        let component = Component {
+    ) -> (WorkerCompiled, ComponentConfig) {
+        let component = ComponentConfig {
             config_id: exec_config.config_id.clone(),
             config_store,
             exports: worker.exported_functions().to_vec(),
@@ -1227,11 +1227,11 @@ struct ComponentConfigRegistryInner {
         (ConfigId, FunctionMetadata, ComponentRetryConfig, ImportType),
     >,
     export_hierarchy: Vec<PackageIfcFns>,
-    ids_to_components: hashbrown::HashMap<ConfigId, Component>,
+    ids_to_components: hashbrown::HashMap<ConfigId, ComponentConfig>,
 }
 
 impl ComponentConfigRegistry {
-    fn insert(&mut self, component: Component) -> Result<(), anyhow::Error> {
+    fn insert(&mut self, component: ComponentConfig) -> Result<(), anyhow::Error> {
         // verify that the component or its exports are not already present
         if self
             .inner
@@ -1362,7 +1362,10 @@ struct ComponentConfigRegistryRO {
 }
 
 impl ComponentConfigRegistryRO {
-    fn find_by_exported_ffqn(&self, ffqn: &FunctionFqn) -> Option<(Component, FunctionMetadata)> {
+    fn find_by_exported_ffqn(
+        &self,
+        ffqn: &FunctionFqn,
+    ) -> Option<(ComponentConfig, FunctionMetadata)> {
         self.inner.exported_ffqns.get(ffqn).map(|(id, meta, ..)| {
             (
                 self.inner.ids_to_components.get(id).unwrap().clone(),
@@ -1371,7 +1374,7 @@ impl ComponentConfigRegistryRO {
         })
     }
 
-    fn list(&self, extensions: bool) -> Vec<Component> {
+    fn list(&self, extensions: bool) -> Vec<ComponentConfig> {
         self.inner
             .ids_to_components
             .values()

@@ -16,7 +16,7 @@ use tracing::instrument;
 use wasm_workers::workflow_worker::JoinNextBlockingStrategy;
 
 #[derive(Debug, Clone)]
-pub struct Component {
+pub struct ComponentConfig {
     // Identifier for given configuration.
     // Uniqueness is not guaranteed.
     // The id is not persisted, only appears in logs and traces and gRPC responses.
