@@ -8,7 +8,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
@@ -42,7 +42,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-submit": [
@@ -50,7 +50,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
         "type_wrapper": "U8",
@@ -60,7 +60,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-await-next": [
@@ -68,7 +68,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
@@ -112,7 +112,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-submit": [
@@ -120,7 +120,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
         "type_wrapper": "U8",
@@ -140,7 +140,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": [
@@ -148,7 +148,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
@@ -161,7 +161,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
@@ -200,7 +200,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
@@ -208,7 +208,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
         "type_wrapper": "U8",
@@ -223,7 +223,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-schedule": [
@@ -257,7 +257,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [
@@ -265,7 +265,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
         "type_wrapper": "U8",
@@ -280,7 +280,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next": [
@@ -288,7 +288,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
@@ -327,7 +327,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": [
@@ -335,7 +335,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
         "type_wrapper": "U8",
@@ -350,7 +350,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [

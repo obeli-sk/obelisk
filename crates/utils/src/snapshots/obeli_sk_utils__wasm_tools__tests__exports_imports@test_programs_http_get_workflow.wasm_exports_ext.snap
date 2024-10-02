@@ -8,7 +8,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
@@ -47,7 +47,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-submit": [
@@ -55,7 +55,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
         "type_wrapper": "String",
@@ -65,7 +65,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-await-next": [
@@ -73,7 +73,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
@@ -91,7 +91,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
@@ -134,7 +134,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": [
@@ -142,7 +142,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
@@ -188,7 +188,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": [
@@ -196,7 +196,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
         "type_wrapper": "String",
@@ -211,7 +211,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-submit": [
@@ -219,7 +219,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
         "type_wrapper": {
@@ -231,7 +231,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-schedule": [
@@ -260,7 +260,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": [
@@ -268,7 +268,7 @@ expression: exports
       {
         "type_wrapper": "String",
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
         "type_wrapper": "String",
@@ -278,7 +278,7 @@ expression: exports
     ],
     {
       "type_wrapper": "String",
-      "wit_type": "string"
+      "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow/workflow.get": [
