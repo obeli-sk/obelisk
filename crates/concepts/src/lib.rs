@@ -810,7 +810,7 @@ pub mod prefixed_ulid {
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum ConfigIdType {
-    WasmActivity,
+    ActivityWasm,
     Workflow,
     WebhookWasm,
 }
@@ -861,7 +861,7 @@ impl ConfigId {
     pub const fn dummy() -> Self {
         // TODO: rename to `dummy_activity`
         Self {
-            config_id_type: ConfigIdType::WasmActivity,
+            config_id_type: ConfigIdType::ActivityWasm,
             name: StrVariant::empty(),
             hash: StrVariant::empty(),
             _private: PhantomData,

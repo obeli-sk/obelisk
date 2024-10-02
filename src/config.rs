@@ -99,7 +99,7 @@ impl ConfigStore {
             StrVariant::from(format!("{:x}", hasher.finish()))
         };
         let config_id_type = match self {
-            Self::WasmActivityV1 { .. } => ConfigIdType::WasmActivity,
+            Self::WasmActivityV1 { .. } => ConfigIdType::ActivityWasm,
             Self::WasmWorkflowV1 { .. } => ConfigIdType::Workflow,
             Self::WebhookComponentV1 { .. } => ConfigIdType::WebhookWasm,
         };

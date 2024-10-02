@@ -283,7 +283,7 @@ pub(crate) mod tests {
     ) -> (WasmComponent, ConfigId, ComponentType) {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
         let config_id = ConfigId::new(
-            ConfigIdType::WasmActivity,
+            ConfigIdType::ActivityWasm,
             wasm_file_name(wasm_path),
             StrVariant::Static("dummy hash"),
         )
@@ -302,7 +302,7 @@ pub(crate) mod tests {
     ) -> ExecutorTaskHandle {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
         let config_id = ConfigId::new(
-            ConfigIdType::WasmActivity,
+            ConfigIdType::ActivityWasm,
             wasm_file_name(wasm_path),
             StrVariant::Static("dummy hash"),
         )
