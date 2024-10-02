@@ -10,7 +10,6 @@ use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::WorkflowToml;
 use crate::config::ComponentConfig;
 use crate::config::ComponentConfigImportable;
-use crate::config::ConfigStore;
 use crate::grpc_util::extractor::accept_trace;
 use crate::grpc_util::grpc_mapping::PendingStatusExt as _;
 use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
@@ -32,6 +31,7 @@ use concepts::storage::PendingState;
 use concepts::ComponentRetryConfig;
 use concepts::ConfigId;
 use concepts::ConfigIdType;
+use concepts::ContentDigest;
 use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
@@ -143,13 +143,14 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         };
 
         // Check that ffqn exists
-        let Some((component, fn_meta)) = self.component_registry_ro.find_by_exported_ffqn(&ffqn)
+        let Some((config_id, retry_config, fn_metadata)) =
+            self.component_registry_ro.find_by_exported_ffqn(&ffqn)
         else {
             return Err(tonic::Status::not_found("function not found"));
         };
         // Type check `params`
         if let Err(err) = params.typecheck(
-            fn_meta
+            fn_metadata
                 .parameter_types
                 .iter()
                 .map(|ParameterType { type_wrapper, .. }| type_wrapper),
@@ -160,7 +161,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         }
         let db_connection = self.db_pool.connection();
         let created_at = Now.now();
-        span.record("config_id", tracing::field::display(&component.config_id));
+        span.record("config_id", tracing::field::display(config_id));
         // Associate the (root) request execution with the request span. Makes possible to find the trace by execution id.
         let metadata = concepts::ExecutionMetadata::from_parent_span(&span);
         db_connection
@@ -172,10 +173,10 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 params,
                 parent: None,
                 scheduled_at: created_at,
-                retry_exp_backoff: component.config_store.default_retry_exp_backoff(),
-                max_retries: component.config_store.default_max_retries(),
-                config_id: component.config_id.clone(),
-                return_type: fn_meta
+                retry_exp_backoff: retry_config.retry_exp_backoff,
+                max_retries: retry_config.max_retries,
+                config_id: config_id.clone(),
+                return_type: fn_metadata
                     .return_type
                     .as_ref()
                     .map(|rt| rt.type_wrapper.clone()),
@@ -278,7 +279,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 name: component.config_id.name.to_string(),
                 r#type: component.config_id.config_id_type.to_string(),
                 config_id: Some(component.config_id.into()),
-                digest: component.config_store.common().content_digest.to_string(),
+                digest: component.content_digest.to_string(),
                 exports: if let Some(exports) = component.importable {
                     inspect_fns(exports.exports, true)
                 } else {
@@ -1021,7 +1022,7 @@ async fn compile_and_verify(
                     )?;
                     Ok(Either::Right((
                         name,
-                        (webhook_compiled, webhook.routes, webhook.config_store),
+                        (webhook_compiled, webhook.routes, webhook.content_digest),
                     )))
                 })
             })
@@ -1041,11 +1042,10 @@ async fn compile_and_verify(
                         component_registry.insert(component)?;
                         workers_compiled.push(worker_compiled);
                     },
-                    Either::Right((webhook_name, (webhook_compiled, routes, config_store))) => {
-                        let component = ComponentConfig { config_id: webhook_compiled.config_id.clone(), config_store, imports: webhook_compiled.imports().to_vec(), importable: None };
+                    Either::Right((webhook_name, (webhook_compiled, routes, content_digest))) => {
+                        let component = ComponentConfig { config_id: webhook_compiled.config_id.clone(), imports: webhook_compiled.imports().to_vec(), content_digest, importable: None };
                         component_registry.insert(component)?;
                         let old = webhooks_compiled_by_names.insert(webhook_name, (webhook_compiled, routes));
-
                         assert!(old.is_none());
                     },
                 }
@@ -1073,7 +1073,6 @@ async fn compile_and_verify(
 #[instrument(skip_all, fields(
     %executor_id,
     config_id = %activity.exec_config.config_id,
-    name = activity.config_store.name(),
     wasm_path = ?activity.wasm_path,
 ))]
 fn prespawn_activity(
@@ -1091,7 +1090,8 @@ fn prespawn_activity(
     )?;
     Ok(WorkerCompiled::new_activity(
         worker,
-        activity.config_store,
+        activity.content_digest,
+        activity.retry_config,
         activity.exec_config,
         executor_id,
     ))
@@ -1100,7 +1100,6 @@ fn prespawn_activity(
 #[instrument(skip_all, fields(
     %executor_id,
     config_id = %workflow.exec_config.config_id,
-    name = workflow.config_store.name(),
     wasm_path = ?workflow.wasm_path,
 ))]
 fn prespawn_workflow(
@@ -1118,7 +1117,7 @@ fn prespawn_workflow(
     )?;
     Ok(WorkerCompiled::new_workflow(
         worker,
-        workflow.config_store,
+        workflow.content_digest,
         workflow.exec_config,
         executor_id,
     ))
@@ -1134,17 +1133,19 @@ struct WorkerCompiled {
 impl WorkerCompiled {
     fn new_activity(
         worker: ActivityWorker<Now>,
-        config_store: ConfigStore,
+        content_digest: ContentDigest,
+        retry_config: ComponentRetryConfig,
         exec_config: ExecConfig,
         executor_id: ExecutorId,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             config_id: exec_config.config_id.clone(),
-            config_store,
+            content_digest,
             importable: Some(ComponentConfigImportable {
                 exports: worker.exported_functions().to_vec(),
                 exports_hierarchy: worker.exports_hierarchy().to_vec(),
                 importable_type: ImportableType::ActivityWasm,
+                retry_config,
             }),
             imports: worker.imported_functions().to_vec(),
         };
@@ -1161,17 +1162,18 @@ impl WorkerCompiled {
 
     fn new_workflow(
         worker: WorkflowWorkerCompiled<Now>,
-        config_store: ConfigStore,
+        content_digest: ContentDigest,
         exec_config: ExecConfig,
         executor_id: ExecutorId,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
             config_id: exec_config.config_id.clone(),
-            config_store,
+            content_digest,
             importable: Some(ComponentConfigImportable {
                 exports: worker.exported_functions().to_vec(),
                 exports_hierarchy: worker.exports_hierarchy().to_vec(),
                 importable_type: ImportableType::Workflow,
+                retry_config: ComponentRetryConfig::default(), // no retries
             }),
             imports: worker.imported_functions().to_vec(),
         };
@@ -1272,10 +1274,7 @@ impl ComponentConfigRegistry {
                     (
                         component.config_id.clone(),
                         exported_fn_metadata.clone(),
-                        ComponentRetryConfig {
-                            max_retries: component.config_store.default_max_retries(),
-                            retry_exp_backoff: component.config_store.default_retry_exp_backoff(),
-                        },
+                        importable.retry_config,
                         importable.importable_type,
                     ),
                 );
@@ -1379,13 +1378,17 @@ impl ComponentConfigRegistryRO {
     fn find_by_exported_ffqn(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(ComponentConfig, FunctionMetadata)> {
-        self.inner.exported_ffqns.get(ffqn).map(|(id, meta, ..)| {
-            (
-                self.inner.ids_to_components.get(id).unwrap().clone(),
-                meta.clone(),
-            )
-        })
+    ) -> Option<(&ConfigId, ComponentRetryConfig, &FunctionMetadata)> {
+        self.inner.exported_ffqns.get(ffqn).map(
+            |(config_id, fn_metadata, retry_config, _importable)| {
+                (
+                    config_id,
+                    *retry_config,
+                    // self.inner.ids_to_components.get(id).unwrap().clone(),
+                    fn_metadata,
+                )
+            },
+        )
     }
 
     fn list(&self, extensions: bool) -> Vec<ComponentConfig> {

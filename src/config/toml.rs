@@ -1,7 +1,7 @@
 use super::{
     ComponentLocation, {ConfigStore, ConfigStoreCommon},
 };
-use concepts::ConfigId;
+use concepts::{ComponentRetryConfig, ConfigId, ContentDigest};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use directories::ProjectDirs;
 use log::{LoggingConfig, LoggingStyle};
@@ -224,10 +224,11 @@ pub(crate) struct WasmActivityToml {
 
 #[derive(Debug)]
 pub(crate) struct ActivityConfigVerified {
-    pub(crate) config_store: ConfigStore,
     pub(crate) wasm_path: PathBuf,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
+    pub(crate) retry_config: ComponentRetryConfig,
+    pub(crate) content_digest: ContentDigest,
 }
 
 impl WasmActivityToml {
@@ -241,10 +242,12 @@ impl WasmActivityToml {
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
+        let content_digest = common.content_digest.clone();
+        let retry_exp_backoff = self.default_retry_exp_backoff.into();
         let config_store = ConfigStore::WasmActivityV1 {
             common,
             default_max_retries: self.default_max_retries,
-            default_retry_exp_backoff: self.default_retry_exp_backoff.into(),
+            default_retry_exp_backoff: retry_exp_backoff,
         };
         let config_id = config_store.config_id()?;
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
@@ -255,10 +258,14 @@ impl WasmActivityToml {
             env_vars: Arc::from(self.env_vars),
         };
         Ok(ActivityConfigVerified {
-            config_store,
+            content_digest,
             wasm_path,
             activity_config,
             exec_config: self.exec.into_exec_exec_config(config_id),
+            retry_config: ComponentRetryConfig {
+                max_retries: self.default_max_retries,
+                retry_exp_backoff,
+            },
         })
     }
 }
@@ -282,7 +289,7 @@ pub(crate) struct WorkflowToml {
 
 #[derive(Debug)]
 pub(crate) struct WorkflowConfigVerified {
-    pub(crate) config_store: ConfigStore,
+    pub(crate) content_digest: ContentDigest,
     pub(crate) wasm_path: PathBuf,
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
@@ -303,14 +310,15 @@ impl WorkflowToml {
             .child_retry_exp_backoff_override
             .clone()
             .map(Duration::from);
-        let config_store = ConfigStore::WasmWorkflowV1 {
+        let content_digest = common.content_digest.clone();
+        let config_id = ConfigStore::WasmWorkflowV1 {
             common,
             join_next_blocking_strategy: self.join_next_blocking_strategy,
             child_retry_exp_backoff,
             child_max_retries: self.child_max_retries_override,
             non_blocking_event_batching: self.non_blocking_event_batching,
-        };
-        let config_id = config_store.config_id()?;
+        }
+        .config_id()?;
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
         let workflow_config = WorkflowConfig {
             config_id: config_id.clone(),
@@ -320,7 +328,7 @@ impl WorkflowToml {
             non_blocking_event_batching: self.non_blocking_event_batching,
         };
         Ok(WorkflowConfigVerified {
-            config_store,
+            content_digest,
             wasm_path,
             workflow_config,
             exec_config: self.exec.into_exec_exec_config(config_id),
@@ -601,7 +609,7 @@ pub(crate) mod webhook {
     use super::{ComponentCommon, DurationConfig, StdOutput};
     use crate::config::ConfigStore;
     use anyhow::Context;
-    use concepts::ConfigId;
+    use concepts::{ConfigId, ContentDigest};
     use serde::Deserialize;
     use std::{
         net::SocketAddr,
@@ -634,7 +642,7 @@ pub(crate) mod webhook {
     }
 
     impl WebhookComponent {
-        #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
+        #[instrument(skip_all, fields(component_name = self.common.name, config_id), err)]
         pub(crate) async fn fetch_and_verify(
             self,
             wasm_cache_dir: Arc<Path>,
@@ -644,8 +652,8 @@ pub(crate) mod webhook {
                 .common
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
                 .await?;
-            let config_store = ConfigStore::WebhookComponentV1 { common };
-            let config_id = config_store.config_id()?;
+            let content_digest = common.content_digest.clone();
+            let config_id = ConfigStore::WebhookComponentV1 { common }.config_id()?;
             tracing::Span::current().record("config_id", tracing::field::display(&config_id));
 
             Ok(WebhookComponentVerified {
@@ -655,12 +663,11 @@ pub(crate) mod webhook {
                     .routes
                     .into_iter()
                     .map(WebhookRouteVerified::try_from)
-                    .collect::<Result<Vec<_>, _>>()
-                    .with_context(|| format!("cannot parse webhook `{}`", config_store.name()))?,
+                    .collect::<Result<Vec<_>, _>>()?,
                 forward_stdout: self.forward_stdout.into(),
                 forward_stderr: self.forward_stderr.into(),
                 env_vars: self.env_vars,
-                config_store,
+                content_digest,
             })
         }
     }
@@ -689,7 +696,7 @@ pub(crate) mod webhook {
         pub(crate) forward_stdout: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) forward_stderr: Option<wasm_workers::std_output_stream::StdOutput>,
         pub(crate) env_vars: Vec<EnvVar>,
-        pub(crate) config_store: ConfigStore,
+        pub(crate) content_digest: ContentDigest,
     }
 
     #[derive(Debug)]

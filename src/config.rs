@@ -3,6 +3,7 @@ pub(crate) mod toml;
 
 use crate::oci;
 use anyhow::Context;
+use concepts::ComponentRetryConfig;
 use concepts::ConfigId;
 use concepts::ConfigIdType;
 use concepts::ContentDigest;
@@ -21,16 +22,17 @@ pub(crate) struct ComponentConfig {
     // Uniqueness is not guaranteed.
     // The id is not persisted, only appears in logs and traces and gRPC responses.
     pub(crate) config_id: ConfigId,
-    pub(crate) config_store: ConfigStore,
     pub(crate) imports: Vec<FunctionMetadata>,
     pub(crate) importable: Option<ComponentConfigImportable>,
+    pub(crate) content_digest: ContentDigest,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ComponentConfigImportable {
     pub(crate) importable_type: ImportableType,
-    pub exports: Vec<FunctionMetadata>,
-    pub exports_hierarchy: Vec<PackageIfcFns>,
+    pub(crate) exports: Vec<FunctionMetadata>,
+    pub(crate) exports_hierarchy: Vec<PackageIfcFns>,
+    pub(crate) retry_config: ComponentRetryConfig,
 }
 
 #[derive(Debug, Clone, Hash)]
@@ -40,6 +42,7 @@ pub(crate) struct ConfigStoreCommon {
     pub(crate) content_digest: ContentDigest,
 }
 
+/// Holds configuration for `ConfigId` computation.
 #[derive(Debug, Clone, Hash)]
 pub(crate) enum ConfigStore {
     WasmActivityV1 {
@@ -60,37 +63,11 @@ pub(crate) enum ConfigStore {
 }
 
 impl ConfigStore {
-    pub(crate) fn common(&self) -> &ConfigStoreCommon {
+    fn common(&self) -> &ConfigStoreCommon {
         match self {
             Self::WasmActivityV1 { common, .. }
             | Self::WasmWorkflowV1 { common, .. }
             | Self::WebhookComponentV1 { common } => common,
-        }
-    }
-
-    pub(crate) fn name(&self) -> &str {
-        &self.common().name
-    }
-
-    pub(crate) fn default_max_retries(&self) -> u32 {
-        match self {
-            Self::WasmActivityV1 {
-                default_max_retries,
-                ..
-            } => *default_max_retries,
-            Self::WasmWorkflowV1 { .. } => 0,
-            Self::WebhookComponentV1 { .. } => unreachable!("webhooks have no retries"),
-        }
-    }
-
-    pub(crate) fn default_retry_exp_backoff(&self) -> Duration {
-        match self {
-            Self::WasmActivityV1 {
-                default_retry_exp_backoff,
-                ..
-            } => *default_retry_exp_backoff,
-            Self::WasmWorkflowV1 { .. } => Duration::ZERO,
-            Self::WebhookComponentV1 { .. } => unreachable!("webhooks have no retries"),
         }
     }
 
@@ -112,7 +89,7 @@ impl ConfigStore {
         };
         Ok(ConfigId::new(
             config_id_type,
-            StrVariant::from(self.name().to_string()),
+            StrVariant::from(self.common().name.clone()),
             hash,
         )?)
     }
