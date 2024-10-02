@@ -3,6 +3,168 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/obeli-sk/obelisk/compare/v0.3.0...v0.4.0) - 2024-10-02
+
+### Added
+
+- Verify webhook imports
+- Preinstantiate in `WorkflowWorkerLinked`
+- Add `server verify`
+- Allow `component list` filtering out the extensions
+- Verify component imports during startup
+- Compile webhook in parallel to other components
+- [**breaking**] Reintroduce topmost parent
+- Introduce business spans
+- Add tracing ctx forwarding on the gRPC boundary
+- Link scheduled execution to its origin
+- Propagate trace ctx from server submit to executor
+- [**breaking**] Replace `correlation_id` with `ExecutionMetadata`
+- [**breaking**] Remove `recycle_instances` setting from activities
+- Allow setting or forwarding envvars to activities, webhooks
+- Add `server generate-config`
+- Allow specifying TOML config path
+- Allow forwarding std streams for activities
+- Make std stream forwarding configurable
+- Log webhook guest out,err to host's stderr
+- Add `correlation_id` to gRPC definition, CLI switch
+- [**breaking**] Change `topmost_parent_id` to `correlation_id`
+- [**breaking**] Replace dynamic `schedule` with `-schedule` suffix for workflows and webhooks
+- Show obelisk types in function signatures
+- [**breaking**] Extract `types.wit`, use `duration` instead of millis
+- Add logging support for activities
+- Add logging capability to workflows and webhooks
+
+### Fixed
+
+- Fail on `start_webhooks` error
+- Parse `obelisk.toml` only when starting the server
+- Skip `wasi:` namespace from mocking in webhooks
+- Verify activity imports in `new_with_config`
+- Reenable epoch interruption in webhook components
+
+### Other
+
+- Use `StrVariant` in `ParameterType`, `ReturnType`
+- Rename `ComponentType::ActivityWasm`
+- Mock webhook imports based on available exports
+- Extract `WebhookCompiled`
+- Rename `ConfigIdType::ActivityWasm`
+- Rename `ConfigIdType::WebhookWasm`
+- Fix clippy
+- Bump sleep workflow and activity
+- Link workflows during verification
+- Fix clippy
+- Extract `ExIm::enrich_exports_with_extensions`
+- Remove `Optional` from `Component.exports`
+- Fix clippy
+- Simplify `inspect_fns`
+- Bump `example_workflow_http_get`
+- Extract `ConfigIdType` from `ComponentType`
+- Remove `Component` from `WebhookInstanceAndRoutes`
+- Move workflow linking to `into_worker`
+- Rename `ConfigVerified`
+- Fix clippy
+- Extract `WorkflowWorkerPre`, `ComponentConfigRegistryRO`
+- Update the readme
+- Introduce `ComponentConfigRegistryRO`
+- Remove long lived `executor` span
+- Unifiy SIGINT handling
+- Rename `component_to_instance` to `prespawn_webhook_instance`
+- Fix clippy
+- Bump `shadow-rs`
+- Bump `oci-wasm` to v0.0.5
+- Fix deprecation warning in `tonic_build`
+- Update milestones
+- Run `cargo update`
+- Run `cargo upgrade`
+- Bump test components
+- Filter out everything on an empty `level`
+- Enable trace level for component logs by default
+- Enable backtrace in test scripts
+- Update the readme
+- *(deps)* Bump cachix/install-nix-action from V28 to 29
+- Replace `SpanKind` with a single span
+- Add sleep workflow and activity to the default TOML
+- Update the readme
+- Add `config_id` to the `worker` span
+- Add execution related attributes to `submit`
+- Fix clippy
+- Bump version of `example_workflow_fibo` in TOML
+- Propagate context to child executions
+- Extract `ServerInit`
+- Revert `vscode-check.sh`
+- Update the readme
+- Use `DbPool` in `expired_timers_watcher`
+- Move component parsing to `webhook_trigger::component_to_instance`
+- Block output of `rustfmt` in `vscode-check.sh`
+- Move retry override to `WebhookInstance`
+- Make sure the generated bindings are formatted
+- Regenerate bindings in `clippy.sh`
+- Add span around webhook instantiation
+- Bump `wasmtime` to version 25
+- Require `rustc` version 1.81.0
+- Bump flake.nix
+- Lower spans to debug for tx functions
+- Instrument engine initialization
+- Make `write_codegen_config` async
+- Fix parent span when calling `WebhookComponent::fetch_and_verify`
+- Disable `server generate-config` for debug builds
+- Replace `Clone` impl with `derivative`
+- Move sqlite config to TOML
+- [**breaking**] Move sqlite configuration into a new table
+- Add `None` to toml's `StdOutput`
+- Update the milestones
+- Update readme and TOML configuration comments
+- Use `StrVariant` in `ConfigId`
+- Bump to latest `example_activity_http_get`
+- Push the latest `example_webhook_fibo`
+- Rename `ComponentType::WebhookComponent`
+- Log failed tests on DEBUG level
+- Add `name` to `ConfigId`
+- [**breaking**] Rename `webhook` to `webhook_component`
+- Update the readme
+- Fix clippy
+- [**breaking**] Switch `correlation_id` type to `StrVariant`
+- Update comments in the TOML configuration file
+- Fail curl on non-successful status codes
+- Change `_private` marker to `non_exhaustive`
+- Rename `ConfigId::dummy_activity()`
+- Work around `Span::current` giving a disabled span
+- Rename `Params::default()` to `Params::empty()`
+- Remove `CancelRequest`
+- [**breaking**] Serialize `ConfigId` to a string
+- Rename `ConfigIdParseError`
+- Fix clippy
+- Fix clippy
+- Print notification send status to logs
+- Lower `sqlite_dao` spans by one level
+- Lower level of `notify_` spans
+- Connect transaction func to the current span directly
+- Lower the span level for `conn_low_prio`
+- Lower log level of the shutdown message
+- Get rid of `expired_timers_watcher` span
+- Update test snapshots
+- Fix `exports_imports`
+- Check that `-obelisk-ext` is not exported by a WASM component
+- Move `SUFFIX_PKG_EXT` to `wasm_tools`
+- Rename `component` to `wasmtime_component`
+- Update snapshots
+- Turn `instance.get_func` not found into a panic
+- Turn `exported_ffqn_to_index` miss into a panic
+- Log component messages with a separate target
+- Introduce `component_logger`
+- Fix `workflow_ctx`
+- Fix clippy
+- Set `millis` to u32 to work around integer overflow
+- Fix renaming the local variable
+- Rename local variable
+- Use `InstancePre` in the activity worker
+- Fix clippy
+- Simplify `wasi:http` linking in `activity_worker`
+- Remove `WebhookComponentInstantiationError`
+- Fix `write_codegen_config` for madsim
+- Fix clippy
+
 ## [0.3.0](https://github.com/obeli-sk/obelisk/compare/v0.2.2...v0.3.0) - 2024-09-13
 
 ### Added
