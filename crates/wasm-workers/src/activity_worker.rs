@@ -366,7 +366,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
             })
@@ -409,7 +409,7 @@ pub(crate) mod tests {
 
         let fibo_worker = ActivityWorker::new_with_config(
             test_programs_fibo_activity_builder::TEST_PROGRAMS_FIBO_ACTIVITY,
-            activity_config(ConfigId::dummy()),
+            activity_config(ConfigId::dummy_activity()),
             engine,
             Now,
         )
@@ -496,7 +496,7 @@ pub(crate) mod tests {
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                    activity_config(ConfigId::dummy()),
+                    activity_config(ConfigId::dummy_activity()),
                     engine,
                     Now,
                 )
@@ -507,7 +507,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: TICK_SLEEP,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
             };
             let exec_task = ExecTask::spawn_new(
                 worker,
@@ -539,7 +539,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: Duration::ZERO,
                     max_retries: 0,
-                    config_id: ConfigId::dummy(),
+                    config_id: ConfigId::dummy_activity(),
                     return_type: None,
                     topmost_parent: execution_id,
                 })
@@ -587,7 +587,7 @@ pub(crate) mod tests {
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_sleep_activity_builder::TEST_PROGRAMS_SLEEP_ACTIVITY,
-                    activity_config(ConfigId::dummy()),
+                    activity_config(ConfigId::dummy_activity()),
                     engine,
                     Now,
                 )
@@ -639,7 +639,7 @@ pub(crate) mod tests {
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                    activity_config(ConfigId::dummy()),
+                    activity_config(ConfigId::dummy_activity()),
                     engine,
                     sim_clock.clone(),
                 )
@@ -649,7 +649,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task = ExecTask::new(
@@ -686,7 +686,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
-                    config_id: ConfigId::dummy(),
+                    config_id: ConfigId::dummy_activity(),
                     return_type: None,
                     topmost_parent: execution_id,
                 })
@@ -749,7 +749,7 @@ pub(crate) mod tests {
             let worker = Arc::new(
                 ActivityWorker::new_with_config(
                     test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
-                    activity_config(ConfigId::dummy()),
+                    activity_config(ConfigId::dummy_activity()),
                     engine,
                     sim_clock.clone(),
                 )
@@ -759,7 +759,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task = ExecTask::new(
@@ -794,7 +794,7 @@ pub(crate) mod tests {
                     scheduled_at: created_at,
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
-                    config_id: ConfigId::dummy(),
+                    config_id: ConfigId::dummy_activity(),
                     return_type: None,
                     topmost_parent: execution_id,
                 })

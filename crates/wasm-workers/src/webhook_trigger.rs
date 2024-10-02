@@ -1131,7 +1131,7 @@ pub(crate) mod tests {
                     let instance = WebhookCompiled::new(
                         test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
                         &engine,
-                        ConfigId::dummy(),
+                        ConfigId::dummy_activity(),
                         None,
                         None,
                         Arc::from([]),

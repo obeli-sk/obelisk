@@ -852,14 +852,9 @@ impl ConfigId {
             _private: PhantomData,
         })
     }
-    #[must_use]
-    pub fn component_type(&self) -> ConfigIdType {
-        self.config_id_type
-    }
 
     #[must_use]
-    pub const fn dummy() -> Self {
-        // TODO: rename to `dummy_activity`
+    pub const fn dummy_activity() -> Self {
         Self {
             config_id_type: ConfigIdType::ActivityWasm,
             name: StrVariant::empty(),

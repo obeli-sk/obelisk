@@ -614,7 +614,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
             })
@@ -685,7 +685,7 @@ pub(crate) mod tests {
             WorkflowWorkerCompiled::new_with_config(
                 path,
                 WorkflowConfig {
-                    config_id: ConfigId::dummy(),
+                    config_id: ConfigId::dummy_activity(),
                     join_next_blocking_strategy,
                     child_retry_exp_backoff: None,
                     child_max_retries: None,
@@ -724,7 +724,7 @@ pub(crate) mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
         };
         ExecTask::spawn_new(
             worker,
@@ -784,7 +784,7 @@ pub(crate) mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
             })
@@ -904,7 +904,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
             })
@@ -1009,7 +1009,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::from_millis(0),
                 max_retries: concurrency - 1, // response can conflict with next ChildExecutionRequest
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
             })
@@ -1086,7 +1086,7 @@ pub(crate) mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
             })
@@ -1098,7 +1098,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
             },
             sim_clock.clone(),
             db_pool.clone(),

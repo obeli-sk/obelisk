@@ -636,7 +636,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
         };
 
         let execution_log = create_and_tick(
@@ -678,7 +678,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
@@ -761,7 +761,7 @@ mod tests {
                 scheduled_at: config.created_at,
                 retry_exp_backoff: config.retry_exp_backoff,
                 max_retries: config.max_retries,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: config.execution_id,
             })
@@ -804,7 +804,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -911,7 +911,7 @@ mod tests {
             batch_size: 1,
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -985,7 +985,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: parent_execution_id,
             })
@@ -996,7 +996,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
             },
             sim_clock.clone(),
             db_pool.clone(),
@@ -1019,7 +1019,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: parent_execution_id,
             };
@@ -1070,7 +1070,7 @@ mod tests {
                 batch_size: 1,
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
             },
             sim_clock.clone(),
             db_pool.clone(),
@@ -1157,7 +1157,7 @@ mod tests {
             batch_size: 1,
             lock_expiry,
             tick_sleep: Duration::ZERO,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
         };
 
         let worker = Arc::new(SleepyWorker {
@@ -1184,7 +1184,7 @@ mod tests {
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: timeout_duration,
                 max_retries: 1,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
             })

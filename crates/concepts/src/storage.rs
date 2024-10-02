@@ -209,7 +209,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     scheduled_at: DateTime::from_timestamp_nanos(0),
     retry_exp_backoff: Duration::ZERO,
     max_retries: 0,
-    config_id: ConfigId::dummy(),
+    config_id: ConfigId::dummy_activity(),
     return_type: None,
     metadata: ExecutionMetadata::empty(),
     topmost_parent: ExecutionId::from_parts(0, 0),
@@ -254,7 +254,7 @@ pub enum ExecutionEventInner {
         scheduled_at: DateTime<Utc>,
         retry_exp_backoff: Duration,
         max_retries: u32,
-        #[arbitrary(value = ConfigId::dummy())]
+        #[arbitrary(value = ConfigId::dummy_activity())]
         config_id: ConfigId,
         #[arbitrary(default)]
         return_type: Option<TypeWrapper>,

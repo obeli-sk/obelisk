@@ -634,7 +634,7 @@ pub(crate) mod tests {
                 batch_size: 1,
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
             };
             ExecTask::spawn_new(
                 worker,
@@ -658,7 +658,7 @@ pub(crate) mod tests {
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
             })
@@ -717,7 +717,7 @@ pub(crate) mod tests {
                             batch_size: 1,
                             lock_expiry: Duration::from_secs(1),
                             tick_sleep: TICK_SLEEP,
-                            config_id: ConfigId::dummy(),
+                            config_id: ConfigId::dummy_activity(),
                         };
                         let exec_task = ExecTask::new(
                             worker,

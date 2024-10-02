@@ -215,7 +215,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
             return_type: None,
             topmost_parent: execution_id,
         })
@@ -234,7 +234,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
             return_type: None,
             topmost_parent: execution_id,
         })
@@ -495,7 +495,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: RETRY_EXP_BACKOFF,
                 max_retries: MAX_RETRIES,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
             })
@@ -569,7 +569,7 @@ pub async fn append_batch_respond_to_parent(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
             return_type: None,
             topmost_parent: parent_id,
         })
@@ -612,7 +612,7 @@ pub async fn append_batch_respond_to_parent(
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: parent_id,
             })
@@ -683,7 +683,7 @@ pub async fn append_batch_respond_to_parent(
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
-                config_id: ConfigId::dummy(),
+                config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: parent_id,
             })
@@ -781,7 +781,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
             return_type: None,
             topmost_parent: older_id,
         })
@@ -801,7 +801,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
             return_type: None,
             topmost_parent: newer_id,
         })
@@ -821,7 +821,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
             return_type: None,
             topmost_parent: newest_id,
         })
@@ -861,7 +861,7 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
             return_type: None,
             topmost_parent: execution_id,
         })
@@ -916,7 +916,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
             return_type: Some(TypeWrapper::U8),
             topmost_parent: execution_id,
         })
@@ -976,7 +976,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
             scheduled_at: sim_clock.now(),
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
-            config_id: ConfigId::dummy(),
+            config_id: ConfigId::dummy_activity(),
             return_type: None,
             topmost_parent: execution_id,
         })

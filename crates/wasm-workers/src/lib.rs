@@ -177,7 +177,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn fn_registry_dummy(ffqns: &[FunctionFqn]) -> Arc<dyn FunctionRegistry> {
-        let component_id = ConfigId::dummy();
+        let component_id = ConfigId::dummy_activity();
         let mut ffqn_to_fn_details = hashbrown::HashMap::new();
         let mut export_hierarchy: hashbrown::HashMap<
             IfcFqnName,
