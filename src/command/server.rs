@@ -303,9 +303,9 @@ fn inspect_fns(functions: Vec<FunctionMetadata>, show_params: bool) -> Vec<grpc:
                     .0
                     .into_iter()
                     .map(|p| grpc::FunctionParameter {
-                        name: p.name,
+                        name: p.name.map(|s| s.to_string()),
                         r#type: Some(grpc::WitType {
-                            wit_type: p.wit_type,
+                            wit_type: p.wit_type.map(|s| s.to_string()),
                             internal: to_any(
                                 &p.type_wrapper,
                                 format!("urn:obelisk:json:params:{ffqn}"),
@@ -321,7 +321,7 @@ fn inspect_fns(functions: Vec<FunctionMetadata>, show_params: bool) -> Vec<grpc:
                      type_wrapper,
                      wit_type,
                  }| grpc::WitType {
-                    wit_type,
+                    wit_type: wit_type.map(|s| s.to_string()),
                     internal: to_any(&type_wrapper, format!("urn:obelisk:json:ret:{ffqn}")),
                 },
             ),

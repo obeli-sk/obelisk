@@ -1,7 +1,7 @@
 use crate::wit_printer::WitPrinter;
 use concepts::{
     FnName, FunctionFqn, FunctionMetadata, IfcFqnName, PackageIfcFns, ParameterType,
-    ParameterTypes, ReturnType,
+    ParameterTypes, ReturnType, StrVariant,
 };
 use indexmap::{indexmap, IndexMap};
 use std::{path::Path, sync::Arc};
@@ -196,16 +196,16 @@ impl ExIm {
         // initialize values for reuse
         let return_type_execution_id = Some(ReturnType {
             type_wrapper: TypeWrapper::String,
-            wit_type: Some(
-                "/* use obelisk:types/execution.{execution-id} */ execution-id".to_string(), // TODO: StrVariant
-            ),
+            wit_type: Some(concepts::StrVariant::Static(
+                "/* use obelisk:types/execution.{execution-id} */ execution-id",
+            )),
         });
         let param_type_join_set = ParameterType {
             type_wrapper: TypeWrapper::String,
-            name: Some("join-set-id".to_string()),
-            wit_type: Some(
-                "/* use obelisk:types/execution.{join-set-id} */ join-set-id".to_string(),
-            ), // TODO: StrVariant
+            name: Some(StrVariant::Static("join-set-id")),
+            wit_type: Some(StrVariant::Static(
+                "/* use obelisk:types/execution.{join-set-id} */ join-set-id",
+            )),
         };
         let param_type_scheduled_at = ParameterType {
             type_wrapper: TypeWrapper::Variant(indexmap! {
@@ -216,8 +216,10 @@ impl ExIm {
                 })),
                 Box::from("in") => Some(TypeWrapper::U64),
             }),
-            name: Some("scheduled-at".to_string()),
-            wit_type: Some("/* use obelisk:types/time.{schedule-at} */ schedule-at".to_string()), // TODO: StrVariant
+            name: Some(StrVariant::Static("scheduled-at")),
+            wit_type: Some(StrVariant::Static(
+                "/* use obelisk:types/time.{schedule-at} */ schedule-at",
+            )),
         };
 
         let mut extensions = Vec::with_capacity(exports_hierarchy.len());
@@ -346,7 +348,7 @@ fn enrich_function_params<'a>(
                     let ffqn = FunctionFqn::new_arc(ifc_fqn.clone(), function_name.clone());
                     let (wit_meta_params, wit_meta_res) = ffqns_to_wit_parsed_meta
                         .remove(&ffqn)
-                        .map(|meta| (Some(meta.params), meta.return_type))
+                        .map(|meta| (Some(meta.params), meta.return_type.map(StrVariant::from)))
                         .unwrap_or_default();
 
                     let mut return_type = func.results();
@@ -392,8 +394,8 @@ fn enrich_function_params<'a>(
                                 .into_iter()
                                 .zip(params)
                                 .map(|(name_wit, type_wrapper)| ParameterType {
-                                    name: Some(name_wit.name),
-                                    wit_type: name_wit.wit_type,
+                                    name: Some(StrVariant::from(name_wit.name)),
+                                    wit_type: name_wit.wit_type.map(StrVariant::from),
                                     type_wrapper,
                                 })
                                 .collect(),

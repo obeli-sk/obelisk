@@ -41,7 +41,6 @@ pub enum FinishedExecutionError {
 #[derive(Clone, Eq, derive_more::Display)]
 pub enum StrVariant {
     Static(&'static str),
-    // TODO String(String)
     Arc(Arc<str>),
 }
 
@@ -1025,7 +1024,7 @@ pub enum ComponentType {
 pub struct ReturnType {
     pub type_wrapper: TypeWrapper,
     #[derivative(PartialEq = "ignore")]
-    pub wit_type: Option<String>,
+    pub wit_type: Option<StrVariant>,
 }
 
 impl Display for ReturnType {
@@ -1048,9 +1047,9 @@ pub struct ParameterTypes(pub Vec<ParameterType>);
 pub struct ParameterType {
     pub type_wrapper: TypeWrapper,
     #[derivative(PartialEq = "ignore")]
-    pub name: Option<String>,
+    pub name: Option<StrVariant>,
     #[derivative(PartialEq = "ignore")]
-    pub wit_type: Option<String>,
+    pub wit_type: Option<StrVariant>,
 }
 
 impl Debug for ParameterTypes {
