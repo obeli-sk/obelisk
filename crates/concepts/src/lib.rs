@@ -827,11 +827,11 @@ pub enum ConfigIdType {
 )]
 #[display("{config_id_type}:{name}:{hash}")]
 #[debug("{}", self)]
+#[non_exhaustive] // force using the constructor as much as possible due to validation
 pub struct ConfigId {
     pub config_id_type: ConfigIdType,
     pub name: StrVariant,
     pub hash: StrVariant,
-    _private: PhantomData<()>,
 }
 impl ConfigId {
     pub fn new(
@@ -849,7 +849,6 @@ impl ConfigId {
             config_id_type: component_type,
             name,
             hash,
-            _private: PhantomData,
         })
     }
 
@@ -859,7 +858,6 @@ impl ConfigId {
             config_id_type: ConfigIdType::ActivityWasm,
             name: StrVariant::empty(),
             hash: StrVariant::empty(),
-            _private: PhantomData,
         }
     }
 }
@@ -891,7 +889,6 @@ impl FromStr for ConfigId {
             config_id_type: component_type,
             name: StrVariant::from(name.to_string()),
             hash: StrVariant::from(hash.to_string()),
-            _private: PhantomData,
         })
     }
 }
