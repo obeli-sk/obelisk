@@ -39,7 +39,8 @@ jobs:
           cd tmp
           wget -q https://github.com/obeli-sk/obelisk/releases/latest/download/${{ matrix.tarfile }}
           tar xvfz ${{ matrix.tarfile }}
-          echo 'api_listening_addr = "0.0.0.0:5005"' > obelisk.toml
+          sed -i 's/api_listening_addr.*/api_listening_addr = "0.0.0.0:5005"/g' obelisk.toml
+          
           cat ../obelisk.toml >> obelisk.toml
           IMAGE_BASE="getobelisk/obelisk"
           IMAGE="${IMAGE_BASE}:${{ matrix.image_tag }}"
