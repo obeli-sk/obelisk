@@ -194,16 +194,18 @@ impl ExIm {
     #[expect(clippy::too_many_lines)]
     fn enrich_exports_with_extensions(exports_hierarchy: &mut Vec<PackageIfcFns>) {
         // initialize values for reuse
-        let return_type_string = Some(ReturnType {
+        let return_type_execution_id = Some(ReturnType {
             type_wrapper: TypeWrapper::String,
             wit_type: Some(
-                "string".to_string(), // TODO: StrVariant
+                "/* use obelisk:types/execution.{execution-id} */ execution-id".to_string(), // TODO: StrVariant
             ),
         });
         let param_type_join_set = ParameterType {
             type_wrapper: TypeWrapper::String,
             name: Some("join-set-id".to_string()),
-            wit_type: Some("string".to_string()), // TODO: StrVariant
+            wit_type: Some(
+                "/* use obelisk:types/execution.{join-set-id} */ join-set-id".to_string(),
+            ), // TODO: StrVariant
         };
         let param_type_scheduled_at = ParameterType {
             type_wrapper: TypeWrapper::Variant(indexmap! {
@@ -244,7 +246,7 @@ impl ExIm {
                     return_type: return_type.clone(),
                 };
 
-                // -submit(join-set-id: string, original params) -> string (execution id)
+                // -submit(join-set-id: join-set-id, original params) -> execution id
                 let fn_submit = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_extended_ifc.clone(),
@@ -260,11 +262,11 @@ impl ExIm {
                         params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
                         ParameterTypes(params)
                     },
-                    return_type: return_type_string.clone(),
+                    return_type: return_type_execution_id.clone(),
                 };
                 insert(fn_submit);
 
-                // -await-next(join-set-id: string) -> original return type
+                // -await-next(join-set-id: join-set-id) -> original return type
                 let fn_await_next = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_extended_ifc.clone(),
@@ -293,7 +295,7 @@ impl ExIm {
                         params.extend_from_slice(&exported_fn_metadata.parameter_types.0);
                         ParameterTypes(params)
                     },
-                    return_type: return_type_string.clone(),
+                    return_type: return_type_execution_id.clone(),
                 };
                 insert(fn_schedule);
             }
