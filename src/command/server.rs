@@ -525,14 +525,16 @@ async fn verify_internal(
         .await
         .with_context(|| format!("cannot create wasm metadata directory {metadata_dir:?}"))?;
 
-    ServerVerified::new(
+    let server_verified = ServerVerified::new(
         config,
         codegen_cache.as_deref(),
         Arc::from(wasm_cache_dir),
         Arc::from(metadata_dir),
         db_file,
     )
-    .await
+    .await?;
+    info!("Server configuration was verified");
+    Ok(server_verified)
 }
 
 async fn run_internal(
@@ -596,7 +598,7 @@ fn make_span<B>(request: &axum::http::Request<B>) -> Span {
 
 struct ServerVerified {
     component_registry_ro: ComponentConfigRegistryRO,
-    compiled_components: CompiledComponents,
+    compiled_components: LinkedComponents,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<String>)>,
     engines: Engines,
     sqlite_config: SqliteConfig,
@@ -640,7 +642,6 @@ impl ServerVerified {
             config.webhooks_by_names,
         )
         .await?;
-        info!("Server configuration was verified");
         Ok(Self {
             compiled_components,
             component_registry_ro,
@@ -741,13 +742,13 @@ impl ServerInit {
     }
 }
 
-type WebhookInstanceAndRoutes = (
+type WebhookInstancesAndRoutes = (
     WebhookInstance<Now, SqlitePool, SqlitePool>,
     Vec<WebhookRouteVerified>,
 );
 
 async fn start_webhooks(
-    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstanceAndRoutes>)>,
+    http_servers_to_webhooks: Vec<(webhook::HttpServer, Vec<WebhookInstancesAndRoutes>)>,
     engines: &Engines,
     db_pool: SqlitePool,
     fn_registry: Arc<dyn FunctionRegistry>,
@@ -958,9 +959,10 @@ async fn fetch_and_verify_all(
     }
 }
 
-struct CompiledComponents {
+/// Holds all the work that does not require a database connection.
+struct LinkedComponents {
     workers_linked: Vec<WorkerLinked>,
-    webhooks_by_names: hashbrown::HashMap<String, WebhookInstanceAndRoutes>,
+    webhooks_by_names: hashbrown::HashMap<String, WebhookInstancesAndRoutes>,
 }
 
 #[instrument(skip_all)]
@@ -969,7 +971,7 @@ async fn compile_and_verify(
     wasm_activities: Vec<ActivityConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<String, WebhookComponentVerified>,
-) -> Result<(CompiledComponents, ComponentConfigRegistryRO), anyhow::Error> {
+) -> Result<(LinkedComponents, ComponentConfigRegistryRO), anyhow::Error> {
     let mut component_registry = ComponentConfigRegistry::default();
     let pre_spawns: Vec<tokio::task::JoinHandle<Result<_, anyhow::Error>>> = wasm_activities
         .into_iter()
@@ -1002,7 +1004,7 @@ async fn compile_and_verify(
             tokio::task::spawn_blocking(move || {
                 span.in_scope(|| {
                     let config_id = webhook.config_id;
-                    let instance = webhook_trigger::prespawn_webhook_instance(
+                    let webhook_compiled = webhook_trigger::WebhookCompiled::new(
                         webhook.wasm_path,
                         &engines.webhook_engine,
                         config_id.clone(),
@@ -1011,7 +1013,7 @@ async fn compile_and_verify(
                         Arc::from(webhook.env_vars),
                         webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
                     )?;
-                    Ok(Either::Right((name, (instance, webhook.routes))))
+                    Ok(Either::Right((name, (webhook_compiled, webhook.routes))))
                 })
             })
         }))
@@ -1023,7 +1025,7 @@ async fn compile_and_verify(
     tokio::select! {
         results_of_results = pre_spawns => {
             let mut workers_compiled = Vec::with_capacity(results_of_results.len());
-            let mut webhooks_by_names = hashbrown::HashMap::new();
+            let mut webhooks_compiled_by_names = hashbrown::HashMap::new();
             for handle in results_of_results {
                 match handle?? {
                     Either::Left((worker_compiled, component)) => {
@@ -1031,15 +1033,19 @@ async fn compile_and_verify(
                         workers_compiled.push(worker_compiled);
                     },
                     Either::Right((webhook_name, webhook_instance)) => {
-                        let old = webhooks_by_names.insert(webhook_name, webhook_instance);
+                        let old = webhooks_compiled_by_names.insert(webhook_name, webhook_instance);
                         assert!(old.is_none());
                     },
                 }
             }
             let component_registry_ro = component_registry.type_check()?;
             let fn_registry: Arc<dyn FunctionRegistry> = Arc::from(component_registry_ro.clone());
-            let workers_linked = workers_compiled.into_iter().map(|worker| worker.into_linked(&fn_registry)).collect::<Result<Vec<_>,_>>()?;
-            Ok((CompiledComponents {
+            let workers_linked = workers_compiled.into_iter().map(|worker| worker.link(&fn_registry)).collect::<Result<Vec<_>,_>>()?;
+            let webhooks_by_names = webhooks_compiled_by_names
+                .into_iter()
+                .map(|(name, (compiled, routes))| compiled.link(&engines.webhook_engine, fn_registry.as_ref()).map(|instance| (name, (instance, routes))))
+                .collect::<Result<hashbrown::HashMap<_,_>,_>>()?;
+            Ok((LinkedComponents {
                 workers_linked,
                 webhooks_by_names,
             }, component_registry_ro))
@@ -1165,15 +1171,12 @@ impl WorkerCompiled {
     }
 
     #[instrument(skip_all, fields(config_id = %self.exec_config.config_id), err)]
-    fn into_linked(
-        self,
-        fn_registry: &Arc<dyn FunctionRegistry>,
-    ) -> Result<WorkerLinked, anyhow::Error> {
+    fn link(self, fn_registry: &Arc<dyn FunctionRegistry>) -> Result<WorkerLinked, anyhow::Error> {
         Ok(WorkerLinked {
             worker: match self.worker {
                 Either::Left(activity) => Either::Left(activity),
                 Either::Right(workflow_compiled) => {
-                    Either::Right(workflow_compiled.into_linked(fn_registry.clone())?)
+                    Either::Right(workflow_compiled.link(fn_registry.clone())?)
                 }
             },
             exec_config: self.exec_config,

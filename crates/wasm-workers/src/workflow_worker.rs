@@ -90,7 +90,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
     }
 
     #[instrument(skip_all, fields(config_id = %self.config.config_id))]
-    pub fn into_linked<DB: DbConnection, P: DbPool<DB>>(
+    pub fn link<DB: DbConnection, P: DbPool<DB>>(
         self,
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Result<WorkflowWorkerLinked<C, DB, P>, WasmFileError> {
@@ -484,7 +484,7 @@ pub(crate) mod tests {
                 clock_fn.clone(),
             )
             .unwrap()
-            .into_linked(fn_registry)
+            .link(fn_registry)
             .unwrap()
             .into_worker(db_pool.clone()),
         );
@@ -685,7 +685,7 @@ pub(crate) mod tests {
                 clock_fn,
             )
             .unwrap()
-            .into_linked(fn_registry)
+            .link(fn_registry)
             .unwrap()
             .into_worker(db_pool),
         )

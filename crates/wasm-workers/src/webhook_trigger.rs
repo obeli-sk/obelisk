@@ -41,6 +41,8 @@ use wasmtime_wasi_http::bindings::ProxyPre;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
+const WASI_NAMESPACE_WITH_COLON: &str = "wasi:";
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HttpTriggerConfig {
     pub config_id: ConfigId,
@@ -51,6 +53,142 @@ type StdError = Box<dyn std::error::Error + Send + Sync>;
 pub enum WebhookServerError {
     #[error("socket error: {0}")]
     SocketError(std::io::Error),
+}
+
+pub struct WebhookCompiled {
+    config_id: ConfigId,
+    forward_stdout: Option<StdOutput>,
+    forward_stderr: Option<StdOutput>,
+    env_vars: Arc<[EnvVar]>,
+    retry_config: RetryConfigOverride,
+
+    wasm_component: WasmComponent,
+}
+
+impl WebhookCompiled {
+    pub fn new(
+        wasm_path: impl AsRef<Path>,
+        engine: &Engine,
+        config_id: ConfigId,
+        forward_stdout: Option<StdOutput>,
+        forward_stderr: Option<StdOutput>,
+        env_vars: Arc<[EnvVar]>,
+        retry_config: RetryConfigOverride,
+    ) -> Result<Self, WasmFileError> {
+        let wasm_component = WasmComponent::new(wasm_path, engine)?;
+        Ok(Self {
+            config_id,
+            forward_stdout,
+            forward_stderr,
+            env_vars,
+            retry_config,
+            wasm_component,
+        })
+    }
+
+    #[instrument(skip_all, fields(config_id = %self.config_id), err)]
+    pub fn link<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
+        self,
+        engine: &Engine,
+        fn_registry: &dyn FunctionRegistry,
+    ) -> Result<WebhookInstance<C, DB, P>, WasmFileError> {
+        let mut linker = Linker::new(engine);
+        wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| {
+            WasmFileError::LinkingError {
+                context: StrVariant::Static("linking `wasmtime_wasi`"),
+                err: err.into(),
+            }
+        })?;
+        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(|err| {
+            WasmFileError::LinkingError {
+                context: StrVariant::Static("linking `wasmtime_wasi_http`"),
+                err: err.into(),
+            }
+        })?;
+        // Mock imported functions
+        // FIXME: mock available exported functions instead of current component imports:
+        for import in &self.wasm_component.exim.imports_hierarchy {
+            if import
+                .ifc_fqn
+                .deref()
+                .starts_with(PREFIX_OF_IGNORED_IMPORTS)
+                || import
+                    .ifc_fqn
+                    .deref()
+                    .starts_with(WASI_NAMESPACE_WITH_COLON)
+            {
+                trace!(
+                ifc_fqn = %import.ifc_fqn,
+                "Skipping");
+                continue;
+            }
+            trace!(
+                ifc_fqn = %import.ifc_fqn,
+                "Adding imported interface to the linker",
+            );
+            if let Ok(mut linker_instance) = linker.instance(import.ifc_fqn.deref()) {
+                for function_name in import.fns.keys() {
+                    let ffqn = FunctionFqn {
+                        ifc_fqn: import.ifc_fqn.clone(),
+                        function_name: function_name.clone(),
+                    };
+                    trace!("Adding mock for imported function {ffqn} to the linker");
+                    let res = linker_instance.func_new_async(function_name.deref(), {
+                        let ffqn = ffqn.clone();
+                        move |mut store_ctx: wasmtime::StoreContextMut<'_, WebhookCtx<C, DB, P>>,
+                              params: &[Val],
+                              results: &mut [Val]| {
+                            let ffqn = ffqn.clone();
+                            Box::new(async move {
+                                Ok(store_ctx
+                                    .data_mut()
+                                    .call_imported_fn(ffqn, params, results)
+                                    .await?)
+                            })
+                        }
+                    });
+                    if let Err(err) = res {
+                        if err.to_string() == format!("import `{function_name}` not found") {
+                            // FIXME: Add test for error message stability
+                            debug!("Skipping mocking of {ffqn}");
+                        } else {
+                            return Err(WasmFileError::LinkingError {
+                                context: StrVariant::Arc(Arc::from(format!(
+                                    "cannot add mock for imported function {ffqn}"
+                                ))),
+                                err: err.into(),
+                            });
+                        }
+                    }
+                }
+            } else {
+                trace!("Skipping interface {ifc_fqn}", ifc_fqn = import.ifc_fqn);
+            }
+        }
+        WebhookCtx::add_to_linker(&mut linker)?;
+        let proxy_pre = linker
+            .instantiate_pre(&self.wasm_component.wasmtime_component)
+            .map_err(|err: wasmtime::Error| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking error while creating instantiate_pre"),
+                err: err.into(),
+            })?;
+        let proxy_pre = Arc::new(ProxyPre::new(proxy_pre).map_err(|err: wasmtime::Error| {
+            WasmFileError::LinkingError {
+                context: StrVariant::Static("linking error while creating ProxyPre instance"),
+                err: err.into(),
+            }
+        })?);
+
+        Ok(WebhookInstance {
+            config_id: self.config_id,
+            forward_stdout: self.forward_stdout,
+            forward_stderr: self.forward_stderr,
+            env_vars: self.env_vars,
+            retry_config: self.retry_config,
+            exim: self.wasm_component.exim,
+            proxy_pre,
+        })
+    }
 }
 
 #[derive(Derivative)]
@@ -111,117 +249,6 @@ impl<T> Default for MethodAwareRouter<T> {
             fallback: Router::default(),
         }
     }
-}
-
-#[instrument(skip_all, fields(%config_id), err)]
-pub fn prespawn_webhook_instance<
-    C: ClockFn + 'static,
-    DB: DbConnection + 'static,
-    P: DbPool<DB> + 'static,
->(
-    wasm_path: impl AsRef<Path>,
-    engine: &Engine,
-    config_id: ConfigId,
-    forward_stdout: Option<StdOutput>,
-    forward_stderr: Option<StdOutput>,
-    env_vars: Arc<[EnvVar]>,
-    retry_config: RetryConfigOverride,
-) -> Result<WebhookInstance<C, DB, P>, WasmFileError> {
-    const WASI_NAMESPACE_WITH_COLON: &str = "wasi:";
-
-    let wasm_component = WasmComponent::new(wasm_path, engine)?;
-    let mut linker = Linker::new(engine);
-    wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| WasmFileError::LinkingError {
-        context: StrVariant::Static("linking `wasmtime_wasi`"),
-        err: err.into(),
-    })?;
-    wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(|err| {
-        WasmFileError::LinkingError {
-            context: StrVariant::Static("linking `wasmtime_wasi_http`"),
-            err: err.into(),
-        }
-    })?;
-    // Mock imported functions
-    // FIXME: mock available exported functions instead of current component imports
-    for import in &wasm_component.exim.imports_hierarchy {
-        if import
-            .ifc_fqn
-            .deref()
-            .starts_with(PREFIX_OF_IGNORED_IMPORTS)
-            || import
-                .ifc_fqn
-                .deref()
-                .starts_with(WASI_NAMESPACE_WITH_COLON)
-        {
-            trace!(
-                ifc_fqn = %import.ifc_fqn,
-                "Skipping");
-            continue;
-        }
-        trace!(
-            ifc_fqn = %import.ifc_fqn,
-            "Adding imported interface to the linker",
-        );
-        if let Ok(mut linker_instance) = linker.instance(import.ifc_fqn.deref()) {
-            for function_name in import.fns.keys() {
-                let ffqn = FunctionFqn {
-                    ifc_fqn: import.ifc_fqn.clone(),
-                    function_name: function_name.clone(),
-                };
-                trace!("Adding mock for imported function {ffqn} to the linker");
-                let res = linker_instance.func_new_async(function_name.deref(), {
-                    let ffqn = ffqn.clone();
-                    move |mut store_ctx: wasmtime::StoreContextMut<'_, WebhookCtx<C, DB, P>>,
-                          params: &[Val],
-                          results: &mut [Val]| {
-                        let ffqn = ffqn.clone();
-                        Box::new(async move {
-                            Ok(store_ctx
-                                .data_mut()
-                                .call_imported_fn(ffqn, params, results)
-                                .await?)
-                        })
-                    }
-                });
-                if let Err(err) = res {
-                    if err.to_string() == format!("import `{function_name}` not found") {
-                        // FIXME: Add test for error message stability
-                        debug!("Skipping mocking of {ffqn}");
-                    } else {
-                        return Err(WasmFileError::LinkingError {
-                            context: StrVariant::Arc(Arc::from(format!(
-                                "cannot add mock for imported function {ffqn}"
-                            ))),
-                            err: err.into(),
-                        });
-                    }
-                }
-            }
-        } else {
-            trace!("Skipping interface {ifc_fqn}", ifc_fqn = import.ifc_fqn);
-        }
-    }
-    WebhookCtx::add_to_linker(&mut linker)?;
-    let instance = linker
-        .instantiate_pre(&wasm_component.wasmtime_component)
-        .map_err(|err: wasmtime::Error| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking error while creating instantiate_pre"),
-            err: err.into(),
-        })?;
-    let instance =
-        ProxyPre::new(instance).map_err(|err: wasmtime::Error| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking error while creating ProxyPre instance"),
-            err: err.into(),
-        })?;
-    Ok(WebhookInstance {
-        proxy_pre: Arc::new(instance),
-        config_id,
-        forward_stdout,
-        forward_stderr,
-        env_vars,
-        retry_config,
-        exim: wasm_component.exim,
-    })
 }
 
 pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
@@ -1014,7 +1041,7 @@ pub(crate) mod tests {
         use crate::activity_worker::tests::{compile_activity, FIBO_10_OUTPUT};
         use crate::engines::{EngineConfig, Engines};
         use crate::tests::TestingFnRegistry;
-        use crate::webhook_trigger::RetryConfigOverride;
+        use crate::webhook_trigger::{RetryConfigOverride, WebhookCompiled};
         use crate::workflow_worker::tests::compile_workflow;
         use crate::{
             activity_worker::tests::spawn_activity_fibo,
@@ -1092,7 +1119,7 @@ pub(crate) mod tests {
                 .await;
 
                 let router = {
-                    let instance = webhook_trigger::prespawn_webhook_instance(
+                    let instance = WebhookCompiled::new(
                         test_programs_fibo_webhook_builder::TEST_PROGRAMS_FIBO_WEBHOOK,
                         &engine,
                         ConfigId::dummy(),
@@ -1101,6 +1128,8 @@ pub(crate) mod tests {
                         Arc::from([]),
                         RetryConfigOverride::default(),
                     )
+                    .unwrap()
+                    .link(&engine, fn_registry.as_ref())
                     .unwrap();
                     let mut router = MethodAwareRouter::default();
                     router.add(Some(Method::GET), "/fibo/:N/:ITERATIONS", instance);
