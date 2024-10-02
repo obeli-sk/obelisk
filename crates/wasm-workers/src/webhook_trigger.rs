@@ -329,7 +329,11 @@ impl RetryConfigOverride {
         }
     }
 
-    fn retry_exp_backoff(&self, import_type: ImportableType, component_default: Duration) -> Duration {
+    fn retry_exp_backoff(
+        &self,
+        import_type: ImportableType,
+        component_default: Duration,
+    ) -> Duration {
         match import_type {
             ImportableType::ActivityWasm => self
                 .activity_retry_exp_backoff_override

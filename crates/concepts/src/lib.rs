@@ -1099,7 +1099,12 @@ pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig, ImportableType)>;
+    ) -> Option<(
+        FunctionMetadata,
+        ConfigId,
+        ComponentRetryConfig,
+        ImportableType,
+    )>;
 
     fn all_exports(&self) -> &[PackageIfcFns];
 }

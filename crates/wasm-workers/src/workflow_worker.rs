@@ -447,7 +447,9 @@ pub(crate) mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
-    pub(crate) async fn compile_workflow(wasm_path: &str) -> (WasmComponent, ConfigId, ImportableType) {
+    pub(crate) async fn compile_workflow(
+        wasm_path: &str,
+    ) -> (WasmComponent, ConfigId, ImportableType) {
         let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
         let config_id = ConfigId::new(
             ConfigIdType::Workflow,

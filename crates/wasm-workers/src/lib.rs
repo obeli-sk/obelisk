@@ -100,7 +100,12 @@ pub(crate) mod tests {
     pub(crate) struct TestingFnRegistry {
         ffqn_to_fn_details: hashbrown::HashMap<
             FunctionFqn,
-            (FunctionMetadata, ConfigId, ComponentRetryConfig, ImportableType),
+            (
+                FunctionMetadata,
+                ConfigId,
+                ComponentRetryConfig,
+                ImportableType,
+            ),
         >,
         export_hierarchy: Vec<PackageIfcFns>,
     }
@@ -157,7 +162,12 @@ pub(crate) mod tests {
         async fn get_by_exported_function(
             &self,
             ffqn: &FunctionFqn,
-        ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig, ImportableType)> {
+        ) -> Option<(
+            FunctionMetadata,
+            ConfigId,
+            ComponentRetryConfig,
+            ImportableType,
+        )> {
             self.ffqn_to_fn_details.get(ffqn).cloned()
         }
 
