@@ -12,8 +12,9 @@ use concepts::storage::{
     HistoryEventScheduledAt, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, Version,
 };
 use concepts::{
-    ComponentType, ConfigId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
-    FunctionMetadata, FunctionRegistry, IfcFqnName, Params, StrVariant, NAMESPACE_OBELISK,
+    ConfigId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
+    FunctionMetadata, FunctionRegistry, IfcFqnName, ImportType, Params, StrVariant,
+    NAMESPACE_OBELISK,
 };
 use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
@@ -319,25 +320,21 @@ pub struct RetryConfigOverride {
 }
 
 impl RetryConfigOverride {
-    fn max_retries(&self, component_type: ComponentType, component_default: u32) -> u32 {
-        match component_type {
-            ComponentType::ActivityWasm => self
+    fn max_retries(&self, import_type: ImportType, component_default: u32) -> u32 {
+        match import_type {
+            ImportType::ActivityWasm => self
                 .activity_max_retries_override
                 .unwrap_or(component_default),
-            ComponentType::Workflow => 0,
+            ImportType::Workflow => 0,
         }
     }
 
-    fn retry_exp_backoff(
-        &self,
-        component_type: ComponentType,
-        component_default: Duration,
-    ) -> Duration {
-        match component_type {
-            ComponentType::ActivityWasm => self
+    fn retry_exp_backoff(&self, import_type: ImportType, component_default: Duration) -> Duration {
+        match import_type {
+            ImportType::ActivityWasm => self
                 .activity_retry_exp_backoff_override
                 .unwrap_or(component_default),
-            ComponentType::Workflow => Duration::ZERO,
+            ImportType::Workflow => Duration::ZERO,
         }
     }
 }
@@ -501,7 +498,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let child_execution_id = ExecutionId::generate();
-                let Some((function_metadata, config_id, child_retry_config, component_type)) =
+                let Some((function_metadata, config_id, child_retry_config, import_type)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
                 else {
                     return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
@@ -524,10 +521,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     scheduled_at: created_at,
                     max_retries: self
                         .retry_config
-                        .max_retries(component_type, child_retry_config.max_retries),
+                        .max_retries(import_type, child_retry_config.max_retries),
                     retry_exp_backoff: self
                         .retry_config
-                        .retry_exp_backoff(component_type, child_retry_config.retry_exp_backoff),
+                        .retry_exp_backoff(import_type, child_retry_config.retry_exp_backoff),
                     config_id,
                     return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.execution_id,
@@ -619,7 +616,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let new_execution_id = ExecutionId::generate();
-                let Some((function_metadata, config_id, default_retry_config, component_type)) =
+                let Some((function_metadata, config_id, default_retry_config, import_type)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
                 else {
                     return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
@@ -643,10 +640,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     scheduled_at,
                     max_retries: self
                         .retry_config
-                        .max_retries(component_type, default_retry_config.max_retries),
+                        .max_retries(import_type, default_retry_config.max_retries),
                     retry_exp_backoff: self
                         .retry_config
-                        .retry_exp_backoff(component_type, default_retry_config.retry_exp_backoff),
+                        .retry_exp_backoff(import_type, default_retry_config.retry_exp_backoff),
                     config_id,
                     return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.execution_id,
@@ -676,7 +673,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             span.record("version", tracing::field::display(&version));
             let child_execution_id = ExecutionId::generate();
             let created_at = self.clock_fn.now();
-            let Some((function_metadata, config_id, default_retry_config, component_type)) =
+            let Some((function_metadata, config_id, default_retry_config, import_type)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
             else {
                 return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
@@ -698,10 +695,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 scheduled_at: created_at,
                 max_retries: self
                     .retry_config
-                    .max_retries(component_type, default_retry_config.max_retries),
+                    .max_retries(import_type, default_retry_config.max_retries),
                 retry_exp_backoff: self
                     .retry_config
-                    .retry_exp_backoff(component_type, default_retry_config.retry_exp_backoff),
+                    .retry_exp_backoff(import_type, default_retry_config.retry_exp_backoff),
                 config_id,
                 return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
                 topmost_parent: self.execution_id,

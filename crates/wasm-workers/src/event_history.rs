@@ -11,11 +11,11 @@ use concepts::storage::{
 };
 use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::ComponentRetryConfig;
-use concepts::ComponentType;
 use concepts::ConfigId;
 use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
+use concepts::ImportType;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use executor::worker::WorkerResult;
@@ -508,16 +508,16 @@ impl<C: ClockFn> EventHistory<C> {
             ),
             WorkflowFunctionError,
         > {
-            let (fn_metadata, config_id, child_retry_config, component_type) = fn_registry
+            let (fn_metadata, config_id, child_retry_config, import_type) = fn_registry
                 .get_by_exported_function(ffqn)
                 .await
                 .ok_or_else(|| WorkflowFunctionError::FunctionMetadataNotFound {
                     ffqn: ffqn.clone(),
                 })?;
             let retry_exp_backoff =
-                retry_config_override.child_retry_exp_backoff(component_type, child_retry_config);
+                retry_config_override.child_retry_exp_backoff(import_type, child_retry_config);
             let max_retries =
-                retry_config_override.child_max_retries(component_type, child_retry_config);
+                retry_config_override.child_max_retries(import_type, child_retry_config);
 
             Ok((fn_metadata, config_id, retry_exp_backoff, max_retries))
         }
@@ -794,27 +794,27 @@ struct ChildRetryConfigOverride {
 impl ChildRetryConfigOverride {
     fn child_max_retries(
         &self,
-        component_type: ComponentType,
+        import_type: ImportType,
         child_config: ComponentRetryConfig,
     ) -> u32 {
-        match component_type {
-            ComponentType::ActivityWasm => self
+        match import_type {
+            ImportType::ActivityWasm => self
                 .child_activity_max_retries
                 .unwrap_or(child_config.max_retries),
-            ComponentType::Workflow => 0,
+            ImportType::Workflow => 0,
         }
     }
 
     fn child_retry_exp_backoff(
         &self,
-        component_type: ComponentType,
+        import_type: ImportType,
         child_config: ComponentRetryConfig,
     ) -> Duration {
-        match component_type {
-            ComponentType::ActivityWasm => self
+        match import_type {
+            ImportType::ActivityWasm => self
                 .child_activity_retry_exp_backoff
                 .unwrap_or(child_config.retry_exp_backoff),
-            ComponentType::Workflow => Duration::ZERO,
+            ImportType::Workflow => Duration::ZERO,
         }
     }
 }

@@ -834,7 +834,7 @@ pub struct ConfigId {
 }
 impl ConfigId {
     pub fn new(
-        component_type: ConfigIdType,
+        config_id_type: ConfigIdType,
         name: StrVariant,
         hash: StrVariant,
     ) -> Result<Self, ConfigIdErrror> {
@@ -845,7 +845,7 @@ impl ConfigId {
             return Err(ConfigIdErrror::InvalidName { invalid, name });
         }
         Ok(Self {
-            config_id_type: component_type,
+            config_id_type,
             name,
             hash,
         })
@@ -881,11 +881,11 @@ impl FromStr for ConfigId {
     type Err = ConfigIdParseError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let (component_type, input) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
+        let (config_id_type, input) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
         let (name, hash) = input.split_once(':').ok_or(Self::Err::DelimiterNotFound)?;
-        let component_type = component_type.parse()?;
+        let config_id_type = config_id_type.parse()?;
         Ok(Self {
-            config_id_type: component_type,
+            config_id_type,
             name: StrVariant::from(name.to_string()),
             hash: StrVariant::from(hash.to_string()),
         })
@@ -1001,20 +1001,8 @@ impl FromStr for Digest {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    strum::Display,
-    PartialEq,
-    Eq,
-    strum::EnumString,
-    Hash,
-    serde_with::SerializeDisplay,
-    serde_with::DeserializeFromStr,
-)]
-#[strum(serialize_all = "snake_case")]
-pub enum ComponentType {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportType {
     ActivityWasm,
     Workflow,
 }
@@ -1111,12 +1099,7 @@ pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(
-        FunctionMetadata,
-        ConfigId,
-        ComponentRetryConfig,
-        ComponentType,
-    )>;
+    ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig, ImportType)>;
 
     fn all_exports(&self) -> &[PackageIfcFns];
 }

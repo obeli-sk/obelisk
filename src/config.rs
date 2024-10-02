@@ -8,7 +8,7 @@ use concepts::ConfigIdType;
 use concepts::ContentDigest;
 use concepts::PackageIfcFns;
 use concepts::StrVariant;
-use concepts::{ComponentType, FunctionMetadata};
+use concepts::{FunctionMetadata, ImportType};
 use serde_with::serde_as;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -22,7 +22,7 @@ pub struct Component {
     // The id is not persisted, only appears in logs and traces and gRPC responses.
     pub config_id: ConfigId,
     #[allow(clippy::struct_field_names)]
-    pub component_type: ComponentType,
+    pub import_type: ImportType,
     pub config_store: ConfigStore,
     pub imports: Vec<FunctionMetadata>,
     pub exports: Vec<FunctionMetadata>,
