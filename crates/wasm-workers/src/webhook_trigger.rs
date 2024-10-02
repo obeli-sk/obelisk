@@ -13,7 +13,7 @@ use concepts::storage::{
 };
 use concepts::{
     ConfigId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
-    FunctionMetadata, FunctionRegistry, IfcFqnName, ImportType, Params, StrVariant,
+    FunctionMetadata, FunctionRegistry, IfcFqnName, ImportableType, Params, StrVariant,
     NAMESPACE_OBELISK,
 };
 use derivative::Derivative;
@@ -320,21 +320,21 @@ pub struct RetryConfigOverride {
 }
 
 impl RetryConfigOverride {
-    fn max_retries(&self, import_type: ImportType, component_default: u32) -> u32 {
+    fn max_retries(&self, import_type: ImportableType, component_default: u32) -> u32 {
         match import_type {
-            ImportType::ActivityWasm => self
+            ImportableType::ActivityWasm => self
                 .activity_max_retries_override
                 .unwrap_or(component_default),
-            ImportType::Workflow => 0,
+            ImportableType::Workflow => 0,
         }
     }
 
-    fn retry_exp_backoff(&self, import_type: ImportType, component_default: Duration) -> Duration {
+    fn retry_exp_backoff(&self, import_type: ImportableType, component_default: Duration) -> Duration {
         match import_type {
-            ImportType::ActivityWasm => self
+            ImportableType::ActivityWasm => self
                 .activity_retry_exp_backoff_override
                 .unwrap_or(component_default),
-            ImportType::Workflow => Duration::ZERO,
+            ImportableType::Workflow => Duration::ZERO,
         }
     }
 }

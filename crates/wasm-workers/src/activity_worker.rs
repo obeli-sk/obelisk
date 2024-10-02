@@ -241,7 +241,7 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::{ExecutorId, RunId},
         storage::{CreateRequest, DbConnection, DbPool, Version},
-        ConfigIdType, ExecutionId, FunctionFqn, ImportType, Params, SupportedFunctionReturnValue,
+        ConfigIdType, ExecutionId, FunctionFqn, ImportableType, Params, SupportedFunctionReturnValue,
     };
     use db_tests::Database;
     use executor::executor::{ExecConfig, ExecTask, ExecutorTaskHandle};
@@ -277,7 +277,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) async fn compile_activity(wasm_path: &str) -> (WasmComponent, ConfigId, ImportType) {
+    pub(crate) async fn compile_activity(wasm_path: &str) -> (WasmComponent, ConfigId, ImportableType) {
         let engine = Engines::get_activity_engine(EngineConfig::on_demand_testing().await).unwrap();
         let config_id = ConfigId::new(
             ConfigIdType::ActivityWasm,
@@ -288,7 +288,7 @@ pub(crate) mod tests {
         (
             WasmComponent::new(wasm_path, &engine).unwrap(),
             config_id,
-            ImportType::ActivityWasm,
+            ImportableType::ActivityWasm,
         )
     }
 

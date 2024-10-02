@@ -35,7 +35,7 @@ use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
-use concepts::ImportType;
+use concepts::ImportableType;
 use concepts::PackageIfcFns;
 use concepts::ParameterType;
 use concepts::Params;
@@ -1136,7 +1136,7 @@ impl WorkerCompiled {
             exports: worker.exported_functions().to_vec(),
             exports_hierarchy: worker.exports_hierarchy().to_vec(),
             imports: worker.imported_functions().to_vec(),
-            import_type: ImportType::ActivityWasm,
+            importable_type: ImportableType::ActivityWasm,
         };
         (
             WorkerCompiled {
@@ -1161,7 +1161,7 @@ impl WorkerCompiled {
             exports: worker.exported_functions().to_vec(),
             exports_hierarchy: worker.exports_hierarchy().to_vec(),
             imports: worker.imported_functions().to_vec(),
-            import_type: ImportType::Workflow,
+            importable_type: ImportableType::Workflow,
         };
         (
             WorkerCompiled {
@@ -1224,7 +1224,12 @@ struct ComponentConfigRegistry {
 struct ComponentConfigRegistryInner {
     exported_ffqns: hashbrown::HashMap<
         FunctionFqn,
-        (ConfigId, FunctionMetadata, ComponentRetryConfig, ImportType),
+        (
+            ConfigId,
+            FunctionMetadata,
+            ComponentRetryConfig,
+            ImportableType,
+        ),
     >,
     export_hierarchy: Vec<PackageIfcFns>,
     ids_to_components: hashbrown::HashMap<ConfigId, ComponentConfig>,
@@ -1257,7 +1262,7 @@ impl ComponentConfigRegistry {
                         max_retries: component.config_store.default_max_retries(),
                         retry_exp_backoff: component.config_store.default_retry_exp_backoff(),
                     },
-                    component.import_type,
+                    component.importable_type,
                 ),
             );
             assert!(old.is_none());
@@ -1400,7 +1405,12 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig, ImportType)> {
+    ) -> Option<(
+        FunctionMetadata,
+        ConfigId,
+        ComponentRetryConfig,
+        ImportableType,
+    )> {
         self.inner
             .exported_ffqns
             .get(ffqn)

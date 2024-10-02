@@ -92,7 +92,7 @@ pub(crate) mod tests {
     use async_trait::async_trait;
     use concepts::{
         ComponentRetryConfig, ConfigId, FnName, FunctionFqn, FunctionMetadata, FunctionRegistry,
-        IfcFqnName, ImportType, PackageIfcFns, ParameterTypes, ReturnType,
+        IfcFqnName, ImportableType, PackageIfcFns, ParameterTypes, ReturnType,
     };
     use indexmap::IndexMap;
     use utils::wasm_tools::WasmComponent;
@@ -100,14 +100,14 @@ pub(crate) mod tests {
     pub(crate) struct TestingFnRegistry {
         ffqn_to_fn_details: hashbrown::HashMap<
             FunctionFqn,
-            (FunctionMetadata, ConfigId, ComponentRetryConfig, ImportType),
+            (FunctionMetadata, ConfigId, ComponentRetryConfig, ImportableType),
         >,
         export_hierarchy: Vec<PackageIfcFns>,
     }
 
     impl TestingFnRegistry {
         pub(crate) fn new_from_components(
-            wasm_components: Vec<(WasmComponent, ConfigId, ImportType)>,
+            wasm_components: Vec<(WasmComponent, ConfigId, ImportableType)>,
         ) -> Arc<dyn FunctionRegistry> {
             let mut ffqn_to_fn_details = hashbrown::HashMap::new();
             let mut export_hierarchy: hashbrown::HashMap<
@@ -157,7 +157,7 @@ pub(crate) mod tests {
         async fn get_by_exported_function(
             &self,
             ffqn: &FunctionFqn,
-        ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig, ImportType)> {
+        ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig, ImportableType)> {
             self.ffqn_to_fn_details.get(ffqn).cloned()
         }
 
@@ -184,7 +184,7 @@ pub(crate) mod tests {
                     },
                     component_id.clone(),
                     ComponentRetryConfig::default(),
-                    ImportType::ActivityWasm,
+                    ImportableType::ActivityWasm,
                 ),
             );
             let index_map = export_hierarchy.entry(ffqn.ifc_fqn.clone()).or_default();

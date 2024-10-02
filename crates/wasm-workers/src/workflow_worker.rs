@@ -422,7 +422,7 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::ExecutorId,
         storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState},
-        ConfigIdType, ImportType,
+        ConfigIdType, ImportableType,
     };
     use concepts::{ExecutionId, Params};
     use db_tests::Database;
@@ -447,7 +447,7 @@ pub(crate) mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
-    pub(crate) async fn compile_workflow(wasm_path: &str) -> (WasmComponent, ConfigId, ImportType) {
+    pub(crate) async fn compile_workflow(wasm_path: &str) -> (WasmComponent, ConfigId, ImportableType) {
         let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
         let config_id = ConfigId::new(
             ConfigIdType::Workflow,
@@ -458,7 +458,7 @@ pub(crate) mod tests {
         (
             WasmComponent::new(wasm_path, &engine).unwrap(),
             config_id,
-            ImportType::Workflow,
+            ImportableType::Workflow,
         )
     }
 

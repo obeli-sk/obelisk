@@ -8,7 +8,7 @@ use concepts::ConfigIdType;
 use concepts::ContentDigest;
 use concepts::PackageIfcFns;
 use concepts::StrVariant;
-use concepts::{FunctionMetadata, ImportType};
+use concepts::{FunctionMetadata, ImportableType};
 use serde_with::serde_as;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -21,7 +21,7 @@ pub struct ComponentConfig {
     // Uniqueness is not guaranteed.
     // The id is not persisted, only appears in logs and traces and gRPC responses.
     pub config_id: ConfigId,
-    pub import_type: ImportType,
+    pub importable_type: ImportableType,
     pub config_store: ConfigStore,
     pub imports: Vec<FunctionMetadata>,
     pub exports: Vec<FunctionMetadata>,
@@ -89,6 +89,9 @@ impl ConfigStore {
         }
     }
 
+    /// Create an identifier for given configuration.
+    /// Uniqueness is not guaranteed.
+    /// The id is not persisted, only appears in logs and traces and gRPC responses.
     pub(crate) fn config_id(&self) -> Result<ConfigId, anyhow::Error> {
         let hash = {
             use std::hash::Hash as _;

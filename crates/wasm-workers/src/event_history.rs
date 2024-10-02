@@ -15,7 +15,7 @@ use concepts::ConfigId;
 use concepts::ExecutionMetadata;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
-use concepts::ImportType;
+use concepts::ImportableType;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use executor::worker::WorkerResult;
@@ -794,27 +794,27 @@ struct ChildRetryConfigOverride {
 impl ChildRetryConfigOverride {
     fn child_max_retries(
         &self,
-        import_type: ImportType,
+        import_type: ImportableType,
         child_config: ComponentRetryConfig,
     ) -> u32 {
         match import_type {
-            ImportType::ActivityWasm => self
+            ImportableType::ActivityWasm => self
                 .child_activity_max_retries
                 .unwrap_or(child_config.max_retries),
-            ImportType::Workflow => 0,
+            ImportableType::Workflow => 0,
         }
     }
 
     fn child_retry_exp_backoff(
         &self,
-        import_type: ImportType,
+        import_type: ImportableType,
         child_config: ComponentRetryConfig,
     ) -> Duration {
         match import_type {
-            ImportType::ActivityWasm => self
+            ImportableType::ActivityWasm => self
                 .child_activity_retry_exp_backoff
                 .unwrap_or(child_config.retry_exp_backoff),
-            ImportType::Workflow => Duration::ZERO,
+            ImportableType::Workflow => Duration::ZERO,
         }
     }
 }
