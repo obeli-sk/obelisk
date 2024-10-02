@@ -1112,6 +1112,9 @@ pub struct ComponentRetryConfig {
     pub retry_exp_backoff: Duration,
 }
 
+pub const NAMESPACE_OBELISK: &str = "obelisk";
+
+/// Implementation must not return `-obelisk-ext` suffix in any package name, nor `obelisk` namespace.
 #[async_trait]
 pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(

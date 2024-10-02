@@ -5,7 +5,6 @@ use crate::workflow_ctx::log_activities;
 use crate::workflow_ctx::{
     host_activities, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
 };
-use crate::workflow_worker::PREFIX_OF_IGNORED_IMPORTS;
 use crate::WasmFileError;
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
@@ -14,7 +13,7 @@ use concepts::storage::{
 };
 use concepts::{
     ComponentType, ConfigId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
-    FunctionMetadata, FunctionRegistry, IfcFqnName, Params, StrVariant,
+    FunctionMetadata, FunctionRegistry, IfcFqnName, Params, StrVariant, NAMESPACE_OBELISK,
 };
 use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
@@ -29,7 +28,7 @@ use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, instrument, trace, Instrument, Level, Span};
+use tracing::{debug, error, info, instrument, trace, warn, Instrument, Level, Span};
 use utils::time::ClockFn;
 use utils::wasm_tools::{ExIm, WasmComponent, SUFFIX_PKG_EXT};
 use wasmtime::component::ResourceTable;
@@ -42,6 +41,8 @@ use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 const WASI_NAMESPACE_WITH_COLON: &str = "wasi:";
+pub(crate) const NAMESPACE_OBELISK_WITH_COLON: &str =
+    const_format::formatcp!("{}:", NAMESPACE_OBELISK);
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HttpTriggerConfig {
@@ -93,33 +94,35 @@ impl WebhookCompiled {
         fn_registry: &dyn FunctionRegistry,
     ) -> Result<WebhookInstance<C, DB, P>, WasmFileError> {
         let mut linker = Linker::new(engine);
+        // Link wasi
         wasmtime_wasi::add_to_linker_async(&mut linker).map_err(|err| {
             WasmFileError::LinkingError {
                 context: StrVariant::Static("linking `wasmtime_wasi`"),
                 err: err.into(),
             }
         })?;
+        // Link wasi-http
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker).map_err(|err| {
             WasmFileError::LinkingError {
                 context: StrVariant::Static("linking `wasmtime_wasi_http`"),
                 err: err.into(),
             }
         })?;
+        // Link obelisk: host-activities and log
+        WebhookCtx::add_to_linker(&mut linker)?;
+
         // Mock imported functions
-        // FIXME: mock available exported functions instead of current component imports:
-        for import in &self.wasm_component.exim.imports_hierarchy {
+        for import in fn_registry.all_exports() {
             if import
                 .ifc_fqn
                 .deref()
-                .starts_with(PREFIX_OF_IGNORED_IMPORTS)
+                .starts_with(NAMESPACE_OBELISK_WITH_COLON)
                 || import
                     .ifc_fqn
                     .deref()
                     .starts_with(WASI_NAMESPACE_WITH_COLON)
             {
-                trace!(
-                ifc_fqn = %import.ifc_fqn,
-                "Skipping");
+                warn!(ifc_fqn = %import.ifc_fqn, "Skipping mock of reserved interface");
                 continue;
             }
             trace!(
@@ -165,7 +168,8 @@ impl WebhookCompiled {
                 trace!("Skipping interface {ifc_fqn}", ifc_fqn = import.ifc_fqn);
             }
         }
-        WebhookCtx::add_to_linker(&mut linker)?;
+
+        // Pre-instantiate to catch missing imports
         let proxy_pre = linker
             .instantiate_pre(&self.wasm_component.wasmtime_component)
             .map_err(|err: wasmtime::Error| WasmFileError::LinkingError {

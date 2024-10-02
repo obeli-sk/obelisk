@@ -1,3 +1,4 @@
+use crate::webhook_trigger::NAMESPACE_OBELISK_WITH_COLON;
 use crate::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::WasmFileError;
 use async_trait::async_trait;
@@ -68,8 +69,6 @@ pub struct WorkflowWorker<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     instance_pre: InstancePre<WorkflowCtx<C, DB, P>>,
 }
 
-pub(crate) const PREFIX_OF_IGNORED_IMPORTS: &str = "obelisk:";
-
 impl<C: ClockFn> WorkflowWorkerCompiled<C> {
     #[tracing::instrument(skip_all, fields(%config.config_id), err)]
     pub fn new_with_config(
@@ -95,8 +94,20 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
         fn_registry: Arc<dyn FunctionRegistry>,
     ) -> Result<WorkflowWorkerLinked<C, DB, P>, WasmFileError> {
         let mut linker = wasmtime::component::Linker::new(&self.engine);
+
+        // Link obelisk: host-activities and log
+        WorkflowCtx::add_to_linker(&mut linker)?;
+
         // Mock imported functions
         for import in fn_registry.all_exports() {
+            if import
+                .ifc_fqn
+                .deref()
+                .starts_with(NAMESPACE_OBELISK_WITH_COLON)
+            {
+                warn!(ifc_fqn = %import.ifc_fqn, "Skipping mock of reserved interface");
+                continue;
+            }
             trace!(
                 ifc_fqn = %import.ifc_fqn,
                 "Adding imported interface to the linker",
@@ -143,9 +154,8 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                 warn!("Skipping interface {ifc_fqn}", ifc_fqn = import.ifc_fqn);
             }
         }
-        WorkflowCtx::add_to_linker(&mut linker)?;
 
-        // Attempt to pre-instantiate to catch missing imports
+        // Pre-instantiate to catch missing imports
         let instance_pre = linker
             .instantiate_pre(&self.wasm_component.wasmtime_component)
             .map_err(|err| WasmFileError::LinkingError {
