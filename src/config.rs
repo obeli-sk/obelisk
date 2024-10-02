@@ -12,8 +12,11 @@ use concepts::StrVariant;
 use concepts::{FunctionMetadata, ImportableType};
 use serde_with::serde_as;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
+use toml::StdOutput;
 use tracing::instrument;
+use wasm_workers::envvar::EnvVar;
 use wasm_workers::workflow_worker::JoinNextBlockingStrategy;
 
 #[derive(Debug, Clone)]
@@ -49,6 +52,9 @@ pub(crate) enum ConfigStore {
         common: ConfigStoreCommon,
         default_max_retries: u32,
         default_retry_exp_backoff: Duration,
+        forward_stdout: StdOutput,
+        forward_stderr: StdOutput,
+        env_vars: Arc<[EnvVar]>,
     },
     WasmWorkflowV1 {
         common: ConfigStoreCommon,

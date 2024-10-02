@@ -30,7 +30,7 @@ pub mod envvar {
     use serde::{Deserialize, Deserializer};
 
     #[derive(Clone, derivative::Derivative)]
-    #[derivative(Debug)]
+    #[derivative(Debug, Hash)]
     pub struct EnvVar {
         pub key: String,
         #[derivative(Debug = "ignore")]

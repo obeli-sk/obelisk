@@ -244,10 +244,14 @@ impl WasmActivityToml {
             .await?;
         let content_digest = common.content_digest.clone();
         let retry_exp_backoff = self.default_retry_exp_backoff.into();
+        let env_vars: Arc<[EnvVar]> = Arc::from(self.env_vars);
         let config_store = ConfigStore::WasmActivityV1 {
             common,
             default_max_retries: self.default_max_retries,
             default_retry_exp_backoff: retry_exp_backoff,
+            env_vars: env_vars.clone(),
+            forward_stdout: self.forward_stdout,
+            forward_stderr: self.forward_stderr,
         };
         let config_id = config_store.config_id()?;
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
@@ -255,7 +259,7 @@ impl WasmActivityToml {
             config_id: config_id.clone(),
             forward_stdout: self.forward_stdout.into(),
             forward_stderr: self.forward_stderr.into(),
-            env_vars: Arc::from(self.env_vars),
+            env_vars,
         };
         Ok(ActivityConfigVerified {
             content_digest,
@@ -587,7 +591,7 @@ pub(crate) mod log {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, Default)]
+#[derive(Debug, Deserialize, Clone, Copy, Default, Hash)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum StdOutput {
     #[default]
