@@ -48,7 +48,7 @@ impl ExecutionJournal {
         self.execution_events.len()
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.execution_events.is_empty()

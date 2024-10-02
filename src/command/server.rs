@@ -1356,7 +1356,7 @@ impl ComponentConfigRegistry {
     }
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 struct ComponentConfigRegistryRO {
     inner: Arc<ComponentConfigRegistryInner>,
 }

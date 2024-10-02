@@ -449,7 +449,6 @@ pub(crate) mod tests {
     pub const FFQN_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
 
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
-    #[allow(dead_code)]
     enum WorkflowStep {
         Sleep { millis: u32 },
         Call { ffqn: FunctionFqn },

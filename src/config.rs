@@ -21,7 +21,6 @@ pub struct Component {
     // Uniqueness is not guaranteed.
     // The id is not persisted, only appears in logs and traces and gRPC responses.
     pub config_id: ConfigId,
-    #[allow(clippy::struct_field_names)]
     pub import_type: ImportType,
     pub config_store: ConfigStore,
     pub imports: Vec<FunctionMetadata>,

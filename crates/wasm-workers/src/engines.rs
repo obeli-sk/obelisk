@@ -233,7 +233,7 @@ impl Engines {
             tokio::fs::write(file, content).await
         }
         #[cfg(madsim)]
-        #[allow(clippy::unused_async)]
+        #[expect(clippy::unused_async)]
         async fn write(mut file: &NamedTempFile, content: String) -> Result<(), std::io::Error> {
             use std::io::Write;
             writeln!(file, "{content}")

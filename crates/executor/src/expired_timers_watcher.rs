@@ -31,7 +31,7 @@ pub struct TimersWatcherConfig<C: ClockFn> {
     pub clock_fn: C,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[derive(Debug)]
 pub(crate) struct TickProgress {
     pub(crate) expired_locks: usize,

@@ -1088,7 +1088,7 @@ pub(crate) mod tests {
 
         struct SetUpFiboWebhook {
             _server: AbortOnDrop,
-            #[allow(dead_code)]
+            #[expect(dead_code)]
             guard: DbGuard,
             db_pool: DbPoolEnum,
             server_addr: SocketAddr,

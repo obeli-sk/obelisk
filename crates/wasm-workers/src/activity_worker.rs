@@ -618,7 +618,6 @@ pub(crate) mod tests {
         }
 
         #[tokio::test]
-        #[allow(clippy::too_many_lines)]
         async fn http_get_simple() {
             use std::ops::Deref;
             use wiremock::{
