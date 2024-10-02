@@ -812,7 +812,7 @@ pub mod prefixed_ulid {
 pub enum ConfigIdType {
     WasmActivity,
     Workflow,
-    WebhookComponent,
+    WebhookWasm,
 }
 
 #[derive(

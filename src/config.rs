@@ -101,7 +101,7 @@ impl ConfigStore {
         let config_id_type = match self {
             Self::WasmActivityV1 { .. } => ConfigIdType::WasmActivity,
             Self::WasmWorkflowV1 { .. } => ConfigIdType::Workflow,
-            Self::WebhookComponentV1 { .. } => ConfigIdType::WebhookComponent,
+            Self::WebhookComponentV1 { .. } => ConfigIdType::WebhookWasm,
         };
         Ok(ConfigId::new(
             config_id_type,
