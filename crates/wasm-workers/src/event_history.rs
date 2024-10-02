@@ -798,7 +798,7 @@ impl ChildRetryConfigOverride {
         child_config: ComponentRetryConfig,
     ) -> u32 {
         match component_type {
-            ComponentType::WasmActivity => self
+            ComponentType::ActivityWasm => self
                 .child_activity_max_retries
                 .unwrap_or(child_config.max_retries),
             ComponentType::Workflow => 0,
@@ -811,7 +811,7 @@ impl ChildRetryConfigOverride {
         child_config: ComponentRetryConfig,
     ) -> Duration {
         match component_type {
-            ComponentType::WasmActivity => self
+            ComponentType::ActivityWasm => self
                 .child_activity_retry_exp_backoff
                 .unwrap_or(child_config.retry_exp_backoff),
             ComponentType::Workflow => Duration::ZERO,

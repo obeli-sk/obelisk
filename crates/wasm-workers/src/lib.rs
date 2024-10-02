@@ -194,7 +194,7 @@ pub(crate) mod tests {
                     },
                     component_id.clone(),
                     ComponentRetryConfig::default(),
-                    ComponentType::WasmActivity,
+                    ComponentType::ActivityWasm,
                 ),
             );
             let index_map = export_hierarchy.entry(ffqn.ifc_fqn.clone()).or_default();

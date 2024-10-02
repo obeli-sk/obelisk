@@ -291,7 +291,7 @@ pub(crate) mod tests {
         (
             WasmComponent::new(wasm_path, &engine).unwrap(),
             config_id,
-            ComponentType::WasmActivity,
+            ComponentType::ActivityWasm,
         )
     }
 

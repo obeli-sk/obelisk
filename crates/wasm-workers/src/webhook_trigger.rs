@@ -321,7 +321,7 @@ pub struct RetryConfigOverride {
 impl RetryConfigOverride {
     fn max_retries(&self, component_type: ComponentType, component_default: u32) -> u32 {
         match component_type {
-            ComponentType::WasmActivity => self
+            ComponentType::ActivityWasm => self
                 .activity_max_retries_override
                 .unwrap_or(component_default),
             ComponentType::Workflow => 0,
@@ -334,7 +334,7 @@ impl RetryConfigOverride {
         component_default: Duration,
     ) -> Duration {
         match component_type {
-            ComponentType::WasmActivity => self
+            ComponentType::ActivityWasm => self
                 .activity_retry_exp_backoff_override
                 .unwrap_or(component_default),
             ComponentType::Workflow => Duration::ZERO,

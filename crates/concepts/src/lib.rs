@@ -1024,7 +1024,7 @@ impl FromStr for Digest {
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentType {
-    WasmActivity,
+    ActivityWasm,
     Workflow,
 }
 

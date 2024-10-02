@@ -1136,7 +1136,7 @@ impl WorkerCompiled {
             exports: worker.exported_functions().to_vec(),
             exports_hierarchy: worker.exports_hierarchy().to_vec(),
             imports: worker.imported_functions().to_vec(),
-            component_type: ComponentType::WasmActivity,
+            component_type: ComponentType::ActivityWasm,
         };
         (
             WorkerCompiled {
