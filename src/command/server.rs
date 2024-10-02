@@ -9,6 +9,7 @@ use crate::config::toml::WasmActivityToml;
 use crate::config::toml::WorkflowConfigVerified;
 use crate::config::toml::WorkflowToml;
 use crate::config::ComponentConfig;
+use crate::config::ComponentConfigImportable;
 use crate::config::ConfigStore;
 use crate::grpc_util::extractor::accept_trace;
 use crate::grpc_util::grpc_mapping::PendingStatusExt as _;
@@ -278,7 +279,11 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 r#type: component.config_id.config_id_type.to_string(),
                 config_id: Some(component.config_id.into()),
                 digest: component.config_store.common().content_digest.to_string(),
-                exports: inspect_fns(component.exports, true),
+                exports: if let Some(exports) = component.importable {
+                    inspect_fns(exports.exports, true)
+                } else {
+                    vec![]
+                },
                 imports: inspect_fns(component.imports, true),
             };
             res_components.push(res_component);
@@ -1133,10 +1138,12 @@ impl WorkerCompiled {
         let component = ComponentConfig {
             config_id: exec_config.config_id.clone(),
             config_store,
-            exports: worker.exported_functions().to_vec(),
-            exports_hierarchy: worker.exports_hierarchy().to_vec(),
+            importable: Some(ComponentConfigImportable {
+                exports: worker.exported_functions().to_vec(),
+                exports_hierarchy: worker.exports_hierarchy().to_vec(),
+                importable_type: ImportableType::ActivityWasm,
+            }),
             imports: worker.imported_functions().to_vec(),
-            importable_type: ImportableType::ActivityWasm,
         };
         (
             WorkerCompiled {
@@ -1158,10 +1165,12 @@ impl WorkerCompiled {
         let component = ComponentConfig {
             config_id: exec_config.config_id.clone(),
             config_store,
-            exports: worker.exported_functions().to_vec(),
-            exports_hierarchy: worker.exports_hierarchy().to_vec(),
+            importable: Some(ComponentConfigImportable {
+                exports: worker.exported_functions().to_vec(),
+                exports_hierarchy: worker.exports_hierarchy().to_vec(),
+                importable_type: ImportableType::Workflow,
+            }),
             imports: worker.imported_functions().to_vec(),
-            importable_type: ImportableType::Workflow,
         };
         (
             WorkerCompiled {
@@ -1245,32 +1254,35 @@ impl ComponentConfigRegistry {
         {
             bail!("component {} is already inserted", component.config_id);
         }
-        for exported_ffqn in component.exports.iter().map(|f| &f.ffqn) {
-            if let Some((offending_id, _, _, _)) = self.inner.exported_ffqns.get(exported_ffqn) {
-                bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
+        if let Some(importable) = &component.importable {
+            for exported_ffqn in importable.exports.iter().map(|f| &f.ffqn) {
+                if let Some((offending_id, _, _, _)) = self.inner.exported_ffqns.get(exported_ffqn)
+                {
+                    bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
+                }
             }
-        }
 
-        // insert to `exported_ffqns`
-        for exported_fn_metadata in &component.exports {
-            let old = self.inner.exported_ffqns.insert(
-                exported_fn_metadata.ffqn.clone(),
-                (
-                    component.config_id.clone(),
-                    exported_fn_metadata.clone(),
-                    ComponentRetryConfig {
-                        max_retries: component.config_store.default_max_retries(),
-                        retry_exp_backoff: component.config_store.default_retry_exp_backoff(),
-                    },
-                    component.importable_type,
-                ),
-            );
-            assert!(old.is_none());
+            // insert to `exported_ffqns`
+            for exported_fn_metadata in &importable.exports {
+                let old = self.inner.exported_ffqns.insert(
+                    exported_fn_metadata.ffqn.clone(),
+                    (
+                        component.config_id.clone(),
+                        exported_fn_metadata.clone(),
+                        ComponentRetryConfig {
+                            max_retries: component.config_store.default_max_retries(),
+                            retry_exp_backoff: component.config_store.default_retry_exp_backoff(),
+                        },
+                        importable.importable_type,
+                    ),
+                );
+                assert!(old.is_none());
+            }
+            // insert to `export_hierarchy`
+            self.inner
+                .export_hierarchy
+                .extend_from_slice(&importable.exports_hierarchy);
         }
-        // insert to `export_hierarchy`
-        self.inner
-            .export_hierarchy
-            .extend_from_slice(&component.exports_hierarchy);
         // insert to `ids_to_components`
         let old = self
             .inner
@@ -1385,8 +1397,8 @@ impl ComponentConfigRegistryRO {
             .values()
             .cloned()
             .map(|mut component| {
-                if !extensions {
-                    component.exports.retain(|fn_metadata| {
+                if let (Some(importable), false) = (&mut component.importable, extensions) {
+                    importable.exports.retain(|fn_metadata| {
                         !fn_metadata
                             .ffqn
                             .ifc_fqn

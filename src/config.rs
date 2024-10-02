@@ -21,9 +21,14 @@ pub struct ComponentConfig {
     // Uniqueness is not guaranteed.
     // The id is not persisted, only appears in logs and traces and gRPC responses.
     pub config_id: ConfigId,
-    pub importable_type: ImportableType,
     pub config_store: ConfigStore,
     pub imports: Vec<FunctionMetadata>,
+    pub importable: Option<ComponentConfigImportable>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ComponentConfigImportable {
+    pub(crate) importable_type: ImportableType,
     pub exports: Vec<FunctionMetadata>,
     pub exports_hierarchy: Vec<PackageIfcFns>,
 }
