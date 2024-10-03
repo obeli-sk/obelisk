@@ -148,6 +148,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
             let worker_span = ctx.worker_span.clone();
             async move {
                 if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
+                    // guest panic is translated to an IntermittentError, which allows for retries.
                     return WorkerResult::Err(WorkerError::IntermittentError {
                         reason: StrVariant::Arc(Arc::from(format!(
                             "wasm function call error - {err}"
@@ -155,7 +156,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                         err: Some(err.into()),
                         version: ctx.version,
                     });
-                }; // guest panic exits here
+                };
                 let result = match SupportedFunctionReturnValue::new(
                     results.into_iter().zip(result_types.iter().cloned()),
                 ) {
@@ -177,7 +178,8 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                     });
                 }
 
-                // Interpret `SupportedFunctionResult::Fallible` Err variant as an retry request
+                // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (IntermittentError)
+                // TODO: Allow specifying permanent error variants in as annotations in WIT
                 if let Some(exec_err) = result.fallible_err() {
                     if ctx.can_be_retried {
                         let reason = StrVariant::Arc(Arc::from(format!(

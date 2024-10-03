@@ -155,6 +155,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 * Trace strings to their origin accross workflows and activities
 * Webhook functions: translating between HTTP and WIT defined parameters and return value
 * Distributed tracing context forwarding for outgoing HTTP as well as webhooks
+* Allow specifying permanent error variants in as annotations in WIT
 * Mapping from execution failures (e.g. panics, timeouts) to error variants
 * Support for (distributed) sagas - define rollbacks on activities, call them on failed workflows
 
