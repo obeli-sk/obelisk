@@ -36,7 +36,7 @@ async fn metadata_to_content_digest(
     Ok(None)
 }
 
-#[instrument(skip_all)]
+#[instrument(skip_all, fields(image = image.to_string()) err)]
 pub(crate) async fn pull_to_cache_dir(
     image: &Reference,
     wasm_cache_dir: &Path,
