@@ -1,8 +1,8 @@
+use crate::activity_worker::ActivityConfig;
 use crate::component_logger::ComponentLogger;
-use crate::envvar::EnvVar;
-use crate::std_output_stream::{LogStream, StdOutput};
+use crate::std_output_stream::LogStream;
 use crate::workflow_ctx::log_activities;
-use concepts::{ConfigId, ExecutionId};
+use concepts::ExecutionId;
 use tracing::Span;
 use wasmtime::Engine;
 use wasmtime::{component::ResourceTable, Store};
@@ -39,22 +39,31 @@ impl WasiHttpView for ActivityCtx {
 pub fn store(
     engine: &Engine,
     execution_id: ExecutionId,
-    config_id: &ConfigId,
-    forward_stdout: Option<StdOutput>,
-    forward_stderr: Option<StdOutput>,
-    env_vars: &[EnvVar],
+    config: &ActivityConfig,
     worker_span: Span,
 ) -> Store<ActivityCtx> {
     let mut wasi_ctx = WasiCtxBuilder::new();
-    if let Some(stdout) = forward_stdout {
-        let stdout = LogStream::new(format!("[{config_id} {execution_id} stdout]"), stdout);
+    if let Some(stdout) = config.forward_stdout {
+        let stdout = LogStream::new(
+            format!(
+                "[{config_id} {execution_id} stdout]",
+                config_id = config.config_id
+            ),
+            stdout,
+        );
         wasi_ctx.stdout(stdout);
     }
-    if let Some(stderr) = forward_stderr {
-        let stderr = LogStream::new(format!("[{config_id} {execution_id} stderr]"), stderr);
+    if let Some(stderr) = config.forward_stderr {
+        let stderr = LogStream::new(
+            format!(
+                "[{config_id} {execution_id} stderr]",
+                config_id = config.config_id
+            ),
+            stderr,
+        );
         wasi_ctx.stderr(stderr);
     }
-    for env_var in env_vars {
+    for env_var in config.env_vars.iter() {
         wasi_ctx.env(&env_var.key, &env_var.val);
     }
     let ctx = ActivityCtx {

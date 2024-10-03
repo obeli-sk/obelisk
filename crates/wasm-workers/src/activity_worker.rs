@@ -35,10 +35,7 @@ pub struct ActivityWorker<C: ClockFn> {
     exim: ExIm,
     clock_fn: C,
     exported_ffqn_to_index: hashbrown::HashMap<FunctionFqn, ComponentExportIndex>,
-    config_id: ConfigId, // TODO: Move to WorkerContext?
-    forward_stdout: Option<StdOutput>,
-    forward_stderr: Option<StdOutput>,
-    env_vars: Arc<[EnvVar]>,
+    config: ActivityConfig,
 }
 
 impl<C: ClockFn> ActivityWorker<C> {
@@ -81,10 +78,7 @@ impl<C: ClockFn> ActivityWorker<C> {
             exim: wasm_component.exim,
             clock_fn,
             exported_ffqn_to_index,
-            config_id: config.config_id,
-            forward_stdout: config.forward_stdout,
-            forward_stderr: config.forward_stderr,
-            env_vars: config.env_vars,
+            config,
             instance_pre,
         })
     }
@@ -111,10 +105,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         let mut store = crate::activity_ctx::store(
             &self.engine,
             ctx.execution_id,
-            &self.config_id,
-            self.forward_stdout,
-            self.forward_stderr,
-            &self.env_vars,
+            &self.config,
             ctx.worker_span.clone(),
         );
 
