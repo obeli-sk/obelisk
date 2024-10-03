@@ -39,23 +39,18 @@ jobs:
           cd tmp
           wget -q https://github.com/obeli-sk/obelisk/releases/latest/download/${{ matrix.tarfile }}
           tar xvfz ${{ matrix.tarfile }}
+          cp ../obelisk.toml obelisk.toml
           sed -i 's/api_listening_addr.*/api_listening_addr = "0.0.0.0:5005"/g' obelisk.toml
-          
-          cat ../obelisk.toml >> obelisk.toml
           IMAGE_BASE="getobelisk/obelisk"
           IMAGE="${IMAGE_BASE}:${{ matrix.image_tag }}"
           docker build --progress=plain -f ../.github/workflows/release/docker-image/${{ matrix.dockerfile }} . --tag $IMAGE
           docker push $IMAGE
 
-          if [ "${{ matrix.latest }}" = "true" ]; then
-            docker tag $IMAGE $IMAGE_BASE
-            docker push $IMAGE_BASE
-          fi
-
           TAGS=$(git tag --points-at HEAD)
           TAGS=$(echo "$TAGS" | grep '^v' || true)
           if [ -z "$TAGS" ]; then
             echo "No tags starting with 'v' pointing at HEAD."
+            exit 1
           elif [ $(echo "$TAGS" | wc -l) -eq 1 ]; then
             VERSION="${TAGS#v}"
             echo "Tagging with version ${VERSION}"
@@ -65,4 +60,10 @@ jobs:
             docker push $IMAGE2
           else
             echo "More than one tag starting with 'v' pointing at HEAD."
+            exit 1
+          fi
+
+          if [ "${{ matrix.latest }}" = "true" ]; then
+            docker tag $IMAGE $IMAGE_BASE
+            docker push $IMAGE_BASE
           fi
