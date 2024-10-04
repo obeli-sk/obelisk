@@ -6,10 +6,7 @@ use concepts::{
 use indexmap::{indexmap, IndexMap};
 use std::{borrow::Cow, path::Path, sync::Arc};
 use tracing::{debug, error, trace};
-use val_json::{
-    execution_error_tuple,
-    type_wrapper::{TypeConversionError, TypeWrapper},
-};
+use val_json::type_wrapper::{TypeConversionError, TypeWrapper};
 use wasmtime::{
     component::{types::ComponentItem, Component, ComponentExportIndex},
     Engine,
@@ -282,7 +279,14 @@ impl ExIm {
                     },
                     parameter_types: ParameterTypes(vec![param_type_join_set.clone()]),
                     return_type: {
-                        let error_tuple = execution_error_tuple();
+                        let error_tuple = Some(Box::new(TypeWrapper::Tuple(vec![
+                            TypeWrapper::String, // execution id
+                            TypeWrapper::Variant(indexmap! {
+                                Box::from("permanent-failure") => Some(TypeWrapper::String),
+                                Box::from("permanent-timeout") => None,
+                                Box::from("non-determinism") => None,
+                            }),
+                        ])));
                         let (ok_part, type_wrapper) = if let Some(original_ret) =
                             exported_fn_metadata.return_type
                         {
