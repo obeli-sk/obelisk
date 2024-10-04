@@ -14,7 +14,7 @@ use concepts::storage::{
 use concepts::{
     ConfigId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
     FunctionMetadata, FunctionRegistry, IfcFqnName, ImportableType, Params, StrVariant,
-    NAMESPACE_OBELISK,
+    SupportedFunctionReturnValue, NAMESPACE_OBELISK,
 };
 use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
@@ -32,6 +32,7 @@ use tokio::net::TcpListener;
 use tracing::{debug, error, info, instrument, trace, warn, Instrument, Level, Span};
 use utils::time::ClockFn;
 use utils::wasm_tools::{ExIm, WasmComponent, SUFFIX_PKG_EXT};
+use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};
@@ -415,6 +416,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         join_set_id: JoinSetId,
         results: &mut [Val],
     ) -> Result<Option<()>, WebhookFunctionError> {
+        if results.len() != 1 {
+            error!("Unexpected results length for -await-next");
+            return Err(WebhookFunctionError::UncategorizedError(
+                "Unexpected results length for -await-next",
+            ));
+        }
         if let Some((response, status)) = self
             .responses
             .iter_mut()
@@ -422,25 +429,51 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         {
             *status = ProcessingStatus::Processed;
             if let JoinSetResponseEvent {
-                event: JoinSetResponse::ChildExecutionFinished { result, .. },
+                event:
+                    JoinSetResponse::ChildExecutionFinished {
+                        result,
+                        child_execution_id,
+                    },
                 join_set_id: _,
             } = response
             {
                 debug!("Found child response: {result:?}");
-                let result = match result {
-                    Ok(res) => res,
-                    Err(err) => {
-                        return Err(WebhookFunctionError::FinishedExecutionError(err.clone()))
+                let child_execution_id = WastVal::String(child_execution_id.to_string());
+                match result {
+                    Ok(
+                        SupportedFunctionReturnValue::Fallible(v)
+                        | SupportedFunctionReturnValue::Infallible(v),
+                    ) => {
+                        results[0] = WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
+                            child_execution_id,
+                            v.value.clone(),
+                        ])))))
+                        .as_val()
                     }
-                };
-                if results.len() != result.len() {
-                    error!("Unexpected results length");
-                    return Err(WebhookFunctionError::UncategorizedError(
-                        "Unexpected results length",
-                    ));
-                }
-                for (idx, item) in result.value().into_iter().enumerate() {
-                    results[idx] = item.as_val();
+                    Ok(SupportedFunctionReturnValue::None) => {
+                        results[0] =
+                            WastVal::Result(Ok(Some(Box::new(child_execution_id)))).as_val();
+                    }
+
+                    Err(err) => {
+                        let variant = match err {
+                            FinishedExecutionError::PermanentTimeout => {
+                                WastVal::Variant("permanent-timeout".to_string(), None)
+                            }
+                            FinishedExecutionError::NonDeterminismDetected(_) => {
+                                WastVal::Variant("non-determinism".to_string(), None)
+                            }
+                            FinishedExecutionError::PermanentFailure(reason) => WastVal::Variant(
+                                "permanent-failure".to_string(),
+                                Some(Box::new(WastVal::String(reason.to_string()))),
+                            ),
+                        };
+                        results[0] = WastVal::Result(Err(Some(Box::new(WastVal::Tuple(vec![
+                            child_execution_id,
+                            variant,
+                        ])))))
+                        .as_val();
+                    }
                 }
                 Ok(Some(()))
             } else {
@@ -672,6 +705,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 ));
             }
         } else {
+            // direct call
             let version = self.get_version().await?;
             let span = Span::current();
             span.record("version", tracing::field::display(&version));
@@ -723,7 +757,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 .wait_for_finished_result(child_execution_id, None /* TODO timeouts */)
                 .await
             {
-                Ok(res) => res.inspect_err(|err| error!("Got execution error: {err:?}"))?,
+                Ok(res) => res?,
                 Err(ClientError::DbError(err)) => return Err(WebhookFunctionError::DbError(err)),
                 Err(ClientError::Timeout) => unreachable!("timeout was not set"),
             };

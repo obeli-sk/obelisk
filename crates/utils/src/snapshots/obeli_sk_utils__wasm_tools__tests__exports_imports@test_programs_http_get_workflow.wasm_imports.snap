@@ -21,11 +21,32 @@ expression: imports
     {
       "type_wrapper": {
         "Result": {
-          "ok": "String",
-          "err": "String"
+          "ok": {
+            "Tuple": [
+              "String",
+              {
+                "Result": {
+                  "ok": "String",
+                  "err": "String"
+                }
+              }
+            ]
+          },
+          "err": {
+            "Tuple": [
+              "String",
+              {
+                "Variant": {
+                  "non-determinism": null,
+                  "permanent-failure": "String",
+                  "permanent-timeout": null
+                }
+              }
+            ]
+          }
         }
       },
-      "wit_type": "result<string, string>"
+      "wit_type": "result<tuple<execution-id, result<string, string>>, tuple<execution-id, execution-error>>"
     }
   ],
   "testing:http-obelisk-ext/http-get.get-successful-submit": [

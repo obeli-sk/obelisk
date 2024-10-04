@@ -29,8 +29,29 @@ expression: imports
       }
     ],
     {
-      "type_wrapper": "U64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "Result": {
+          "ok": {
+            "Tuple": [
+              "String",
+              "U64"
+            ]
+          },
+          "err": {
+            "Tuple": [
+              "String",
+              {
+                "Variant": {
+                  "non-determinism": null,
+                  "permanent-failure": "String",
+                  "permanent-timeout": null
+                }
+              }
+            ]
+          }
+        }
+      },
+      "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     }
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-submit": [
@@ -60,8 +81,29 @@ expression: imports
       }
     ],
     {
-      "type_wrapper": "U64",
-      "wit_type": "u64"
+      "type_wrapper": {
+        "Result": {
+          "ok": {
+            "Tuple": [
+              "String",
+              "U64"
+            ]
+          },
+          "err": {
+            "Tuple": [
+              "String",
+              {
+                "Variant": {
+                  "non-determinism": null,
+                  "permanent-failure": "String",
+                  "permanent-timeout": null
+                }
+              }
+            ]
+          }
+        }
+      },
+      "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [

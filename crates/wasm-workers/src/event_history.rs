@@ -13,6 +13,7 @@ use concepts::storage::{HistoryEvent, JoinSetRequest};
 use concepts::ComponentRetryConfig;
 use concepts::ConfigId;
 use concepts::ExecutionMetadata;
+use concepts::FinishedExecutionError;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
 use concepts::ImportableType;
@@ -27,6 +28,7 @@ use tracing::Level;
 use tracing::Span;
 use tracing::{debug, error, trace};
 use utils::time::ClockFn;
+use val_json::execution_error_tuple;
 use val_json::type_wrapper::TypeWrapper;
 use val_json::wast_val::{WastVal, WastValWithType};
 
@@ -117,10 +119,13 @@ impl<C: ClockFn> EventHistory<C> {
         db_connection: &DB,
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
-    ) -> Result<SupportedFunctionReturnValue, WorkflowFunctionError> {
+    ) -> Result<Option<WastVal>, WorkflowFunctionError> {
         trace!("replay_or_interrupt: {event_call:?}");
-        if let Some(accept_resp) = self.find_matching_atomic(&event_call)? {
-            return Ok(accept_resp);
+        if let Some(accept_resp) = self
+            .find_matching_atomic(&event_call, db_connection)
+            .await?
+        {
+            return Ok(accept_resp.into_value());
         }
         // not found in the history, persisting the request
         let called_at = self.clock_fn.now();
@@ -148,8 +153,10 @@ impl<C: ClockFn> EventHistory<C> {
                 self.event_history
                     .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
                 return Ok(self
-                    .find_matching_atomic(&cloned_non_blocking)?
-                    .expect("non-blocking EventCall must return the response"));
+                    .find_matching_atomic(&cloned_non_blocking, db_connection)
+                    .await?
+                    .expect("non-blocking EventCall must return the response")
+                    .into_value());
             }
             Some(poll_variant) => {
                 let keys = event_call.as_keys();
@@ -167,11 +174,11 @@ impl<C: ClockFn> EventHistory<C> {
                     .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
                 let keys_len = keys.len();
                 for (idx, key) in keys.into_iter().enumerate() {
-                    let res = self.process_event_by_key(key)?;
+                    let res = self.process_event_by_key(key, db_connection).await?;
                     if idx == keys_len - 1 {
                         if let Some(res) = res {
                             // Last key was replayed.
-                            return Ok(res);
+                            return Ok(res.into_value());
                         }
                     }
                 }
@@ -198,9 +205,9 @@ impl<C: ClockFn> EventHistory<C> {
                         .map(|outer| (outer.event, Unprocessed)),
                 );
                 trace!("All responses: {:?}", self.responses);
-                if let Some(accept_resp) = self.process_event_by_key(key)? {
+                if let Some(accept_resp) = self.process_event_by_key(key, db_connection).await? {
                     debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
-                    return Ok(accept_resp);
+                    return Ok(accept_resp.into_value());
                 }
             }
         } else {
@@ -209,15 +216,16 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
-    fn find_matching_atomic(
+    async fn find_matching_atomic<DB: DbConnection>(
         &mut self,
         event_call: &EventCall,
+        db_connection: &DB,
     ) -> Result<Option<SupportedFunctionReturnValue>, WorkflowFunctionError> {
         let keys = event_call.as_keys();
         assert!(!keys.is_empty());
         let mut last = None;
         for (idx, key) in keys.into_iter().enumerate() {
-            last = self.process_event_by_key(key)?;
+            last = self.process_event_by_key(key, db_connection).await?;
             if last.is_none() {
                 assert_eq!(
                     idx, 0,
@@ -266,9 +274,10 @@ impl<C: ClockFn> EventHistory<C> {
 
     // TODO: Check params, scheduled_at etc to catch non-deterministic errors.
     #[expect(clippy::too_many_lines)]
-    fn process_event_by_key(
+    async fn process_event_by_key<DB: DbConnection>(
         &mut self,
         key: EventHistoryKey,
+        db_connection: &DB,
     ) -> Result<Option<SupportedFunctionReturnValue>, WorkflowFunctionError> {
         let Some((found_idx, (found_request_event, _))) = self.next_unprocessed_request() else {
             return Ok(None);
@@ -340,7 +349,7 @@ impl<C: ClockFn> EventHistory<C> {
             }
 
             (
-                EventHistoryKey::JoinNextChild { join_set_id },
+                EventHistoryKey::JoinNextChild { join_set_id, kind },
                 HistoryEvent::JoinNext {
                     join_set_id: found_join_set_id,
                     ..
@@ -358,13 +367,116 @@ impl<C: ClockFn> EventHistory<C> {
                         ..
                     }) => {
                         trace!(%join_set_id, "Matched JoinNext & ChildExecutionFinished");
-                        match result {
-                            Ok(result) => Ok(Some(result.clone())),
-                            Err(err) => {
-                                error!(%child_execution_id,
-                                    %join_set_id,
-                                    "Child execution finished with an execution error, failing the parent");
-                                Err(WorkflowFunctionError::ChildExecutionError(err.clone()))
+                        let error_tuple = execution_error_tuple();
+                        match kind {
+                            JoinNextKind::DirectCall => match result {
+                                Ok(result) => Ok(Some(result.clone())),
+                                Err(err) => {
+                                    error!(%child_execution_id,
+                                            %join_set_id,
+                                            "Child execution finished with an execution error, failing the parent");
+                                    Err(WorkflowFunctionError::ChildExecutionError(err.clone()))
+                                }
+                            },
+                            JoinNextKind::AwaitNext => {
+                                match result {
+                                    Ok(SupportedFunctionReturnValue::None) => {
+                                        // result<execution-id, tuple<execution-id, execution-error>>
+                                        Ok(Some(SupportedFunctionReturnValue::Fallible(
+                                            WastValWithType {
+                                                r#type: TypeWrapper::Result {
+                                                    ok: Some(Box::new(TypeWrapper::String)),
+                                                    err: error_tuple,
+                                                },
+                                                value: WastVal::Result(Ok(Some(Box::new(
+                                                    WastVal::String(child_execution_id.to_string()),
+                                                )))),
+                                            },
+                                        )))
+                                    }
+                                    Ok(
+                                        SupportedFunctionReturnValue::Fallible(v)
+                                        | SupportedFunctionReturnValue::Infallible(v),
+                                    ) => {
+                                        // result<(execution-id, inner>, tuple<execution-id, execution-error>>
+                                        Ok(Some(SupportedFunctionReturnValue::Fallible(
+                                            WastValWithType {
+                                                r#type: TypeWrapper::Result {
+                                                    ok: Some(Box::new(TypeWrapper::Tuple(vec![
+                                                        TypeWrapper::String,
+                                                        v.r#type.clone(), // the inner type
+                                                    ]))),
+                                                    err: error_tuple,
+                                                },
+                                                value: WastVal::Result(Ok(Some(Box::new(
+                                                    WastVal::Tuple(vec![
+                                                        WastVal::String(
+                                                            child_execution_id.to_string(),
+                                                        ),
+                                                        v.value.clone(),
+                                                    ]),
+                                                )))),
+                                            },
+                                        )))
+                                    }
+                                    Err(err) => {
+                                        match kind {
+                                            JoinNextKind::DirectCall => {
+                                                error!(%child_execution_id,
+                                                    %join_set_id,
+                                                    "Child execution finished with an execution error, failing the parent");
+                                                Err(WorkflowFunctionError::ChildExecutionError(
+                                                    err.clone(),
+                                                ))
+                                            }
+                                            JoinNextKind::AwaitNext => {
+                                                let variant = match err { // TODO: copied from webhook_trigger
+                                                    FinishedExecutionError::PermanentTimeout => {
+                                                        WastVal::Variant("permanent-timeout".to_string(), None)
+                                                    }
+                                                    FinishedExecutionError::NonDeterminismDetected(_) => {
+                                                        WastVal::Variant("non-determinism".to_string(), None)
+                                                    }
+                                                    FinishedExecutionError::PermanentFailure(reason) => WastVal::Variant(
+                                                        "permanent-failure".to_string(),
+                                                        Some(Box::new(WastVal::String(reason.to_string()))),
+                                                    ),
+                                                };
+                                                // Get the child execution log in order to get the return type of the child.
+                                                // FIXME: add the child's return_type to `JoinSetResponse::ChildExecutionFinished`
+                                                let found_child =
+                                                    db_connection.get(*child_execution_id).await?;
+                                                let ok_type = match found_child.return_type() {
+                                                    None => TypeWrapper::String, // result<execution-id, _>
+                                                    Some(inner) =>
+                                                    // result<tuple<execution_id, inner>, _>
+                                                    {
+                                                        TypeWrapper::Tuple(vec![
+                                                            TypeWrapper::String,
+                                                            inner.clone(),
+                                                        ])
+                                                    }
+                                                };
+                                                Ok(Some(SupportedFunctionReturnValue::Fallible(
+                                                    WastValWithType {
+                                                        r#type: TypeWrapper::Result {
+                                                            ok: Some(Box::new(ok_type)),
+                                                            err: error_tuple,
+                                                        },
+                                                        value: WastVal::Result(Err(Some(
+                                                            Box::new(WastVal::Tuple(vec![
+                                                                WastVal::String(
+                                                                    child_execution_id.to_string(),
+                                                                ),
+                                                                variant,
+                                                            ])),
+                                                        ))),
+                                                    },
+                                                )))
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -663,7 +775,7 @@ impl<C: ClockFn> EventHistory<C> {
                 Ok(history_events)
             }
 
-            EventCall::BlockingChildJoinNext { join_set_id } => {
+            EventCall::BlockingChildAwaitNext { join_set_id } => {
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let event = HistoryEvent::JoinNext {
@@ -821,21 +933,24 @@ impl ChildRetryConfigOverride {
 
 #[derive(Debug)]
 enum PollVariant {
-    JoinNextChild(JoinSetId),
+    JoinNextChild {
+        join_set_id: JoinSetId,
+        kind: JoinNextKind,
+    },
     JoinNextDelay(JoinSetId),
 }
 impl PollVariant {
     fn join_set_id(&self) -> JoinSetId {
         match self {
-            PollVariant::JoinNextChild(join_set_id) | PollVariant::JoinNextDelay(join_set_id) => {
-                *join_set_id
-            }
+            PollVariant::JoinNextChild { join_set_id, .. }
+            | PollVariant::JoinNextDelay(join_set_id) => *join_set_id,
         }
     }
     fn as_key(&self) -> EventHistoryKey {
         match self {
-            PollVariant::JoinNextChild(join_set_id) => EventHistoryKey::JoinNextChild {
+            PollVariant::JoinNextChild { join_set_id, kind } => EventHistoryKey::JoinNextChild {
                 join_set_id: *join_set_id,
+                kind: *kind,
             },
             PollVariant::JoinNextDelay(join_set_id) => EventHistoryKey::JoinNextDelay {
                 join_set_id: *join_set_id,
@@ -845,14 +960,14 @@ impl PollVariant {
 
     fn as_function_error(&self) -> WorkflowFunctionError {
         match self {
-            PollVariant::JoinNextChild(_) => WorkflowFunctionError::ChildExecutionRequest,
+            PollVariant::JoinNextChild { .. } => WorkflowFunctionError::ChildExecutionRequest,
             PollVariant::JoinNextDelay(_) => WorkflowFunctionError::DelayRequest,
         }
     }
 
     fn as_worker_result(&self) -> WorkerResult {
         match self {
-            PollVariant::JoinNextChild(_) => WorkerResult::ChildExecutionRequest,
+            PollVariant::JoinNextChild { .. } => WorkerResult::ChildExecutionRequest,
             PollVariant::JoinNextDelay(_) => WorkerResult::DelayRequest,
         }
     }
@@ -875,10 +990,11 @@ pub(crate) enum EventCall {
         ffqn: FunctionFqn,
         params: Params,
     },
-    BlockingChildJoinNext {
+    BlockingChildAwaitNext {
         join_set_id: JoinSetId,
     },
     /// combines [`Self::CreateJoinSet`] [`Self::StartAsync`] [`Self::BlockingChildJoinNext`]
+    /// Direct call
     BlockingChildExecutionRequest {
         ffqn: FunctionFqn,
         join_set_id: JoinSetId,
@@ -896,10 +1012,16 @@ impl EventCall {
     fn poll_variant(&self) -> Option<PollVariant> {
         match &self {
             // Blocking calls can be polled for JoinSetResponse
-            EventCall::BlockingChildExecutionRequest { join_set_id, .. }
-            | EventCall::BlockingChildJoinNext { join_set_id } => {
-                Some(PollVariant::JoinNextChild(*join_set_id))
+            EventCall::BlockingChildExecutionRequest { join_set_id, .. } => {
+                Some(PollVariant::JoinNextChild {
+                    join_set_id: *join_set_id,
+                    kind: JoinNextKind::DirectCall,
+                })
             }
+            EventCall::BlockingChildAwaitNext { join_set_id } => Some(PollVariant::JoinNextChild {
+                join_set_id: *join_set_id,
+                kind: JoinNextKind::AwaitNext,
+            }),
             EventCall::BlockingDelayRequest { join_set_id, .. } => {
                 Some(PollVariant::JoinNextDelay(*join_set_id))
             }
@@ -925,6 +1047,7 @@ enum EventHistoryKey {
     },
     JoinNextChild {
         join_set_id: JoinSetId,
+        kind: JoinNextKind,
         // TODO: Add wakeup conditions: ffqn (used by function_await), execution id
     },
     JoinNextDelay {
@@ -933,6 +1056,12 @@ enum EventHistoryKey {
     Schedule {
         execution_id: ExecutionId,
     },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum JoinNextKind {
+    AwaitNext,
+    DirectCall,
 }
 
 impl EventCall {
@@ -951,9 +1080,10 @@ impl EventCall {
                 join_set_id: *join_set_id,
                 child_execution_id: *child_execution_id,
             }],
-            EventCall::BlockingChildJoinNext { join_set_id } => {
+            EventCall::BlockingChildAwaitNext { join_set_id } => {
                 vec![EventHistoryKey::JoinNextChild {
                     join_set_id: *join_set_id,
+                    kind: JoinNextKind::AwaitNext,
                 }]
             }
             EventCall::BlockingChildExecutionRequest {
@@ -970,6 +1100,7 @@ impl EventCall {
                 },
                 EventHistoryKey::JoinNextChild {
                     join_set_id: *join_set_id,
+                    kind: JoinNextKind::DirectCall,
                 },
             ],
             EventCall::BlockingDelayRequest {
@@ -1135,7 +1266,7 @@ mod tests {
                         .unwrap();
                     event_history
                         .apply(
-                            EventCall::BlockingChildJoinNext { join_set_id },
+                            EventCall::BlockingChildAwaitNext { join_set_id },
                             &db_pool.connection(),
                             &mut version,
                             fn_registry.as_ref(),
@@ -1319,14 +1450,20 @@ mod tests {
         // issue BlockingChildJoinNext
         let res = event_history
             .apply(
-                EventCall::BlockingChildJoinNext { join_set_id },
+                EventCall::BlockingChildAwaitNext { join_set_id },
                 &db_pool.connection(),
                 &mut version,
                 fn_registry.as_ref(),
             )
             .await
             .unwrap();
-        assert_eq!(CHILD_RESP, res);
+
+        let child_resp_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
+            WastVal::String(child_execution_id.to_string()),
+            WastVal::U8(1),
+        ]))))));
+
+        assert_eq!(child_resp_wrapped, res);
 
         drop(db_connection);
         db_pool.close().await.unwrap();
@@ -1358,7 +1495,7 @@ mod tests {
             join_set_id: JoinSetId,
             child_execution_id_a: ExecutionId,
             child_execution_id_b: ExecutionId,
-        ) -> Result<SupportedFunctionReturnValue, WorkflowFunctionError> {
+        ) -> Result<Option<WastVal>, WorkflowFunctionError> {
             event_history
                 .apply(
                     EventCall::CreateJoinSet { join_set_id },
@@ -1398,7 +1535,7 @@ mod tests {
                 .unwrap();
             event_history
                 .apply(
-                    EventCall::BlockingChildJoinNext { join_set_id },
+                    EventCall::BlockingChildAwaitNext { join_set_id },
                     &db_pool.connection(),
                     version,
                     fn_registry,
@@ -1514,21 +1651,32 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(KID_A, res);
+        let kid_a_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
+            WastVal::String(child_execution_id_a.to_string()),
+            WastVal::U8(1),
+        ]))))));
+        assert_eq!(kid_a_wrapped, res);
 
         // second child result should be found
         let res = event_history
             .apply(
-                EventCall::BlockingChildJoinNext { join_set_id },
+                EventCall::BlockingChildAwaitNext { join_set_id },
                 &db_pool.connection(),
                 &mut version,
                 fn_registry.as_ref(),
             )
             .await
             .unwrap();
-        assert_eq!(KID_B, res);
+        let kid_b_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
+            WastVal::String(child_execution_id_b.to_string()),
+            WastVal::U8(2),
+        ]))))));
+        assert_eq!(kid_b_wrapped, res);
 
         drop(db_connection);
         db_pool.close().await.unwrap();
     }
+
+    // TODO: Check -await-next for fn without return type
+    // TODO: Check execution errors translating to execution-error
 }

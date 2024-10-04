@@ -14,11 +14,32 @@ expression: exports
     {
       "type_wrapper": {
         "Result": {
-          "ok": "String",
-          "err": "String"
+          "ok": {
+            "Tuple": [
+              "String",
+              {
+                "Result": {
+                  "ok": "String",
+                  "err": "String"
+                }
+              }
+            ]
+          },
+          "err": {
+            "Tuple": [
+              "String",
+              {
+                "Variant": {
+                  "non-determinism": null,
+                  "permanent-failure": "String",
+                  "permanent-timeout": null
+                }
+              }
+            ]
+          }
         }
       },
-      "wit_type": "result<string, string>"
+      "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<string, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-schedule": [
@@ -79,11 +100,32 @@ expression: exports
     {
       "type_wrapper": {
         "Result": {
-          "ok": "String",
-          "err": "String"
+          "ok": {
+            "Tuple": [
+              "String",
+              {
+                "Result": {
+                  "ok": "String",
+                  "err": "String"
+                }
+              }
+            ]
+          },
+          "err": {
+            "Tuple": [
+              "String",
+              {
+                "Variant": {
+                  "non-determinism": null,
+                  "permanent-failure": "String",
+                  "permanent-timeout": null
+                }
+              }
+            ]
+          }
         }
       },
-      "wit_type": "result<string, string>"
+      "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<string, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-await-next": [
@@ -98,12 +140,33 @@ expression: exports
       "type_wrapper": {
         "Result": {
           "ok": {
-            "List": "String"
+            "Tuple": [
+              "String",
+              {
+                "Result": {
+                  "ok": {
+                    "List": "String"
+                  },
+                  "err": "String"
+                }
+              }
+            ]
           },
-          "err": "String"
+          "err": {
+            "Tuple": [
+              "String",
+              {
+                "Variant": {
+                  "non-determinism": null,
+                  "permanent-failure": "String",
+                  "permanent-timeout": null
+                }
+              }
+            ]
+          }
         }
       },
-      "wit_type": "result<list<string>, string>"
+      "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<list<string>, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-schedule": [
@@ -149,12 +212,33 @@ expression: exports
       "type_wrapper": {
         "Result": {
           "ok": {
-            "List": "String"
+            "Tuple": [
+              "String",
+              {
+                "Result": {
+                  "ok": {
+                    "List": "String"
+                  },
+                  "err": "String"
+                }
+              }
+            ]
           },
-          "err": "String"
+          "err": {
+            "Tuple": [
+              "String",
+              {
+                "Variant": {
+                  "non-determinism": null,
+                  "permanent-failure": "String",
+                  "permanent-timeout": null
+                }
+              }
+            ]
+          }
         }
       },
-      "wit_type": "result<list<string>, string>"
+      "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<list<string>, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-schedule": [

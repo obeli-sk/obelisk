@@ -8,10 +8,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, Version};
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
-use concepts::{
-    ExecutionId, FinishedExecutionError, FunctionRegistry, IfcFqnName, StrVariant,
-    SupportedFunctionReturnValue,
-};
+use concepts::{ExecutionId, FinishedExecutionError, FunctionRegistry, IfcFqnName, StrVariant};
 use concepts::{FunctionFqn, Params};
 use executor::worker::{FatalError, WorkerError, WorkerResult};
 use rand::rngs::StdRng;
@@ -23,8 +20,7 @@ use std::time::Duration;
 use tracing::{debug, error, instrument, trace, Span};
 use utils::time::ClockFn;
 use utils::wasm_tools::SUFFIX_PKG_EXT;
-use val_json::type_wrapper::TypeWrapper;
-use val_json::wast_val::{WastVal, WastValWithType};
+use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Val};
 
 #[derive(thiserror::Error, Debug, Clone)]
@@ -155,14 +151,17 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 self.fn_registry.as_ref(),
             )
             .await?;
-        if results.len() != res.len() {
-            error!("Unexpected results length");
-            return Err(WorkflowFunctionError::UncategorizedError(
-                "Unexpected results length",
-            ));
-        }
-        for (idx, item) in res.value().into_iter().enumerate() {
-            results[idx] = item.as_val();
+        match (results.len(), res) {
+            (0, None) => {}
+            (1, Some(res)) => {
+                results[0] = res.as_val();
+            }
+            (expected, got) => {
+                error!("Unexpected results length, runtime expects {expected}, got: {got:?}",);
+                return Err(WorkflowFunctionError::UncategorizedError(
+                    "Unexpected results length",
+                ));
+            }
         }
         trace!(?params, ?results, "call_imported_fn finish");
         Ok(())
@@ -276,7 +275,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
                     WorkflowFunctionError::UncategorizedError("cannot parse JoinSetId")
                 })?;
-                Ok(EventCall::BlockingChildJoinNext { join_set_id })
+                Ok(EventCall::BlockingChildAwaitNext { join_set_id })
             } else if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
             {
                 let ffqn =
@@ -332,7 +331,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 pub(crate) mod host_activities {
     use super::{
         assert_matches, async_trait, ClockFn, DbConnection, DbPool, Duration, EventCall, JoinSetId,
-        SupportedFunctionReturnValue, TypeWrapper, WastVal, WastValWithType, WorkflowCtx,
+        WastVal, WorkflowCtx,
     };
 
     // Generate `obelisk::workflow::host_activities`
@@ -364,12 +363,7 @@ pub(crate) mod host_activities {
                     self.fn_registry.as_ref(),
                 )
                 .await?;
-            Ok(
-                assert_matches!(res, SupportedFunctionReturnValue::Infallible(WastValWithType {
-            r#type: TypeWrapper::String,
-            value: WastVal::String(join_set_id),
-        }) => join_set_id),
-            )
+            Ok(assert_matches!(res, Some(WastVal::String(join_set_id)) => join_set_id))
         }
     }
 }

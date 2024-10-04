@@ -4,9 +4,12 @@ use concepts::{
     ParameterTypes, ReturnType, StrVariant,
 };
 use indexmap::{indexmap, IndexMap};
-use std::{path::Path, sync::Arc};
+use std::{borrow::Cow, path::Path, sync::Arc};
 use tracing::{debug, error, trace};
-use val_json::{type_wrapper::TypeConversionError, type_wrapper::TypeWrapper};
+use val_json::{
+    execution_error_tuple,
+    type_wrapper::{TypeConversionError, TypeWrapper},
+};
 use wasmtime::{
     component::{types::ComponentItem, Component, ComponentExportIndex},
     Engine,
@@ -268,7 +271,7 @@ impl ExIm {
                 };
                 insert(fn_submit);
 
-                // -await-next(join-set-id: join-set-id) -> original return type
+                // -await-next(join-set-id: join-set-id) ->  result<(execution_id, original_return_type), execution-error>
                 let fn_await_next = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: obelisk_extended_ifc.clone(),
@@ -278,7 +281,38 @@ impl ExIm {
                         )),
                     },
                     parameter_types: ParameterTypes(vec![param_type_join_set.clone()]),
-                    return_type: exported_fn_metadata.return_type.clone(),
+                    return_type: {
+                        let error_tuple = execution_error_tuple();
+                        let (ok_part, type_wrapper) = if let Some(original_ret) =
+                            exported_fn_metadata.return_type
+                        {
+                            (
+                                // Use ReturnType::display to serialize wit_type or fallback
+                                Cow::Owned(format!("tuple</* use obelisk:types/execution.{{execution-id}} */ execution-id, {original_ret}>")),
+                                TypeWrapper::Result {
+                                    ok: Some(Box::new(TypeWrapper::Tuple(vec![
+                                        TypeWrapper::String,
+                                        original_ret.type_wrapper,
+                                    ]))), // (execution-id, original_ret)
+                                    err: error_tuple,
+                                },
+                            )
+                        } else {
+                            (
+                                Cow::Borrowed(
+                                    "/* use obelisk:types/execution.{execution-id} */ execution-id",
+                                ),
+                                TypeWrapper::Result {
+                                    ok: Some(Box::new(TypeWrapper::String)), // execution-id
+                                    err: error_tuple,
+                                },
+                            )
+                        };
+                        Some(ReturnType { type_wrapper, wit_type: Some(StrVariant::from(format!(
+                            // result<{ok_part}, tuple<execution_id, execution_error>>
+                            "result<{ok_part}, tuple</* use obelisk:types/execution.{{execution-id}} */ execution-id, /* use obelisk:types/execution.{{execution-error}} */ execution-error>>"
+                        ))) })
+                    },
                 };
                 insert(fn_await_next);
                 // -schedule(schedule: schedule-at, original params) -> string (execution id)

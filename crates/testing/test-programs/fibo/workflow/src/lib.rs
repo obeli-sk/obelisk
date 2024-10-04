@@ -38,7 +38,9 @@ impl crate::bindings::exports::testing::fibo_workflow::workflow::Guest for Compo
         }
         let mut last = 0;
         for _ in 0..iterations {
-            last = crate::bindings::testing::fibo_obelisk_ext::fibo::fibo_await_next(&join_set_id);
+            last = crate::bindings::testing::fibo_obelisk_ext::fibo::fibo_await_next(&join_set_id)
+                .unwrap()
+                .1;
         }
         last
     }
@@ -70,7 +72,7 @@ impl crate::bindings::exports::testing::fibo_workflow::workflow_nesting::Guest f
         }
         let mut last = 0;
         for _ in 0..fiboas {
-            last = fiboa_await_next(&join_set_id);
+            last = fiboa_await_next(&join_set_id).unwrap().1;
         }
         last
     }

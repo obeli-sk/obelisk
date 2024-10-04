@@ -29,7 +29,9 @@ impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Compo
             let contents =
                 crate::bindings::testing::http_obelisk_ext::http_get::get_successful_await_next(
                     &join_set_id,
-                )?;
+                )
+                .unwrap()
+                .1?;
             list.push(contents);
         }
         Ok(list)
@@ -53,7 +55,9 @@ impl crate::bindings::exports::testing::http_workflow::workflow::Guest for Compo
             let contents =
                 crate::bindings::testing::http_obelisk_ext::http_get::get_successful_await_next(
                     &join_set_id,
-                )?;
+                )
+                .unwrap()
+                .1?;
             list.push(contents);
         }
         Ok(list)

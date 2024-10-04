@@ -34,7 +34,7 @@ pub enum FinishedExecutionError {
     PermanentTimeout,
     #[error("non-determinism detected, reason: `{0}`")]
     NonDeterminismDetected(StrVariant),
-    #[error("uncategorized error: `{0}`")]
+    #[error("permanent failure: `{0}`")]
     PermanentFailure(StrVariant), // intermittent failure that is not retried (anymore) and cannot be mapped to the function result type
 }
 
@@ -1020,7 +1020,7 @@ impl Display for ReturnType {
         if let Some(wit_type) = &self.wit_type {
             write!(f, "{wit_type}")
         } else {
-            write!(f, "{:?}", self.type_wrapper)
+            write!(f, "<unknown_type_{:?}>", self.type_wrapper)
         }
     }
 }
@@ -1060,7 +1060,7 @@ impl Display for ParameterType {
         if let Some(wit_type) = &self.wit_type {
             write!(f, "{wit_type}")
         } else {
-            write!(f, "{:?}", self.type_wrapper)
+            write!(f, "<unknown_type_{:?}>", self.type_wrapper)
         }
     }
 }

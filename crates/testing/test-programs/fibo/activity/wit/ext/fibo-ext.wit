@@ -1,8 +1,9 @@
 package testing:fibo-obelisk-ext;
 
 interface fibo {
+    use obelisk:types/execution.{execution-id, execution-error};
 
     fibo-submit: func(join-set-id: string, n: u8) -> string;
 
-    fibo-await-next: func(join-set-id: string) -> u64;
+    fibo-await-next: func(join-set-id: string) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
 }

@@ -32,7 +32,7 @@ expression: imports
           "wit_type": "string"
         }
       ],
-      "return_type": "u64"
+      "return_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     },
     "testing:fibo-obelisk-ext/fibo",
     "fibo-await-next"
@@ -62,7 +62,7 @@ expression: imports
           "wit_type": "string"
         }
       ],
-      "return_type": "u64"
+      "return_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     },
     "testing:fibo-workflow-obelisk-ext/workflow",
     "fiboa-await-next"

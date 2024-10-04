@@ -45,9 +45,12 @@ impl Guest for Component {
                 n,
                 iterations,
             );
-            let fibo_res = bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_await_next(
-                &join_set_id,
-            );
+            let fibo_res =
+                bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_await_next(
+                    &join_set_id,
+                )
+                .unwrap()
+                .1;
             format!("submit/await-next: {fibo_res}")
         } else if n > 1 {
             // Call the execution directly.

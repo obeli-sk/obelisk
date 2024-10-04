@@ -24,4 +24,10 @@ interface execution {
     type join-set-id = string;
 
     type execution-id = string;
+
+    variant execution-error {
+        permanent-failure(string), // trap, instantiation error, non determinism, unhandled child execution error, param/result parsing error
+        permanent-timeout,
+        non-determinism,
+    }
 }

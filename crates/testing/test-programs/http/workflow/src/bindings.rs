@@ -3,6 +3,39 @@ pub mod obelisk {
     #[allow(dead_code)]
     pub mod types {
         #[allow(dead_code, clippy::all)]
+        pub mod execution {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+            use super::super::super::_rt;
+            pub type JoinSetId = _rt::String;
+            pub type ExecutionId = _rt::String;
+            #[derive(Clone)]
+            pub enum ExecutionError {
+                PermanentFailure(_rt::String),
+                /// trap, instantiation error, non determinism, unhandled child execution error, param/result parsing error
+                PermanentTimeout,
+                NonDeterminism,
+            }
+            impl ::core::fmt::Debug for ExecutionError {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    match self {
+                        ExecutionError::PermanentFailure(e) => f
+                            .debug_tuple("ExecutionError::PermanentFailure")
+                            .field(e)
+                            .finish(),
+                        ExecutionError::PermanentTimeout => {
+                            f.debug_tuple("ExecutionError::PermanentTimeout").finish()
+                        }
+                        ExecutionError::NonDeterminism => {
+                            f.debug_tuple("ExecutionError::NonDeterminism").finish()
+                        }
+                    }
+                }
+            }
+        }
+        #[allow(dead_code, clippy::all)]
         pub mod time {
             #[used]
             #[doc(hidden)]
@@ -11,15 +44,6 @@ pub mod obelisk {
             /// A duration of time, in nanoseconds.
             /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
             pub type Duration = u64;
-        }
-        #[allow(dead_code, clippy::all)]
-        pub mod execution {
-            #[used]
-            #[doc(hidden)]
-            static __FORCE_SECTION_REF: fn() =
-                super::super::super::__link_custom_section_describing_imports;
-            use super::super::super::_rt;
-            pub type JoinSetId = _rt::String;
         }
     }
     #[allow(dead_code)]
@@ -193,6 +217,9 @@ pub mod testing {
             static __FORCE_SECTION_REF: fn() =
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
+            pub type ExecutionId = super::super::super::obelisk::types::execution::ExecutionId;
+            pub type ExecutionError =
+                super::super::super::obelisk::types::execution::ExecutionError;
             #[allow(unused_unsafe, clippy::all)]
             pub fn get_successful_submit(join_set_id: &str, url: &str) -> _rt::String {
                 unsafe {
@@ -227,11 +254,14 @@ pub mod testing {
             #[allow(unused_unsafe, clippy::all)]
             pub fn get_successful_await_next(
                 join_set_id: &str,
-            ) -> Result<_rt::String, _rt::String> {
+            ) -> Result<
+                (ExecutionId, Result<_rt::String, _rt::String>),
+                (ExecutionId, ExecutionError),
+            > {
                 unsafe {
                     #[repr(align(4))]
-                    struct RetArea([::core::mem::MaybeUninit<u8>; 12]);
-                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 12]);
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 24]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 24]);
                     let vec0 = join_set_id;
                     let ptr0 = vec0.as_ptr().cast::<u8>();
                     let len0 = vec0.len();
@@ -255,17 +285,68 @@ pub mod testing {
                                 let l4 = *ptr1.add(8).cast::<usize>();
                                 let len5 = l4;
                                 let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
-                                _rt::string_lift(bytes5)
+                                let l6 = i32::from(*ptr1.add(12).cast::<u8>());
+                                (
+                                    _rt::string_lift(bytes5),
+                                    match l6 {
+                                        0 => {
+                                            let e = {
+                                                let l7 = *ptr1.add(16).cast::<*mut u8>();
+                                                let l8 = *ptr1.add(20).cast::<usize>();
+                                                let len9 = l8;
+                                                let bytes9 =
+                                                    _rt::Vec::from_raw_parts(l7.cast(), len9, len9);
+                                                _rt::string_lift(bytes9)
+                                            };
+                                            Ok(e)
+                                        }
+                                        1 => {
+                                            let e = {
+                                                let l10 = *ptr1.add(16).cast::<*mut u8>();
+                                                let l11 = *ptr1.add(20).cast::<usize>();
+                                                let len12 = l11;
+                                                let bytes12 = _rt::Vec::from_raw_parts(
+                                                    l10.cast(),
+                                                    len12,
+                                                    len12,
+                                                );
+                                                _rt::string_lift(bytes12)
+                                            };
+                                            Err(e)
+                                        }
+                                        _ => _rt::invalid_enum_discriminant(),
+                                    },
+                                )
                             };
                             Ok(e)
                         }
                         1 => {
                             let e = {
-                                let l6 = *ptr1.add(4).cast::<*mut u8>();
-                                let l7 = *ptr1.add(8).cast::<usize>();
-                                let len8 = l7;
-                                let bytes8 = _rt::Vec::from_raw_parts(l6.cast(), len8, len8);
-                                _rt::string_lift(bytes8)
+                                let l13 = *ptr1.add(4).cast::<*mut u8>();
+                                let l14 = *ptr1.add(8).cast::<usize>();
+                                let len15 = l14;
+                                let bytes15 = _rt::Vec::from_raw_parts(l13.cast(), len15, len15);
+                                let l16 = i32::from(*ptr1.add(12).cast::<u8>());
+                                use super::super::super::obelisk::types::execution::ExecutionError as V20;
+                                let v20 = match l16 {
+                                    0 => {
+                                        let e20 = {
+                                            let l17 = *ptr1.add(16).cast::<*mut u8>();
+                                            let l18 = *ptr1.add(20).cast::<usize>();
+                                            let len19 = l18;
+                                            let bytes19 =
+                                                _rt::Vec::from_raw_parts(l17.cast(), len19, len19);
+                                            _rt::string_lift(bytes19)
+                                        };
+                                        V20::PermanentFailure(e20)
+                                    }
+                                    1 => V20::PermanentTimeout,
+                                    n => {
+                                        debug_assert_eq!(n, 2, "invalid enum discriminant");
+                                        V20::NonDeterminism
+                                    }
+                                };
+                                (_rt::string_lift(bytes15), v20)
                             };
                             Err(e)
                         }
@@ -724,27 +805,32 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 912] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x96\x06\x01A\x02\x01\
-A\x0e\x01B\x04\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0e\
-get-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x05\x01@\x02\x0b\
-join-set-ids\x03urls\0s\x04\0\x15get-successful-submit\x01\0\x01j\x01s\x01s\x01@\
-\x01\x0bjoin-set-ids\0\x01\x04\0\x19get-successful-await-next\x01\x02\x03\x01!te\
-sting:http-obelisk-ext/http-get\x05\x01\x01B\x06\x01w\x04\0\x08duration\x03\0\0\x01\
-r\x02\x07secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\
-\x02at\x01\x03\0\x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obeli\
-sk:types/time\x05\x02\x01B\x04\x01s\x04\0\x0bjoin-set-id\x03\0\0\x01s\x04\0\x0ce\
-xecution-id\x03\0\x02\x03\x01\x17obelisk:types/execution\x05\x03\x02\x03\0\x02\x08\
-duration\x02\x03\0\x03\x0bjoin-set-id\x01B\x08\x02\x03\x02\x01\x04\x04\0\x08dura\
-tion\x03\0\0\x02\x03\x02\x01\x05\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x05nano\
-s\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0cnew-join-set\x01\x05\x03\
-\x01\x20obelisk:workflow/host-activities\x05\x06\x01B\x0a\x01j\x01s\x01s\x01@\x01\
-\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-successful\x01\x01\x01ps\x01j\x01\
-\x02\x01s\x01@\x01\x04urls\x02\0\x03\x04\0\x1bget-successful-concurrently\x01\x04\
-\x01@\x02\x03urls\x0bconcurrencyy\0\x03\x04\0\"get-successful-concurrently-stres\
-s\x01\x05\x04\x01\x1etesting:http-workflow/workflow\x05\x07\x04\x01\x19testing:h\
-ttp-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cproce\
-ssed-by\x02\x0dwit-component\x070.215.0\x10wit-bindgen-rust\x060.30.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1097] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xcf\x07\x01A\x02\x01\
+A\x10\x01B\x04\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0e\
+get-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x06\x01s\x04\0\
+\x0bjoin-set-id\x03\0\0\x01s\x04\0\x0cexecution-id\x03\0\x02\x01q\x03\x11permane\
+nt-failure\x01s\0\x11permanent-timeout\0\0\x0fnon-determinism\0\0\x04\0\x0fexecu\
+tion-error\x03\0\x04\x03\x01\x17obelisk:types/execution\x05\x01\x02\x03\0\x01\x0c\
+execution-id\x02\x03\0\x01\x0fexecution-error\x01B\x0c\x02\x03\x02\x01\x02\x04\0\
+\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0fexecution-error\x03\0\x02\x01\
+@\x02\x0bjoin-set-ids\x03urls\0s\x04\0\x15get-successful-submit\x01\x04\x01j\x01\
+s\x01s\x01o\x02\x01\x05\x01o\x02\x01\x03\x01j\x01\x06\x01\x07\x01@\x01\x0bjoin-s\
+et-ids\0\x08\x04\0\x19get-successful-await-next\x01\x09\x03\x01!testing:http-obe\
+lisk-ext/http-get\x05\x04\x01B\x06\x01w\x04\0\x08duration\x03\0\0\x01r\x02\x07se\
+condsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\
+\x03\0\x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/t\
+ime\x05\x05\x02\x03\0\x03\x08duration\x02\x03\0\x01\x0bjoin-set-id\x01B\x08\x02\x03\
+\x02\x01\x06\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x07\x04\0\x0bjoin-set-id\x03\
+\0\x02\x01@\x01\x05nanos\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0c\
+new-join-set\x01\x05\x03\x01\x20obelisk:workflow/host-activities\x05\x08\x01B\x0a\
+\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-successfu\
+l\x01\x01\x01ps\x01j\x01\x02\x01s\x01@\x01\x04urls\x02\0\x03\x04\0\x1bget-succes\
+sful-concurrently\x01\x04\x01@\x02\x03urls\x0bconcurrencyy\0\x03\x04\0\"get-succ\
+essful-concurrently-stress\x01\x05\x04\x01\x1etesting:http-workflow/workflow\x05\
+\x09\x04\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09\
+producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.215.0\x10wit-bindgen-rus\
+t\x060.30.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

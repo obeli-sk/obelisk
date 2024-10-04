@@ -123,6 +123,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [x] HTTP webhook triggers able to start new executions (workflows and activities), able to wait for result before sending the response.
 - [x] Forward stdout and stderr (configurable) of activities and webhooks
 - [x] Support for distributed tracing, logging from components collected by OTLP
+- [x] Mapping from any execution result (e.g. traps, timeouts, err variants) to other execution results via `-await-next`
 - [ ] Expose filesystem with directory mapping for activities, webhooks
 - [ ] Expose network configuration for activities, webhooks
 - [ ] External activities - running external processes
@@ -156,7 +157,6 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 * Webhook functions: translating between HTTP and WIT defined parameters and return value
 * Distributed tracing context forwarding for outgoing HTTP as well as webhooks
 * Allow specifying permanent error variants in as annotations in WIT
-* Mapping from execution failures (e.g. panics, timeouts) to error variants
 * Support for (distributed) sagas - define rollbacks on activities, call them on failed workflows
 
 # Building from source
