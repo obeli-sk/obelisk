@@ -363,7 +363,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                                 version,
                             )
                         } else {
-                            info!("Permanently failed");
+                            info!("Permanently failed - {reason}");
                             let result = Err(FinishedExecutionError::PermanentFailure(reason));
                             let parent = parent.map(|(p, j)| (p, j, result.clone()));
                             (ExecutionEventInner::Finished { result }, parent, version)
@@ -377,27 +377,24 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         FatalError::NonDeterminismDetected(reason),
                         version,
                     ) => {
-                        info!("Non-determinism detected");
+                        info!("Non-determinism detected - {reason}");
                         let result = Err(FinishedExecutionError::NonDeterminismDetected(reason));
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
                     WorkerError::FatalError(FatalError::ParamsParsingError(err), version) => {
                         info!("Error parsing parameters - {err:?}");
-                        let result = Err(FinishedExecutionError::PermanentFailure(
-                            StrVariant::Arc(Arc::from(format!(
-                                "error parsing parameters: `{err}`, detail: {err:?}"
-                            ))),
-                        ));
+                        let result =
+                            Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
+                                Arc::from(format!("error parsing parameters: `{err}`")),
+                            )));
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }
                     WorkerError::FatalError(FatalError::ResultParsingError(err), version) => {
                         info!("Error parsing result - {err:?}");
                         let result = Err(FinishedExecutionError::PermanentFailure(
-                            StrVariant::Arc(Arc::from(format!(
-                                "error parsing result: `{err}`, detail: {err:?}"
-                            ))),
+                            StrVariant::Arc(Arc::from(format!("error parsing result: `{err}`"))),
                         ));
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
@@ -406,7 +403,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         info!("Child finished with an execution error - {err:?}");
                         let result = Err(FinishedExecutionError::PermanentFailure(
                             StrVariant::Arc(Arc::from(format!(
-                                "child finished with an execution error: `{err}`, detail: {err:?}"
+                                "child finished with an execution error: `{err}`"
                             ))),
                         ));
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
@@ -414,10 +411,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     }
                     WorkerError::FatalError(FatalError::UncategorizedError(err), version) => {
                         info!("Uncategorized error - {err:?}");
-                        let result =
-                            Err(FinishedExecutionError::PermanentFailure(StrVariant::Arc(
-                                Arc::from(format!("uncategorized error: `{err}`, detail: {err:?}")),
-                            )));
+                        let result = Err(FinishedExecutionError::PermanentFailure(
+                            StrVariant::Arc(Arc::from(format!("uncategorized error: `{err}`"))),
+                        ));
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }

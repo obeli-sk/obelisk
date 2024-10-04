@@ -276,8 +276,7 @@ pub enum ExecutionEventInner {
     /// out of resources like [`WorkerError::LimitReached`] or when
     /// the executor is shutting down.
     Unlocked,
-    // Created by the executor holding last lock.
-    // Processed by a scheduler.
+    // Created by the executor holding the lock.
     // After expiry interpreted as pending.
     #[display("IntermittentFailure(`{expires_at}`)")]
     IntermittentFailure {
@@ -287,7 +286,6 @@ pub enum ExecutionEventInner {
         reason: StrVariant,
     },
     // Created by the executor holding last lock.
-    // Processed by a scheduler.
     // After expiry interpreted as pending.
     #[display("IntermittentTimeout(`{expires_at}`)")]
     IntermittentTimeout { expires_at: DateTime<Utc> }, // TODO: Rename to IntermittentlyTimeouted
