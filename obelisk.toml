@@ -80,14 +80,14 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 
 [[wasm_activity]]
 name = "fibo_activity"
-location.oci = "docker.io/getobelisk/example_activity_fibo:2024-08-12-1@sha256:d33ea7dde23bb8204e8916a4ca868195c1d66b0459bf0e3bc874cb27e25abf3e"
+location.oci = "docker.io/getobelisk/example_activity_fibo:2024-10-04@sha256:b0915e6bae3083a0dceec80497510c0faf4f5cad71202864da0a99eee2e2bbc2"
 default_max_retries = 0
 forward_stdout = "stderr"
 forward_stderr = "stderr"
 
 [[workflow]]
 name = "fibo_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-09-28@sha256:45bdca52415cf7ca0324d1e74d35fea77b77a5f0515c8e4041def904ff9ed8be"
+location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-04@sha256:b72df7d3ee2dff9dad01813d56e9ab9dd424234dd5aea1ed1dfbc03c105555e1"
 exec.lock_expiry.secs = 2
 
 [[wasm_activity]]
@@ -98,7 +98,7 @@ forward_stderr = "stderr"
 
 [[workflow]]
 name = "http_get_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-10-01@sha256:d105fb7edfec4fe4422882288cf1742076884fecd54236bfd85acb8d4009a428"
+location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-10-04@sha256:e05a7e3392209b759ae6b59a1da128218891e41c73f2de47ed4151ae9b786bc5"
 
 [[http_server]]
 name = "external"
@@ -106,7 +106,7 @@ listening_addr = "0.0.0.0:9090"
 
 [[webhook_component]]
 name = "webhook_trigger_fibo"
-location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-09-28@sha256:5bb61161474b697fd2082cbcb3be725a214dff65c39a80c399554690716afc89"
+location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-04@sha256:6fe6f49d626073abadec7e02ef81cef6a76463dc95b07607cd6f3fc309303672"
 http_server = "external"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 forward_stdout = "stderr"
