@@ -406,6 +406,14 @@ impl SupportedFunctionReturnValue {
         }
     }
 
+    pub fn into_value(self) -> Option<WastVal> {
+        match self {
+            SupportedFunctionReturnValue::None => None,
+            SupportedFunctionReturnValue::Fallible(v)
+            | SupportedFunctionReturnValue::Infallible(v) => Some(v.value),
+        }
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         match self {

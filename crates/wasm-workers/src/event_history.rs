@@ -28,9 +28,10 @@ use tracing::Level;
 use tracing::Span;
 use tracing::{debug, error, trace};
 use utils::time::ClockFn;
-use val_json::execution_error_tuple;
-use val_json::type_wrapper::TypeWrapper;
-use val_json::wast_val::{WastVal, WastValWithType};
+use val_json::wast_val::WastVal;
+
+/// Replaces `SupportedFunctionReturnValue`
+type ChildReturnValue = Option<WastVal>;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum ProcessingStatus {
@@ -119,13 +120,10 @@ impl<C: ClockFn> EventHistory<C> {
         db_connection: &DB,
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
-    ) -> Result<Option<WastVal>, WorkflowFunctionError> {
+    ) -> Result<ChildReturnValue, WorkflowFunctionError> {
         trace!("replay_or_interrupt: {event_call:?}");
-        if let Some(accept_resp) = self
-            .find_matching_atomic(&event_call, db_connection)
-            .await?
-        {
-            return Ok(accept_resp.into_value());
+        if let Some(accept_resp) = self.find_matching_atomic(&event_call)? {
+            return Ok(accept_resp);
         }
         // not found in the history, persisting the request
         let called_at = self.clock_fn.now();
@@ -153,10 +151,8 @@ impl<C: ClockFn> EventHistory<C> {
                 self.event_history
                     .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
                 return Ok(self
-                    .find_matching_atomic(&cloned_non_blocking, db_connection)
-                    .await?
-                    .expect("non-blocking EventCall must return the response")
-                    .into_value());
+                    .find_matching_atomic(&cloned_non_blocking)?
+                    .expect("non-blocking EventCall must return the response"));
             }
             Some(poll_variant) => {
                 let keys = event_call.as_keys();
@@ -174,11 +170,11 @@ impl<C: ClockFn> EventHistory<C> {
                     .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
                 let keys_len = keys.len();
                 for (idx, key) in keys.into_iter().enumerate() {
-                    let res = self.process_event_by_key(key, db_connection).await?;
+                    let res = self.process_event_by_key(key)?;
                     if idx == keys_len - 1 {
                         if let Some(res) = res {
                             // Last key was replayed.
-                            return Ok(res.into_value());
+                            return Ok(res);
                         }
                     }
                 }
@@ -205,9 +201,9 @@ impl<C: ClockFn> EventHistory<C> {
                         .map(|outer| (outer.event, Unprocessed)),
                 );
                 trace!("All responses: {:?}", self.responses);
-                if let Some(accept_resp) = self.process_event_by_key(key, db_connection).await? {
+                if let Some(accept_resp) = self.process_event_by_key(key)? {
                     debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
-                    return Ok(accept_resp.into_value());
+                    return Ok(accept_resp);
                 }
             }
         } else {
@@ -216,16 +212,16 @@ impl<C: ClockFn> EventHistory<C> {
         }
     }
 
-    async fn find_matching_atomic<DB: DbConnection>(
+    fn find_matching_atomic(
         &mut self,
         event_call: &EventCall,
-        db_connection: &DB,
-    ) -> Result<Option<SupportedFunctionReturnValue>, WorkflowFunctionError> {
+    ) -> Result<Option<ChildReturnValue>, WorkflowFunctionError> {
+        // None means no progress
         let keys = event_call.as_keys();
         assert!(!keys.is_empty());
         let mut last = None;
         for (idx, key) in keys.into_iter().enumerate() {
-            last = self.process_event_by_key(key, db_connection).await?;
+            last = self.process_event_by_key(key)?;
             if last.is_none() {
                 assert_eq!(
                     idx, 0,
@@ -274,11 +270,10 @@ impl<C: ClockFn> EventHistory<C> {
 
     // TODO: Check params, scheduled_at etc to catch non-deterministic errors.
     #[expect(clippy::too_many_lines)]
-    async fn process_event_by_key<DB: DbConnection>(
+    fn process_event_by_key(
         &mut self,
         key: EventHistoryKey,
-        db_connection: &DB,
-    ) -> Result<Option<SupportedFunctionReturnValue>, WorkflowFunctionError> {
+    ) -> Result<Option<ChildReturnValue>, WorkflowFunctionError> {
         let Some((found_idx, (found_request_event, _))) = self.next_unprocessed_request() else {
             return Ok(None);
         };
@@ -293,12 +288,7 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%join_set_id, "Matched JoinSet");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
-                Ok(Some(SupportedFunctionReturnValue::Infallible(
-                    WastValWithType {
-                        r#type: TypeWrapper::String,
-                        value: WastVal::String(join_set_id.to_string()),
-                    },
-                )))
+                Ok(Some(Some(WastVal::String(join_set_id.to_string()))))
             }
 
             (
@@ -315,12 +305,7 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::StartAsync`] , return execution id
-                Ok(Some(SupportedFunctionReturnValue::Infallible(
-                    WastValWithType {
-                        r#type: TypeWrapper::String,
-                        value: WastVal::String(execution_id.to_string()),
-                    },
-                )))
+                Ok(Some(Some(WastVal::String(execution_id.to_string()))))
             }
 
             (
@@ -340,12 +325,7 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%delay_id, %join_set_id, "Matched JoinSetRequest::DelayRequest");
                 self.event_history[found_idx].1 = Processed;
                 // return delay id
-                Ok(Some(SupportedFunctionReturnValue::Infallible(
-                    WastValWithType {
-                        r#type: TypeWrapper::String,
-                        value: WastVal::String(delay_id.to_string()),
-                    },
-                )))
+                Ok(Some(Some(WastVal::String(delay_id.to_string()))))
             }
 
             (
@@ -367,10 +347,9 @@ impl<C: ClockFn> EventHistory<C> {
                         ..
                     }) => {
                         trace!(%join_set_id, "Matched JoinNext & ChildExecutionFinished");
-                        let error_tuple = execution_error_tuple();
                         match kind {
                             JoinNextKind::DirectCall => match result {
-                                Ok(result) => Ok(Some(result.clone())),
+                                Ok(result) => Ok(Some(result.clone().into_value())),
                                 Err(err) => {
                                     error!(%child_execution_id,
                                             %join_set_id,
@@ -382,42 +361,21 @@ impl<C: ClockFn> EventHistory<C> {
                                 match result {
                                     Ok(SupportedFunctionReturnValue::None) => {
                                         // result<execution-id, tuple<execution-id, execution-error>>
-                                        Ok(Some(SupportedFunctionReturnValue::Fallible(
-                                            WastValWithType {
-                                                r#type: TypeWrapper::Result {
-                                                    ok: Some(Box::new(TypeWrapper::String)),
-                                                    err: error_tuple,
-                                                },
-                                                value: WastVal::Result(Ok(Some(Box::new(
-                                                    WastVal::String(child_execution_id.to_string()),
-                                                )))),
-                                            },
-                                        )))
+                                        Ok(Some(Some(WastVal::Result(Ok(Some(Box::new(
+                                            WastVal::String(child_execution_id.to_string()),
+                                        )))))))
                                     }
                                     Ok(
                                         SupportedFunctionReturnValue::Fallible(v)
                                         | SupportedFunctionReturnValue::Infallible(v),
                                     ) => {
                                         // result<(execution-id, inner>, tuple<execution-id, execution-error>>
-                                        Ok(Some(SupportedFunctionReturnValue::Fallible(
-                                            WastValWithType {
-                                                r#type: TypeWrapper::Result {
-                                                    ok: Some(Box::new(TypeWrapper::Tuple(vec![
-                                                        TypeWrapper::String,
-                                                        v.r#type.clone(), // the inner type
-                                                    ]))),
-                                                    err: error_tuple,
-                                                },
-                                                value: WastVal::Result(Ok(Some(Box::new(
-                                                    WastVal::Tuple(vec![
-                                                        WastVal::String(
-                                                            child_execution_id.to_string(),
-                                                        ),
-                                                        v.value.clone(),
-                                                    ]),
-                                                )))),
-                                            },
-                                        )))
+                                        Ok(Some(Some(WastVal::Result(Ok(Some(Box::new(
+                                            WastVal::Tuple(vec![
+                                                WastVal::String(child_execution_id.to_string()),
+                                                v.value.clone(),
+                                            ]),
+                                        )))))))
                                     }
                                     Err(err) => {
                                         match kind {
@@ -442,37 +400,14 @@ impl<C: ClockFn> EventHistory<C> {
                                                         Some(Box::new(WastVal::String(reason.to_string()))),
                                                     ),
                                                 };
-                                                // Get the child execution log in order to get the return type of the child.
-                                                // FIXME: add the child's return_type to `JoinSetResponse::ChildExecutionFinished`
-                                                let found_child =
-                                                    db_connection.get(*child_execution_id).await?;
-                                                let ok_type = match found_child.return_type() {
-                                                    None => TypeWrapper::String, // result<execution-id, _>
-                                                    Some(inner) =>
-                                                    // result<tuple<execution_id, inner>, _>
-                                                    {
-                                                        TypeWrapper::Tuple(vec![
-                                                            TypeWrapper::String,
-                                                            inner.clone(),
-                                                        ])
-                                                    }
-                                                };
-                                                Ok(Some(SupportedFunctionReturnValue::Fallible(
-                                                    WastValWithType {
-                                                        r#type: TypeWrapper::Result {
-                                                            ok: Some(Box::new(ok_type)),
-                                                            err: error_tuple,
-                                                        },
-                                                        value: WastVal::Result(Err(Some(
-                                                            Box::new(WastVal::Tuple(vec![
-                                                                WastVal::String(
-                                                                    child_execution_id.to_string(),
-                                                                ),
-                                                                variant,
-                                                            ])),
-                                                        ))),
-                                                    },
-                                                )))
+                                                Ok(Some(Some(WastVal::Result(Err(Some(
+                                                    Box::new(WastVal::Tuple(vec![
+                                                        WastVal::String(
+                                                            child_execution_id.to_string(),
+                                                        ),
+                                                        variant,
+                                                    ])),
+                                                ))))))
                                             }
                                         }
                                     }
@@ -503,7 +438,7 @@ impl<C: ClockFn> EventHistory<C> {
                         ..
                     }) => {
                         trace!(%join_set_id, "Matched JoinNext & DelayFinished");
-                        Ok(Some(SupportedFunctionReturnValue::None))
+                        Ok(Some(ChildReturnValue::None))
                     }
                     _ => Ok(None), // no progress, still at JoinNext
                 }
@@ -518,12 +453,7 @@ impl<C: ClockFn> EventHistory<C> {
             ) if execution_id == *found_execution_id => {
                 trace!(%execution_id, "Matched Schedule");
                 // return execution id
-                Ok(Some(SupportedFunctionReturnValue::Infallible(
-                    WastValWithType {
-                        r#type: TypeWrapper::String,
-                        value: WastVal::String(execution_id.to_string()),
-                    },
-                )))
+                Ok(Some(Some(WastVal::String(execution_id.to_string()))))
             }
 
             (key, found) => Err(WorkflowFunctionError::NonDeterminismDetected(
