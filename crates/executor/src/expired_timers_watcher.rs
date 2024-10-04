@@ -184,7 +184,6 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
     })
 }
 
-
 // FIXME: Remove in favor of -await-next's execution-error inspection
 fn convert_permanent_timeout(return_type: Option<TypeWrapper>) -> FinishedExecutionResult {
     match return_type {

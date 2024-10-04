@@ -406,6 +406,7 @@ impl SupportedFunctionReturnValue {
         }
     }
 
+    #[must_use]
     pub fn into_value(self) -> Option<WastVal> {
         match self {
             SupportedFunctionReturnValue::None => None,

@@ -448,7 +448,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                             child_execution_id,
                             v.value.clone(),
                         ])))))
-                        .as_val()
+                        .as_val();
                     }
                     Ok(SupportedFunctionReturnValue::None) => {
                         results[0] =
