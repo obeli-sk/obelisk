@@ -37,7 +37,6 @@ use tokio::{
     time::Instant,
 };
 use tracing::{debug, debug_span, error, info, instrument, trace, warn, Level, Span};
-use val_json::type_wrapper::TypeWrapper;
 
 #[derive(Debug, Clone, Copy)]
 struct DelayReq {
@@ -1943,10 +1942,9 @@ impl DbConnection for SqlitePool {
                                 let retry_exp_backoff = Duration::from_millis(row.get::<_, u64>("retry_exp_backoff_millis")?);
                                 let parent_execution_id = row.get::<_, Option<ExecutionIdW>>("parent_execution_id")?.map(|it|it.0);
                                 let parent_join_set_id = row.get::<_, Option<JoinSetIdW>>("parent_join_set_id")?.map(|it|it.0);
-                                let return_type = row.get::<_, JsonWrapper<Option<TypeWrapper>>>("return_type")?.0;
 
                                 Ok(ExpiredTimer::Lock { execution_id, version, intermittent_event_count, max_retries,
-                                    retry_exp_backoff, parent: parent_execution_id.and_then(|pexe| parent_join_set_id.map(|pjs| (pexe, pjs))), return_type })
+                                    retry_exp_backoff, parent: parent_execution_id.and_then(|pexe| parent_join_set_id.map(|pjs| (pexe, pjs)))})
                             },
                         ).map_err(convert_err)?
                         .collect::<Result<Vec<_>, _>>().map_err(convert_err)?

@@ -537,6 +537,8 @@ pub struct CreateRequest {
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
     pub config_id: ConfigId,
+    // Previously used for `FinishedExecutionError` conversion into `SupportedFunctionReturnValue`.
+    // Not used currently.
     pub return_type: Option<TypeWrapper>,
     pub metadata: ExecutionMetadata,
     pub topmost_parent: ExecutionId,
@@ -748,7 +750,6 @@ pub enum ExpiredTimer {
         max_retries: u32,
         retry_exp_backoff: Duration,
         parent: Option<(ExecutionId, JoinSetId)>,
-        return_type: Option<TypeWrapper>,
     },
     AsyncDelay {
         execution_id: ExecutionId,

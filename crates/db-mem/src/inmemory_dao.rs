@@ -545,7 +545,6 @@ impl DbHolder {
                     intermittent_event_count: journal.intermittent_event_count(),
                     retry_exp_backoff: journal.retry_exp_backoff(),
                     parent: journal.parent(),
-                    return_type: journal.return_type().cloned(),
                 },
             });
         }

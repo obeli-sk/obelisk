@@ -417,6 +417,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         results: &mut [Val],
     ) -> Result<Option<()>, WebhookFunctionError> {
         if results.len() != 1 {
+            // either
+            // result<execution-id, tuple<execution-id, error-result>> or
+            // result<tuple<execution-id>, inner>, tuple<execution-id, error-result>>
             error!("Unexpected results length for -await-next");
             return Err(WebhookFunctionError::UncategorizedError(
                 "Unexpected results length for -await-next",
@@ -437,7 +440,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 join_set_id: _,
             } = response
             {
-                debug!("Found child response: {result:?}");
+                trace!("Found child response: {result:?}");
+                // TODO: If the child execution succeeded, perform type check between `SupportedFunctionReturnValue`
+                // and what is expected by the `FunctionRegistry`
                 let child_execution_id = WastVal::String(child_execution_id.to_string());
                 match result {
                     Ok(

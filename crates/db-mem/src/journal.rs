@@ -11,7 +11,6 @@ use concepts::{FunctionFqn, Params, StrVariant};
 use std::cmp::max;
 use std::{collections::VecDeque, time::Duration};
 use tokio::sync::oneshot;
-use val_json::type_wrapper::TypeWrapper;
 
 #[derive(Debug)]
 pub(crate) struct ExecutionJournal {
@@ -277,14 +276,6 @@ impl ExecutionJournal {
                 event: ExecutionEventInner::Created { parent, .. },
                 ..
             }) => *parent)
-    }
-
-    #[must_use]
-    pub fn return_type(&self) -> Option<&TypeWrapper> {
-        assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
-            event: ExecutionEventInner::Created { return_type, .. },
-            ..
-        }) => return_type.as_ref())
     }
 
     #[must_use]

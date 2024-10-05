@@ -4,8 +4,6 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbError;
 use concepts::storage::DbPool;
 use concepts::storage::JoinSetResponseEvent;
-use concepts::FinishedExecutionResult;
-use concepts::SupportedFunctionReturnValue;
 use concepts::{
     storage::{ExecutionEventInner, ExpiredTimer, JoinSetResponse},
     FinishedExecutionError,
@@ -21,9 +19,6 @@ use tokio::task::AbortHandle;
 use tracing::Level;
 use tracing::{debug, error, info, instrument, trace, warn};
 use utils::time::ClockFn;
-use val_json::type_wrapper::TypeWrapper;
-use val_json::wast_val::WastVal;
-use val_json::wast_val::WastValWithType;
 
 #[derive(Debug, Clone)]
 pub struct TimersWatcherConfig<C: ClockFn> {
@@ -120,7 +115,6 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                 max_retries,
                 retry_exp_backoff,
                 parent,
-                return_type,
             } => {
                 let append = if intermittent_event_count < max_retries {
                     let duration =
@@ -137,7 +131,7 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                 } else {
                     info!(%execution_id, "Marking execution with expired lock as permanently timed out");
                     // Try to convert to SupportedFunctionResult::Fallible
-                    let finished_exec_result = convert_permanent_timeout(return_type);
+                    let finished_exec_result = Err(FinishedExecutionError::PermanentTimeout);
                     let parent = parent.map(|(p, j)| (p, j, finished_exec_result.clone()));
                     Append {
                         created_at: executed_at,
@@ -182,29 +176,4 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
         expired_locks,
         expired_async_timers,
     })
-}
-
-// FIXME: Remove in favor of -await-next's execution-error inspection
-fn convert_permanent_timeout(return_type: Option<TypeWrapper>) -> FinishedExecutionResult {
-    match return_type {
-        Some(return_type @ TypeWrapper::Result { ok: _, err: None }) => {
-            Ok(SupportedFunctionReturnValue::Fallible(WastValWithType {
-                r#type: return_type,
-                value: WastVal::Result(Err(None)),
-            }))
-        }
-        Some(TypeWrapper::Result {
-            ok,
-            err: Some(err_type),
-        }) if matches!(err_type.as_ref(), TypeWrapper::String) => {
-            Ok(SupportedFunctionReturnValue::Fallible(WastValWithType {
-                r#type: TypeWrapper::Result {
-                    ok,
-                    err: Some(err_type),
-                },
-                value: WastVal::Result(Err(Some(WastVal::String("timeout".to_string()).into()))),
-            }))
-        }
-        _ => Err(FinishedExecutionError::PermanentTimeout),
-    }
 }

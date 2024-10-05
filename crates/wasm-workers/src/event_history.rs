@@ -335,8 +335,9 @@ impl<C: ClockFn> EventHistory<C> {
                     ..
                 },
             ) if join_set_id == *found_join_set_id => {
-                trace!(
-                %join_set_id, "Peeked at JoinNext - Child");
+                trace!(%join_set_id, "Peeked at JoinNext - Child");
+                // TODO: If the child execution succeeded, perform type check between `SupportedFunctionReturnValue`
+                // and what is expected by the `FunctionRegistry`
                 match self.mark_next_unprocessed_response(found_idx, join_set_id) {
                     Some(JoinSetResponseEvent {
                         event:
