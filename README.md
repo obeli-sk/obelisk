@@ -124,6 +124,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [x] Forward stdout and stderr (configurable) of activities and webhooks
 - [x] Support for distributed tracing, logging from components collected by OTLP
 - [x] Mapping from any execution result (e.g. traps, timeouts, err variants) to other execution results via `-await-next`
+- [ ] Heterogenous join sets
 - [ ] Expose filesystem with directory mapping for activities, webhooks
 - [ ] Expose network configuration for activities, webhooks
 - [ ] External activities - running external processes
