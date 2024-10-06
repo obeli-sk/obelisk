@@ -44,7 +44,12 @@ impl Serialize for WastVal {
                 ser.end()
             }
             WastVal::Tuple(_) => todo!(),
-            WastVal::Variant(_, _) => todo!(),
+            WastVal::Variant(key, value) => {
+                use serde::ser::SerializeMap;
+                let mut ser = serializer.serialize_map(Some(1))?;
+                ser.serialize_entry(key, value)?;
+                ser.end()
+            }
             WastVal::Enum(_) => todo!(),
             WastVal::Option(option) => {
                 if let Some(some) = option {
@@ -400,6 +405,31 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                         }
                         Ok(WastVal::Record(dst_map))
                     }
+                    TypeWrapper::Variant(variants) => {
+                        if let Some(variant_name) = map.next_key::<String>()? {
+                            if let Some(found) = variants.get(variant_name.as_str()) {
+                                if let Some(variant_field_type) = found {
+                                    let value = map
+                                        .next_value_seed(WastValDeserialize(variant_field_type))?;
+                                    Ok(WastVal::Variant(variant_name, Some(Box::new(value))))
+                                } else {
+                                    // consume null
+                                    let _none: Option<()> = map.next_value()?;
+                                    Ok(WastVal::Variant(variant_name, None))
+                                }
+                            } else {
+                                Err(Error::custom(format!(
+                                    "variant `{variant_name}` not found in the following list: `{:?}`",
+                                    variants.keys().collect::<Vec<_>>()
+                                )))
+                            }
+                        } else {
+                            Err(Error::custom(format!(
+                                "expected single map key from following list: `{:?}`",
+                                variants.keys().collect::<Vec<_>>()
+                            )))
+                        }
+                    }
                     _ => Err(Error::invalid_type(Unexpected::Map, &self)),
                 }
             }
@@ -564,8 +594,9 @@ mod tests {
         wast_val::{WastVal, WastValWithType},
         wast_val_ser::WastValDeserialize,
     };
-    use indexmap::IndexMap;
+    use indexmap::{indexmap, IndexMap};
     use serde::de::DeserializeSeed;
+    use serde_json::json;
 
     #[test]
     fn bool() {
@@ -833,8 +864,64 @@ mod tests {
             ])),
         };
         let json = serde_json::to_value(&expected).unwrap();
-        println!("\n{json}");
+        assert_eq!(
+            json,
+            json!({"type":{"Record":{"field1":"Bool","field2":"U32"}},"value":{"field1":true,"field2":1}})
+        );
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_variant_with_field() {
+        let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
+            Box::from("millis") => Some(TypeWrapper::U64),
+            Box::from("secs") => Some(TypeWrapper::U64),
+            Box::from("minutes") => Some(TypeWrapper::U32),
+            Box::from("hours") => Some(TypeWrapper::U32),
+            Box::from("days") => Some(TypeWrapper::U32),
+        });
+        let expected = WastValWithType {
+            r#type: duration_type_wrapper,
+            value: WastVal::Variant("secs".to_string(), Some(Box::new(WastVal::U64(1)))),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            json,
+            json!({"type":{"Variant":{"days":"U32","hours":"U32","millis":"U64","minutes":"U32","secs":"U64"}},"value":{"secs":1}})
+        );
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_variant_without_field() {
+        let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
+            Box::from("a") => None,
+            Box::from("b") => None,
+        });
+        let expected = WastValWithType {
+            r#type: duration_type_wrapper,
+            value: WastVal::Variant("a".to_string(), None),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            json,
+            json!({"type":{"Variant":{"a":null,"b":null}},"value":{"a":null}})
+        );
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_variant_wrong_field_deser() {
+        let err = serde_json::from_value::<WastValWithType>(
+            json!({"type":{"Variant":{"a":null,"b":null}},"value":{"c":null}}),
+        )
+        .unwrap_err();
+        assert_eq!(
+            "variant `c` not found in the following list: `[\"a\", \"b\"]`",
+            err.to_string()
+        );
     }
 }
