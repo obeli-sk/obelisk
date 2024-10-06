@@ -286,14 +286,14 @@ impl ExIm {
                     },
                     parameter_types: ParameterTypes(vec![param_type_join_set.clone()]),
                     return_type: {
-                        let error_tuple = Some(Box::new(TypeWrapper::Tuple(vec![
+                        let error_tuple = Some(Box::new(TypeWrapper::Tuple(Box::new([
                             TypeWrapper::String, // execution id
                             TypeWrapper::Variant(indexmap! {
                                 Box::from("permanent-failure") => Some(TypeWrapper::String),
                                 Box::from("permanent-timeout") => None,
                                 Box::from("non-determinism") => None,
                             }),
-                        ])));
+                        ]))));
                         let (ok_part, type_wrapper) = if let Some(original_ret) =
                             exported_fn_metadata.return_type
                         {
@@ -301,10 +301,10 @@ impl ExIm {
                                 // Use ReturnType::display to serialize wit_type or fallback
                                 Cow::Owned(format!("tuple</* use obelisk:types/execution.{{execution-id}} */ execution-id, {original_ret}>")),
                                 TypeWrapper::Result {
-                                    ok: Some(Box::new(TypeWrapper::Tuple(vec![
+                                    ok: Some(Box::new(TypeWrapper::Tuple(Box::new([
                                         TypeWrapper::String,
                                         original_ret.type_wrapper,
-                                    ]))), // (execution-id, original_ret)
+                                    ])))), // (execution-id, original_ret)
                                     err: error_tuple,
                                 },
                             )

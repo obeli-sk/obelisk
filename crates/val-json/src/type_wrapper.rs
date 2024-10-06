@@ -20,7 +20,7 @@ pub enum TypeWrapper {
     String,
     List(Box<TypeWrapper>),
     Record(IndexMap<Box<str>, TypeWrapper>),
-    Tuple(Vec<TypeWrapper>),
+    Tuple(Box<[TypeWrapper]>),
     Variant(IndexMap<Box<str>, Option<TypeWrapper>>),
     Enum(IndexSet<Box<str>>),
     Option(Box<TypeWrapper>),

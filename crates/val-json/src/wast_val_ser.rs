@@ -27,7 +27,7 @@ impl Serialize for WastVal {
             WastVal::F64(v) => serializer.serialize_f64(*v),
             WastVal::Char(v) => serializer.serialize_char(*v),
             WastVal::String(v) => serializer.serialize_str(v),
-            WastVal::List(list) => {
+            WastVal::List(list) | WastVal::Tuple(list) => {
                 use serde::ser::SerializeSeq;
                 let mut seq = serializer.serialize_seq(Some(list.len()))?;
                 for val in list {
@@ -43,7 +43,6 @@ impl Serialize for WastVal {
                 }
                 ser.end()
             }
-            WastVal::Tuple(_) => todo!(),
             WastVal::Variant(key, value) => {
                 use serde::ser::SerializeMap;
                 let mut ser = serializer.serialize_map(Some(1))?;
@@ -487,6 +486,22 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                         vec.push(element);
                     }
                     Ok(WastVal::List(vec))
+                } else if let TypeWrapper::Tuple(type_sequence) = self.0 {
+                    if let Some(actual_size) = seq.size_hint() {
+                        if actual_size != type_sequence.len() {
+                            return Err(Error::invalid_length(actual_size, &self));
+                        }
+                    }
+                    let mut vec = Vec::new();
+                    for (idx, seed) in type_sequence.iter().enumerate() {
+                        if let Some(element) = seq.next_element_seed(WastValDeserialize(seed))? {
+                            vec.push(element);
+                        } else {
+                            return Err(Error::invalid_length(idx, &self));
+                        }
+                    }
+                    // Will fail if there are more elements than consumed
+                    Ok(WastVal::Tuple(vec))
                 } else {
                     Err(Error::invalid_type(Unexpected::Seq, &self))
                 }
@@ -972,5 +987,40 @@ mod tests {
         let json = json!({"type":{"Enum":["a","b"]},"value":{"a":1}});
         let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!("invalid type: integer `1`, expected unit", err.to_string());
+    }
+
+    #[test]
+    fn serde_tuple() {
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Tuple(Box::new([TypeWrapper::Bool, TypeWrapper::U32])),
+            value: WastVal::Tuple(vec![WastVal::Bool(false), WastVal::U32(1)]),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            json,
+            json!({"type":{"Tuple":["Bool","U32"]},"value":[false,1]})
+        );
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_enum_deser_with_too_few_values_should_fail() {
+        let json = json!({"type":{"Tuple":["Bool","U32"]},"value":[false]});
+        let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
+        assert_eq!(
+            "invalid length 1, expected value matching Tuple([Bool, U32])",
+            err.to_string()
+        );
+    }
+
+    #[test]
+    fn serde_enum_deser_with_too_many_values_should_fail() {
+        let json = json!({"type":{"Tuple":["Bool","U32"]},"value":[false, 1, false]});
+        let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
+        assert_eq!(
+            "invalid length 3, expected value matching Tuple([Bool, U32])",
+            err.to_string()
+        );
     }
 }
