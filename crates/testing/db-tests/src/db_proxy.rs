@@ -29,6 +29,13 @@ impl DbPool<DbConnectionProxy> for DbPoolEnum {
         }
     }
 
+    fn is_closing(&self) -> bool {
+        match self {
+            DbPoolEnum::Memory(pool) => pool.is_closing(),
+            DbPoolEnum::Sqlite(pool) => pool.is_closing(),
+        }
+    }
+
     async fn close(&self) -> Result<(), DbError> {
         match self {
             DbPoolEnum::Memory(pool) => pool.close().await,

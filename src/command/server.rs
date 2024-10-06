@@ -73,6 +73,7 @@ use tracing::warn;
 use tracing::Instrument;
 use tracing::Span;
 use tracing::{debug, info, trace};
+use utils::time::now_tokio_instant;
 use utils::time::ClockFn;
 use utils::time::Now;
 use utils::wasm_tools::SUFFIX_PKG_EXT;
@@ -207,8 +208,12 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(execution_id));
-        let db_connection = self.db_pool.connection();
-        let execution_log = db_connection.get(execution_id).await.to_status()?;
+        let execution_log = self
+            .db_pool
+            .connection()
+            .get(execution_id)
+            .await
+            .to_status()?;
         let current_pending_state = execution_log.pending_state;
         let grpc_pending_status = convert_execution_status(&execution_log);
         let is_finished = grpc_pending_status.is_finished();
@@ -229,11 +234,25 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             tx.send(TonicResult::Ok(summary))
                 .await
                 .expect("mpsc bounded channel requires buffer > 0");
+            let db_pool = self.db_pool.clone();
+
             tokio::spawn(async move {
                 loop {
-                    tokio::time::sleep(Duration::from_millis(500)).await; // TODO: Switch to subscription-based approach
+                    let sleep_until = now_tokio_instant() + Duration::from_millis(500);
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        if db_pool.is_closing() {
+                            debug!("Exitting get_status early, database is closing");
+                            let _ = tx.send(TonicResult::Err(tonic::Status::aborted("server is shutting down"))).await;
+                            return;
+                        }
+                        if now_tokio_instant() >= sleep_until {
+                            break;
+                        }
+                    }
+
                     // FIXME: pagination
-                    match db_connection.get(execution_id).await {
+                    match db_pool.connection().get(execution_id).await {
                         Ok(execution_log) => {
                             if execution_log.pending_state != current_pending_state {
                                 let grpc_pending_status = convert_execution_status(&execution_log);
@@ -562,7 +581,8 @@ async fn run_internal(
     .await?;
     let (init, component_registry_ro) = ServerInit::new(verified).await?;
     let grpc_server = Arc::new(GrpcServer::new(init.db_pool.clone(), component_registry_ro));
-    let grpc_server_res = tonic::transport::Server::builder()
+
+    tonic::transport::Server::builder()
         .layer(
             tower::ServiceBuilder::new()
                 .layer(tower_http::trace::TraceLayer::new_for_grpc().make_span_with(make_span))
@@ -589,13 +609,11 @@ async fn run_internal(
             tokio::signal::ctrl_c()
                 .await
                 .expect("failed to listen for SIGINT event");
-            warn!("Received SIGINT");
+            warn!("Received SIGINT, waiting for gRPC server to shut down");
+            init.close().await;
         })
         .await
-        .with_context(|| format!("grpc server error listening on {api_listening_addr}"));
-    // ^ Will await until the gRPC server shuts down.
-    init.close().await?;
-    grpc_server_res
+        .with_context(|| format!("grpc server error listening on {api_listening_addr}"))
 }
 
 fn make_span<B>(request: &axum::http::Request<B>) -> Span {
@@ -737,15 +755,16 @@ impl ServerInit {
         ))
     }
 
-    async fn close(self) -> Result<(), anyhow::Error> {
+    async fn close(self) {
+        info!("Server is closing");
         self.timers_watcher.close().await;
         for exec_join_handle in self.exec_join_handles {
             exec_join_handle.close().await;
         }
-        self.db_pool
-            .close()
-            .await
-            .context("cannot close the database")
+        let res = self.db_pool.close().await;
+        if let Err(err) = res {
+            error!("Cannot close the database - {err:?}");
+        }
     }
 }
 
@@ -960,8 +979,8 @@ async fn fetch_and_verify_all(
         },
         sigint = tokio::signal::ctrl_c() => {
             sigint.expect("failed to listen for SIGINT event");
-            warn!("Received SIGINT");
-            anyhow::bail!("cancelled while resolving the WASM files")
+            warn!("Received SIGINT, canceling while resolving the WASM files");
+            anyhow::bail!("canceling while resolving the WASM files")
         }
     }
 }
@@ -1064,8 +1083,8 @@ async fn compile_and_verify(
         },
         sigint = tokio::signal::ctrl_c() => {
             sigint.expect("failed to listen for SIGINT event");
-            warn!("Received SIGINT");
-            anyhow::bail!("cancelled while compiling the components")
+            warn!("Received SIGINT, canceling while compiling the components");
+            anyhow::bail!("canceling while compiling the components")
         }
     }
 }

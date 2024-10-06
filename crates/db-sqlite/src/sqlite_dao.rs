@@ -307,7 +307,10 @@ impl DbPool<SqlitePool> for SqlitePool {
         self.clone()
     }
 
-    // FIXME: close(self)
+    fn is_closing(&self) -> bool {
+        self.shutdown.load(Ordering::Relaxed)
+    }
+
     async fn close(&self) -> Result<(), DbError> {
         let res = self
             .shutdown

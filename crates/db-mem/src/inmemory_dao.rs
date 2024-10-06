@@ -19,6 +19,7 @@ use concepts::{ExecutionId, FunctionFqn, StrVariant};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -351,7 +352,7 @@ mod index {
 }
 
 #[derive(Clone)]
-pub struct InMemoryPool(Arc<tokio::sync::Mutex<DbHolder>>);
+pub struct InMemoryPool(Arc<tokio::sync::Mutex<DbHolder>>, Arc<AtomicBool>);
 
 impl Default for InMemoryPool {
     fn default() -> Self {
@@ -362,11 +363,14 @@ impl Default for InMemoryPool {
 impl InMemoryPool {
     #[must_use]
     pub fn new() -> Self {
-        Self(Arc::new(tokio::sync::Mutex::new(DbHolder {
-            journals: BTreeMap::default(),
-            index: JournalsIndex::default(),
-            ffqn_to_pending_subscription: hashbrown::HashMap::default(),
-        })))
+        Self(
+            Arc::new(tokio::sync::Mutex::new(DbHolder {
+                journals: BTreeMap::default(),
+                index: JournalsIndex::default(),
+                ffqn_to_pending_subscription: hashbrown::HashMap::default(),
+            })),
+            Arc::new(AtomicBool::default()),
+        )
     }
 }
 
@@ -376,7 +380,19 @@ impl DbPool<InMemoryDbConnection> for InMemoryPool {
         InMemoryDbConnection(self.0.clone())
     }
 
+    fn is_closing(&self) -> bool {
+        self.1.load(Ordering::Relaxed)
+    }
+
     async fn close(&self) -> Result<(), DbError> {
+        let res = self
+            .1
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
+        if res.is_err() {
+            return Err(DbError::Specific(SpecificError::GenericError(
+                StrVariant::Static("already closed"),
+            )));
+        }
         Ok(())
     }
 }
