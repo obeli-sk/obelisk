@@ -66,7 +66,14 @@ impl Serialize for WastVal {
                 Ok(ok) => serializer.serialize_newtype_variant("Result", 0, "Ok", ok),
                 Err(err) => serializer.serialize_newtype_variant("Result", 0, "Err", err),
             },
-            WastVal::Flags(_) => todo!(),
+            WastVal::Flags(flags) => {
+                use serde::ser::SerializeSeq;
+                let mut seq = serializer.serialize_seq(Some(flags.len()))?;
+                for val in flags {
+                    seq.serialize_element(val)?;
+                }
+                seq.end()
+            }
         }
     }
 }
@@ -502,6 +509,19 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                     }
                     // Will fail if there are more elements than consumed
                     Ok(WastVal::Tuple(vec))
+                } else if let TypeWrapper::Flags(possible_flags) = self.0 {
+                    let mut vec = Vec::with_capacity(possible_flags.len());
+                    while let Some(element) = seq.next_element::<String>()? {
+                        if vec.contains(&element) {
+                            return Err(Error::custom(format!("cannot deserialize flags: flag `{element}` was found more than once")));
+                        } else if possible_flags.contains(element.as_str()) {
+                            vec.push(element);
+                        } else {
+                            return Err(Error::custom(format!("cannot deserialize flags: flag `{element}` not found in the list: `{possible_flags:?}`")));
+                        }
+                    }
+                    // Will fail if there are more elements than consumed
+                    Ok(WastVal::Flags(vec))
                 } else {
                     Err(Error::invalid_type(Unexpected::Seq, &self))
                 }
@@ -1020,6 +1040,41 @@ mod tests {
         let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "invalid length 3, expected value matching Tuple([Bool, U32])",
+            err.to_string()
+        );
+    }
+
+    #[test]
+    fn serde_flags() {
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Flags(indexset! {Box::from("a"), Box::from("b"), Box::from("c")}),
+            value: WastVal::Flags(vec!["a".to_string(), "b".to_string()]),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            json,
+            json!({"type":{"Flags":["a","b","c"]},"value":["a","b"]})
+        );
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_flags_duplicates_should_fail() {
+        let json = json!({"type":{"Flags":["a","b","c"]},"value":["a","a"]});
+        let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
+        assert_eq!(
+            "cannot deserialize flags: flag `a` was found more than once",
+            err.to_string()
+        );
+    }
+
+    #[test]
+    fn serde_flags_unknown_flags_should_fail() {
+        let json = json!({"type":{"Flags":["a","b","c"]},"value":["a","d"]});
+        let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
+        assert_eq!(
+            "cannot deserialize flags: flag `d` not found in the list: `{\"a\", \"b\", \"c\"}`",
             err.to_string()
         );
     }

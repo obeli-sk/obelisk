@@ -28,7 +28,7 @@ pub enum TypeWrapper {
         ok: Option<Box<TypeWrapper>>,
         err: Option<Box<TypeWrapper>>,
     },
-    Flags(Vec<Box<str>>),
+    Flags(IndexSet<Box<str>>),
     Own(ResourceTypeWrapper),
     Borrow(ResourceTypeWrapper),
 }
