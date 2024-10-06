@@ -87,7 +87,7 @@ forward_stderr = "stderr"
 
 [[workflow]]
 name = "fibo_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-06@sha256:b2d260c81de32028ebeb3b0d7476df7534be4d8f1c77817383a2c2f2f8fb60cc"
+location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-06@sha256:11bba74ede432a72251ef62020af14a82bddc2adb7c5c886ea216bc45c80c549"
 exec.lock_expiry.secs = 2
 
 [[wasm_activity]]
@@ -98,7 +98,7 @@ forward_stderr = "stderr"
 
 [[workflow]]
 name = "http_get_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-10-06@sha256:b1947be46e249cf1af7e7a136cf91c080da6f4f45e64564354bb5f718e31bd7b"
+location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-10-06@sha256:9068bd715a696a33e352268eb3d0da060e460057730314e41c957983b6237241"
 
 [[http_server]]
 name = "external"
@@ -106,7 +106,7 @@ listening_addr = "0.0.0.0:9090"
 
 [[webhook_component]]
 name = "webhook_fibo"
-location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-06@sha256:6e07e4a00671f71c513f2fc1d92267e777c08adf37fb6a6470d0f41248dc407f"
+location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-06@sha256:f36a137c558710989a20f4255db28c4941f3e29e10019b7b09dbb9cbfc2947e5"
 http_server = "external"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 forward_stdout = "stderr"
@@ -114,12 +114,12 @@ forward_stderr = "stderr"
 
 [[wasm_activity]]
 name = "sleep_activity"
-location.oci = "docker.io/getobelisk/example_activity_sleep:2024-10-06@sha256:fafd7d695b0c9d3fbba50f99a73fe023fe62d27e511235160dcb28ea7b92543e"
+location.oci = "docker.io/getobelisk/example_activity_sleep:2024-10-06@sha256:af19908f9675e7c14740d3f8428ecbf3f41a2a914cd33bb8af808be3d6e30526"
 exec.lock_expiry.secs = 10
 
 [[workflow]]
 name = "sleep_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-10-06@sha256:ef8b4fc80531244810c5b2698a39478bf6f2de5b0da09259aa1f8d5914f0e05d"
+location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-10-06@sha256:c1146d25019c5caaa6bb1fc77f1c40eb897e22372dc0c496b16735fc6446d40d"
 
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:

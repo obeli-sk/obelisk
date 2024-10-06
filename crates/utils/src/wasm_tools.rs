@@ -208,8 +208,8 @@ impl ExIm {
             )),
         };
         let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("millis") => Some(TypeWrapper::U64),
-            Box::from("secs") => Some(TypeWrapper::U64),
+            Box::from("milliseconds") => Some(TypeWrapper::U64),
+            Box::from("seconds") => Some(TypeWrapper::U64),
             Box::from("minutes") => Some(TypeWrapper::U32),
             Box::from("hours") => Some(TypeWrapper::U32),
             Box::from("days") => Some(TypeWrapper::U32),

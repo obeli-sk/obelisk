@@ -928,20 +928,20 @@ mod tests {
     #[test]
     fn serde_variant_with_field() {
         let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("millis") => Some(TypeWrapper::U64),
-            Box::from("secs") => Some(TypeWrapper::U64),
+            Box::from("milliseconds") => Some(TypeWrapper::U64),
+            Box::from("seconds") => Some(TypeWrapper::U64),
             Box::from("minutes") => Some(TypeWrapper::U32),
             Box::from("hours") => Some(TypeWrapper::U32),
             Box::from("days") => Some(TypeWrapper::U32),
         });
         let expected = WastValWithType {
             r#type: duration_type_wrapper,
-            value: WastVal::Variant("secs".to_string(), Some(Box::new(WastVal::U64(1)))),
+            value: WastVal::Variant("seconds".to_string(), Some(Box::new(WastVal::U64(1)))),
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
             json,
-            json!({"type":{"Variant":{"days":"U32","hours":"U32","millis":"U64","minutes":"U32","secs":"U64"}},"value":{"secs":1}})
+            json!({"type":{"Variant":{"milliseconds":"U64","seconds":"U64","minutes":"U32","hours":"U32","days":"U32"}},"value":{"seconds":1}})
         );
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);

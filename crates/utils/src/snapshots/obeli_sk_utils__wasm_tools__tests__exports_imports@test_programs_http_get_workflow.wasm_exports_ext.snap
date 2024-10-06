@@ -57,9 +57,9 @@ expression: exports
               "Variant": {
                 "days": "U32",
                 "hours": "U32",
-                "millis": "U64",
+                "milliseconds": "U64",
                 "minutes": "U32",
-                "secs": "U64"
+                "seconds": "U64"
               }
             },
             "now": null
@@ -192,9 +192,9 @@ expression: exports
               "Variant": {
                 "days": "U32",
                 "hours": "U32",
-                "millis": "U64",
+                "milliseconds": "U64",
                 "minutes": "U32",
-                "secs": "U64"
+                "seconds": "U64"
               }
             },
             "now": null
@@ -272,9 +272,9 @@ expression: exports
               "Variant": {
                 "days": "U32",
                 "hours": "U32",
-                "millis": "U64",
+                "milliseconds": "U64",
                 "minutes": "U32",
-                "secs": "U64"
+                "seconds": "U64"
               }
             },
             "now": null
@@ -357,9 +357,9 @@ expression: exports
               "Variant": {
                 "days": "U32",
                 "hours": "U32",
-                "millis": "U64",
+                "milliseconds": "U64",
                 "minutes": "U32",
-                "secs": "U64"
+                "seconds": "U64"
               }
             },
             "now": null

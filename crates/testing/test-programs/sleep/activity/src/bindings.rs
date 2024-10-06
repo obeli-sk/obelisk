@@ -10,8 +10,8 @@ pub mod obelisk {
                 super::super::super::__link_custom_section_describing_imports;
             #[derive(Clone, Copy)]
             pub enum Duration {
-                Millis(u64),
-                Secs(u64),
+                Milliseconds(u64),
+                Seconds(u64),
                 Minutes(u32),
                 Hours(u32),
                 Days(u32),
@@ -19,8 +19,12 @@ pub mod obelisk {
             impl ::core::fmt::Debug for Duration {
                 fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                     match self {
-                        Duration::Millis(e) => f.debug_tuple("Duration::Millis").field(e).finish(),
-                        Duration::Secs(e) => f.debug_tuple("Duration::Secs").field(e).finish(),
+                        Duration::Milliseconds(e) => {
+                            f.debug_tuple("Duration::Milliseconds").field(e).finish()
+                        }
+                        Duration::Seconds(e) => {
+                            f.debug_tuple("Duration::Seconds").field(e).finish()
+                        }
                         Duration::Minutes(e) => {
                             f.debug_tuple("Duration::Minutes").field(e).finish()
                         }
@@ -55,11 +59,11 @@ pub mod exports {
                     let v0 = match arg0 {
                         0 => {
                             let e0 = arg1 as u64;
-                            V0::Millis(e0)
+                            V0::Milliseconds(e0)
                         }
                         1 => {
                             let e0 = arg1 as u64;
-                            V0::Secs(e0)
+                            V0::Seconds(e0)
                         }
                         2 => {
                             let e0 = arg1 as i32 as u32;
@@ -86,11 +90,11 @@ pub mod exports {
                     let v0 = match arg0 {
                         0 => {
                             let e0 = arg1 as u64;
-                            V0::Millis(e0)
+                            V0::Milliseconds(e0)
                         }
                         1 => {
                             let e0 = arg1 as u64;
-                            V0::Secs(e0)
+                            V0::Seconds(e0)
                         }
                         2 => {
                             let e0 = arg1 as i32 as u32;
@@ -169,17 +173,17 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 436] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xba\x02\x01A\x02\x01\
-A\x05\x01B\x06\x01q\x05\x06millis\x01w\0\x04secs\x01w\0\x07minutes\x01y\0\x05hou\
-rs\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\x0bnanos\
-econdsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\x02in\x01\
-\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\0\x02\x03\
-\0\0\x08duration\x01B\x06\x02\x03\x02\x01\x01\x04\0\x08duration\x03\0\0\x01@\x01\
-\x08duration\x01\x01\0\x04\0\x05sleep\x01\x02\x01@\x02\x08duration\x01\x0aiterat\
-ionsy\x01\0\x04\0\x0asleep-loop\x01\x03\x04\x01\x13testing:sleep/sleep\x05\x02\x04\
-\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cpr\
-ocessed-by\x02\x0dwit-component\x070.215.0\x10wit-bindgen-rust\x060.30.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 445] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc3\x02\x01A\x02\x01\
+A\x05\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07minutes\x01y\
+\0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\
+\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\
+\x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\
+\0\x02\x03\0\0\x08duration\x01B\x06\x02\x03\x02\x01\x01\x04\0\x08duration\x03\0\0\
+\x01@\x01\x08duration\x01\x01\0\x04\0\x05sleep\x01\x02\x01@\x02\x08duration\x01\x0a\
+iterationsy\x01\0\x04\0\x0asleep-loop\x01\x03\x04\x01\x13testing:sleep/sleep\x05\
+\x02\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\
+\x0cprocessed-by\x02\x0dwit-component\x070.215.0\x10wit-bindgen-rust\x060.30.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

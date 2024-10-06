@@ -115,8 +115,8 @@ pub mod obelisk {
                 super::super::super::__link_custom_section_describing_imports;
             #[derive(Clone, Copy)]
             pub enum Duration {
-                Millis(u64),
-                Secs(u64),
+                Milliseconds(u64),
+                Seconds(u64),
                 Minutes(u32),
                 Hours(u32),
                 Days(u32),
@@ -124,8 +124,12 @@ pub mod obelisk {
             impl ::core::fmt::Debug for Duration {
                 fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                     match self {
-                        Duration::Millis(e) => f.debug_tuple("Duration::Millis").field(e).finish(),
-                        Duration::Secs(e) => f.debug_tuple("Duration::Secs").field(e).finish(),
+                        Duration::Milliseconds(e) => {
+                            f.debug_tuple("Duration::Milliseconds").field(e).finish()
+                        }
+                        Duration::Seconds(e) => {
+                            f.debug_tuple("Duration::Seconds").field(e).finish()
+                        }
                         Duration::Minutes(e) => {
                             f.debug_tuple("Duration::Minutes").field(e).finish()
                         }
@@ -185,8 +189,8 @@ pub mod obelisk {
                 unsafe {
                     use super::super::super::obelisk::types::time::Duration as V0;
                     let (result1_0, result1_1) = match nanos {
-                        V0::Millis(e) => (0i32, _rt::as_i64(e)),
-                        V0::Secs(e) => (1i32, _rt::as_i64(e)),
+                        V0::Milliseconds(e) => (0i32, _rt::as_i64(e)),
+                        V0::Seconds(e) => (1i32, _rt::as_i64(e)),
                         V0::Minutes(e) => (2i32, i64::from(_rt::as_i32(e))),
                         V0::Hours(e) => (3i32, i64::from(_rt::as_i32(e))),
                         V0::Days(e) => (4i32, i64::from(_rt::as_i32(e))),
@@ -856,29 +860,29 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1638] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xec\x0b\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1647] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf5\x0b\x01A\x02\x01\
 A\x1a\x01B\x06\x01@\x01\x07messages\x01\0\x04\0\x05trace\x01\0\x04\0\x05debug\x01\
 \0\x04\0\x04info\x01\0\x04\0\x04warn\x01\0\x04\0\x05error\x01\0\x03\x01\x0fobeli\
-sk:log/log\x05\0\x01B\x06\x01q\x05\x06millis\x01w\0\x04secs\x01w\0\x07minutes\x01\
-y\0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07seconds\
-w\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\
-\x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\
-\x01\x01B\x06\x01s\x04\0\x0bjoin-set-id\x03\0\0\x01s\x04\0\x0cexecution-id\x03\0\
-\x02\x01q\x03\x11permanent-failure\x01s\0\x11permanent-timeout\0\0\x0fnon-determ\
-inism\0\0\x04\0\x0fexecution-error\x03\0\x04\x03\x01\x17obelisk:types/execution\x05\
-\x02\x02\x03\0\x01\x08duration\x02\x03\0\x02\x0bjoin-set-id\x01B\x08\x02\x03\x02\
-\x01\x03\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin-set-id\x03\0\
-\x02\x01@\x01\x05nanos\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0cne\
-w-join-set\x01\x05\x03\x01\x20obelisk:workflow/host-activities\x05\x05\x02\x03\0\
-\x02\x0cexecution-id\x02\x03\0\x02\x0fexecution-error\x01B\x0b\x02\x03\x02\x01\x06\
-\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x07\x04\0\x0fexecution-error\x03\0\
-\x02\x01@\x02\x0bjoin-set-ids\x01n}\0s\x04\0\x0bfibo-submit\x01\x04\x01o\x02\x01\
-w\x01o\x02\x01\x03\x01j\x01\x05\x01\x06\x01@\x01\x0bjoin-set-ids\0\x07\x04\0\x0f\
-fibo-await-next\x01\x08\x03\x01\x1dtesting:fibo-obelisk-ext/fibo\x05\x08\x01B\x0b\
-\x02\x03\x02\x01\x06\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x07\x04\0\x0f\
-execution-error\x03\0\x02\x01@\x03\x0bjoin-set-ids\x01n}\x0aiterationsy\0s\x04\0\
-\x0cfiboa-submit\x01\x04\x01o\x02\x01w\x01o\x02\x01\x03\x01j\x01\x05\x01\x06\x01\
+sk:log/log\x05\0\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07m\
+inutes\x01y\0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07\
+secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\
+\x03\0\x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/t\
+ime\x05\x01\x01B\x06\x01s\x04\0\x0bjoin-set-id\x03\0\0\x01s\x04\0\x0cexecution-i\
+d\x03\0\x02\x01q\x03\x11permanent-failure\x01s\0\x11permanent-timeout\0\0\x0fnon\
+-determinism\0\0\x04\0\x0fexecution-error\x03\0\x04\x03\x01\x17obelisk:types/exe\
+cution\x05\x02\x02\x03\0\x01\x08duration\x02\x03\0\x02\x0bjoin-set-id\x01B\x08\x02\
+\x03\x02\x01\x03\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin-set\
+-id\x03\0\x02\x01@\x01\x05nanos\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\
+\0\x0cnew-join-set\x01\x05\x03\x01\x20obelisk:workflow/host-activities\x05\x05\x02\
+\x03\0\x02\x0cexecution-id\x02\x03\0\x02\x0fexecution-error\x01B\x0b\x02\x03\x02\
+\x01\x06\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x07\x04\0\x0fexecution-er\
+ror\x03\0\x02\x01@\x02\x0bjoin-set-ids\x01n}\0s\x04\0\x0bfibo-submit\x01\x04\x01\
+o\x02\x01w\x01o\x02\x01\x03\x01j\x01\x05\x01\x06\x01@\x01\x0bjoin-set-ids\0\x07\x04\
+\0\x0ffibo-await-next\x01\x08\x03\x01\x1dtesting:fibo-obelisk-ext/fibo\x05\x08\x01\
+B\x0b\x02\x03\x02\x01\x06\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x07\x04\0\
+\x0fexecution-error\x03\0\x02\x01@\x03\x0bjoin-set-ids\x01n}\x0aiterationsy\0s\x04\
+\0\x0cfiboa-submit\x01\x04\x01o\x02\x01w\x01o\x02\x01\x03\x01j\x01\x05\x01\x06\x01\
 @\x01\x0bjoin-set-ids\0\x07\x04\0\x10fiboa-await-next\x01\x08\x03\x01*testing:fi\
 bo-workflow-obelisk-ext/workflow\x05\x09\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fib\
 o-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14iterations-per-fiboay\0w\x04\

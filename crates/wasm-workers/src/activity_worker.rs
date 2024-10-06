@@ -523,7 +523,7 @@ pub(crate) mod tests {
                     execution_id,
                     ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
                     params: Params::from_json_value(json!([
-                        {"millis": sleep_millis},
+                        {"milliseconds": sleep_millis},
                         sleep_iterations
                     ]))
                     .unwrap(),
@@ -594,7 +594,7 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
                 params: Params::from_json_value(json!([
-                    {"millis": sleep_millis},
+                    {"milliseconds": sleep_millis},
                     sleep_iterations
                 ]))
                 .unwrap(),

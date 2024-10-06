@@ -3,8 +3,8 @@ package obelisk:types;
 interface time {
 
     variant duration {
-        millis(u64),
-        secs(u64),
+        milliseconds(u64),
+        seconds(u64),
         minutes(u32),
         hours(u32),
         days(u32),

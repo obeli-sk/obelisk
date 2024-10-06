@@ -412,15 +412,15 @@ impl TryFrom<&wasmtime::component::Val> for HistoryEventScheduledAt {
             ("in", Some(duration)) => {
                 if let &Val::Variant(key, value) = &duration.deref() {
                     let duration = match (key.as_str(), value.as_deref()) {
-                        ("millis", Some(Val::U64(value))) => Duration::from_millis(*value),
-                        ("secs", Some(Val::U64(value))) => Duration::from_secs(*value),
+                        ("milliseconds", Some(Val::U64(value))) => Duration::from_millis(*value),
+                        ("seconds", Some(Val::U64(value))) => Duration::from_secs(*value),
                         ("minutes", Some(Val::U64(value))) => Duration::from_secs(*value * 60),
                         ("hours", Some(Val::U64(value))) => Duration::from_secs(*value * 60 * 60),
                         ("days", Some(Val::U64(value))) => {
                             Duration::from_secs(*value * 60 * 60 * 24)
                         },
                         _ => return Err(
-                            "cannot convert `scheduled-at`, `in` variant: Allowed keys: `millis`(U64), `secs`(U64), `minutes`(U32), `hours`(U32), `days`(U32)",
+                            "cannot convert `scheduled-at`, `in` variant: Allowed keys: `milliseconds`(U64), `seconds`(U64), `minutes`(U32), `hours`(U32), `days`(U32)",
                         )
                     };
                     Ok(HistoryEventScheduledAt::In(duration))

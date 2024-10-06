@@ -347,8 +347,8 @@ pub(crate) mod host_activities {
     impl From<DurationEnum> for Duration {
         fn from(value: DurationEnum) -> Self {
             match value {
-                DurationEnum::Millis(millis) => Duration::from_millis(millis),
-                DurationEnum::Secs(secs) => Duration::from_secs(secs),
+                DurationEnum::Milliseconds(millis) => Duration::from_millis(millis),
+                DurationEnum::Seconds(secs) => Duration::from_secs(secs),
                 DurationEnum::Minutes(mins) => Duration::from_secs(u64::from(mins * 60)),
                 DurationEnum::Hours(hours) => Duration::from_secs(u64::from(hours * 60 * 60)),
                 DurationEnum::Days(days) => Duration::from_secs(u64::from(days * 24 * 60 * 60)),
