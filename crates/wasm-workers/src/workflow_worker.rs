@@ -772,7 +772,7 @@ pub(crate) mod tests {
         );
         let execution_id = ExecutionId::generate();
         let db_connection = db_pool.connection();
-        let params = Params::from_json_value(json!([SLEEP_MILLIS])).unwrap();
+        let params = Params::from_json_value(json!([{"millis":SLEEP_MILLIS}])).unwrap();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -1074,7 +1074,8 @@ pub(crate) mod tests {
         let db_connection = db_pool.connection();
 
         let params =
-            Params::from_json_value(json!([SLEEP_DURATION.as_nanos(), ITERATIONS])).unwrap();
+            Params::from_json_value(json!([{"millis": SLEEP_DURATION.as_millis()}, ITERATIONS]))
+                .unwrap();
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
@@ -1138,7 +1139,10 @@ pub(crate) mod tests {
         let next_pending = next_pending.pop().unwrap();
         assert!(next_pending.parent.is_none());
         let params = serde_json::to_string(
-            &Params::from_json_value(json!([SLEEP_DURATION.as_nanos(), ITERATIONS - 1])).unwrap(),
+            &Params::from_json_value(
+                json!([{"millis":SLEEP_DURATION.as_millis()}, ITERATIONS - 1]),
+            )
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(params, serde_json::to_string(&next_pending.params).unwrap());

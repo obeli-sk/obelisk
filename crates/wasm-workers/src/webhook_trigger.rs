@@ -1,6 +1,7 @@
 use crate::component_logger::ComponentLogger;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
+use crate::workflow_ctx::host_activities::obelisk::types::time::Duration as DurationEnum;
 use crate::workflow_ctx::log_activities;
 use crate::workflow_ctx::{
     host_activities, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
@@ -856,8 +857,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
     host_activities::obelisk::workflow::host_activities::Host for WebhookCtx<C, DB, P>
 {
-    async fn sleep(&mut self, nanos: u64) -> wasmtime::Result<()> {
-        tokio::time::sleep(Duration::from_nanos(nanos)).await;
+    async fn sleep(&mut self, duration: DurationEnum) -> wasmtime::Result<()> {
+        tokio::time::sleep(Duration::from(duration)).await;
         Ok(())
     }
 

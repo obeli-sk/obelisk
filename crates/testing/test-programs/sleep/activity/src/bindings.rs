@@ -8,9 +8,27 @@ pub mod obelisk {
             #[doc(hidden)]
             static __FORCE_SECTION_REF: fn() =
                 super::super::super::__link_custom_section_describing_imports;
-            /// A duration of time, in nanoseconds.
-            /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
-            pub type Duration = u64;
+            #[derive(Clone, Copy)]
+            pub enum Duration {
+                Millis(u64),
+                Secs(u64),
+                Minutes(u32),
+                Hours(u32),
+                Days(u32),
+            }
+            impl ::core::fmt::Debug for Duration {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    match self {
+                        Duration::Millis(e) => f.debug_tuple("Duration::Millis").field(e).finish(),
+                        Duration::Secs(e) => f.debug_tuple("Duration::Secs").field(e).finish(),
+                        Duration::Minutes(e) => {
+                            f.debug_tuple("Duration::Minutes").field(e).finish()
+                        }
+                        Duration::Hours(e) => f.debug_tuple("Duration::Hours").field(e).finish(),
+                        Duration::Days(e) => f.debug_tuple("Duration::Days").field(e).finish(),
+                    }
+                }
+            }
         }
     }
 }
@@ -30,32 +48,80 @@ pub mod exports {
                 pub type Duration = super::super::super::super::obelisk::types::time::Duration;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_sleep_cabi<T: Guest>(arg0: i64) {
+                pub unsafe fn _export_sleep_cabi<T: Guest>(arg0: i32, arg1: i64) {
                     #[cfg(target_arch = "wasm32")]
                     _rt::run_ctors_once();
-                    T::sleep(arg0 as u64);
+                    use super::super::super::super::obelisk::types::time::Duration as V0;
+                    let v0 = match arg0 {
+                        0 => {
+                            let e0 = arg1 as u64;
+                            V0::Millis(e0)
+                        }
+                        1 => {
+                            let e0 = arg1 as u64;
+                            V0::Secs(e0)
+                        }
+                        2 => {
+                            let e0 = arg1 as i32 as u32;
+                            V0::Minutes(e0)
+                        }
+                        3 => {
+                            let e0 = arg1 as i32 as u32;
+                            V0::Hours(e0)
+                        }
+                        n => {
+                            debug_assert_eq!(n, 4, "invalid enum discriminant");
+                            let e0 = arg1 as i32 as u32;
+                            V0::Days(e0)
+                        }
+                    };
+                    T::sleep(v0);
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_sleep_loop_cabi<T: Guest>(arg0: i64, arg1: i32) {
+                pub unsafe fn _export_sleep_loop_cabi<T: Guest>(arg0: i32, arg1: i64, arg2: i32) {
                     #[cfg(target_arch = "wasm32")]
                     _rt::run_ctors_once();
-                    T::sleep_loop(arg0 as u64, arg1 as u32);
+                    use super::super::super::super::obelisk::types::time::Duration as V0;
+                    let v0 = match arg0 {
+                        0 => {
+                            let e0 = arg1 as u64;
+                            V0::Millis(e0)
+                        }
+                        1 => {
+                            let e0 = arg1 as u64;
+                            V0::Secs(e0)
+                        }
+                        2 => {
+                            let e0 = arg1 as i32 as u32;
+                            V0::Minutes(e0)
+                        }
+                        3 => {
+                            let e0 = arg1 as i32 as u32;
+                            V0::Hours(e0)
+                        }
+                        n => {
+                            debug_assert_eq!(n, 4, "invalid enum discriminant");
+                            let e0 = arg1 as i32 as u32;
+                            V0::Days(e0)
+                        }
+                    };
+                    T::sleep_loop(v0, arg2 as u32);
                 }
                 pub trait Guest {
-                    fn sleep(nanos: Duration);
-                    fn sleep_loop(nanos: Duration, iterations: u32);
+                    fn sleep(duration: Duration);
+                    fn sleep_loop(duration: Duration, iterations: u32);
                 }
                 #[doc(hidden)]
                 macro_rules! __export_testing_sleep_sleep_cabi {
                     ($ty:ident with_types_in $($path_to_types:tt)*) => {
                         const _ : () = { #[export_name = "testing:sleep/sleep#sleep"]
-                        unsafe extern "C" fn export_sleep(arg0 : i64,) {
-                        $($path_to_types)*:: _export_sleep_cabi::<$ty > (arg0) }
+                        unsafe extern "C" fn export_sleep(arg0 : i32, arg1 : i64,) {
+                        $($path_to_types)*:: _export_sleep_cabi::<$ty > (arg0, arg1) }
                         #[export_name = "testing:sleep/sleep#sleep-loop"] unsafe extern
-                        "C" fn export_sleep_loop(arg0 : i64, arg1 : i32,) {
-                        $($path_to_types)*:: _export_sleep_loop_cabi::<$ty > (arg0, arg1)
-                        } };
+                        "C" fn export_sleep_loop(arg0 : i32, arg1 : i64, arg2 : i32,) {
+                        $($path_to_types)*:: _export_sleep_loop_cabi::<$ty > (arg0, arg1,
+                        arg2) } };
                     };
                 }
                 #[doc(hidden)]
@@ -103,16 +169,17 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 383] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x85\x02\x01A\x02\x01\
-A\x05\x01B\x06\x01w\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\x0bnanosecond\
-sy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\x02in\x01\x01\
-\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\0\x02\x03\0\0\
-\x08duration\x01B\x06\x02\x03\x02\x01\x01\x04\0\x08duration\x03\0\0\x01@\x01\x05\
-nanos\x01\x01\0\x04\0\x05sleep\x01\x02\x01@\x02\x05nanos\x01\x0aiterationsy\x01\0\
-\x04\0\x0asleep-loop\x01\x03\x04\x01\x13testing:sleep/sleep\x05\x02\x04\x01\x0ba\
-ny:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-b\
-y\x02\x0dwit-component\x070.215.0\x10wit-bindgen-rust\x060.30.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 436] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xba\x02\x01A\x02\x01\
+A\x05\x01B\x06\x01q\x05\x06millis\x01w\0\x04secs\x01w\0\x07minutes\x01y\0\x05hou\
+rs\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\x0bnanos\
+econdsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\x02in\x01\
+\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\0\x02\x03\
+\0\0\x08duration\x01B\x06\x02\x03\x02\x01\x01\x04\0\x08duration\x03\0\0\x01@\x01\
+\x08duration\x01\x01\0\x04\0\x05sleep\x01\x02\x01@\x02\x08duration\x01\x0aiterat\
+ionsy\x01\0\x04\0\x0asleep-loop\x01\x03\x04\x01\x13testing:sleep/sleep\x05\x02\x04\
+\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cpr\
+ocessed-by\x02\x0dwit-component\x070.215.0\x10wit-bindgen-rust\x060.30.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

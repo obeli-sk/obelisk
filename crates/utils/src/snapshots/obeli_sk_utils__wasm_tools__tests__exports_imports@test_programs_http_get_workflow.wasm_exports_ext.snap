@@ -53,7 +53,15 @@ expression: exports
                 "seconds": "U64"
               }
             },
-            "in": "U64",
+            "in": {
+              "Variant": {
+                "days": "U32",
+                "hours": "U32",
+                "millis": "U64",
+                "minutes": "U32",
+                "secs": "U64"
+              }
+            },
             "now": null
           }
         },
@@ -180,7 +188,15 @@ expression: exports
                 "seconds": "U64"
               }
             },
-            "in": "U64",
+            "in": {
+              "Variant": {
+                "days": "U32",
+                "hours": "U32",
+                "millis": "U64",
+                "minutes": "U32",
+                "secs": "U64"
+              }
+            },
             "now": null
           }
         },
@@ -252,7 +268,15 @@ expression: exports
                 "seconds": "U64"
               }
             },
-            "in": "U64",
+            "in": {
+              "Variant": {
+                "days": "U32",
+                "hours": "U32",
+                "millis": "U64",
+                "minutes": "U32",
+                "secs": "U64"
+              }
+            },
             "now": null
           }
         },
@@ -329,7 +353,15 @@ expression: exports
                 "seconds": "U64"
               }
             },
-            "in": "U64",
+            "in": {
+              "Variant": {
+                "days": "U32",
+                "hours": "U32",
+                "millis": "U64",
+                "minutes": "U32",
+                "secs": "U64"
+              }
+            },
             "now": null
           }
         },

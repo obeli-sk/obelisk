@@ -1,7 +1,7 @@
 package testing:sleep-workflow-obelisk-ext;
 
 interface workflow {
-    use obelisk:types/time.{schedule-at, duration};
+    use obelisk:types/time.{duration, schedule-at};
 
-    reschedule-schedule: func(schedule: schedule-at, nanos: duration, iterations: u8) -> string;
+    reschedule-schedule: func(schedule: schedule-at, duration: duration, iterations: u8) -> string;
 }

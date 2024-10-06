@@ -329,6 +329,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 }
 
 pub(crate) mod host_activities {
+    use obelisk::types::time::Duration as DurationEnum;
+
     use super::{
         assert_matches, async_trait, ClockFn, DbConnection, DbPool, Duration, EventCall, JoinSetId,
         WastVal, WorkflowCtx,
@@ -342,13 +344,25 @@ pub(crate) mod host_activities {
         trappable_imports: true,
     });
 
+    impl From<DurationEnum> for Duration {
+        fn from(value: DurationEnum) -> Self {
+            match value {
+                DurationEnum::Millis(millis) => Duration::from_millis(millis),
+                DurationEnum::Secs(secs) => Duration::from_secs(secs),
+                DurationEnum::Minutes(mins) => Duration::from_secs(u64::from(mins * 60)),
+                DurationEnum::Hours(hours) => Duration::from_secs(u64::from(hours * 60 * 60)),
+                DurationEnum::Days(days) => Duration::from_secs(u64::from(days * 24 * 60 * 60)),
+            }
+        }
+    }
+
     #[async_trait]
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activities::Host
         for WorkflowCtx<C, DB, P>
     {
         // TODO: Apply jitter, should be configured on the component level
-        async fn sleep(&mut self, nanos: u64) -> wasmtime::Result<()> {
-            Ok(self.call_sleep(Duration::from_nanos(nanos)).await?)
+        async fn sleep(&mut self, duration: DurationEnum) -> wasmtime::Result<()> {
+            Ok(self.call_sleep(Duration::from(duration)).await?)
         }
 
         async fn new_join_set(&mut self) -> wasmtime::Result<String> {

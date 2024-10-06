@@ -41,9 +41,27 @@ pub mod obelisk {
             #[doc(hidden)]
             static __FORCE_SECTION_REF: fn() =
                 super::super::super::__link_custom_section_describing_imports;
-            /// A duration of time, in nanoseconds.
-            /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
-            pub type Duration = u64;
+            #[derive(Clone, Copy)]
+            pub enum Duration {
+                Millis(u64),
+                Secs(u64),
+                Minutes(u32),
+                Hours(u32),
+                Days(u32),
+            }
+            impl ::core::fmt::Debug for Duration {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    match self {
+                        Duration::Millis(e) => f.debug_tuple("Duration::Millis").field(e).finish(),
+                        Duration::Secs(e) => f.debug_tuple("Duration::Secs").field(e).finish(),
+                        Duration::Minutes(e) => {
+                            f.debug_tuple("Duration::Minutes").field(e).finish()
+                        }
+                        Duration::Hours(e) => f.debug_tuple("Duration::Hours").field(e).finish(),
+                        Duration::Days(e) => f.debug_tuple("Duration::Days").field(e).finish(),
+                    }
+                }
+            }
         }
     }
     #[allow(dead_code)]
@@ -60,17 +78,25 @@ pub mod obelisk {
             #[allow(unused_unsafe, clippy::all)]
             pub fn sleep(nanos: Duration) {
                 unsafe {
+                    use super::super::super::obelisk::types::time::Duration as V0;
+                    let (result1_0, result1_1) = match nanos {
+                        V0::Millis(e) => (0i32, _rt::as_i64(e)),
+                        V0::Secs(e) => (1i32, _rt::as_i64(e)),
+                        V0::Minutes(e) => (2i32, i64::from(_rt::as_i32(e))),
+                        V0::Hours(e) => (3i32, i64::from(_rt::as_i32(e))),
+                        V0::Days(e) => (4i32, i64::from(_rt::as_i32(e))),
+                    };
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "obelisk:workflow/host-activities")]
                     extern "C" {
                         #[link_name = "sleep"]
-                        fn wit_import(_: i64);
+                        fn wit_import(_: i32, _: i64);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: i64) {
+                    fn wit_import(_: i32, _: i64) {
                         unreachable!()
                     }
-                    wit_import(_rt::as_i64(nanos));
+                    wit_import(result1_0, result1_1);
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
@@ -757,6 +783,65 @@ mod _rt {
             self as i64
         }
     }
+    pub fn as_i32<T: AsI32>(t: T) -> i32 {
+        t.as_i32()
+    }
+    pub trait AsI32 {
+        fn as_i32(self) -> i32;
+    }
+    impl<'a, T: Copy + AsI32> AsI32 for &'a T {
+        fn as_i32(self) -> i32 {
+            (*self).as_i32()
+        }
+    }
+    impl AsI32 for i32 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for u32 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for i16 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for u16 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for i8 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for u8 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for char {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for usize {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
     #[cfg(target_arch = "wasm32")]
     pub fn run_ctors_once() {
         wit_bindgen_rt::run_ctors_once();
@@ -805,8 +890,8 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1097] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xcf\x07\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1144] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xfe\x07\x01A\x02\x01\
 A\x10\x01B\x04\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0e\
 get-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x06\x01s\x04\0\
 \x0bjoin-set-id\x03\0\0\x01s\x04\0\x0cexecution-id\x03\0\x02\x01q\x03\x11permane\
@@ -817,8 +902,9 @@ execution-id\x02\x03\0\x01\x0fexecution-error\x01B\x0c\x02\x03\x02\x01\x02\x04\0
 @\x02\x0bjoin-set-ids\x03urls\0s\x04\0\x15get-successful-submit\x01\x04\x01j\x01\
 s\x01s\x01o\x02\x01\x05\x01o\x02\x01\x03\x01j\x01\x06\x01\x07\x01@\x01\x0bjoin-s\
 et-ids\0\x08\x04\0\x19get-successful-await-next\x01\x09\x03\x01!testing:http-obe\
-lisk-ext/http-get\x05\x04\x01B\x06\x01w\x04\0\x08duration\x03\0\0\x01r\x02\x07se\
-condsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\
+lisk-ext/http-get\x05\x04\x01B\x06\x01q\x05\x06millis\x01w\0\x04secs\x01w\0\x07m\
+inutes\x01y\0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07\
+secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\
 \x03\0\x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/t\
 ime\x05\x05\x02\x03\0\x03\x08duration\x02\x03\0\x01\x0bjoin-set-id\x01B\x08\x02\x03\
 \x02\x01\x06\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x07\x04\0\x0bjoin-set-id\x03\

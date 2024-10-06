@@ -409,9 +409,24 @@ impl TryFrom<&wasmtime::component::Val> for HistoryEventScheduledAt {
         };
         match (variant.as_str(), val) {
             ("now", None) => Ok(HistoryEventScheduledAt::Now),
-            ("in", Some(dur)) if matches!(dur.deref(), Val::U64(_)) => {
-                let nanos = assert_matches!(dur.deref(), Val::U64(nanos) => *nanos);
-                Ok(HistoryEventScheduledAt::In(Duration::from_nanos(nanos)))
+            ("in", Some(duration)) => {
+                if let &Val::Variant(key, value) = &duration.deref() {
+                    let duration = match (key.as_str(), value.as_deref()) {
+                        ("millis", Some(Val::U64(value))) => Duration::from_millis(*value),
+                        ("secs", Some(Val::U64(value))) => Duration::from_secs(*value),
+                        ("minutes", Some(Val::U64(value))) => Duration::from_secs(*value * 60),
+                        ("hours", Some(Val::U64(value))) => Duration::from_secs(*value * 60 * 60),
+                        ("days", Some(Val::U64(value))) => {
+                            Duration::from_secs(*value * 60 * 60 * 24)
+                        },
+                        _ => return Err(
+                            "cannot convert `scheduled-at`, `in` variant: Allowed keys: `millis`(U64), `secs`(U64), `minutes`(U32), `hours`(U32), `days`(U32)",
+                        )
+                    };
+                    Ok(HistoryEventScheduledAt::In(duration))
+                } else {
+                    todo!()
+                }
             }
             ("at", Some(date_time)) if matches!(date_time.deref(), Val::Record(_)) => {
                 let date_time =
@@ -433,7 +448,7 @@ impl TryFrom<&wasmtime::component::Val> for HistoryEventScheduledAt {
                     }
                     _ => {
                         Err(
-                            "cannot convert `scheduled-at`, record must have exactly two keys: `seconds`(U64), `nanoseconds`(U32)",
+                            "cannot convert `scheduled-at`, `at` variant: record must have exactly two keys: `seconds`(U64), `nanoseconds`(U32)",
                         )
                     }
                 }

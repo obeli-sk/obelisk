@@ -207,6 +207,13 @@ impl ExIm {
                 "/* use obelisk:types/execution.{join-set-id} */ join-set-id",
             )),
         };
+        let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
+            Box::from("millis") => Some(TypeWrapper::U64),
+            Box::from("secs") => Some(TypeWrapper::U64),
+            Box::from("minutes") => Some(TypeWrapper::U32),
+            Box::from("hours") => Some(TypeWrapper::U32),
+            Box::from("days") => Some(TypeWrapper::U32),
+        });
         let param_type_scheduled_at = ParameterType {
             type_wrapper: TypeWrapper::Variant(indexmap! {
                 Box::from("now") => None,
@@ -214,7 +221,7 @@ impl ExIm {
                     Box::from("seconds") => TypeWrapper::U64,
                     Box::from("nanoseconds") => TypeWrapper::U32,
                 })),
-                Box::from("in") => Some(TypeWrapper::U64),
+                Box::from("in") => Some(duration_type_wrapper),
             }),
             name: Some(StrVariant::Static("scheduled-at")),
             wit_type: Some(StrVariant::Static(
