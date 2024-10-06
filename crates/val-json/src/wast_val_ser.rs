@@ -50,7 +50,12 @@ impl Serialize for WastVal {
                 ser.serialize_entry(key, value)?;
                 ser.end()
             }
-            WastVal::Enum(_) => todo!(),
+            WastVal::Enum(key) => {
+                use serde::ser::SerializeMap;
+                let mut ser = serializer.serialize_map(Some(1))?;
+                ser.serialize_entry(key, &None::<()>)?;
+                ser.end()
+            }
             WastVal::Option(option) => {
                 if let Some(some) = option {
                     serializer.serialize_some(some)
@@ -419,15 +424,28 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                                 }
                             } else {
                                 Err(Error::custom(format!(
-                                    "variant `{variant_name}` not found in the following list: `{:?}`",
+                                    "cannot deserialize variant: `{variant_name}` not found in the following list: `{:?}`",
                                     variants.keys().collect::<Vec<_>>()
                                 )))
                             }
                         } else {
                             Err(Error::custom(format!(
-                                "expected single map key from following list: `{:?}`",
+                                "cannot deserialize variant: expected single map key from following list: `{:?}`",
                                 variants.keys().collect::<Vec<_>>()
                             )))
+                        }
+                    }
+                    TypeWrapper::Enum(variants) => {
+                        if let Some(variant_name) = map.next_key::<String>()? {
+                            if variants.contains(variant_name.as_str()) {
+                                // consume null
+                                let _none: Option<()> = map.next_value()?;
+                                Ok(WastVal::Enum(variant_name))
+                            } else {
+                                Err(Error::custom(format!("cannot deserialize enum: `{variant_name}` not found in the following list: `{variants:?}`")))
+                            }
+                        } else {
+                            Err(Error::custom(format!("cannot deserialize enum: expected single map key from following list: `{variants:?}`")))
                         }
                     }
                     _ => Err(Error::invalid_type(Unexpected::Map, &self)),
@@ -594,7 +612,7 @@ mod tests {
         wast_val::{WastVal, WastValWithType},
         wast_val_ser::WastValDeserialize,
     };
-    use indexmap::{indexmap, IndexMap};
+    use indexmap::{indexmap, indexset, IndexMap};
     use serde::de::DeserializeSeed;
     use serde_json::json;
 
@@ -896,12 +914,11 @@ mod tests {
 
     #[test]
     fn serde_variant_without_field() {
-        let duration_type_wrapper = TypeWrapper::Variant(indexmap! {
-            Box::from("a") => None,
-            Box::from("b") => None,
-        });
         let expected = WastValWithType {
-            r#type: duration_type_wrapper,
+            r#type: TypeWrapper::Variant(indexmap! {
+                Box::from("a") => None,
+                Box::from("b") => None,
+            }),
             value: WastVal::Variant("a".to_string(), None),
         };
         let json = serde_json::to_value(&expected).unwrap();
@@ -920,8 +937,40 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(
-            "variant `c` not found in the following list: `[\"a\", \"b\"]`",
+            "cannot deserialize variant: `c` not found in the following list: `[\"a\", \"b\"]`",
             err.to_string()
         );
+    }
+
+    #[test]
+    fn serde_enum() {
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Enum(indexset! {
+                Box::from("a"),
+                Box::from("b"),
+            }),
+            value: WastVal::Enum("a".to_string()),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(json, json!({"type":{"Enum":["a","b"]},"value":{"a":null}}));
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn serde_enum_deser_wrong_key_should_fail() {
+        let json = json!({"type":{"Enum":["a","b"]},"value":{"c":null}});
+        let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
+        assert_eq!(
+            "cannot deserialize enum: `c` not found in the following list: `{\"a\", \"b\"}`",
+            err.to_string()
+        );
+    }
+
+    #[test]
+    fn serde_enum_deser_with_value_should_fail() {
+        let json = json!({"type":{"Enum":["a","b"]},"value":{"a":1}});
+        let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
+        assert_eq!("invalid type: integer `1`, expected unit", err.to_string());
     }
 }

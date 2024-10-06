@@ -1,5 +1,5 @@
 pub use indexmap;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -22,7 +22,7 @@ pub enum TypeWrapper {
     Record(IndexMap<Box<str>, TypeWrapper>),
     Tuple(Vec<TypeWrapper>),
     Variant(IndexMap<Box<str>, Option<TypeWrapper>>),
-    Enum(Vec<Box<str>>),
+    Enum(IndexSet<Box<str>>),
     Option(Box<TypeWrapper>),
     Result {
         ok: Option<Box<TypeWrapper>>,
