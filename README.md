@@ -124,14 +124,15 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [x] Forward stdout and stderr (configurable) of activities and webhooks
 - [x] Support for distributed tracing, logging from components collected by OTLP
 - [x] Mapping from any execution result (e.g. traps, timeouts, err variants) to other execution results via `-await-next`
-- [ ] Heterogenous join sets
 - [ ] Expose filesystem with directory mapping for activities, webhooks
+- [ ] Spawning processes from WASM activities, reading their outputs
+- [ ] External executors support - starting executions solely based on WIT exports. External executors must share write access to the sqlite database.
+- [ ] External activities gRPC API
 - [ ] Expose network configuration for activities, webhooks
-- [ ] External activities - running external processes
+- [ ] Heterogenous join sets, allowing one join set to combine multiple function signatures and delays
 - [ ] HTML based UI for showing executions, event history and relations
 - [ ] Add examples with C#, Go, JS, Python
-- [ ] WASM to WIT exporter with extensions
-- [ ] Print the component's WIT, filter by export/import.
+- [ ] Print each component's imports and exports in WIT format
 
 ## Future ideas
 * Interactive CLI for execution management
