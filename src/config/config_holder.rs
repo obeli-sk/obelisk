@@ -79,7 +79,7 @@ impl ConfigHolder {
             bail!("config file not found: {:?}", self.paths);
         }
         let settings = builder
-            .add_source(Environment::with_prefix("obelisk").separator("_"))
+            .add_source(Environment::with_prefix("obelisk").separator("__"))
             .build()
             .await?;
         Ok(settings.try_deserialize()?)
