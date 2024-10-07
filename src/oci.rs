@@ -1,16 +1,17 @@
 use anyhow::{bail, ensure, Context};
 use concepts::{ContentDigest, Digest};
-use oci_client::Reference;
-use oci_wasm::{WasmClient, WasmConfig};
+use futures_util::TryFutureExt;
+use oci_client::{manifest::OciImageManifest, Reference};
+use oci_wasm::{ToConfig, WasmClient, WasmConfig, WASM_MANIFEST_MEDIA_TYPE};
 use std::{
+    future::Future,
     path::{Path, PathBuf},
     str::FromStr,
+    time::Duration,
 };
-use tracing::{debug, info, info_span, instrument, Instrument};
+use tracing::{debug, info, info_span, instrument, warn, Instrument};
 
-fn get_client() -> WasmClient {
-    WasmClient::new(oci_client::Client::default())
-}
+const OCI_CLIENT_RETRIES: u8 = 10;
 
 fn digest_to_metadata_file(metadata_dir: &Path, metadata_file: &Digest) -> PathBuf {
     metadata_dir.join(format!(
@@ -42,7 +43,7 @@ pub(crate) async fn pull_to_cache_dir(
     wasm_cache_dir: &Path,
     metadata_dir: &Path,
 ) -> Result<(ContentDigest, PathBuf), anyhow::Error> {
-    let client = get_client();
+    let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
     let auth = get_oci_auth(image)?;
     // If the `image` specifies the metadata digest, try to find the link in the `metadata_dir`.
     let content_digest = if let Some(content_digest) =
@@ -146,7 +147,7 @@ pub(crate) async fn push(file: &PathBuf, reference: &Reference) -> Result<(), an
     if reference.digest().is_some() {
         bail!("cannot push a digest reference");
     }
-    let client = get_client();
+    let client = WasmClientWithRetry::new(OCI_CLIENT_RETRIES);
     let (conf, layer) = WasmConfig::from_component(file, None)
         .await
         .context("Unable to parse component")?;
@@ -173,4 +174,80 @@ fn calculate_sha256_mem(data: &[u8]) -> ContentDigest {
         concepts::HashType::Sha256,
         format!("{:x}", hasher.finalize()),
     )
+}
+
+struct WasmClientWithRetry {
+    client: WasmClient,
+    retries: u8,
+}
+
+impl WasmClientWithRetry {
+    fn new(retries: u8) -> Self {
+        Self {
+            client: WasmClient::new(oci_client::Client::default()),
+            retries,
+        }
+    }
+
+    async fn retry<O, E, F: Future<Output = Result<O, E>>>(
+        &self,
+        what: impl Fn() -> F,
+    ) -> Result<O, E> {
+        let mut tries = 0;
+        loop {
+            match what().await {
+                Ok(ok) => return Ok(ok),
+                Err(err) if tries == self.retries => return Err(err),
+                _ => {
+                    tries += 1;
+                    let duration = Duration::from_millis(100 * u64::from(tries));
+                    warn!("Retrying after {duration:?}");
+                    tokio::time::sleep(duration).await;
+                }
+            }
+        }
+    }
+
+    #[instrument(skip_all)]
+    async fn pull_manifest_and_config(
+        &self,
+        image: &Reference,
+        auth: &oci_client::secrets::RegistryAuth,
+    ) -> anyhow::Result<(oci_client::manifest::OciImageManifest, WasmConfig, String)> {
+        self.retry(|| self.client.pull_manifest_and_config(image, auth))
+            .await
+    }
+
+    #[instrument(skip_all)]
+    async fn pull(
+        &self,
+        image: &Reference,
+        auth: &oci_client::secrets::RegistryAuth,
+    ) -> anyhow::Result<oci_client::client::ImageData> {
+        self.retry(|| self.client.pull(image, auth)).await
+    }
+
+    #[instrument(skip_all)]
+    async fn push(
+        &self,
+        image: &Reference,
+        auth: &oci_client::secrets::RegistryAuth,
+        component_layer: oci_client::client::ImageLayer,
+        config: impl ToConfig,
+        annotations: Option<std::collections::BTreeMap<String, String>>,
+    ) -> anyhow::Result<oci_client::client::PushResponse> {
+        let layers = vec![component_layer];
+        let config = config.to_config()?;
+        let mut manifest = OciImageManifest::build(&layers, &config, annotations);
+        manifest.media_type = Some(WASM_MANIFEST_MEDIA_TYPE.to_string());
+        self.retry(|| {
+            let config = config.clone();
+            let manifest = manifest.clone();
+            self.client
+                .as_ref()
+                .push(image, &layers, config, auth, Some(manifest))
+                .err_into()
+        })
+        .await
+    }
 }
