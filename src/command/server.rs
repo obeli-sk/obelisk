@@ -3,11 +3,11 @@ use crate::config::config_holder::ConfigHolder;
 use crate::config::toml::webhook;
 use crate::config::toml::webhook::WebhookComponentVerified;
 use crate::config::toml::webhook::WebhookRouteVerified;
-use crate::config::toml::ActivityConfigVerified;
+use crate::config::toml::ActivityWasmConfigToml;
+use crate::config::toml::ActivityWasmConfigVerified;
 use crate::config::toml::ObeliskConfig;
-use crate::config::toml::WasmActivityToml;
+use crate::config::toml::WorkflowConfigToml;
 use crate::config::toml::WorkflowConfigVerified;
-use crate::config::toml::WorkflowToml;
 use crate::config::ComponentConfig;
 use crate::config::ComponentConfigImportable;
 use crate::grpc_util::extractor::accept_trace;
@@ -826,7 +826,7 @@ async fn start_webhooks(
 
 #[derive(Debug)]
 struct ConfigVerified {
-    wasm_activities: Vec<ActivityConfigVerified>,
+    wasm_activities: Vec<ActivityWasmConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<String, WebhookComponentVerified>,
     http_servers_to_webhook_names: Vec<(webhook::HttpServer, Vec<String>)>,
@@ -834,8 +834,8 @@ struct ConfigVerified {
 
 #[instrument(skip_all)]
 async fn fetch_and_verify_all(
-    wasm_activities: Vec<WasmActivityToml>,
-    workflows: Vec<WorkflowToml>,
+    wasm_activities: Vec<ActivityWasmConfigToml>,
+    workflows: Vec<WorkflowConfigToml>,
     http_servers: Vec<webhook::HttpServer>,
     webhooks: Vec<webhook::WebhookComponent>,
     wasm_cache_dir: Arc<Path>,
@@ -994,7 +994,7 @@ struct LinkedComponents {
 #[instrument(skip_all)]
 async fn compile_and_verify(
     engines: &Engines,
-    wasm_activities: Vec<ActivityConfigVerified>,
+    wasm_activities: Vec<ActivityWasmConfigVerified>,
     workflows: Vec<WorkflowConfigVerified>,
     webhooks_by_names: hashbrown::HashMap<String, WebhookComponentVerified>,
 ) -> Result<(LinkedComponents, ComponentConfigRegistryRO), anyhow::Error> {
@@ -1095,7 +1095,7 @@ async fn compile_and_verify(
     wasm_path = ?activity.wasm_path,
 ))]
 fn prespawn_activity(
-    activity: ActivityConfigVerified,
+    activity: ActivityWasmConfigVerified,
     engines: &Engines,
     executor_id: ExecutorId,
 ) -> Result<(WorkerCompiled, ComponentConfig), anyhow::Error> {

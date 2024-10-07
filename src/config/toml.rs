@@ -45,10 +45,10 @@ pub(crate) struct ObeliskConfig {
     pub(crate) oci: OciConfig,
     #[serde(default)]
     pub(crate) codegen_cache: Option<CodegenCache>,
-    #[serde(default, rename = "wasm_activity")]
-    pub(crate) wasm_activities: Vec<WasmActivityToml>,
+    #[serde(default, rename = "activity_wasm")]
+    pub(crate) wasm_activities: Vec<ActivityWasmConfigToml>,
     #[serde(default, rename = "workflow")]
-    pub(crate) workflows: Vec<WorkflowToml>,
+    pub(crate) workflows: Vec<WorkflowConfigToml>,
     #[serde(default)]
     pub(crate) wasmtime_pooling_config: WasmtimePoolingConfig,
     #[cfg(feature = "otlp")]
@@ -205,7 +205,7 @@ impl ExecConfigToml {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WasmActivityToml {
+pub(crate) struct ActivityWasmConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     #[serde(default)]
@@ -223,7 +223,7 @@ pub(crate) struct WasmActivityToml {
 }
 
 #[derive(Debug)]
-pub(crate) struct ActivityConfigVerified {
+pub(crate) struct ActivityWasmConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) activity_config: ActivityConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
@@ -231,13 +231,13 @@ pub(crate) struct ActivityConfigVerified {
     pub(crate) content_digest: ContentDigest,
 }
 
-impl WasmActivityToml {
+impl ActivityWasmConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
     pub(crate) async fn fetch_and_verify(
         self,
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
-    ) -> Result<ActivityConfigVerified, anyhow::Error> {
+    ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
         let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
@@ -261,7 +261,7 @@ impl WasmActivityToml {
             forward_stderr: self.forward_stderr.into(),
             env_vars,
         };
-        Ok(ActivityConfigVerified {
+        Ok(ActivityWasmConfigVerified {
             content_digest,
             wasm_path,
             activity_config,
@@ -276,7 +276,7 @@ impl WasmActivityToml {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkflowToml {
+pub(crate) struct WorkflowConfigToml {
     #[serde(flatten)]
     pub(crate) common: ComponentCommon,
     #[serde(default)]
@@ -299,7 +299,7 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) exec_config: executor::executor::ExecConfig,
 }
 
-impl WorkflowToml {
+impl WorkflowConfigToml {
     #[instrument(skip_all, fields(component_name = self.common.name, config_id))]
     pub(crate) async fn fetch_and_verify(
         self,

@@ -29,10 +29,10 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # exec.tick_sleep.millis = 200 # Sleep between event loop ticks.
 
 ### WASM Activity components configuration
-# [[wasm_activity]]
+# [[activity_wasm]]
 ## Common settings for all components - see above.
 ## Common executor settings - see above.
-## Specific settings for wasm_activity:
+## Specific settings for activity_wasm:
 # default_max_retries = 5 # When calling the activity directly, `default_max_retries` is applied.
 # default_retry_exp_backoff.millis = 100 # Exponential backoff setting.
 ## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".
@@ -78,7 +78,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## Environment variables: Set to a specific value or forward from the host. Default is empty.
 # env_vars = ["ENV1", "ENV2=somevalue"]
 
-[[wasm_activity]]
+[[activity_wasm]]
 name = "fibo_activity"
 location.oci = "docker.io/getobelisk/example_activity_fibo:2024-10-04@sha256:b0915e6bae3083a0dceec80497510c0faf4f5cad71202864da0a99eee2e2bbc2"
 default_max_retries = 0
@@ -90,7 +90,7 @@ name = "fibo_workflow"
 location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-06@sha256:11bba74ede432a72251ef62020af14a82bddc2adb7c5c886ea216bc45c80c549"
 exec.lock_expiry.secs = 2
 
-[[wasm_activity]]
+[[activity_wasm]]
 name = "http_get_activity"
 location.oci = "docker.io/getobelisk/example_activity_http_get:2024-09-28@sha256:80bfc8e64fe241040b7c2f11fc6d109cf9b04cddc53404ed2fe71c61aa3b0fdc"
 forward_stdout = "stderr"
@@ -112,7 +112,7 @@ routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 forward_stdout = "stderr"
 forward_stderr = "stderr"
 
-[[wasm_activity]]
+[[activity_wasm]]
 name = "sleep_activity"
 location.oci = "docker.io/getobelisk/example_activity_sleep:2024-10-06@sha256:af19908f9675e7c14740d3f8428ecbf3f41a2a914cd33bb8af808be3d6e30526"
 exec.lock_expiry.secs = 10
