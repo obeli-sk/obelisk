@@ -602,6 +602,114 @@ pub mod testing {
                     }
                 }
             }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn fiboa_concurrent_submit(
+                join_set_id: &str,
+                n: u8,
+                iterations: u32,
+            ) -> _rt::String {
+                unsafe {
+                    #[repr(align(4))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
+                    let vec0 = join_set_id;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    let ptr1 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
+                    extern "C" {
+                        #[link_name = "fiboa-concurrent-submit"]
+                        fn wit_import(_: *mut u8, _: usize, _: i32, _: i32, _: *mut u8);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize, _: i32, _: i32, _: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(
+                        ptr0.cast_mut(),
+                        len0,
+                        _rt::as_i32(&n),
+                        _rt::as_i32(&iterations),
+                        ptr1,
+                    );
+                    let l2 = *ptr1.add(0).cast::<*mut u8>();
+                    let l3 = *ptr1.add(4).cast::<usize>();
+                    let len4 = l3;
+                    let bytes4 = _rt::Vec::from_raw_parts(l2.cast(), len4, len4);
+                    _rt::string_lift(bytes4)
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn fiboa_concurrent_await_next(
+                join_set_id: &str,
+            ) -> Result<(ExecutionId, u64), (ExecutionId, ExecutionError)> {
+                unsafe {
+                    #[repr(align(8))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 32]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 32]);
+                    let vec0 = join_set_id;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    let ptr1 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
+                    extern "C" {
+                        #[link_name = "fiboa-concurrent-await-next"]
+                        fn wit_import(_: *mut u8, _: usize, _: *mut u8);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize, _: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0.cast_mut(), len0, ptr1);
+                    let l2 = i32::from(*ptr1.add(0).cast::<u8>());
+                    match l2 {
+                        0 => {
+                            let e = {
+                                let l3 = *ptr1.add(8).cast::<*mut u8>();
+                                let l4 = *ptr1.add(12).cast::<usize>();
+                                let len5 = l4;
+                                let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
+                                let l6 = *ptr1.add(16).cast::<i64>();
+                                (_rt::string_lift(bytes5), l6 as u64)
+                            };
+                            Ok(e)
+                        }
+                        1 => {
+                            let e = {
+                                let l7 = *ptr1.add(8).cast::<*mut u8>();
+                                let l8 = *ptr1.add(12).cast::<usize>();
+                                let len9 = l8;
+                                let bytes9 = _rt::Vec::from_raw_parts(l7.cast(), len9, len9);
+                                let l10 = i32::from(*ptr1.add(16).cast::<u8>());
+                                use super::super::super::obelisk::types::execution::ExecutionError as V14;
+                                let v14 = match l10 {
+                                    0 => {
+                                        let e14 = {
+                                            let l11 = *ptr1.add(20).cast::<*mut u8>();
+                                            let l12 = *ptr1.add(24).cast::<usize>();
+                                            let len13 = l12;
+                                            let bytes13 =
+                                                _rt::Vec::from_raw_parts(l11.cast(), len13, len13);
+                                            _rt::string_lift(bytes13)
+                                        };
+                                        V14::PermanentFailure(e14)
+                                    }
+                                    1 => V14::PermanentTimeout,
+                                    n => {
+                                        debug_assert_eq!(n, 2, "invalid enum discriminant");
+                                        V14::NonDeterminism
+                                    }
+                                };
+                                (_rt::string_lift(bytes9), v14)
+                            };
+                            Err(e)
+                        }
+                        _ => _rt::invalid_enum_discriminant(),
+                    }
+                }
+            }
         }
     }
 }
@@ -860,8 +968,8 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1647] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf5\x0b\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1707] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb1\x0c\x01A\x02\x01\
 A\x1a\x01B\x06\x01@\x01\x07messages\x01\0\x04\0\x05trace\x01\0\x04\0\x05debug\x01\
 \0\x04\0\x04info\x01\0\x04\0\x04warn\x01\0\x04\0\x05error\x01\0\x03\x01\x0fobeli\
 sk:log/log\x05\0\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07m\
@@ -880,23 +988,24 @@ cution\x05\x02\x02\x03\0\x01\x08duration\x02\x03\0\x02\x0bjoin-set-id\x01B\x08\x
 ror\x03\0\x02\x01@\x02\x0bjoin-set-ids\x01n}\0s\x04\0\x0bfibo-submit\x01\x04\x01\
 o\x02\x01w\x01o\x02\x01\x03\x01j\x01\x05\x01\x06\x01@\x01\x0bjoin-set-ids\0\x07\x04\
 \0\x0ffibo-await-next\x01\x08\x03\x01\x1dtesting:fibo-obelisk-ext/fibo\x05\x08\x01\
-B\x0b\x02\x03\x02\x01\x06\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x07\x04\0\
+B\x0d\x02\x03\x02\x01\x06\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x07\x04\0\
 \x0fexecution-error\x03\0\x02\x01@\x03\x0bjoin-set-ids\x01n}\x0aiterationsy\0s\x04\
 \0\x0cfiboa-submit\x01\x04\x01o\x02\x01w\x01o\x02\x01\x03\x01j\x01\x05\x01\x06\x01\
-@\x01\x0bjoin-set-ids\0\x07\x04\0\x10fiboa-await-next\x01\x08\x03\x01*testing:fi\
-bo-workflow-obelisk-ext/workflow\x05\x09\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fib\
-o-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14iterations-per-fiboay\0w\x04\
-\0\x11fibo-start-fiboas\x01\x01\x03\x01&testing:fibo-workflow/workflow-nesting\x05\
-\x0a\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fib\
-oa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x03\x01\x1etesting:fibo-workflow/workfl\
-ow\x05\x0b\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:fib\
-o/fibo\x05\x0c\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01\
-@\x03\x01n}\x06fiboasy\x14iterations-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\
-\x01\x04\x01&testing:fibo-workflow/workflow-nesting\x05\x0d\x01B\x04\x01@\x02\x01\
-n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-co\
-ncurrent\x01\0\x04\x01\x1etesting:fibo-workflow/workflow\x05\x0e\x04\x01\x0bany:\
-any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\
-\x0dwit-component\x070.215.0\x10wit-bindgen-rust\x060.30.0";
+@\x01\x0bjoin-set-ids\0\x07\x04\0\x10fiboa-await-next\x01\x08\x04\0\x17fiboa-con\
+current-submit\x01\x04\x04\0\x1bfiboa-concurrent-await-next\x01\x08\x03\x01*test\
+ing:fibo-workflow-obelisk-ext/workflow\x05\x09\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14\
+fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14iterations-per-fiboay\0w\
+\x04\0\x11fibo-start-fiboas\x01\x01\x03\x01&testing:fibo-workflow/workflow-nesti\
+ng\x05\x0a\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05\
+fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x03\x01\x1etesting:fibo-workflow/wor\
+kflow\x05\x0b\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:\
+fibo/fibo\x05\x0c\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\
+\x01@\x03\x01n}\x06fiboasy\x14iterations-per-fiboay\0w\x04\0\x11fibo-start-fiboa\
+s\x01\x01\x04\x01&testing:fibo-workflow/workflow-nesting\x05\x0d\x01B\x04\x01@\x02\
+\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fibo\
+a-concurrent\x01\0\x04\x01\x1etesting:fibo-workflow/workflow\x05\x0e\x04\x01\x0b\
+any:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-\
+by\x02\x0dwit-component\x070.215.0\x10wit-bindgen-rust\x060.30.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

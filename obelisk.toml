@@ -87,7 +87,7 @@ forward_stderr = "stderr"
 
 [[workflow]]
 name = "fibo_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-06@sha256:11bba74ede432a72251ef62020af14a82bddc2adb7c5c886ea216bc45c80c549"
+location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-07@sha256:a0d9393bf99855437567128e435ee824d653f71e65fb70d73222dbb34f5b0b03"
 exec.lock_expiry.secs = 2
 
 [[activity_wasm]]

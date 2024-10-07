@@ -5,4 +5,7 @@ interface workflow {
 
     fiboa-submit: func(join-set-id: string, n: u8, iterations: u32) -> string;
     fiboa-await-next: func(join-set-id: string) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
+
+    fiboa-concurrent-submit: func(join-set-id: string, n: u8, iterations: u32) -> string;
+    fiboa-concurrent-await-next: func(join-set-id: string) -> result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>;
 }
