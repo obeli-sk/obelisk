@@ -54,7 +54,7 @@ expression: imports
     "testing:fibo-obelisk-ext/fibo",
     "fibo-submit"
   ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": [
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": [
     {
       "params": [
         {
@@ -65,9 +65,9 @@ expression: imports
       "return_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     },
     "testing:fibo-workflow-obelisk-ext/workflow",
-    "fiboa-await-next"
+    "fiboa-concurrent-await-next"
   ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
     {
       "params": [
         {
@@ -86,7 +86,7 @@ expression: imports
       "return_type": "string"
     },
     "testing:fibo-workflow-obelisk-ext/workflow",
-    "fiboa-submit"
+    "fiboa-concurrent-submit"
   ],
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     {

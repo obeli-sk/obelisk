@@ -72,7 +72,7 @@ expression: imports
       "wit_type": "string"
     }
   ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": [
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": [
     [
       {
         "type_wrapper": "String",
@@ -106,7 +106,7 @@ expression: imports
       "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
     }
   ],
-  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [
+  "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
     [
       {
         "type_wrapper": "String",
