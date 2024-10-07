@@ -359,6 +359,7 @@ impl SqlitePool {
         let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(config.queue_capacity);
         {
             let shutdown = shutdown.clone();
+            let path = path.clone();
             std::thread::spawn(move || {
                 let mut conn = match Connection::open_with_flags(path, OpenFlags::default()) {
                     Ok(conn) => conn,
@@ -458,7 +459,7 @@ impl SqlitePool {
                 )));
             }
         }
-        info!("Sqlite database initialized");
+        info!("Sqlite database location: {path:?}");
         Ok(Self {
             shutdown,
             command_tx,

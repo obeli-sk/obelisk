@@ -1,4 +1,6 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
+use futures_util::TryFutureExt;
+use http::{uri::Scheme, Uri};
 use tonic::transport::{Channel, ClientTlsConfig};
 
 pub(crate) mod grpc_mapping;
@@ -9,12 +11,19 @@ pub(crate) type TonicRespResult<T> = TonicResult<tonic::Response<T>>;
 
 pub(crate) async fn to_channel(url: String) -> Result<Channel, anyhow::Error> {
     let tls = ClientTlsConfig::new().with_native_roots();
-    let url = url.parse().context("cannot parse uri")?;
-    Channel::builder(url)
-        .tls_config(tls)?
-        .connect()
-        .await
-        .context("connect error")
+    let url: Uri = url.parse().context("cannot parse uri")?;
+    if url.scheme() == Some(&Scheme::HTTP) {
+        Channel::builder(url).connect().err_into().await
+    } else if url.scheme() == Some(&Scheme::HTTPS) {
+        Channel::builder(url)
+            .tls_config(tls)?
+            .connect()
+            .err_into()
+            .await
+    } else {
+        Err(anyhow!("unknown scheme for {url}"))
+    }
+    .context("gRPC connect error")
 }
 
 // Source: https://github.com/hseeberger/hello-tracing-rs/blob/b411f8b192b7d585c42b5928ea635b2bd8bde29c/hello-tracing-common/src/otel/grpc.rs
