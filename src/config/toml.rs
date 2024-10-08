@@ -635,11 +635,14 @@ pub(crate) mod webhook {
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookComponent {
+        // TODO: Rename to WebhookComponentConfigToml
         #[serde(flatten)]
         pub(crate) common: ComponentCommon,
         pub(crate) http_server: String,
         pub(crate) routes: Vec<WebhookRoute>,
+        #[serde(default)]
         pub(crate) forward_stdout: StdOutput,
+        #[serde(default)]
         pub(crate) forward_stderr: StdOutput,
         #[serde(default)]
         pub(crate) env_vars: Vec<EnvVar>,
@@ -694,6 +697,7 @@ pub(crate) mod webhook {
 
     #[derive(Debug)]
     pub(crate) struct WebhookComponentVerified {
+        // TODO: WebhookComponentConfigVerified
         pub(crate) config_id: ConfigId,
         pub(crate) wasm_path: PathBuf,
         pub(crate) routes: Vec<WebhookRouteVerified>,

@@ -82,8 +82,6 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 name = "fibo_activity"
 location.oci = "docker.io/getobelisk/example_activity_fibo:2024-10-04@sha256:b0915e6bae3083a0dceec80497510c0faf4f5cad71202864da0a99eee2e2bbc2"
 default_max_retries = 0
-forward_stdout = "stderr"
-forward_stderr = "stderr"
 
 [[workflow]]
 name = "fibo_workflow"
@@ -109,8 +107,6 @@ name = "webhook_fibo"
 location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-06@sha256:f36a137c558710989a20f4255db28c4941f3e29e10019b7b09dbb9cbfc2947e5"
 http_server = "external"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
-forward_stdout = "stderr"
-forward_stderr = "stderr"
 
 [[activity_wasm]]
 name = "sleep_activity"
