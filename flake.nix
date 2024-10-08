@@ -106,11 +106,9 @@
             obelisk = makeObelisk pkgs false;
             obeliskPatchForGenericLinux = makeObelisk pkgs true;
             obeliskMusl = makeObelisk pkgsMusl false;
-            docker = makeDocker pkgs obeliskMusl false;
-            dockerBinSh = makeDocker pkgs obeliskMusl true;
+            dockerLibcForUbuntu = makeDocker pkgs obeliskPatchForGenericLinux false;
             default = obelisk;
           };
-
         }
       );
 }
