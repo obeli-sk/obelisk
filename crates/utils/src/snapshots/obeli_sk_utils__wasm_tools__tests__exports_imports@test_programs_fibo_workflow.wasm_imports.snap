@@ -3,16 +3,6 @@ source: crates/utils/src/wasm_tools.rs
 expression: imports
 ---
 {
-  "obelisk:log/log.trace": [
-    [
-      {
-        "type_wrapper": "String",
-        "name": "message",
-        "wit_type": "string"
-      }
-    ],
-    null
-  ],
   "obelisk:workflow/host-activities.new-join-set": [
     [],
     {
