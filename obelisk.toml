@@ -85,7 +85,7 @@ default_max_retries = 0
 
 [[workflow]]
 name = "fibo_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-07@sha256:a0d9393bf99855437567128e435ee824d653f71e65fb70d73222dbb34f5b0b03"
+location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-08@sha256:a1293a75704d56602881caaea42b92d11cd88fc7258a3ac30d41a9bc73614483"
 exec.lock_expiry.secs = 2
 
 [[activity_wasm]]
