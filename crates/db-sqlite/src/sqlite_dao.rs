@@ -788,7 +788,7 @@ impl SqlitePool {
                 .map_err(convert_err)?;
                 Ok(IndexUpdated {
                     intermittent_event_count: None,
-                    pending_at: Some(PendingAt { ffqn, scheduled_at }),
+                    pending_at: Some(PendingAt { scheduled_at, ffqn }),
                 })
             }
             PendingState::Locked {

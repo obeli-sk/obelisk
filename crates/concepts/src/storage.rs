@@ -887,6 +887,7 @@ impl PendingState {
         }
     }
 
+    #[must_use]
     pub fn is_finished(&self) -> bool {
         matches!(self, PendingState::Finished { .. })
     }
