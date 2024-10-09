@@ -66,14 +66,7 @@ impl ExecutionJournal {
 
     #[must_use]
     pub fn version(&self) -> Version {
-        Version(
-            self.execution_events.len()
-                - if self.pending_state.is_finished() {
-                    1
-                } else {
-                    0
-                },
-        )
+        Version(self.execution_events.len() - usize::from(self.pending_state.is_finished()))
     }
 
     #[must_use]
