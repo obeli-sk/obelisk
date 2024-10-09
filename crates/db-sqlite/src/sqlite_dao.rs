@@ -1343,11 +1343,11 @@ impl SqlitePool {
         let pendnig_at = match previous_pending_state {
             PendingState::BlockedByJoinSet {
                 join_set_id: found_join_set_id,
-                ..
+                lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
             } if join_set_id == found_join_set_id => {
                 // update the pending state.
                 let pending_state = PendingState::PendingAt {
-                    scheduled_at: req.created_at, // TODO: test this
+                    scheduled_at: lock_expires_at, // TODO: test this
                 };
                 let next_version = Self::get_next_version(tx, execution_id)?;
                 Self::update_state(

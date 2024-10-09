@@ -361,7 +361,7 @@ pub enum HistoryEvent {
     #[display("JoinNext({join_set_id})")]
     JoinNext {
         join_set_id: JoinSetId,
-        /// Set to a future time if the executor is keeping the execution warm waiting for the result.
+        /// Set to a future time if the worker is keeping the execution warm waiting for the result.
         lock_expires_at: DateTime<Utc>,
     },
     #[display("Schedule({execution_id}, {scheduled_at})")]
