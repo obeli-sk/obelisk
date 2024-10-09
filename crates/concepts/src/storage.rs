@@ -21,8 +21,7 @@ use std::ops::Deref as _;
 use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoStaticStr;
-use tracing::debug;
-use tracing::trace;
+use tracing::error;
 use val_json::type_wrapper::TypeWrapper;
 
 /// Remote client representation of the execution journal.
@@ -506,7 +505,7 @@ pub enum DbError {
     #[error(transparent)]
     Connection(#[from] DbConnectionError),
     #[error(transparent)]
-    Specific(SpecificError),
+    Specific(#[from] SpecificError),
 }
 
 pub type AppendResponse = Version;
@@ -658,8 +657,77 @@ pub trait DbConnection: Send + Sync {
         parent_response_event: JoinSetResponseEvent,
     ) -> Result<AppendBatchResponse, DbError>;
 
+    #[cfg(feature = "test")]
     /// Get execution log.
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError>; // FIXME: make optional
+
+    async fn get_execution_event(
+        &self,
+        execution_id: ExecutionId,
+        version: &Version,
+    ) -> Result<ExecutionEvent, DbError>;
+
+    async fn get_create_request(
+        &self,
+        execution_id: ExecutionId,
+    ) -> Result<CreateRequest, DbError> {
+        let execution_event = self
+            .get_execution_event(execution_id, &Version::new(0))
+            .await?;
+        if let ExecutionEventInner::Created {
+            ffqn,
+            params,
+            parent,
+            scheduled_at,
+            retry_exp_backoff,
+            max_retries,
+            config_id,
+            return_type,
+            metadata,
+            topmost_parent,
+        } = execution_event.event
+        {
+            Ok(CreateRequest {
+                created_at: execution_event.created_at,
+                execution_id,
+                ffqn,
+                params,
+                parent,
+                scheduled_at,
+                retry_exp_backoff,
+                max_retries,
+                config_id,
+                return_type,
+                metadata,
+                topmost_parent,
+            })
+        } else {
+            error!(%execution_id, "Execution log must start with creation");
+            Err(DbError::Specific(SpecificError::ConsistencyError(
+                StrVariant::Static("execution log must start with creation"),
+            )))
+        }
+    }
+
+    async fn get_finished_result(
+        &self,
+        execution_id: ExecutionId,
+        finished: PendingStateFinished,
+    ) -> Result<(FinishedExecutionResult, DateTime<Utc>), DbError> {
+        let last_event = self
+            .get_execution_event(execution_id, &Version::new(finished.version))
+            .await?;
+        if let ExecutionEventInner::Finished { result } = last_event.event {
+            Ok((result, last_event.created_at))
+        } else {
+            error!(%execution_id, %finished, "Execution event is not the `Finished` variant");
+            Err(DbError::Specific(SpecificError::ConsistencyError(
+                StrVariant::Static("execution event is not the `Finished` variant"),
+            )))
+        }
+    }
+
+    async fn get_pending_state(&self, execution_id: ExecutionId) -> Result<PendingState, DbError>;
 
     /// Get currently expired locks and async timers (delay requests)
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError>;
@@ -679,68 +747,35 @@ pub trait DbConnection: Send + Sync {
         &self,
         execution_id: ExecutionId,
         timeout: Option<Duration>,
-    ) -> Result<FinishedExecutionResult, ClientError> {
-        let execution_log = self
-            .wait_for_pending_state(execution_id, PendingState::Finished, timeout)
-            .await?;
-        Ok(execution_log
-            .into_finished_result()
-            .expect("pending state was checked"))
-    }
+    ) -> Result<FinishedExecutionResult, ClientError>;
 
-    /// Best effort for subscribe to pending executions.
+    /// Best effort for blocking while there are no pending executions.
     /// Return imediately if there are pending notifications at `pending_at_or_sooner`.
     /// Implementation must return not later than at expiry date, which is: `pending_at_or_sooner` + `max_wait`.
     /// Timers that expire until the expiry date can be disregarded.
     /// Databases that do not support subscriptions should wait for `max_wait`.
+    // FIXME: Rename to wait_for_pending
     async fn subscribe_to_pending(
         &self,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         max_wait: Duration,
     );
-
-    async fn wait_for_pending_state(
-        &self,
-        execution_id: ExecutionId,
-        expected_pending_state: PendingState,
-        timeout: Option<Duration>,
-    ) -> Result<ExecutionLog, ClientError> {
-        trace!(%execution_id, "Waiting for {expected_pending_state}");
-        let fut = async move {
-            loop {
-                let execution_log = self.get(execution_id).await?;
-                if execution_log.pending_state == expected_pending_state {
-                    debug!(%execution_id, "Found: {expected_pending_state}");
-                    return Ok(execution_log);
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await; // TODO: Switch to subscription-based approach
-            }
-        };
-
-        if let Some(timeout) = timeout {
-            tokio::select! { // future's liveness: Dropping the loser immediately.
-                res = fut => res,
-                () = tokio::time::sleep(timeout) => Err(ClientError::Timeout)
-            }
-        } else {
-            fut.await
-        }
-    }
 }
 
+#[cfg(feature = "test")]
 pub async fn wait_for_pending_state_fn<T: Debug>(
     db_connection: &dyn DbConnection,
     execution_id: ExecutionId,
     predicate: impl Fn(ExecutionLog) -> Option<T> + Send,
     timeout: Option<Duration>,
 ) -> Result<T, ClientError> {
-    trace!(%execution_id, "Waiting for predicate");
+    tracing::trace!(%execution_id, "Waiting for predicate");
     let fut = async move {
         loop {
             let execution_log = db_connection.get(execution_id).await?;
             if let Some(t) = predicate(execution_log) {
-                debug!(%execution_id, "Found: {t:?}");
+                tracing::debug!(%execution_id, "Found: {t:?}");
                 return Ok(t);
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -784,9 +819,7 @@ pub enum PendingState {
         lock_expires_at: DateTime<Utc>,
     },
     #[display("PendingAt(`{scheduled_at}`)")]
-    PendingAt {
-        scheduled_at: DateTime<Utc>,
-    }, // e.g. created with a schedule, intermittent timeout/failure
+    PendingAt { scheduled_at: DateTime<Utc> }, // e.g. created with a schedule, intermittent timeout/failure
     #[display("BlockedByJoinSet({join_set_id},`{lock_expires_at}`)")]
     /// Caused by [`HistoryEvent::JoinNext`]
     BlockedByJoinSet {
@@ -794,7 +827,15 @@ pub enum PendingState {
         /// See [`HistoryEvent::JoinNext::lock_expires_at`].
         lock_expires_at: DateTime<Utc>,
     },
-    Finished,
+    #[display("Finished")]
+    Finished { finished: PendingStateFinished },
+}
+
+#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
+#[display("_0")]
+pub struct PendingStateFinished {
+    pub version: usize, // not Version since it must be Copy
+    pub finished_at: DateTime<Utc>,
 }
 
 impl PendingState {
@@ -840,10 +881,14 @@ impl PendingState {
             PendingState::BlockedByJoinSet { .. } => Err(SpecificError::ValidationFailed(
                 StrVariant::Static("cannot append Locked event when in BlockedByJoinSet state"),
             )),
-            PendingState::Finished => Err(SpecificError::ValidationFailed(StrVariant::Static(
-                "already finished",
-            ))),
+            PendingState::Finished { .. } => Err(SpecificError::ValidationFailed(
+                StrVariant::Static("already finished"),
+            )),
         }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        matches!(self, PendingState::Finished { .. })
     }
 }
 

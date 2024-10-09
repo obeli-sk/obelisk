@@ -25,5 +25,8 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
+[features]
+test = []
+
 [lints]
 workspace = true

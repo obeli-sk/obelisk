@@ -684,7 +684,7 @@ pub(crate) mod tests {
                         .cloned()
                         .collect::<Vec<_>>(),
                 ))),
-                PendingState::Finished => Some(None),
+                PendingState::Finished { .. } => Some(None),
                 _ => None,
             },
             None,
@@ -748,7 +748,7 @@ pub(crate) mod tests {
         assert_eq!(0, child_execution_count);
         assert_eq!(0, delay_request_count);
         let execution_log = db_connection.get(execution_id).await.unwrap();
-        assert_eq!(PendingState::Finished, execution_log.pending_state);
+        assert!(execution_log.pending_state.is_finished());
         drop(db_connection);
         workflow_exec_task.close().await;
         timers_watcher_task.close().await;

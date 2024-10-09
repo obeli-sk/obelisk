@@ -1082,7 +1082,7 @@ mod tests {
                 .unwrap();
         }
         let child_log = db_pool.connection().get(child_execution_id).await.unwrap();
-        assert_eq!(PendingState::Finished, child_log.pending_state);
+        assert!(child_log.pending_state.is_finished());
         assert_eq!(
             ExecutionEventInner::Finished {
                 result: Err(expected_child_err)

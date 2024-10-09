@@ -57,6 +57,12 @@ impl From<String> for StrVariant {
     }
 }
 
+impl From<&'static str> for StrVariant {
+    fn from(value: &'static str) -> Self {
+        StrVariant::Static(value)
+    }
+}
+
 impl PartialEq for StrVariant {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {

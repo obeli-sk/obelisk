@@ -44,6 +44,7 @@ wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 
 [dev-dependencies]
+concepts = { workspace = true, features = ["test"] }
 db-mem.workspace = true
 db-sqlite = { workspace = true, features = ["tempfile"] }
 db-tests.workspace = true

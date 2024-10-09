@@ -9,9 +9,9 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-concepts.workspace = true
-db-mem.workspace = true
-db-sqlite = { workspace = true, features = ["tempfile"] }
+concepts = { workspace = true, features = ["test"] }
+db-mem = { workspace = true, features = ["test"] }
+db-sqlite = { workspace = true, features = ["tempfile", "test"] }
 test-utils.workspace = true
 utils.workspace = true
 val-json.workspace = true

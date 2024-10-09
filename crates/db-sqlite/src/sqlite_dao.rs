@@ -4,14 +4,14 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{DelayId, ExecutorId, JoinSetId, PrefixedUlid, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
-        DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
-        ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution,
-        PendingState, SpecificError, Version, DUMMY_CREATED, DUMMY_HISTORY_EVENT,
-        DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
+        AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
+        DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
+        ExecutionLog, ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse,
+        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockResponse,
+        LockedExecution, PendingState, PendingStateFinished, SpecificError, Version, DUMMY_CREATED,
+        DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
-    ExecutionId, FunctionFqn, StrVariant,
+    ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
 };
 use derivative::Derivative;
 use rusqlite::{
@@ -84,16 +84,18 @@ const CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_created_at ON t_join_set_response (execution_id, created_at);
 ";
 
-/// Stores executions in state: `Pending`, `PendingAt`, `Locked`, and delay requests.
+/// Stores executions in `PendingState`
 /// State to column mapping:
-/// `PendingAt`:  `ffqn`
-/// `BlockedByJoinSet`:      `join_set_id`
-/// `Locked`:                `executor_id`, `run_id`, `intermittent_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>, `return_type`
+/// `PendingAt`:            `ffqn`
+/// `BlockedByJoinSet`:     `join_set_id`
+/// `Locked`:               `executor_id`, `run_id`, `intermittent_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>, `return_type`
+/// `Finished` :            `finished_version` -> `next_version`
+//FIXME: Remove `return_type`
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
     next_version INTEGER NOT NULL,
-    pending_or_expires_at TEXT NOT NULL,
+    pending_expires_finished TEXT NOT NULL,
 
     ffqn TEXT,
 
@@ -107,11 +109,14 @@ CREATE TABLE IF NOT EXISTS t_state (
     parent_execution_id TEXT,
     parent_join_set_id TEXT,
     return_type TEXT,
-    PRIMARY KEY (execution_id, join_set_id)
+
+    PRIMARY KEY (execution_id)
 )
 ";
+// TODO execution_id, join_set_id IDX?
+// TODO execution_id, join_set_id IDX?
 const IDX_T_STATE_LOCK_PENDING: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (ffqn, pending_or_expires_at);
+CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (ffqn, pending_expires_finished);
 ";
 
 /// Represents [`ExpiredTimer::AsyncDelay`] . Rows are deleted when the delay is processed.
@@ -130,7 +135,7 @@ fn convert_err(err: rusqlite::Error) -> DbError {
     if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
         DbError::Specific(SpecificError::NotFound)
     } else {
-        error!("Sqlite error {err:?}");
+        error!(backtrace = %std::backtrace::Backtrace::capture(), "Sqlite error {err:?}");
         DbError::Specific(SpecificError::GenericError(StrVariant::Static(
             "sqlite error",
         )))
@@ -205,7 +210,8 @@ impl<T: FromStr<Err = D>, D: Debug> FromSql for FromStrWrapper<T> {
 
 #[derive(Debug)]
 struct CombinedStateDTO {
-    pending_or_expires_at: DateTime<Utc>,
+    ffqn: Option<String>,
+    pending_expires_finished: DateTime<Utc>,
     executor_id: Option<ExecutorId>,
     run_id: Option<RunId>,
     join_set_id: Option<JoinSetId>,
@@ -232,32 +238,46 @@ impl CombinedState {
     fn new(dto: &CombinedStateDTO, next_version: Version) -> Result<Self, DbError> {
         let pending_state = match dto {
             CombinedStateDTO {
-                pending_or_expires_at,
+                ffqn: Some(_),
+                pending_expires_finished: at,
                 executor_id: None,
                 run_id: None,
                 join_set_id: None,
-            } => Ok(PendingState::PendingAt {
-                scheduled_at: *pending_or_expires_at,
-            }), // merges PendingNow into PendingAt(default)
+            } => Ok(PendingState::PendingAt { scheduled_at: *at }),
             CombinedStateDTO {
-                pending_or_expires_at,
+                ffqn: None,
+                pending_expires_finished: at,
                 executor_id: Some(executor_id),
                 run_id: Some(run_id),
                 join_set_id: None,
             } => Ok(PendingState::Locked {
                 executor_id: *executor_id,
                 run_id: *run_id,
-                lock_expires_at: *pending_or_expires_at,
+                lock_expires_at: *at,
             }),
             CombinedStateDTO {
-                pending_or_expires_at,
+                ffqn: None,
+                pending_expires_finished: at,
                 executor_id: None,
                 run_id: None,
                 join_set_id: Some(join_set_id),
             } => Ok(PendingState::BlockedByJoinSet {
                 join_set_id: *join_set_id,
-                lock_expires_at: *pending_or_expires_at,
+                lock_expires_at: *at,
             }),
+            CombinedStateDTO {
+                ffqn: None,
+                pending_expires_finished: at,
+                executor_id: None,
+                run_id: None,
+                join_set_id: None,
+            } => Ok(PendingState::Finished {
+                finished: PendingStateFinished {
+                    finished_at: *at,
+                    version: next_version.0,
+                },
+            }),
+
             _ => {
                 error!("Cannot deserialize pending state from  {dto:?}");
                 Err(DbError::Specific(SpecificError::ConsistencyError(
@@ -702,62 +722,82 @@ impl SqlitePool {
         .map_err(convert_err)?;
         let next_version = Version::new(version.0 + 1);
         let pending_state = PendingState::PendingAt { scheduled_at };
-        let index_updated = Self::update_index(
+        let index_updated = Self::update_state(
             tx,
             execution_id,
-            &pending_state,
+            pending_state,
             &next_version,
-            false,
             Some(ffqn),
+            true,
         )?;
         Ok((next_version, index_updated.pending_at))
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %pending_state, %next_version, purge, ?ffqn))]
-    fn update_index(
+    fn update_state(
         tx: &Transaction,
         execution_id: ExecutionId,
-        pending_state: &PendingState,
+        pending_state: PendingState,
         next_version: &Version,
-        purge: bool,               // should the execution be deleted from `t_state`
         ffqn: Option<FunctionFqn>, // will be fetched from `Created` if required
+        create: bool,
     ) -> Result<IndexUpdated, DbError> {
         debug!("update_index");
         let execution_id_str = execution_id.to_string();
-        if purge {
+        if create {
+            assert_matches!(pending_state, PendingState::PendingAt { .. });
+        } else {
+            let expected_current_version = if let PendingState::Finished {
+                finished:
+                    PendingStateFinished {
+                        version: finished_version,
+                        ..
+                    },
+            } = &pending_state
+            {
+                assert_eq!(*finished_version, next_version.0); // `next_state` must not be bumped.
+                next_version.0
+            } else {
+                next_version.0 - 1
+            };
             let mut stmt = tx
-                .prepare_cached("DELETE FROM t_state WHERE execution_id = :execution_id")
+                .prepare_cached("DELETE FROM t_state WHERE execution_id = :execution_id") //  AND next_version = :expected_version
                 .map_err(convert_err)?;
-            stmt.execute(named_params! {
-                ":execution_id": execution_id_str,
-            })
-            .map_err(convert_err)?;
+            let deleted = stmt
+                .execute(named_params! {
+                    ":execution_id": execution_id_str,
+                    // ":expected_version": expected_current_version,
+                })
+                .map_err(convert_err)?;
+            if deleted != 1 {
+                error!("Failed updating state to {pending_state:?}");
+                return Err(DbError::Specific(SpecificError::ConsistencyError(
+                    "updating state failed".into(),
+                )));
+            }
         }
         match pending_state {
             PendingState::PendingAt { scheduled_at } => {
                 debug!("Setting state `Pending(`{scheduled_at:?}`)");
-                let mut stmt = tx.prepare(
-                    "INSERT INTO t_state (execution_id, next_version, pending_or_expires_at, ffqn) \
-                    VALUES (:execution_id, :next_version, :pending_or_expires_at, :ffqn)",
-                ).map_err(convert_err)?;
                 let ffqn = if let Some(ffqn) = ffqn {
                     ffqn
                 } else {
                     Self::fetch_created_event(tx, execution_id)?.ffqn
                 };
+                let mut stmt =  tx.prepare(
+                        "INSERT INTO t_state (execution_id, next_version, pending_expires_finished, ffqn) \
+                        VALUES (:execution_id, :next_version, :pending_expires_finished, :ffqn)",
+                    ).map_err(convert_err)?;
                 stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
                     ":next_version": next_version.0,
-                    ":pending_or_expires_at": scheduled_at,
+                    ":pending_expires_finished": scheduled_at,
                     ":ffqn": ffqn.to_string()
                 })
                 .map_err(convert_err)?;
                 Ok(IndexUpdated {
                     intermittent_event_count: None,
-                    pending_at: Some(PendingAt {
-                        ffqn,
-                        scheduled_at: *scheduled_at,
-                    }),
+                    pending_at: Some(PendingAt { ffqn, scheduled_at }),
                 })
             }
             PendingState::Locked {
@@ -772,10 +812,10 @@ impl SqlitePool {
                 let intermittent_event_count = Self::count_intermittent_events(tx, execution_id)?;
                 let create_req = Self::fetch_created_event(tx, execution_id)?;
                 let mut stmt = tx.prepare_cached(
-                "INSERT INTO t_state \
-                (execution_id, next_version, pending_or_expires_at, executor_id, run_id, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id, return_type) \
-                VALUES \
-                (:execution_id, :next_version, :pending_or_expires_at, :executor_id, :run_id, :intermittent_event_count, :max_retries, :retry_exp_backoff_millis, :parent_execution_id, :parent_join_set_id, :return_type)",
+                    "INSERT INTO t_state \
+                    (execution_id, next_version, pending_expires_finished, executor_id, run_id, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id, return_type) \
+                    VALUES \
+                    (:execution_id, :next_version, :pending_expires_finished, :executor_id, :run_id, :intermittent_event_count, :max_retries, :retry_exp_backoff_millis, :parent_execution_id, :parent_join_set_id, :return_type)",
                 ).map_err(convert_err)?;
                 let return_type = create_req
                     .return_type
@@ -790,7 +830,7 @@ impl SqlitePool {
                 stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
                     ":next_version": next_version.0, // If the lock expires, this version will be used by `expired_timers_watcher`.
-                    ":pending_or_expires_at": lock_expires_at,
+                    ":pending_expires_finished": lock_expires_at,
                     ":executor_id": executor_id.to_string(),
                     ":run_id": run_id.to_string(),
                     ":intermittent_event_count": intermittent_event_count,
@@ -811,25 +851,45 @@ impl SqlitePool {
             } => {
                 debug!(%join_set_id, "Setting state `BlockedByJoinSet({next_version},{lock_expires_at})`");
                 let mut stmt = tx.prepare_cached(
-                    "INSERT INTO t_state (execution_id, next_version, pending_or_expires_at, join_set_id) \
-                VALUES \
-                (:execution_id, :next_version, :pending_or_expires_at, :join_set_id)",
+                    "INSERT INTO t_state (execution_id, next_version, pending_expires_finished, join_set_id) \
+                                  VALUES (:execution_id, :next_version, :pending_expires_finished, :join_set_id)",
                 ).map_err(convert_err)?;
                 stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
-                    ":next_version": next_version.0, // If the lock expires, this version will be used by `expired_timers_watcher`.
-                    ":pending_or_expires_at": lock_expires_at,
+                    ":next_version": next_version.0,
+                    ":pending_expires_finished": lock_expires_at,
                     ":join_set_id": join_set_id.to_string(),
                 })
                 .map_err(convert_err)?;
                 Ok(IndexUpdated::default())
             }
-            PendingState::Finished => Ok(IndexUpdated::default()),
+            PendingState::Finished {
+                finished:
+                    PendingStateFinished {
+                        version: finished_version,
+                        finished_at,
+                    },
+            } => {
+                debug!("Setting state `Finished`");
+                let mut stmt = tx
+                    .prepare_cached(
+                        // the old next_version == finished_version
+                        "INSERT INTO t_state (execution_id, next_version, pending_expires_finished) VALUES (:execution_id, :next_version, :pending_expires_finished)",
+                    )
+                    .map_err(convert_err)?;
+                stmt.execute(named_params! {
+                    ":execution_id": execution_id_str,
+                    ":next_version": finished_version,
+                    ":pending_expires_finished": finished_at,
+                })
+                .map_err(convert_err)?;
+                Ok(IndexUpdated::default())
+            }
         }
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %next_version, purge))]
-    fn update_index_next_version(
+    fn bump_state_next_version(
         tx: &Transaction,
         execution_id: ExecutionId,
         next_version: &Version,
@@ -838,14 +898,17 @@ impl SqlitePool {
         debug!("update_index_version");
         let execution_id_str = execution_id.to_string();
         let mut stmt = tx.prepare_cached(
-            "UPDATE t_state SET next_version = :next_version WHERE execution_id = :execution_id AND next_version = :current_version",
+            "UPDATE t_state SET next_version = :next_version WHERE execution_id = :execution_id AND next_version = :next_version - 1",
         ).map_err(convert_err)?;
-        stmt.execute(named_params! {
-            ":execution_id": execution_id_str,
-            ":next_version": next_version.0,
-            ":current_version": next_version.0 - 1,
-        })
-        .map_err(convert_err)?;
+        let updated = stmt
+            .execute(named_params! {
+                ":execution_id": execution_id_str,
+                ":next_version": next_version.0,
+            })
+            .map_err(convert_err)?;
+        if updated != 1 {
+            return Err(DbError::Specific(SpecificError::NotFound));
+        }
         if let Some(DelayReq {
             join_set_id,
             delay_id,
@@ -871,13 +934,12 @@ impl SqlitePool {
         Ok(())
     }
 
-    // Map `t_state` into one of: `PendingAt`, `Locked`, `BlockedByJoinSet`. State `Finished` is merged into not found, represented as None.
-    fn get_pending_state(
+    fn get_combined_state(
         tx: &Transaction,
         execution_id: ExecutionId,
-    ) -> Result<Option<CombinedState>, DbError> {
+    ) -> Result<CombinedState, DbError> {
         let mut stmt = tx.prepare(
-            "SELECT next_version, pending_or_expires_at, executor_id, run_id, join_set_id FROM t_state WHERE \
+            "SELECT ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id FROM t_state WHERE \
         execution_id = :execution_id",
         ).map_err(convert_err)?;
         stmt.query_row(
@@ -887,8 +949,9 @@ impl SqlitePool {
             |row| {
                 Ok(CombinedState::new(
                     &CombinedStateDTO {
-                        pending_or_expires_at: row
-                            .get::<_, DateTime<Utc>>("pending_or_expires_at")?,
+                        ffqn: row.get("ffqn")?,
+                        pending_expires_finished: row
+                            .get::<_, DateTime<Utc>>("pending_expires_finished")?,
                         executor_id: row
                             .get::<_, Option<ExecutorIdW>>("executor_id")?
                             .map(|w| w.0),
@@ -901,9 +964,7 @@ impl SqlitePool {
                 ))
             },
         )
-        .optional()
         .map_err(convert_err)?
-        .transpose()
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %run_id, %executor_id))]
@@ -917,18 +978,14 @@ impl SqlitePool {
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockedExecution, DbError> {
         debug!("lock_inner");
-        let (pending_state, expected_version) = Self::get_pending_state(tx, execution_id)?
-            .map(|combined_state| (combined_state.pending_state, combined_state.next_version))
-            .ok_or_else(|| {
-                debug!("Execution does not exist or is already finished");
-                DbError::Specific(SpecificError::ValidationFailed(StrVariant::Static(
-                    "execution does not exist or is already finished",
-                )))
-            })?;
-        Self::check_expected_next_and_appending_version(&expected_version, &appending_version)?;
+        let CombinedState {
+            pending_state,
+            next_version: expected_version,
+        } = Self::get_combined_state(tx, execution_id)?;
         pending_state
             .can_append_lock(created_at, executor_id, run_id, lock_expires_at)
             .map_err(DbError::Specific)?;
+        Self::check_expected_next_and_appending_version(&expected_version, &appending_version)?;
 
         // Append to `execution_log` table.
         let event = ExecutionEventInner::Locked {
@@ -966,13 +1023,13 @@ impl SqlitePool {
         };
 
         let next_version = Version::new(appending_version.0 + 1);
-        let intermittent_event_count = Self::update_index(
+        let intermittent_event_count = Self::update_state(
             tx,
             execution_id,
-            &pending_state,
+            pending_state,
             &next_version,
-            true,
             None, // No need for ffqn as we are not constructing PendingState::Pending
+            false,
         )?
         .intermittent_event_count
         .expect("intermittent_event_count must be set");
@@ -1077,13 +1134,14 @@ impl SqlitePool {
         .map_err(convert_err)
     }
 
-    #[instrument(level = Level::TRACE, skip_all)]
+    #[instrument(level = Level::TRACE, skip_all, fields(%execution_id))]
     fn append(
         tx: &Transaction,
         execution_id: ExecutionId,
         req: &AppendRequest,
         appending_version: Version,
     ) -> Result<(AppendResponse, Option<PendingAt>), DbError> {
+        assert!(!matches!(req.event, ExecutionEventInner::Created { .. }));
         if let ExecutionEventInner::Locked {
             executor_id,
             run_id,
@@ -1102,12 +1160,14 @@ impl SqlitePool {
             return Ok((locked.version, None));
         }
 
-        let combined_state = Self::get_pending_state(tx, execution_id)?.ok_or_else(|| {
-            debug!("Execution does not exist or is already finished");
-            DbError::Specific(SpecificError::ValidationFailed(StrVariant::Static(
-                "execution does not exist or is already finished",
-            )))
-        })?;
+        let combined_state = dbg!(Self::get_combined_state(tx, execution_id)?);
+        if combined_state.pending_state.is_finished() {
+            debug!("Execution is already finished");
+            return Err(DbError::Specific(SpecificError::ValidationFailed(
+                StrVariant::Static("execution is already finished"),
+            )));
+        }
+
         Self::check_expected_next_and_appending_version(
             &combined_state.next_version,
             &appending_version,
@@ -1132,7 +1192,7 @@ impl SqlitePool {
         })
         .map_err(convert_err)?;
         // Calculate current pending state
-
+        let mut next_version = Version(appending_version.0 + 1);
         let index_action = match &req.event {
             ExecutionEventInner::Created { .. } => {
                 unreachable!("handled in the caller")
@@ -1148,7 +1208,13 @@ impl SqlitePool {
                 })
             }
             ExecutionEventInner::Finished { .. } => {
-                IndexAction::PendingStateChanged(PendingState::Finished)
+                next_version = appending_version.clone();
+                IndexAction::PendingStateChanged(PendingState::Finished {
+                    finished: PendingStateFinished {
+                        version: appending_version.0,
+                        finished_at: req.created_at,
+                    },
+                })
             }
             ExecutionEventInner::Unlocked => {
                 IndexAction::PendingStateChanged(PendingState::PendingAt {
@@ -1211,14 +1277,14 @@ impl SqlitePool {
                 }
             }
         };
-        let next_version = Version(appending_version.0 + 1);
+
         let pending_at = match index_action {
             IndexAction::PendingStateChanged(pending_state) => {
-                Self::update_index(tx, execution_id, &pending_state, &next_version, true, None)?
+                Self::update_state(tx, execution_id, pending_state, &next_version, None, false)?
                     .pending_at
             }
             IndexAction::NoPendingStateChange(delay_req) => {
-                Self::update_index_next_version(tx, execution_id, &next_version, delay_req)?;
+                Self::bump_state_next_version(tx, execution_id, &next_version, delay_req)?;
                 None
             }
         };
@@ -1259,20 +1325,18 @@ impl SqlitePool {
         .map_err(convert_err)?;
 
         // if the execution is going to be unblocked by this response...
-        let previous_pending_state = Self::get_pending_state(tx, execution_id)?
-            .map(|combined_state| combined_state.pending_state);
+        let previous_pending_state = Self::get_combined_state(tx, execution_id)?.pending_state;
         let pendnig_at = match previous_pending_state {
-            Some(PendingState::BlockedByJoinSet {
-                lock_expires_at,
+            PendingState::BlockedByJoinSet {
                 join_set_id: found_join_set_id,
                 ..
-            }) if join_set_id == found_join_set_id => {
+            } if join_set_id == found_join_set_id => {
                 // update the pending state.
                 let pending_state = PendingState::PendingAt {
-                    scheduled_at: lock_expires_at,
+                    scheduled_at: req.created_at, // TODO: test this
                 };
                 let next_version = Self::get_next_version(tx, execution_id)?;
-                Self::update_index(tx, execution_id, &pending_state, &next_version, true, None)?
+                Self::update_state(tx, execution_id, pending_state, &next_version, None, false)?
                     .pending_at
             }
             _ => None,
@@ -1296,6 +1360,83 @@ impl SqlitePool {
             response_subscribers.lock().unwrap().remove(&execution_id),
             pendnig_at,
         ))
+    }
+
+    #[cfg(feature = "test")]
+    fn get(tx: &Transaction, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
+        let mut stmt = tx
+            .prepare(
+                "SELECT created_at, json_value FROM t_execution_log WHERE \
+                        execution_id = :execution_id ORDER BY version",
+            )
+            .map_err(convert_err)?;
+        let events = stmt
+            .query_map(
+                named_params! {
+                    ":execution_id": execution_id.to_string(),
+                },
+                |row| {
+                    let created_at = row.get("created_at")?;
+                    let event = serde_json::from_value::<ExecutionEventInner>(
+                        row.get::<_, serde_json::Value>("json_value")?,
+                    )
+                    .map(|event| ExecutionEvent { created_at, event })
+                    .map_err(|serde| {
+                        error!("Cannot deserialize {row:?} - {serde:?}");
+                        parsing_err(serde)
+                    });
+                    Ok(event)
+                },
+            )
+            .map_err(convert_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(convert_err)?
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        if events.is_empty() {
+            return Err(DbError::Specific(SpecificError::NotFound));
+        }
+        let combined_state = Self::get_combined_state(tx, execution_id)?;
+        let responses = Self::get_responses(tx, execution_id)?;
+        Ok(ExecutionLog {
+            execution_id,
+            events,
+            responses,
+            version: combined_state.next_version, // In case of finished, this will be the already last version
+            pending_state: combined_state.pending_state,
+        })
+    }
+
+    fn get_execution_event(
+        tx: &Transaction,
+        execution_id: ExecutionId,
+        version: usize,
+    ) -> Result<ExecutionEvent, DbError> {
+        let mut stmt = tx
+            .prepare(
+                "SELECT created_at, json_value FROM t_execution_log WHERE \
+                        execution_id = :execution_id AND version = :version",
+            )
+            .map_err(convert_err)?;
+        stmt.query_row(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":version": version,
+            },
+            |row| {
+                let created_at = row.get("created_at")?;
+                let event = serde_json::from_value::<ExecutionEventInner>(
+                    row.get::<_, serde_json::Value>("json_value")?,
+                )
+                .map(|event| ExecutionEvent { created_at, event })
+                .map_err(|serde| {
+                    error!("Cannot deserialize {row:?} - {serde:?}");
+                    parsing_err(serde)
+                });
+                Ok(event)
+            },
+        )
+        .map_err(convert_err)?
     }
 
     fn get_responses(
@@ -1402,14 +1543,14 @@ impl SqlitePool {
             let mut stmt = conn
                 .prepare(
                     "SELECT execution_id, next_version FROM t_state WHERE \
-                            pending_or_expires_at <= :pending_or_expires_at AND ffqn = :ffqn \
-                            ORDER BY pending_or_expires_at LIMIT :batch_size",
+                            pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn \
+                            ORDER BY pending_expires_finished LIMIT :batch_size",
                 )
                 .map_err(convert_err)?;
             let execs_and_versions = stmt
                 .query_map(
                     named_params! {
-                        ":pending_or_expires_at": pending_at_or_sooner,
+                        ":pending_expires_finished": pending_at_or_sooner,
                         ":ffqn": ffqn.to_string(),
                         ":batch_size": batch_size - execution_ids_versions.len(),
                     },
@@ -1791,56 +1932,13 @@ impl DbConnection for SqlitePool {
         Ok(version)
     }
 
+    #[cfg(feature = "test")]
     #[instrument(level = Level::DEBUG, skip(self))]
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
         trace!("get");
-        self.transaction_read(move |tx| {
-            let mut stmt = tx
-                .prepare(
-                    "SELECT created_at, json_value FROM t_execution_log WHERE \
-                        execution_id = :execution_id ORDER BY version",
-                )
-                .map_err(convert_err)?;
-            let events = stmt
-                .query_map(
-                    named_params! {
-                        ":execution_id": execution_id.to_string(),
-                    },
-                    |row| {
-                        let created_at = row.get("created_at")?;
-                        let event = serde_json::from_value::<ExecutionEventInner>(
-                            row.get::<_, serde_json::Value>("json_value")?,
-                        )
-                        .map(|event| ExecutionEvent { created_at, event })
-                        .map_err(|serde| {
-                            error!("Cannot deserialize {row:?} - {serde:?}");
-                            parsing_err(serde)
-                        });
-                        Ok(event)
-                    },
-                )
-                .map_err(convert_err)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(convert_err)?
-                .into_iter()
-                .collect::<Result<Vec<_>, _>>()?;
-            if events.is_empty() {
-                return Err(DbError::Specific(SpecificError::NotFound));
-            }
-            let pending_state = Self::get_pending_state(tx, execution_id)?
-                .map_or(PendingState::Finished, |it| it.pending_state); // Execution exists and was not found in `t_state` => Finished
-            let version = Version::new(events.len());
-            let responses = Self::get_responses(tx, execution_id)?;
-            Ok(ExecutionLog {
-                execution_id,
-                events,
-                responses,
-                version,
-                pending_state,
-            })
-        })
-        .await
-        .map_err(DbError::from)
+        self.transaction_read(move |tx| Self::get(tx, execution_id))
+            .await
+            .map_err(DbError::from)
     }
 
     #[instrument(level = Level::DEBUG, skip(self))]
@@ -1932,7 +2030,7 @@ impl DbConnection for SqlitePool {
 
                     expired_timers.extend(conn.prepare(
                         "SELECT execution_id, next_version, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id, return_type FROM t_state \
-                        WHERE pending_or_expires_at <= :at AND executor_id IS NOT NULL",
+                        WHERE pending_expires_finished <= :at AND executor_id IS NOT NULL",
                     ).map_err(convert_err)?.query_map(
                             named_params! {
                                 ":at": at,
@@ -1997,6 +2095,73 @@ impl DbConnection for SqlitePool {
             _ = receiver.recv() => {} // Got results eventually
             () = tokio::time::sleep_until(sleep_until) => {} // Timeout
         }
+    }
+
+    async fn wait_for_finished_result(
+        &self,
+        execution_id: ExecutionId,
+        timeout: Option<Duration>,
+    ) -> Result<FinishedExecutionResult, ClientError> {
+        let execution_result = {
+            let fut = async move {
+                loop {
+                    if let Some(execution_result) = self
+                        .transaction_read(move |tx| {
+                            let pending_state =
+                                Self::get_combined_state(tx, execution_id)?.pending_state;
+                            if let PendingState::Finished { finished } = pending_state {
+                                let event =
+                                    Self::get_execution_event(tx, execution_id, finished.version)?;
+                                if let ExecutionEventInner::Finished { result } = event.event {
+                                    Ok(Some(result))
+                                } else {
+                                    error!("Mismatch, expected Finished row: {event:?} based on t_state {finished}");
+                                    Err(DbError::Specific(SpecificError::ConsistencyError(
+                                        StrVariant::Static(
+                                            "cannot get finished event based on t_state version",
+                                        ),
+                                    )))
+                                }
+                            } else {
+                                Ok(None)
+                            }
+                        })
+                        .await?
+                    {
+                        return Ok(execution_result);
+                    }
+                    // FIXME: change to subscription based approach
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            };
+
+            if let Some(timeout) = timeout {
+                tokio::select! { // future's liveness: Dropping the loser immediately.
+                    res = fut => res,
+                    () = tokio::time::sleep(timeout) => Err(ClientError::Timeout)
+                }
+            } else {
+                fut.await
+            }
+        }?;
+        Ok(execution_result)
+    }
+
+    async fn get_execution_event(
+        &self,
+        execution_id: ExecutionId,
+        version: &Version,
+    ) -> Result<ExecutionEvent, DbError> {
+        let version = version.0;
+        self.transaction_read(move |tx| Self::get_execution_event(tx, execution_id, version))
+            .await
+    }
+
+    async fn get_pending_state(&self, execution_id: ExecutionId) -> Result<PendingState, DbError> {
+        Ok(self
+            .transaction_read(move |tx| Self::get_combined_state(tx, execution_id))
+            .await?
+            .pending_state)
     }
 }
 

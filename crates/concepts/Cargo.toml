@@ -18,7 +18,7 @@ async-trait.workspace = true
 chrono.workspace = true
 derivative.workspace = true
 derive_more.workspace = true
-getrandom.workspace = true      # Only needed for the madsim patch
+getrandom.workspace = true             # Only needed for the madsim patch
 hashbrown.workspace = true
 indexmap.workspace = true
 opentelemetry.workspace = true
@@ -35,6 +35,9 @@ wasmtime.workspace = true
 
 [dev-dependencies]
 madsim.workspace = true
+
+[features]
+test = []
 
 [lints]
 workspace = true

@@ -5,11 +5,12 @@ use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
-        AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection, DbError,
-        DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, Version,
+        AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
+        DbConnection, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
+        ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
+        LockResponse, PendingState, Version,
     },
-    ExecutionId, FunctionFqn,
+    ExecutionId, FinishedExecutionResult, FunctionFqn,
 };
 use db_mem::inmemory_dao::InMemoryPool;
 use db_sqlite::sqlite_dao::SqlitePool;
@@ -186,5 +187,24 @@ impl DbConnection for DbConnectionProxy {
         self.0
             .subscribe_to_pending(pending_at_or_sooner, ffqns, max_wait)
             .await;
+    }
+    async fn wait_for_finished_result(
+        &self,
+        execution_id: ExecutionId,
+        timeout: Option<Duration>,
+    ) -> Result<FinishedExecutionResult, ClientError> {
+        self.0.wait_for_finished_result(execution_id, timeout).await
+    }
+
+    async fn get_pending_state(&self, execution_id: ExecutionId) -> Result<PendingState, DbError> {
+        self.0.get_pending_state(execution_id).await
+    }
+
+    async fn get_execution_event(
+        &self,
+        execution_id: ExecutionId,
+        version: &Version,
+    ) -> Result<ExecutionEvent, DbError> {
+        self.0.get_execution_event(execution_id, version).await
     }
 }

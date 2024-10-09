@@ -19,14 +19,12 @@ use crate::grpc_util::TonicResult;
 use crate::init;
 use anyhow::bail;
 use anyhow::Context;
-use assert_matches::assert_matches;
+use chrono::DateTime;
+use chrono::Utc;
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
-use concepts::storage::ExecutionEvent;
-use concepts::storage::ExecutionEventInner;
-use concepts::storage::ExecutionLog;
 use concepts::storage::PendingState;
 use concepts::ComponentRetryConfig;
 use concepts::ConfigId;
@@ -208,18 +206,24 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(execution_id));
-        let execution_log = self
-            .db_pool
-            .connection()
-            .get(execution_id)
-            .await
-            .to_status()?;
-        let current_pending_state = execution_log.pending_state;
-        let grpc_pending_status = convert_execution_status(&execution_log);
+        let (create_request, mut current_pending_state, grpc_pending_status) = {
+            let conn = self.db_pool.connection();
+            let create_request = conn.get_create_request(execution_id).await.to_status()?;
+            let current_pending_state = conn.get_pending_state(execution_id).await.to_status()?;
+            let grpc_pending_status = convert_execution_status(
+                conn,
+                execution_id,
+                current_pending_state,
+                create_request.created_at,
+                &create_request.ffqn,
+            )
+            .await?;
+            (create_request, current_pending_state, grpc_pending_status)
+        };
         let is_finished = grpc_pending_status.is_finished();
         let summary = grpc::GetStatusResponse {
             message: Some(Message::Summary(ExecutionSummary {
-                function_name: Some(execution_log.ffqn().into()),
+                function_name: Some(create_request.ffqn.clone().into()),
                 current_status: Some(grpc_pending_status),
             })),
         };
@@ -236,42 +240,68 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 .expect("mpsc bounded channel requires buffer > 0");
             let db_pool = self.db_pool.clone();
 
-            tokio::spawn(async move {
-                loop {
-                    let sleep_until = now_tokio_instant() + Duration::from_millis(500);
+            tokio::spawn(
+                async move {
                     loop {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                        if db_pool.is_closing() {
-                            debug!("Exitting get_status early, database is closing");
-                            let _ = tx.send(TonicResult::Err(tonic::Status::aborted("server is shutting down"))).await;
-                            return;
-                        }
-                        if now_tokio_instant() >= sleep_until {
-                            break;
-                        }
-                    }
-
-                    // FIXME: pagination
-                    match db_pool.connection().get(execution_id).await {
-                        Ok(execution_log) => {
-                            if execution_log.pending_state != current_pending_state {
-                                let grpc_pending_status = convert_execution_status(&execution_log);
-                                let is_finished = grpc_pending_status.is_finished();
-                                let message = grpc::GetStatusResponse {
-                                    message: Some(Message::CurrentStatus(grpc_pending_status)),
-                                };
-                                if tx.send(TonicResult::Ok(message)).await.is_err() || is_finished {
-                                    return;
-                                }
+                        let sleep_until = now_tokio_instant() + Duration::from_millis(500);
+                        loop {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            if db_pool.is_closing() {
+                                debug!("Exitting get_status early, database is closing");
+                                let _ = tx
+                                    .send(TonicResult::Err(tonic::Status::aborted(
+                                        "server is shutting down",
+                                    )))
+                                    .await;
+                                return;
+                            }
+                            if now_tokio_instant() >= sleep_until {
+                                break;
                             }
                         }
-                        Err(db_err) => {
-                            error!("Database error while streaming status of {execution_id} - {db_err:?}");
-                            return;
+                        let conn = db_pool.connection();
+                        match conn.get_pending_state(execution_id).await {
+                            Ok(pending_state) => {
+                                if pending_state != current_pending_state {
+                                    let grpc_pending_status = match convert_execution_status(
+                                        conn,
+                                        execution_id,
+                                        pending_state,
+                                        create_request.created_at,
+                                        &create_request.ffqn,
+                                    )
+                                    .await
+                                    {
+                                        Ok(status) => status,
+                                        Err(tonic_status) => {
+                                            let _ = tx.send(TonicResult::Err(tonic_status)).await;
+                                            return;
+                                        }
+                                    };
+                                    let is_finished = grpc_pending_status.is_finished();
+                                    let message = grpc::GetStatusResponse {
+                                        message: Some(Message::CurrentStatus(grpc_pending_status)),
+                                    };
+                                    let send_res = tx.send(TonicResult::Ok(message)).await;
+                                    if send_res.is_err() || is_finished {
+                                        return;
+                                    }
+                                    current_pending_state = pending_state;
+                                }
+                            }
+                            Err(db_err) => {
+                                error!("Database error while streaming status - {db_err:?}");
+                                let _ = tx
+                                    .send(TonicResult::Err(tonic::Status::internal(
+                                        "database error",
+                                    )))
+                                    .await;
+                                return;
+                            }
                         }
                     }
                 }
-            }.in_current_span()
+                .in_current_span(),
             );
             let output = ReceiverStream::new(rx);
             Ok(tonic::Response::new(
@@ -372,10 +402,16 @@ fn to_any<T: serde::Serialize>(serializable: T, uri: String) -> Option<prost_wkt
         })
 }
 
-fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStatus {
+async fn convert_execution_status(
+    conn: impl DbConnection,
+    execution_id: ExecutionId,
+    pending_state: PendingState,
+    execution_created_at: DateTime<Utc>,
+    ffqn: &FunctionFqn,
+) -> Result<grpc::ExecutionStatus, tonic::Status> {
     use grpc::execution_status::{BlockedByJoinSet, Finished, Locked, PendingAt, Status};
-    grpc::ExecutionStatus {
-        status: Some(match execution_log.pending_state {
+    Ok(grpc::ExecutionStatus {
+        status: Some(match pending_state {
             PendingState::Locked {
                 executor_id: _,
                 run_id,
@@ -394,30 +430,19 @@ fn convert_execution_status(execution_log: &ExecutionLog) -> grpc::ExecutionStat
                 join_set_id: Some(join_set_id.into()),
                 lock_expires_at: Some(lock_expires_at.into()),
             }),
-            PendingState::Finished => {
-                let finished = execution_log.last_event();
-                let finished_at = finished.created_at;
-                let finished = assert_matches!(finished, ExecutionEvent {
-                    event: ExecutionEventInner::Finished { result },
-                    ..
-                } => result);
+            PendingState::Finished { finished } => {
+                let (finished, finished_at) = conn
+                    .get_finished_result(execution_id, finished)
+                    .await
+                    .to_status()?;
                 Status::Finished(Finished {
-                    result: to_any(
-                        finished,
-                        format!(
-                            "urn:obelisk:json:params:{ffqn}",
-                            ffqn = execution_log.ffqn()
-                        ),
-                    ),
-                    created_at: execution_log
-                        .events
-                        .first()
-                        .map(|event| event.created_at.into()),
+                    result: to_any(finished, format!("urn:obelisk:json:params:{ffqn}")),
+                    created_at: Some(execution_created_at.into()),
                     finished_at: Some(finished_at.into()),
                 })
             }
         }),
-    }
+    })
 }
 
 pub(crate) async fn run(

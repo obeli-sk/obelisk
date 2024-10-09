@@ -9,13 +9,13 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::{
-    AppendBatchResponse, AppendRequest, AppendResponse, CreateRequest, DbConnection,
-    DbConnectionError, DbError, DbPool, ExecutionEventInner, ExecutionLog, ExpiredTimer,
-    JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, SpecificError,
-    Version,
+    AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest, DbConnection,
+    DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
+    ExpiredTimer, JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution,
+    SpecificError, Version,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
-use concepts::{ExecutionId, FunctionFqn, StrVariant};
+use concepts::{ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
 use std::collections::BTreeMap;
@@ -153,6 +153,7 @@ impl DbConnection for InMemoryDbConnection {
             .map_err(DbError::Specific)
     }
 
+    #[cfg(feature = "test")]
     #[instrument(skip_all, %execution_id)]
     async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
         self.0
@@ -160,6 +161,19 @@ impl DbConnection for InMemoryDbConnection {
             .await
             .get(execution_id)
             .map_err(DbError::Specific)
+    }
+
+    async fn get_execution_event(
+        &self,
+        execution_id: ExecutionId,
+        version: &Version,
+    ) -> Result<ExecutionEvent, DbError> {
+        let execution_log = self.0.lock().await.get(execution_id)?;
+        Ok(execution_log
+            .events
+            .get(version.0)
+            .cloned()
+            .ok_or(SpecificError::NotFound)?)
     }
 
     async fn subscribe_to_next_responses(
@@ -217,6 +231,51 @@ impl DbConnection for InMemoryDbConnection {
                 }
             }
         }
+    }
+
+    async fn wait_for_finished_result(
+        &self,
+        execution_id: ExecutionId,
+        timeout: Option<Duration>,
+    ) -> Result<FinishedExecutionResult, ClientError> {
+        let execution_log = {
+            let fut = async move {
+                loop {
+                    let execution_log = self
+                        .0
+                        .lock()
+                        .await
+                        .get(execution_id)
+                        .map_err(DbError::Specific)?;
+                    if execution_log.pending_state.is_finished() {
+                        return Ok(execution_log);
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            };
+
+            if let Some(timeout) = timeout {
+                tokio::select! { // future's liveness: Dropping the loser immediately.
+                    res = fut => res,
+                    () = tokio::time::sleep(timeout) => Err(ClientError::Timeout)
+                }
+            } else {
+                fut.await
+            }
+        }?;
+        Ok(execution_log
+            .into_finished_result()
+            .expect("pending state was checked"))
+    }
+
+    async fn get_pending_state(&self, execution_id: ExecutionId) -> Result<PendingState, DbError> {
+        Ok(self
+            .0
+            .lock()
+            .await
+            .get(execution_id)
+            .map_err(DbError::Specific)?
+            .pending_state)
     }
 }
 
@@ -308,7 +367,7 @@ mod index {
                         .or_default()
                         .push(lock_expires_at);
                 }
-                PendingState::BlockedByJoinSet { .. } | PendingState::Finished => {}
+                PendingState::BlockedByJoinSet { .. } | PendingState::Finished { .. } => {}
             }
             // Add all open async timers
             let mut delay_req_resp = journal

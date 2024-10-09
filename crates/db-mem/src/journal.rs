@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
     CreateRequest, ExecutionEvent, ExecutionEventInner, HistoryEvent, JoinSetResponseEvent,
-    JoinSetResponseEventOuter,
+    JoinSetResponseEventOuter, PendingStateFinished,
 };
 use concepts::storage::{ExecutionLog, PendingState, SpecificError, Version};
 use concepts::{ExecutionId, ExecutionMetadata};
@@ -101,7 +101,7 @@ impl ExecutionJournal {
         created_at: DateTime<Utc>,
         event: ExecutionEventInner,
     ) -> Result<Version, SpecificError> {
-        if self.pending_state == PendingState::Finished {
+        if self.pending_state.is_finished() {
             return Err(SpecificError::ValidationFailed(StrVariant::Static(
                 "already finished",
             )));
@@ -145,8 +145,9 @@ impl ExecutionJournal {
     fn calculate_pending_state(&self) -> PendingState {
         self.execution_events
             .iter()
+            .enumerate()
             .rev()
-            .find_map(|event| match &event.event {
+            .find_map(|(idx, event)| match &event.event {
                 ExecutionEventInner::Created { scheduled_at, .. } => {
                     Some(PendingState::PendingAt {
                         scheduled_at: *scheduled_at,
@@ -157,7 +158,15 @@ impl ExecutionJournal {
                     scheduled_at: event.created_at,
                 }),
 
-                ExecutionEventInner::Finished { .. } => Some(PendingState::Finished),
+                ExecutionEventInner::Finished { .. } => {
+                    assert_eq!(self.execution_events.len() - 1, idx);
+                    Some(PendingState::Finished {
+                        finished: PendingStateFinished {
+                            version: idx,
+                            finished_at: event.created_at,
+                        },
+                    })
+                }
 
                 ExecutionEventInner::Locked {
                     executor_id,
