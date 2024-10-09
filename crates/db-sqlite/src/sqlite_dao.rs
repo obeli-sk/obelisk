@@ -728,9 +728,9 @@ impl SqlitePool {
             tx,
             execution_id,
             pending_state,
+            None, // no current version
             &next_version,
             Some(ffqn),
-            true,
         )?;
         Ok((next_version, index_updated.pending_at))
     }
@@ -740,43 +740,32 @@ impl SqlitePool {
         tx: &Transaction,
         execution_id: ExecutionId,
         pending_state: PendingState,
+        expected_current_version_or_create: Option<&Version>, // None iif creating new execution
         next_version: &Version,
         ffqn: Option<FunctionFqn>, // will be fetched from `Created` if required
-        create: bool,
     ) -> Result<IndexUpdated, DbError> {
         debug!("update_index");
         let execution_id_str = execution_id.to_string();
-        if create {
-            assert_matches!(pending_state, PendingState::PendingAt { .. });
-        } else {
-            let expected_current_version = if let PendingState::Finished {
-                finished:
-                    PendingStateFinished {
-                        version: finished_version,
-                        ..
-                    },
-            } = &pending_state
-            {
-                assert_eq!(*finished_version, next_version.0); // `next_state` must not be bumped.
-                next_version.0
-            } else {
-                next_version.0 - 1
-            };
+
+        if let Some(expected_current_version) = expected_current_version_or_create {
             let mut stmt = tx
-                .prepare_cached("DELETE FROM t_state WHERE execution_id = :execution_id") //  AND next_version = :expected_version
+                .prepare_cached("DELETE FROM t_state WHERE execution_id = :execution_id AND next_version = :expected_version")
                 .map_err(convert_err)?;
             let deleted = stmt
                 .execute(named_params! {
                     ":execution_id": execution_id_str,
-                    // ":expected_version": expected_current_version,
+                    ":expected_version": expected_current_version.0,
                 })
                 .map_err(convert_err)?;
             if deleted != 1 {
-                error!("Failed updating state to {pending_state:?}");
+                error!(backtrace = %std::backtrace::Backtrace::capture(), "Failed updating state to {pending_state:?}");
                 return Err(DbError::Specific(SpecificError::ConsistencyError(
                     "updating state failed".into(),
                 )));
             }
+        } else {
+            // Creating
+            assert_matches!(pending_state, PendingState::PendingAt { .. });
         }
         match pending_state {
             PendingState::PendingAt { scheduled_at } => {
@@ -1029,9 +1018,9 @@ impl SqlitePool {
             tx,
             execution_id,
             pending_state,
+            Some(&Version(next_version.0 - 1)),
             &next_version,
             None, // No need for ffqn as we are not constructing PendingState::Pending
-            false,
         )?
         .intermittent_event_count
         .expect("intermittent_event_count must be set");
@@ -1162,7 +1151,7 @@ impl SqlitePool {
             return Ok((locked.version, None));
         }
 
-        let combined_state = dbg!(Self::get_combined_state(tx, execution_id)?);
+        let combined_state = Self::get_combined_state(tx, execution_id)?;
         if combined_state.pending_state.is_finished() {
             debug!("Execution is already finished");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -1282,8 +1271,31 @@ impl SqlitePool {
 
         let pending_at = match index_action {
             IndexAction::PendingStateChanged(pending_state) => {
-                Self::update_state(tx, execution_id, pending_state, &next_version, None, false)?
-                    .pending_at
+                let expected_current_version = Version(
+                    if let PendingState::Finished {
+                        finished:
+                            PendingStateFinished {
+                                version: finished_version,
+                                ..
+                            },
+                    } = &pending_state
+                    {
+                        assert_eq!(*finished_version, next_version.0); // `next_state` must not be bumped.
+                        next_version.0
+                    } else {
+                        next_version.0 - 1
+                    },
+                );
+
+                Self::update_state(
+                    tx,
+                    execution_id,
+                    pending_state,
+                    Some(&expected_current_version),
+                    &next_version,
+                    None,
+                )?
+                .pending_at
             }
             IndexAction::NoPendingStateChange(delay_req) => {
                 Self::bump_state_next_version(tx, execution_id, &next_version, delay_req)?;
@@ -1338,8 +1350,15 @@ impl SqlitePool {
                     scheduled_at: req.created_at, // TODO: test this
                 };
                 let next_version = Self::get_next_version(tx, execution_id)?;
-                Self::update_state(tx, execution_id, pending_state, &next_version, None, false)?
-                    .pending_at
+                Self::update_state(
+                    tx,
+                    execution_id,
+                    pending_state,
+                    Some(&next_version), // not changing the version
+                    &next_version,
+                    None,
+                )?
+                .pending_at
             }
             _ => None,
         };
