@@ -113,10 +113,11 @@ CREATE TABLE IF NOT EXISTS t_state (
     PRIMARY KEY (execution_id)
 )
 ";
-// TODO execution_id, join_set_id IDX?
-// TODO execution_id, join_set_id IDX?
 const IDX_T_STATE_LOCK_PENDING: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (ffqn, pending_expires_finished);
+";
+const IDX_T_STATE_EXPIRED_TIMERS: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_state_expired_timers ON t_state (pending_expires_finished) WHERE executor_id IS NOT NULL;
 ";
 
 /// Represents [`ExpiredTimer::AsyncDelay`] . Rows are deleted when the delay is processed.
@@ -417,6 +418,7 @@ impl SqlitePool {
                     init(init_tx, CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID).unwrap();
                 let init_tx = init(init_tx, CREATE_TABLE_T_STATE).unwrap();
                 let init_tx = init(init_tx, IDX_T_STATE_LOCK_PENDING).unwrap();
+                let init_tx = init(init_tx, IDX_T_STATE_EXPIRED_TIMERS).unwrap();
                 let init_tx = init(init_tx, CREATE_TABLE_T_DELAY).unwrap();
                 init_tx.send(Ok(())).expect("sending init OK must succeed");
                 let mut vec: Vec<ThreadCommand> = Vec::with_capacity(config.queue_capacity);
