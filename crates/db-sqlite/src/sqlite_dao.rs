@@ -6,9 +6,9 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
         DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
-        ExecutionLog, ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockResponse,
-        LockedExecution, PendingState, PendingStateFinished, SpecificError, Version, DUMMY_CREATED,
+        ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
+        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution,
+        PendingState, PendingStateFinished, SpecificError, Version, DUMMY_CREATED,
         DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
     ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
@@ -1384,7 +1384,10 @@ impl SqlitePool {
     }
 
     #[cfg(feature = "test")]
-    fn get(tx: &Transaction, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
+    fn get(
+        tx: &Transaction,
+        execution_id: ExecutionId,
+    ) -> Result<concepts::storage::ExecutionLog, DbError> {
         let mut stmt = tx
             .prepare(
                 "SELECT created_at, json_value FROM t_execution_log WHERE \
@@ -1419,7 +1422,7 @@ impl SqlitePool {
         }
         let combined_state = Self::get_combined_state(tx, execution_id)?;
         let responses = Self::get_responses(tx, execution_id)?;
-        Ok(ExecutionLog {
+        Ok(concepts::storage::ExecutionLog {
             execution_id,
             events,
             responses,
@@ -1955,7 +1958,10 @@ impl DbConnection for SqlitePool {
 
     #[cfg(feature = "test")]
     #[instrument(level = Level::DEBUG, skip(self))]
-    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
+    async fn get(
+        &self,
+        execution_id: ExecutionId,
+    ) -> Result<concepts::storage::ExecutionLog, DbError> {
         trace!("get");
         self.transaction_read(move |tx| Self::get(tx, execution_id))
             .await
