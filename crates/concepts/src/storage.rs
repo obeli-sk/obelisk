@@ -30,7 +30,7 @@ pub struct ExecutionLog {
     pub execution_id: ExecutionId,
     pub events: Vec<ExecutionEvent>,
     pub responses: Vec<JoinSetResponseEventOuter>,
-    pub version: Version,
+    pub next_version: Version, // Is not advanced once in Finished state
     pub pending_state: PendingState,
 }
 

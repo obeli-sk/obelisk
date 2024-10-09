@@ -66,7 +66,14 @@ impl ExecutionJournal {
 
     #[must_use]
     pub fn version(&self) -> Version {
-        Version(self.execution_events.len())
+        Version(
+            self.execution_events.len()
+                - if self.pending_state.is_finished() {
+                    1
+                } else {
+                    0
+                },
+        )
     }
 
     #[must_use]
@@ -292,7 +299,7 @@ impl ExecutionJournal {
         ExecutionLog {
             execution_id: self.execution_id,
             events: self.execution_events.iter().cloned().collect(),
-            version: self.version(),
+            next_version: self.version(),
             pending_state: self.pending_state,
             responses: self.responses.clone(),
         }

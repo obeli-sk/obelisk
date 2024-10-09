@@ -1426,7 +1426,7 @@ impl SqlitePool {
             execution_id,
             events,
             responses,
-            version: combined_state.next_version, // In case of finished, this will be the already last version
+            next_version: combined_state.next_version, // In case of finished, this will be the already last version
             pending_state: combined_state.pending_state,
         })
     }

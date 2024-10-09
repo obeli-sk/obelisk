@@ -1115,7 +1115,7 @@ mod tests {
             info_span!("worker-test"),
             execution_id,
         );
-        (event_history, exec_log.version)
+        (event_history, exec_log.next_version)
     }
 
     #[rstest]

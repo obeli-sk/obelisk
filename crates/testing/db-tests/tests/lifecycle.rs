@@ -663,7 +663,7 @@ pub async fn append_batch_respond_to_parent(
 
         let parent_exe = db_connection.get(parent_id).await.unwrap();
         assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
-        version = parent_exe.version;
+        version = parent_exe.next_version;
 
         child_id
     };
