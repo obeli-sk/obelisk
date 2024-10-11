@@ -3,6 +3,71 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/obeli-sk/obelisk/compare/v0.4.0...v0.5.0) - 2024-10-11
+
+### Added
+
+- Filter out redundant pending state changes
+- [**breaking**] Use `__` as separator in envvars overriding the TOML
+- Do not require native TLS certs on HTTP
+- Retry when an OCI registry returns an error
+- [**breaking**] Rename table `wasm_activity` to `activity_wasm`
+- [**breaking**] Remove abbreviations in `Duration`
+- Change nanos-based `Duration` to a `Variant`
+- [**breaking**] Expose execution id and execution errors in `-await-next`
+- Expose webhooks via `component list`
+- [**breaking**] Do not convert permanent timeouts to `Err`
+- Implement Tuple de/serialization
+- Implement Flags de/serialization
+- Implement `Enum` de/serialization
+- Implement Variant de-serialization
+
+### Fixed
+
+- Forwarding of std streams in `[[webhook_component]]` must be optional
+- Do not block server shutdown with `get_status`
+- Include activity settings in `config_id` computation
+- Set `PendingAt` with `scheduled_at` set to `lock_expires_at`
+- Verify version consistency in `t_state`
+
+### Other
+
+- Remove `expect(dead_code)` in `env_vars`
+- Fix clippy
+- Bump non-conflicting breaking dependencies
+- Bump `flake.nix`
+- Run `cargo update`
+- Run `cargo upgrade`
+- Warn on missing metadata digest
+- [**breaking**] Replace `get` with `get_execution_event`
+- Remove logging from fibo workflow
+- Unify docker build target in `flake.nix`
+- Update milestones
+- Tweak `fibo_start_fiboas` to start `fiboa_concurrent`
+- Update milestones
+- Bump test components
+- Update the project plan
+- Add more specific logging on OCI pull failure
+- Use `ConfigStore` solely for `ConfigId` computation
+- Extract `ComponentConfigImportable`
+- Rename `ImportableType`
+- Rename `ComponentConfig`
+- Replace `allow` with `expect`
+- Rename `ImportType`
+- Fix finished exec log discrepancy in mem db
+- Fix clippy
+- Fix clippy
+- Use `ChildReturnValue` to avoid a db lookup
+- [**breaking**] Remove details from `PermanentFailure`
+- Format sources
+- Fix a clippy warning
+- Add index `idx_t_state_expired_timers`
+- Fix clippy
+- Update test snapshots
+- Update test snapshots
+- Move `execution_error_tuple` back to `wasm_tools`
+- Use `ActivityConfig` in `ActivityWorker`
+
 ## [0.4.0](https://github.com/obeli-sk/obelisk/compare/v0.3.0...v0.4.0) - 2024-10-02
 
 ### Added
