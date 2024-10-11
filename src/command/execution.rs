@@ -58,7 +58,7 @@ fn print_status(
             }
         }
         Some(Message::CurrentStatus(pending_status)) => {
-            print_pending_status(pending_status, old_pending_status)?
+            print_pending_status(pending_status, old_pending_status)?;
         }
         None => {}
     }
@@ -113,7 +113,7 @@ fn print_pending_status(
         }
     };
     if *old_pending_status != new_pending_status {
-        println!("{}", new_pending_status);
+        println!("{new_pending_status}");
         let _ = std::mem::replace(old_pending_status, new_pending_status);
     }
     Ok(())
