@@ -151,8 +151,10 @@ fn add_dependency(file: &Utf8Path) {
 }
 
 fn run_cargo_component_build(out_dir: &Path, name: &str, tripple: &str) -> PathBuf {
-    let mut cmd = Command::new("cargo-component");
-    cmd.arg("build")
+    // TODO: Switch back to `cargo-component` after https://github.com/bytecodealliance/cargo-component/pull/346
+    let mut cmd = Command::new("cargo");
+    cmd.arg("component")
+        .arg("build")
         .arg("--release")
         .arg(format!("--target={tripple}"))
         .arg(format!("--package={name}"))
