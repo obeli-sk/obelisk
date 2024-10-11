@@ -43,7 +43,10 @@ pub(crate) async fn submit(
     Ok(())
 }
 
-fn print_status(response: grpc::GetStatusResponse) -> Result<(), anyhow::Error> {
+fn print_status(
+    response: grpc::GetStatusResponse,
+    old_pending_status: &mut String,
+) -> Result<(), anyhow::Error> {
     use grpc::get_status_response::Message;
     match response.message {
         Some(Message::Summary(summary)) => {
@@ -51,23 +54,28 @@ fn print_status(response: grpc::GetStatusResponse) -> Result<(), anyhow::Error> 
                 println!("Function: {ffqn}");
             }
             if let Some(pending_status) = summary.current_status {
-                print_pending_status(pending_status)?;
+                print_pending_status(pending_status, old_pending_status)?;
             }
         }
-        Some(Message::CurrentStatus(pending_status)) => print_pending_status(pending_status)?,
+        Some(Message::CurrentStatus(pending_status)) => {
+            print_pending_status(pending_status, old_pending_status)?
+        }
         None => {}
     }
     Ok(())
 }
 
-fn print_pending_status(pending_status: grpc::ExecutionStatus) -> Result<(), anyhow::Error> {
+fn print_pending_status(
+    pending_status: grpc::ExecutionStatus,
+    old_pending_status: &mut String,
+) -> Result<(), anyhow::Error> {
     let Some(status) = pending_status.status else {
         return Ok(());
     };
-    match status {
-        Status::Locked(_) => println!("Locked"),
-        Status::PendingAt(_) => println!("Pending"),
-        Status::BlockedByJoinSet(_) => println!("BlockedByJoinSet"),
+    let new_pending_status = match status {
+        Status::Locked(_) => "Locked".to_string(),
+        Status::PendingAt(_) => "Pending".to_string(),
+        Status::BlockedByJoinSet(_) => "BlockedByJoinSet".to_string(),
         Status::Finished(Finished {
             result,
             created_at,
@@ -79,27 +87,34 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus) -> Result<(), any
                 .context("`result` must be UTF-8 encoded")?;
             let result: FinishedExecutionResult =
                 serde_json::from_str(&result).context("cannot deserialize `result`")?;
-            match &result {
+            let mut new_pending_status = match &result {
                 Ok(ret_val) => {
+                    let mut new_pending_status = String::new();
                     if ret_val.fallible_err().is_some() {
-                        println!("Execution returned an error result.");
+                        new_pending_status.push_str("Execution returned an error result.");
                     } else {
-                        println!("Execution finished successfuly.");
+                        new_pending_status.push_str("Execution finished successfuly.");
                     }
                     let val = serde_json::to_string_pretty(&ret_val.value()).unwrap();
-                    println!("{val}");
+                    new_pending_status.push_str(&format!("\n{val}"));
+                    new_pending_status
                 }
                 Err(err) => {
-                    println!("Execution error - {err}");
+                    format!("Execution error - {err}")
                 }
-            }
-            println!(
-                "Execution took {since_created:?}.",
+            };
+            new_pending_status.push_str(&format!(
+                "\nExecution took {since_created:?}.",
                 since_created = (finished_at - created_at)
                     .to_std()
                     .expect("must be non-negative")
-            );
+            ));
+            new_pending_status
         }
+    };
+    if *old_pending_status != new_pending_status {
+        println!("{}", new_pending_status);
+        let _ = std::mem::replace(old_pending_status, new_pending_status);
     }
     Ok(())
 }
@@ -136,8 +151,9 @@ pub(crate) async fn get(
         .await
         .to_anyhow()?
         .into_inner();
+    let mut pending_status_cache = String::new();
     while let Some(status) = stream.message().await? {
-        print_status(status)?;
+        print_status(status, &mut pending_status_cache)?;
     }
     Ok(())
 }
