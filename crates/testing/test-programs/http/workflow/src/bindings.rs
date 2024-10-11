@@ -538,9 +538,7 @@ pub mod exports {
                                 }
                                 ptr
                             } else {
-                                {
-                                    ::core::ptr::null_mut()
-                                }
+                                ::core::ptr::null_mut()
                             };
                             for (i, e) in vec7.into_iter().enumerate() {
                                 let base = result7.add(i * 8);
@@ -625,9 +623,7 @@ pub mod exports {
                                 }
                                 ptr
                             } else {
-                                {
-                                    ::core::ptr::null_mut()
-                                }
+                                ::core::ptr::null_mut()
                             };
                             for (i, e) in vec4.into_iter().enumerate() {
                                 let base = result4.add(i * 8);
@@ -892,7 +888,7 @@ macro_rules! __export_any_impl {
 #[doc(inline)]
 pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
-#[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
+#[link_section = "component-type:wit-bindgen:0.31.0:testing:http-workflow:any:encoded world"]
 #[doc(hidden)]
 pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1153] = *b"\
 \0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x87\x08\x01A\x02\x01\
@@ -919,8 +915,8 @@ get-successful\x01\x01\x01ps\x01j\x01\x02\x01s\x01@\x01\x04urls\x02\0\x03\x04\0\
 get-successful-concurrently\x01\x04\x01@\x02\x03urls\x0bconcurrencyy\0\x03\x04\0\
 \"get-successful-concurrently-stress\x01\x05\x04\x01\x1etesting:http-workflow/wo\
 rkflow\x05\x09\x04\x01\x19testing:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\
-\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.215.0\x10wit-\
-bindgen-rust\x060.30.0";
+\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.216.0\x10wit-\
+bindgen-rust\x060.31.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

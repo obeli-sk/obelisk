@@ -93,6 +93,15 @@ message GetStatusRequest {
 }
 
 message ExecutionStatus {
+
+    enum ResultKind {
+        OK = 0;
+        TIMEOUT = 1;
+        NONDETERMINISM_DETECTED = 2;
+        EXECUTION_FAILURE = 3;
+        FALLIBLE_ERROR = 4;
+    }
+
     message Locked {
         RunId run_id = 2;
         google.protobuf.Timestamp lock_expires_at = 3;
@@ -107,7 +116,9 @@ message ExecutionStatus {
     message Finished {
         google.protobuf.Any result = 1;
         google.protobuf.Timestamp created_at = 2;
+        reserved 3;
         google.protobuf.Timestamp finished_at = 4;
+        ResultKind result_kind = 5;
     }
     oneof status {
         Locked locked = 1;

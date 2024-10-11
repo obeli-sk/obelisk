@@ -966,7 +966,7 @@ macro_rules! __export_any_impl {
 #[doc(inline)]
 pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
-#[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
+#[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
 pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1707] = *b"\
 \0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb1\x0c\x01A\x02\x01\
@@ -1005,7 +1005,7 @@ s\x01\x01\x04\x01&testing:fibo-workflow/workflow-nesting\x05\x0d\x01B\x04\x01@\x
 \x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fibo\
 a-concurrent\x01\0\x04\x01\x1etesting:fibo-workflow/workflow\x05\x0e\x04\x01\x0b\
 any:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-\
-by\x02\x0dwit-component\x070.215.0\x10wit-bindgen-rust\x060.30.0";
+by\x02\x0dwit-component\x070.216.0\x10wit-bindgen-rust\x060.31.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

@@ -466,7 +466,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                             FinishedExecutionError::PermanentTimeout => {
                                 WastVal::Variant("permanent-timeout".to_string(), None)
                             }
-                            FinishedExecutionError::NonDeterminismDetected(_) => {
+                            FinishedExecutionError::NondeterminismDetected(_) => {
                                 WastVal::Variant("non-determinism".to_string(), None)
                             }
                             FinishedExecutionError::PermanentFailure(reason) => WastVal::Variant(

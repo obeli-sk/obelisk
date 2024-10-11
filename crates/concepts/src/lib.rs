@@ -17,6 +17,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use storage::{PendingStateFinishedError, PendingStateFinishedResultKind};
 use tracing::Span;
 use val_json::{
     type_wrapper::{TypeConversionError, TypeWrapper},
@@ -32,10 +33,21 @@ pub type FinishedExecutionResult = Result<SupportedFunctionReturnValue, Finished
 pub enum FinishedExecutionError {
     #[error("permanent timeout")]
     PermanentTimeout,
-    #[error("non-determinism detected, reason: `{0}`")]
-    NonDeterminismDetected(StrVariant),
+    #[error("nondeterminism detected: `{0}`")]
+    NondeterminismDetected(StrVariant),
     #[error("permanent failure: `{0}`")]
     PermanentFailure(StrVariant), // intermittent failure that is not retried (anymore) and cannot be mapped to the function result type
+}
+
+impl FinishedExecutionError {
+    #[must_use]
+    pub fn as_pending_state_finished_error(&self) -> PendingStateFinishedError {
+        match self {
+            Self::PermanentTimeout => PendingStateFinishedError::Timeout,
+            Self::PermanentFailure(_) => PendingStateFinishedError::ExecutionFailure,
+            Self::NondeterminismDetected(_) => PendingStateFinishedError::NondeterminismDetected,
+        }
+    }
 }
 
 #[derive(Clone, Eq, derive_more::Display)]
@@ -432,6 +444,15 @@ impl SupportedFunctionReturnValue {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         matches!(self, Self::None)
+    }
+
+    #[must_use]
+    pub fn as_pending_state_finished_result(&self) -> PendingStateFinishedResultKind {
+        if self.fallible_err().is_some() {
+            PendingStateFinishedResultKind(Err(PendingStateFinishedError::FallibleError))
+        } else {
+            PendingStateFinishedResultKind(Ok(()))
+        }
     }
 }
 

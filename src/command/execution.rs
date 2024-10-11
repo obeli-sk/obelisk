@@ -80,21 +80,20 @@ fn print_pending_status(
             result,
             created_at,
             finished_at,
+            result_kind,
         }) => {
             let created_at = DateTime::from(created_at.context("`created_at` must exist")?);
             let finished_at = DateTime::from(finished_at.context("`finished_at` must exist")?);
             let result = String::from_utf8(result.context("`result` must exist")?.value)
                 .context("`result` must be UTF-8 encoded")?;
+            let result_kind = grpc::execution_status::ResultKind::try_from(result_kind)
+                .expect("must be convertible back to ResultKind");
             let result: FinishedExecutionResult =
                 serde_json::from_str(&result).context("cannot deserialize `result`")?;
             let mut new_pending_status = match &result {
                 Ok(ret_val) => {
-                    let mut new_pending_status = String::new();
-                    if ret_val.fallible_err().is_some() {
-                        new_pending_status.push_str("Execution returned an error result.");
-                    } else {
-                        new_pending_status.push_str("Execution finished successfuly.");
-                    }
+                    let mut new_pending_status =
+                        format!("Execution finished: {}", result_kind.as_str_name());
                     let val = serde_json::to_string_pretty(&ret_val.value()).unwrap();
                     new_pending_status.push_str(&format!("\n{val}"));
                     new_pending_status

@@ -13,11 +13,14 @@ use crate::SupportedFunctionReturnValue;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use derive_more::FromStrError;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::fmt::Display;
 use std::ops::Deref as _;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoStaticStr;
@@ -827,7 +830,7 @@ pub enum PendingState {
         /// See [`HistoryEvent::JoinNext::lock_expires_at`].
         lock_expires_at: DateTime<Utc>,
     },
-    #[display("Finished")]
+    #[display("Finished({finished})")]
     Finished { finished: PendingStateFinished },
 }
 
@@ -836,6 +839,54 @@ pub enum PendingState {
 pub struct PendingStateFinished {
     pub version: usize, // not Version since it must be Copy
     pub finished_at: DateTime<Utc>,
+    pub result_kind: PendingStateFinishedResultKind,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
+)]
+pub struct PendingStateFinishedResultKind(pub Result<(), PendingStateFinishedError>);
+
+impl FromStr for PendingStateFinishedResultKind {
+    type Err = FromStrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "ok" {
+            Ok(PendingStateFinishedResultKind(Ok(())))
+        } else {
+            let err = PendingStateFinishedError::from_str(s)?;
+            Ok(PendingStateFinishedResultKind(Err(err)))
+        }
+    }
+}
+
+impl Display for PendingStateFinishedResultKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Ok(()) => write!(f, "ok"),
+            Err(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl From<&FinishedExecutionResult> for PendingStateFinishedResultKind {
+    fn from(result: &FinishedExecutionResult) -> Self {
+        match result {
+            Ok(supported_fn_return_value) => {
+                supported_fn_return_value.as_pending_state_finished_result()
+            }
+            Err(err) => PendingStateFinishedResultKind(Err(err.as_pending_state_finished_error())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, derive_more::FromStr)]
+#[display("_0")]
+pub enum PendingStateFinishedError {
+    Timeout,
+    NondeterminismDetected,
+    ExecutionFailure,
+    FallibleError,
 }
 
 impl PendingState {

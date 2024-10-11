@@ -8,8 +8,8 @@ use concepts::{
         DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
         ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution,
-        PendingState, PendingStateFinished, SpecificError, Version, DUMMY_CREATED,
-        DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
+        PendingState, PendingStateFinished, PendingStateFinishedResultKind, SpecificError, Version,
+        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
     ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
 };
@@ -89,7 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_created_at ON t_
 /// `PendingAt`:            `ffqn`
 /// `BlockedByJoinSet`:     `join_set_id`
 /// `Locked`:               `executor_id`, `run_id`, `intermittent_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>, `return_type`
-/// `Finished` :            `finished_version` -> `next_version`
+/// `Finished` :            `finished_version` -> `next_version`, `result`
 //FIXME: Remove `return_type`
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
@@ -109,6 +109,8 @@ CREATE TABLE IF NOT EXISTS t_state (
     parent_execution_id TEXT,
     parent_join_set_id TEXT,
     return_type TEXT,
+
+    result_kind TEXT,
 
     PRIMARY KEY (execution_id)
 )
@@ -216,6 +218,7 @@ struct CombinedStateDTO {
     executor_id: Option<ExecutorId>,
     run_id: Option<RunId>,
     join_set_id: Option<JoinSetId>,
+    result_kind: Option<PendingStateFinishedResultKind>,
 }
 
 #[derive(Debug)]
@@ -240,42 +243,49 @@ impl CombinedState {
         let pending_state = match dto {
             CombinedStateDTO {
                 ffqn: Some(_),
-                pending_expires_finished: at,
+                pending_expires_finished: scheduled_at,
                 executor_id: None,
                 run_id: None,
                 join_set_id: None,
-            } => Ok(PendingState::PendingAt { scheduled_at: *at }),
+                result_kind: None,
+            } => Ok(PendingState::PendingAt {
+                scheduled_at: *scheduled_at,
+            }),
             CombinedStateDTO {
                 ffqn: None,
-                pending_expires_finished: at,
+                pending_expires_finished: lock_expires_at,
                 executor_id: Some(executor_id),
                 run_id: Some(run_id),
                 join_set_id: None,
+                result_kind: None,
             } => Ok(PendingState::Locked {
                 executor_id: *executor_id,
                 run_id: *run_id,
-                lock_expires_at: *at,
+                lock_expires_at: *lock_expires_at,
             }),
             CombinedStateDTO {
                 ffqn: None,
-                pending_expires_finished: at,
+                pending_expires_finished: lock_expires_at,
                 executor_id: None,
                 run_id: None,
                 join_set_id: Some(join_set_id),
+                result_kind: None,
             } => Ok(PendingState::BlockedByJoinSet {
                 join_set_id: *join_set_id,
-                lock_expires_at: *at,
+                lock_expires_at: *lock_expires_at,
             }),
             CombinedStateDTO {
                 ffqn: None,
-                pending_expires_finished: at,
+                pending_expires_finished: finished_at,
                 executor_id: None,
                 run_id: None,
                 join_set_id: None,
+                result_kind: Some(result_kind),
             } => Ok(PendingState::Finished {
                 finished: PendingStateFinished {
-                    finished_at: *at,
+                    finished_at: *finished_at,
                     version: next_version.0,
+                    result_kind: *result_kind,
                 },
             }),
 
@@ -859,19 +869,22 @@ impl SqlitePool {
                     PendingStateFinished {
                         version: finished_version,
                         finished_at,
+                        result_kind,
                     },
             } => {
                 debug!("Setting state `Finished`");
                 let mut stmt = tx
                     .prepare_cached(
                         // the old next_version == finished_version
-                        "INSERT INTO t_state (execution_id, next_version, pending_expires_finished) VALUES (:execution_id, :next_version, :pending_expires_finished)",
+                        "INSERT INTO t_state (execution_id, next_version, pending_expires_finished, result_kind) \
+                                      VALUES (:execution_id, :next_version, :pending_expires_finished, :result_kind)",
                     )
                     .map_err(convert_err)?;
                 stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
                     ":next_version": finished_version,
                     ":pending_expires_finished": finished_at,
+                    ":result_kind": result_kind.to_string(),
                 })
                 .map_err(convert_err)?;
                 Ok(IndexUpdated::default())
@@ -930,7 +943,7 @@ impl SqlitePool {
         execution_id: ExecutionId,
     ) -> Result<CombinedState, DbError> {
         let mut stmt = tx.prepare(
-            "SELECT ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id FROM t_state WHERE \
+            "SELECT ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, result_kind FROM t_state WHERE \
         execution_id = :execution_id",
         ).map_err(convert_err)?;
         stmt.query_row(
@@ -950,6 +963,11 @@ impl SqlitePool {
                         join_set_id: row
                             .get::<_, Option<JoinSetIdW>>("join_set_id")?
                             .map(|w| w.0),
+                        result_kind: row
+                            .get::<_, Option<FromStrWrapper<PendingStateFinishedResultKind>>>(
+                                "result_kind",
+                            )?
+                            .map(|wrapper| wrapper.0),
                     },
                     Version::new(row.get("next_version")?),
                 ))
@@ -1198,12 +1216,13 @@ impl SqlitePool {
                     scheduled_at: *expires_at,
                 })
             }
-            ExecutionEventInner::Finished { .. } => {
+            ExecutionEventInner::Finished { result } => {
                 next_version = appending_version.clone();
                 IndexAction::PendingStateChanged(PendingState::Finished {
                     finished: PendingStateFinished {
                         version: appending_version.0,
                         finished_at: req.created_at,
+                        result_kind: PendingStateFinishedResultKind::from(result),
                     },
                 })
             }

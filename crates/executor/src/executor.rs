@@ -327,7 +327,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     ) -> Result<Option<Append>, DbError> {
         Ok(match worker_result {
             WorkerResult::Ok(result, new_version) => {
-                info!("Execution finished successfully");
+                info!(
+                    "Execution finished: {}",
+                    result.as_pending_state_finished_result()
+                );
                 let parent = parent.map(|(p, j)| (p, j, Ok(result.clone())));
                 let primary_event = ExecutionEventInner::Finished { result: Ok(result) };
                 Some(Append {
@@ -378,7 +381,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         version,
                     ) => {
                         info!("Non-determinism detected - {reason}");
-                        let result = Err(FinishedExecutionError::NonDeterminismDetected(reason));
+                        let result = Err(FinishedExecutionError::NondeterminismDetected(reason));
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)
                     }

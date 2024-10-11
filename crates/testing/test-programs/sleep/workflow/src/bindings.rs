@@ -551,7 +551,7 @@ macro_rules! __export_any_impl {
 #[doc(inline)]
 pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
-#[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
+#[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
 pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1066] = *b"\
 \0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb0\x07\x01A\x02\x01\
@@ -577,7 +577,7 @@ edule-schedule\x01\x04\x03\x01+testing:sleep-workflow-obelisk-ext/workflow\x05\x
 \x02\x08duration\x01\x0aiterations}\x01\0\x04\0\x0areschedule\x01\x03\x04\x01\x1f\
 testing:sleep-workflow/workflow\x05\x08\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\
 \0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.\
-215.0\x10wit-bindgen-rust\x060.30.0";
+216.0\x10wit-bindgen-rust\x060.31.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

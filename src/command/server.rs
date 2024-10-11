@@ -26,6 +26,8 @@ use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::storage::PendingState;
+use concepts::storage::PendingStateFinishedError;
+use concepts::storage::PendingStateFinishedResultKind;
 use concepts::ComponentRetryConfig;
 use concepts::ConfigId;
 use concepts::ConfigIdType;
@@ -431,14 +433,32 @@ async fn convert_execution_status(
                 lock_expires_at: Some(lock_expires_at.into()),
             }),
             PendingState::Finished { finished } => {
-                let (finished, finished_at) = conn
+                let (result, finished_at) = conn
                     .get_finished_result(execution_id, finished)
                     .await
                     .to_status()?;
                 Status::Finished(Finished {
-                    result: to_any(finished, format!("urn:obelisk:json:params:{ffqn}")),
+                    result: to_any(result, format!("urn:obelisk:json:params:{ffqn}")),
                     created_at: Some(execution_created_at.into()),
                     finished_at: Some(finished_at.into()),
+                    result_kind: match finished.result_kind {
+                        PendingStateFinishedResultKind(Ok(())) => {
+                            grpc::execution_status::ResultKind::Ok
+                        }
+                        PendingStateFinishedResultKind(Err(PendingStateFinishedError::Timeout)) => {
+                            grpc::execution_status::ResultKind::Timeout
+                        }
+                        PendingStateFinishedResultKind(Err(
+                            PendingStateFinishedError::NondeterminismDetected,
+                        )) => grpc::execution_status::ResultKind::NondeterminismDetected,
+                        PendingStateFinishedResultKind(Err(
+                            PendingStateFinishedError::ExecutionFailure,
+                        )) => grpc::execution_status::ResultKind::ExecutionFailure,
+                        PendingStateFinishedResultKind(Err(
+                            PendingStateFinishedError::FallibleError,
+                        )) => grpc::execution_status::ResultKind::FallibleError,
+                    }
+                    .into(),
                 })
             }
         }),

@@ -1988,9 +1988,7 @@ pub mod wasi {
                             }
                             ptr
                         } else {
-                            {
-                                ::core::ptr::null_mut()
-                            }
+                            ::core::ptr::null_mut()
                         };
                         for (i, e) in vec3.into_iter().enumerate() {
                             let base = result3.add(i * 16);
@@ -2151,9 +2149,7 @@ pub mod wasi {
                             }
                             ptr
                         } else {
-                            {
-                                ::core::ptr::null_mut()
-                            }
+                            ::core::ptr::null_mut()
                         };
                         for (i, e) in vec2.into_iter().enumerate() {
                             let base = result2.add(i * 8);
@@ -6182,9 +6178,7 @@ pub mod wasi {
                         }
                         ptr
                     } else {
-                        {
-                            ::core::ptr::null_mut()
-                        }
+                        ::core::ptr::null_mut()
                     };
                     for (i, e) in vec0.into_iter().enumerate() {
                         let base = result0.add(i * 4);
@@ -7647,7 +7641,7 @@ macro_rules! __export_any_impl {
 #[doc(inline)]
 pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
-#[link_section = "component-type:wit-bindgen:0.30.0:any:encoded world"]
+#[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
 pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 7275] = *b"\
 \0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf17\x01A\x02\x01A#\x01\
@@ -7795,7 +7789,7 @@ incoming-request\x03\0\0\x02\x03\x02\x01\x15\x04\0\x11response-outparam\x03\0\x0
 \x01i\x01\x01i\x03\x01@\x02\x07request\x04\x0cresponse-out\x05\x01\0\x04\0\x06ha\
 ndle\x01\x06\x04\x01\x20wasi:http/incoming-handler@0.2.0\x05\x16\x04\x01\x0bany:\
 any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\
-\x0dwit-component\x070.215.0\x10wit-bindgen-rust\x060.30.0";
+\x0dwit-component\x070.216.0\x10wit-bindgen-rust\x060.31.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {
