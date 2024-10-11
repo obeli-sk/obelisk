@@ -1,11 +1,12 @@
+#[cfg(any(feature = "tracing-chrome", feature = "tokio-console"))]
 #[derive(strum::Display, Clone, Copy)]
-#[expect(non_camel_case_types, dead_code)]
+#[expect(non_camel_case_types)]
 pub(crate) enum SupportedEnvVar {
     TOKIO_CONSOLE,
     CHROME_TRACE,
 }
 
-#[expect(dead_code)]
+#[cfg(any(feature = "tracing-chrome", feature = "tokio-console"))]
 pub(crate) fn is_env_true(key: &SupportedEnvVar) -> bool {
     std::env::var(key.to_string())
         .ok()
