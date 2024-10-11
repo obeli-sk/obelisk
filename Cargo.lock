@@ -1011,7 +1011,7 @@ dependencies = [
  "chrono",
  "derivative",
  "derive_more",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.0",
  "itertools 0.13.0",
  "madsim-tokio",
  "obeli-sk-concepts",
@@ -1595,7 +1595,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 dependencies = [
  "ahash",
- "allocator-api2",
  "serde",
 ]
 
@@ -1605,7 +1604,10 @@ version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e087f84d4f86bf4b218b927129862374b72199ae7d8657835f1e89000eea4fb"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash",
+ "serde",
 ]
 
 [[package]]
@@ -2362,7 +2364,7 @@ dependencies = [
  "directories",
  "docker_credential",
  "futures-util",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.0",
  "http 1.1.0",
  "itertools 0.13.0",
  "madsim-tokio",
@@ -2414,7 +2416,7 @@ dependencies = [
  "derivative",
  "derive_more",
  "getrandom",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.0",
  "indexmap 2.6.0",
  "madsim",
  "madsim-tokio",
@@ -2441,7 +2443,7 @@ dependencies = [
  "chrono",
  "derivative",
  "derive_more",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.0",
  "itertools 0.13.0",
  "madsim-tokio",
  "obeli-sk-concepts",
@@ -2468,7 +2470,7 @@ dependencies = [
  "db-tests",
  "derivative",
  "derive_more",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.0",
  "indexmap 2.6.0",
  "madsim",
  "madsim-tokio",
@@ -2494,7 +2496,7 @@ dependencies = [
  "cfg-if",
  "chrono",
  "derivative",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.0",
  "hyper 1.4.1",
  "indexmap 2.6.0",
  "insta",
@@ -2512,7 +2514,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
- "wit-parser 0.217.0",
+ "wit-parser 0.219.1",
 ]
 
 [[package]]
@@ -2526,7 +2528,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "wasmtime",
- "wast 217.0.0",
+ "wast 219.0.1",
 ]
 
 [[package]]
@@ -2545,7 +2547,7 @@ dependencies = [
  "derivative",
  "derive_more",
  "futures-util",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.0",
  "http-body-util",
  "hyper 1.4.1",
  "hyper-util",
@@ -3158,9 +3160,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.11.0"
+version = "1.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38200e5ee88914975b69f657f0801b6f6dccafd44fd9326302a4aaeecfacb1d8"
+checksum = "4219d74c6b67a3654a9fbebc4b419e22126d13d2f3c4a07ee0cb61ff79a79619"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -3286,9 +3288,9 @@ checksum = "afab94fb28594581f62d981211a9a4d53cc8130bbcbbb89a0440d9b8e81a7746"
 
 [[package]]
 name = "rstest"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b423f0e62bdd61734b67cd21ff50871dfaeb9cc74f869dcd6af974fbcb19936"
+checksum = "0a2c585be59b6b5dd66a9d2084aa1d8bd52fbdb806eafdeffb52791147862035"
 dependencies = [
  "futures",
  "futures-timer",
@@ -3298,9 +3300,9 @@ dependencies = [
 
 [[package]]
 name = "rstest_macros"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5e1711e7d14f74b12a58411c542185ef7fb7f2e7f8ee6e2940a883628522b42"
+checksum = "825ea780781b15345a146be27eaefb05085e337e869bff01b4306a4fd4a9ad5a"
 dependencies = [
  "cfg-if",
  "glob",
@@ -3852,7 +3854,7 @@ dependencies = [
 name = "test-programs-fibo-activity"
 version = "0.4.0"
 dependencies = [
- "wit-bindgen-rt 0.30.0",
+ "wit-bindgen-rt 0.34.0",
 ]
 
 [[package]]
@@ -3866,7 +3868,7 @@ dependencies = [
 name = "test-programs-fibo-webhook"
 version = "0.4.0"
 dependencies = [
- "wit-bindgen-rt 0.30.0",
+ "wit-bindgen-rt 0.34.0",
 ]
 
 [[package]]
@@ -3880,7 +3882,7 @@ dependencies = [
 name = "test-programs-fibo-workflow"
 version = "0.4.0"
 dependencies = [
- "wit-bindgen-rt 0.30.0",
+ "wit-bindgen-rt 0.34.0",
 ]
 
 [[package]]
@@ -3896,7 +3898,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "waki",
- "wit-bindgen-rt 0.30.0",
+ "wit-bindgen-rt 0.34.0",
 ]
 
 [[package]]
@@ -3910,7 +3912,7 @@ dependencies = [
 name = "test-programs-http-get-workflow"
 version = "0.4.0"
 dependencies = [
- "wit-bindgen-rt 0.30.0",
+ "wit-bindgen-rt 0.34.0",
 ]
 
 [[package]]
@@ -3924,7 +3926,7 @@ dependencies = [
 name = "test-programs-sleep-activity"
 version = "0.4.0"
 dependencies = [
- "wit-bindgen-rt 0.30.0",
+ "wit-bindgen-rt 0.34.0",
 ]
 
 [[package]]
@@ -3938,7 +3940,7 @@ dependencies = [
 name = "test-programs-sleep-workflow"
 version = "0.4.0"
 dependencies = [
- "wit-bindgen-rt 0.30.0",
+ "wit-bindgen-rt 0.34.0",
 ]
 
 [[package]]
@@ -4835,8 +4837,11 @@ version = "0.219.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c771866898879073c53b565a6c7b49953795159836714ac56a5befb581227c5"
 dependencies = [
+ "ahash",
  "bitflags 2.6.0",
+ "hashbrown 0.14.5",
  "indexmap 2.6.0",
+ "semver",
 ]
 
 [[package]]
@@ -5168,19 +5173,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ef140f1b49946586078353a453a1d28ba90adfc54dde75710bc1931de204d68"
 dependencies = [
  "leb128",
-]
-
-[[package]]
-name = "wast"
-version = "217.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79004ecebded92d3c710d4841383368c7f04b63d0992ddd6b0c7d5029b7629b7"
-dependencies = [
- "bumpalo",
- "leb128",
- "memchr",
- "unicode-width",
- "wasm-encoder 0.217.0",
 ]
 
 [[package]]
@@ -5586,9 +5578,9 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-rt"
-version = "0.30.0"
+version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2de7a3b06b9725d129b5cbd1beca968feed919c433305a23da46843185ecdd6"
+checksum = "744845cde309b8fa32408d6fb67456449278c66ea4dcd96de29797b302721f02"
 dependencies = [
  "bitflags 2.6.0",
 ]
@@ -5711,6 +5703,24 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser 0.217.0",
+]
+
+[[package]]
+name = "wit-parser"
+version = "0.219.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a86f669283257e8e424b9a4fc3518e3ade0b95deb9fbc0f93a1876be3eda598"
+dependencies = [
+ "anyhow",
+ "id-arena",
+ "indexmap 2.6.0",
+ "log",
+ "semver",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "unicode-xid",
+ "wasmparser 0.219.1",
 ]
 
 [[package]]
