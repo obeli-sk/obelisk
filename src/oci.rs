@@ -65,7 +65,7 @@ pub(crate) async fn pull_to_cache_dir(
             .instrument(info_span!("pull_manifest_and_config"))
             .await?;
         match image.digest() {
-            None => info!("Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}"),
+            None => warn!("Consider adding metadata digest to component's `location.oci` configuration: {image}@{metadata_digest}"),
             Some(specified) => {
                 debug!("Fetched metadata digest {metadata_digest}");
                 if specified != metadata_digest {
