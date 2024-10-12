@@ -1,6 +1,6 @@
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
-use crate::webhook_trigger::NAMESPACE_OBELISK_WITH_COLON;
 use crate::WasmFileError;
+use crate::NAMESPACE_OBELISK_WITH_COLON;
 use async_trait::async_trait;
 use concepts::storage::{DbConnection, DbPool};
 use concepts::{ConfigId, FunctionFqn, FunctionMetadata, PackageIfcFns, StrVariant};

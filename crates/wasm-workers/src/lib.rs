@@ -1,4 +1,5 @@
 use concepts::StrVariant;
+use concepts::NAMESPACE_OBELISK;
 use std::{error::Error, fmt::Debug};
 use utils::wasm_tools::{self};
 
@@ -7,8 +8,10 @@ mod component_logger;
 pub mod engines;
 pub mod epoch_ticker;
 pub mod std_output_stream;
-pub mod webhook_trigger;
+pub mod webhook;
 pub mod workflow;
+
+const NAMESPACE_OBELISK_WITH_COLON: &str = const_format::formatcp!("{}:", NAMESPACE_OBELISK);
 
 #[derive(thiserror::Error, Debug)]
 pub enum WasmFileError {
@@ -242,7 +245,7 @@ pub(crate) mod tests {
             ])]
         #[tokio::test]
         async fn webhook(wasm_path: &str) {
-            crate::webhook_trigger::tests::nosim::compile_webhook(wasm_path).await;
+            crate::webhook::webhook_trigger::tests::nosim::compile_webhook(wasm_path).await;
         }
     }
 }

@@ -5,7 +5,7 @@ use crate::workflow::workflow_ctx::host_activities::obelisk::types::time::Durati
 use crate::workflow::workflow_ctx::{
     host_activities, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
 };
-use crate::WasmFileError;
+use crate::{WasmFileError, NAMESPACE_OBELISK_WITH_COLON};
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
     ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner, HistoryEvent,
@@ -14,7 +14,7 @@ use concepts::storage::{
 use concepts::{
     ConfigId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
     FunctionMetadata, FunctionRegistry, IfcFqnName, ImportableType, Params, StrVariant,
-    SupportedFunctionReturnValue, NAMESPACE_OBELISK,
+    SupportedFunctionReturnValue,
 };
 use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
@@ -43,8 +43,6 @@ use wasmtime_wasi_http::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 const WASI_NAMESPACE_WITH_COLON: &str = "wasi:";
-pub(crate) const NAMESPACE_OBELISK_WITH_COLON: &str =
-    const_format::formatcp!("{}:", NAMESPACE_OBELISK);
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HttpTriggerConfig {
@@ -1090,11 +1088,10 @@ pub(crate) mod tests {
         use crate::activity::activity_worker::tests::{compile_activity, FIBO_10_OUTPUT};
         use crate::engines::{EngineConfig, Engines};
         use crate::tests::TestingFnRegistry;
-        use crate::webhook_trigger::{RetryConfigOverride, WebhookCompiled};
+        use crate::webhook::webhook_trigger::{self, RetryConfigOverride, WebhookCompiled};
         use crate::workflow::workflow_worker::tests::compile_workflow;
         use crate::{
             activity::activity_worker::tests::spawn_activity_fibo,
-            webhook_trigger,
             workflow::workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
         };
         use assert_matches::assert_matches;
