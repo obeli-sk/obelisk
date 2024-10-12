@@ -447,6 +447,9 @@ pub(crate) mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
 
+    #[cfg(not(madsim))]
+    const HTTP_GET_SUCCESSFUL_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
+
     pub(crate) async fn compile_workflow(
         wasm_path: &str,
     ) -> (WasmComponent, ConfigId, ImportableType) {
@@ -847,8 +850,6 @@ pub(crate) mod tests {
             Mock, MockServer, ResponseTemplate,
         };
         const BODY: &str = "ok";
-        pub const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
-        FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
 
         test_utils::set_up();
         let sim_clock = SimClock::new(DateTime::default());
@@ -897,7 +898,7 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at,
                 execution_id,
-                ffqn: HTTP_GET_WORKFLOW_FFQN,
+                ffqn: HTTP_GET_SUCCESSFUL_WORKFLOW_FFQN,
                 params,
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -945,7 +946,7 @@ pub(crate) mod tests {
             Mock, MockServer, ResponseTemplate,
         };
         const BODY: &str = "ok";
-        const HTTP_GET_WORKFLOW_FFQN: FunctionFqn =
+        const GET_SUCCESSFUL_CONCURRENTLY_STRESS: FunctionFqn =
             FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL_CONCURRENTLY_STRESS);
 
         test_utils::set_up();
@@ -1002,7 +1003,7 @@ pub(crate) mod tests {
             .create(CreateRequest {
                 created_at,
                 execution_id,
-                ffqn: HTTP_GET_WORKFLOW_FFQN,
+                ffqn: GET_SUCCESSFUL_CONCURRENTLY_STRESS,
                 params,
                 parent: None,
                 metadata: concepts::ExecutionMetadata::empty(),
@@ -1148,6 +1149,104 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(params, serde_json::to_string(&next_pending.params).unwrap());
         drop(exec_task);
+        db_pool.close().await.unwrap();
+    }
+
+    #[cfg(not(madsim))]
+    #[rstest]
+    #[tokio::test]
+    async fn http_get_fallible_err(
+        #[values(Database::Memory, Database::Sqlite)] database: Database,
+    ) {
+        use crate::activity_worker::tests::spawn_activity;
+        use chrono::DateTime;
+        use concepts::storage::{
+            PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,
+        };
+        use std::ops::Deref;
+
+        test_utils::set_up();
+        let sim_clock = SimClock::new(DateTime::default());
+        let (_guard, db_pool) = database.set_up().await;
+        let created_at = sim_clock.now();
+        let db_connection = db_pool.connection();
+        let fn_registry = TestingFnRegistry::new_from_components(vec![
+            compile_activity(
+                test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            )
+            .await,
+            compile_workflow(
+                test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+            )
+            .await,
+        ]);
+        let activity_exec_task = spawn_activity(
+            db_pool.clone(),
+            test_programs_http_get_activity_builder::TEST_PROGRAMS_HTTP_GET_ACTIVITY,
+            sim_clock.clone(),
+        )
+        .await;
+
+        let workflow_exec_task = spawn_workflow(
+            db_pool.clone(),
+            test_programs_http_get_workflow_builder::TEST_PROGRAMS_HTTP_GET_WORKFLOW,
+            sim_clock.clone(),
+            JoinNextBlockingStrategy::Await,
+            0,
+            fn_registry,
+        )
+        .await;
+
+        let url = "http://";
+        let params = Params::from_json_value(json!([url])).unwrap();
+        // Create an execution.
+        let execution_id = ExecutionId::generate();
+        db_connection
+            .create(CreateRequest {
+                created_at,
+                execution_id,
+                ffqn: HTTP_GET_SUCCESSFUL_WORKFLOW_FFQN,
+                params,
+                parent: None,
+                metadata: concepts::ExecutionMetadata::empty(),
+                scheduled_at: created_at,
+                retry_exp_backoff: Duration::ZERO,
+                max_retries: 0,
+                config_id: ConfigId::dummy_activity(),
+                return_type: None,
+                topmost_parent: execution_id,
+            })
+            .await
+            .unwrap();
+        // Check the result.
+        let res: SupportedFunctionReturnValue = assert_matches!(
+            db_connection
+                .wait_for_finished_result(execution_id, None)
+                .await
+                .unwrap(),
+            Ok(res) => res
+        );
+        let val = assert_matches!(res.value(), Some(wast_val) => wast_val);
+        let val = assert_matches!(val, WastVal::Result(Err(Some(val))) => val).deref();
+        let val = assert_matches!(val, WastVal::String(val) => val);
+        assert_eq!("empty host", val);
+
+        let pending_state = db_connection.get_pending_state(execution_id).await.unwrap();
+        assert_matches!(
+            pending_state,
+            PendingState::Finished {
+                finished: PendingStateFinished {
+                    result_kind: PendingStateFinishedResultKind(Err(
+                        PendingStateFinishedError::FallibleError
+                    )),
+                    ..
+                }
+            }
+        );
+
+        drop(db_connection);
+        activity_exec_task.close().await;
+        workflow_exec_task.close().await;
         db_pool.close().await.unwrap();
     }
 }
