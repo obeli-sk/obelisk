@@ -77,7 +77,7 @@ use utils::time::now_tokio_instant;
 use utils::time::ClockFn;
 use utils::time::Now;
 use utils::wasm_tools::SUFFIX_PKG_EXT;
-use wasm_workers::activity_worker::ActivityWorker;
+use wasm_workers::activity::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::webhook_trigger;

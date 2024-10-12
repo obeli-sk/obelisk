@@ -15,7 +15,7 @@ use std::{
 use tracing::instrument;
 use util::{replace_path_prefix_mkdir, FileOrFolder};
 use wasm_workers::{
-    activity_worker::ActivityConfig,
+    activity::activity_worker::ActivityConfig,
     envvar::EnvVar,
     workflow::workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig},
 };

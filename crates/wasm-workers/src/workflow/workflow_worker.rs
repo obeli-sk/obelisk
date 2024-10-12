@@ -412,7 +412,7 @@ pub(crate) mod tests {
     // TODO: test timeouts
     use super::*;
     use crate::{
-        activity_worker::tests::{
+        activity::activity_worker::tests::{
             compile_activity, spawn_activity_fibo, wasm_file_name, FIBO_10_INPUT, FIBO_10_OUTPUT,
         },
         engines::{EngineConfig, Engines},
@@ -842,7 +842,7 @@ pub(crate) mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         #[values(0, 10)] batching: u32,
     ) {
-        use crate::activity_worker::tests::spawn_activity;
+        use crate::activity::activity_worker::tests::spawn_activity;
         use chrono::DateTime;
         use std::ops::Deref;
         use wiremock::{
@@ -938,7 +938,7 @@ pub(crate) mod tests {
         join_next_strategy: JoinNextBlockingStrategy,
         #[values(0, 10)] batching: u32,
     ) {
-        use crate::activity_worker::tests::spawn_activity;
+        use crate::activity::activity_worker::tests::spawn_activity;
         use chrono::DateTime;
         use std::ops::Deref;
         use wiremock::{
@@ -1158,7 +1158,7 @@ pub(crate) mod tests {
     async fn http_get_fallible_err(
         #[values(Database::Memory, Database::Sqlite)] database: Database,
     ) {
-        use crate::activity_worker::tests::spawn_activity;
+        use crate::activity::activity_worker::tests::spawn_activity;
         use chrono::DateTime;
         use concepts::storage::{
             PendingStateFinished, PendingStateFinishedError, PendingStateFinishedResultKind,

@@ -2,8 +2,7 @@ use concepts::StrVariant;
 use std::{error::Error, fmt::Debug};
 use utils::wasm_tools::{self};
 
-mod activity_ctx;
-pub mod activity_worker;
+pub mod activity;
 mod component_logger;
 pub mod engines;
 pub mod epoch_ticker;
@@ -213,7 +212,7 @@ pub(crate) mod tests {
 
     mod populate_codegen_cache {
         use crate::{
-            activity_worker::tests::compile_activity,
+            activity::activity_worker::tests::compile_activity,
             workflow::workflow_worker::tests::compile_workflow,
         };
 

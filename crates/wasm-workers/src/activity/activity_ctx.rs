@@ -1,4 +1,4 @@
-use crate::activity_worker::ActivityConfig;
+use super::activity_worker::ActivityConfig;
 use crate::component_logger::{log_activities, ComponentLogger};
 use crate::std_output_stream::LogStream;
 use concepts::ExecutionId;

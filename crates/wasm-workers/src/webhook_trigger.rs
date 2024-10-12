@@ -1087,13 +1087,13 @@ pub(crate) mod tests {
     #[cfg(not(madsim))] // Due to TCP server/client
     pub(crate) mod nosim {
         use super::*;
-        use crate::activity_worker::tests::{compile_activity, FIBO_10_OUTPUT};
+        use crate::activity::activity_worker::tests::{compile_activity, FIBO_10_OUTPUT};
         use crate::engines::{EngineConfig, Engines};
         use crate::tests::TestingFnRegistry;
         use crate::webhook_trigger::{RetryConfigOverride, WebhookCompiled};
         use crate::workflow::workflow_worker::tests::compile_workflow;
         use crate::{
-            activity_worker::tests::spawn_activity_fibo,
+            activity::activity_worker::tests::spawn_activity_fibo,
             webhook_trigger,
             workflow::workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
         };

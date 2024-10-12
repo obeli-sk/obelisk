@@ -1,4 +1,4 @@
-use crate::activity_ctx::ActivityCtx;
+use super::activity_ctx::{self, ActivityCtx};
 use crate::component_logger::log_activities;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
@@ -9,7 +9,6 @@ use concepts::{FunctionMetadata, StrVariant};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::path::Path;
-use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{info, trace};
 use utils::time::{now_tokio_instant, ClockFn};
@@ -25,8 +24,6 @@ pub struct ActivityConfig {
     pub forward_stderr: Option<StdOutput>,
     pub env_vars: Arc<[EnvVar]>,
 }
-
-pub const TIMEOUT_SLEEP_UNIT: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
 pub struct ActivityWorker<C: ClockFn> {
@@ -102,7 +99,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Params: {params:?}", params = ctx.params);
         assert!(ctx.event_history.is_empty());
-        let mut store = crate::activity_ctx::store(
+        let mut store = activity_ctx::store(
             &self.engine,
             ctx.execution_id,
             &self.config,
