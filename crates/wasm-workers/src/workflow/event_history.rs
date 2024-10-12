@@ -1,7 +1,7 @@
-use crate::event_history::ProcessingStatus::Processed;
-use crate::event_history::ProcessingStatus::Unprocessed;
-use crate::workflow_ctx::WorkflowFunctionError;
-use crate::workflow_worker::JoinNextBlockingStrategy;
+use super::event_history::ProcessingStatus::Processed;
+use super::event_history::ProcessingStatus::Unprocessed;
+use super::workflow_ctx::WorkflowFunctionError;
+use super::workflow_worker::JoinNextBlockingStrategy;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::HistoryEventScheduledAt;
@@ -1061,10 +1061,10 @@ impl EventCall {
 
 #[cfg(test)]
 mod tests {
-    use crate::event_history::{EventCall, EventHistory};
+    use super::super::event_history::{EventCall, EventHistory};
+    use super::super::workflow_ctx::WorkflowFunctionError;
+    use super::super::workflow_worker::JoinNextBlockingStrategy;
     use crate::tests::fn_registry_dummy;
-    use crate::workflow_ctx::WorkflowFunctionError;
-    use crate::workflow_worker::JoinNextBlockingStrategy;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::JoinSetId;

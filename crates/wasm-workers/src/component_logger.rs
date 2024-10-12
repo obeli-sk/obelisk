@@ -26,3 +26,14 @@ impl ComponentLogger {
         self.span.in_scope(|| error!(target: TARGET, "{}", message));
     }
 }
+
+pub(crate) mod log_activities {
+
+    // Generate `obelisk::log::log`
+    wasmtime::component::bindgen!({
+        path: "host-wit/",
+        async: false,
+        interfaces: "import obelisk:log/log;",
+        trappable_imports: false,
+    });
+}

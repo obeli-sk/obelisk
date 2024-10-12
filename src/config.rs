@@ -17,7 +17,7 @@ use std::time::Duration;
 use toml::StdOutput;
 use tracing::instrument;
 use wasm_workers::envvar::EnvVar;
-use wasm_workers::workflow_worker::JoinNextBlockingStrategy;
+use wasm_workers::workflow::workflow_worker::JoinNextBlockingStrategy;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ComponentConfig {

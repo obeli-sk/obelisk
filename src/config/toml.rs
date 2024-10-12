@@ -17,7 +17,7 @@ use util::{replace_path_prefix_mkdir, FileOrFolder};
 use wasm_workers::{
     activity_worker::ActivityConfig,
     envvar::EnvVar,
-    workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig},
+    workflow::workflow_worker::{JoinNextBlockingStrategy, WorkflowConfig},
 };
 use webhook::{HttpServer, WebhookComponent};
 

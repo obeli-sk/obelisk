@@ -1,7 +1,7 @@
 use crate::activity_ctx::ActivityCtx;
+use crate::component_logger::log_activities;
 use crate::envvar::EnvVar;
 use crate::std_output_stream::StdOutput;
-use crate::workflow_ctx::log_activities;
 use crate::WasmFileError;
 use async_trait::async_trait;
 use concepts::{ConfigId, FunctionFqn, PackageIfcFns, SupportedFunctionReturnValue};

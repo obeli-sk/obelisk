@@ -1,7 +1,6 @@
 use crate::activity_worker::ActivityConfig;
-use crate::component_logger::ComponentLogger;
+use crate::component_logger::{log_activities, ComponentLogger};
 use crate::std_output_stream::LogStream;
-use crate::workflow_ctx::log_activities;
 use concepts::ExecutionId;
 use tracing::Span;
 use wasmtime::Engine;

@@ -83,8 +83,8 @@ use wasm_workers::epoch_ticker::EpochTicker;
 use wasm_workers::webhook_trigger;
 use wasm_workers::webhook_trigger::MethodAwareRouter;
 use wasm_workers::webhook_trigger::WebhookInstance;
-use wasm_workers::workflow_worker::WorkflowWorkerCompiled;
-use wasm_workers::workflow_worker::WorkflowWorkerLinked;
+use wasm_workers::workflow::workflow_worker::WorkflowWorkerCompiled;
+use wasm_workers::workflow::workflow_worker::WorkflowWorkerLinked;
 
 const EPOCH_MILLIS: u64 = 10;
 

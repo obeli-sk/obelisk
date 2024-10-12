@@ -1,6 +1,6 @@
-use crate::component_logger::ComponentLogger;
-use crate::event_history::{EventCall, EventHistory};
-use crate::workflow_worker::JoinNextBlockingStrategy;
+use super::event_history::{EventCall, EventHistory};
+use super::workflow_worker::JoinNextBlockingStrategy;
+use crate::component_logger::{log_activities, ComponentLogger};
 use crate::WasmFileError;
 use assert_matches::assert_matches;
 use async_trait::async_trait;
@@ -382,39 +382,27 @@ pub(crate) mod host_activities {
     }
 }
 
-pub(crate) mod log_activities {
-    use super::{ClockFn, DbConnection, DbPool, WorkflowCtx};
+impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::log::Host
+    for WorkflowCtx<C, DB, P>
+{
+    fn trace(&mut self, message: String) {
+        self.component_logger.trace(&message);
+    }
 
-    // Generate `obelisk::log::log`
-    wasmtime::component::bindgen!({
-        path: "host-wit/",
-        async: false,
-        interfaces: "import obelisk:log/log;",
-        trappable_imports: false,
-    });
+    fn debug(&mut self, message: String) {
+        self.component_logger.debug(&message);
+    }
 
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::log::log::Host
-        for WorkflowCtx<C, DB, P>
-    {
-        fn trace(&mut self, message: String) {
-            self.component_logger.trace(&message);
-        }
+    fn info(&mut self, message: String) {
+        self.component_logger.info(&message);
+    }
 
-        fn debug(&mut self, message: String) {
-            self.component_logger.debug(&message);
-        }
+    fn warn(&mut self, message: String) {
+        self.component_logger.warn(&message);
+    }
 
-        fn info(&mut self, message: String) {
-            self.component_logger.info(&message);
-        }
-
-        fn warn(&mut self, message: String) {
-            self.component_logger.warn(&message);
-        }
-
-        fn error(&mut self, message: String) {
-            self.component_logger.error(&message);
-        }
+    fn error(&mut self, message: String) {
+        self.component_logger.error(&message);
     }
 }
 
@@ -426,8 +414,8 @@ pub(crate) const SUFFIX_FN_SCHEDULE: &str = "-schedule";
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::{
-        tests::fn_registry_dummy, workflow_ctx::WorkflowCtx,
-        workflow_worker::JoinNextBlockingStrategy,
+        tests::fn_registry_dummy, workflow::workflow_ctx::WorkflowCtx,
+        workflow::workflow_worker::JoinNextBlockingStrategy,
     };
     use assert_matches::assert_matches;
     use async_trait::async_trait;

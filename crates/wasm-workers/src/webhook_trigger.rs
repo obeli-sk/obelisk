@@ -1,9 +1,8 @@
-use crate::component_logger::ComponentLogger;
+use crate::component_logger::{log_activities, ComponentLogger};
 use crate::envvar::EnvVar;
 use crate::std_output_stream::{LogStream, StdOutput};
-use crate::workflow_ctx::host_activities::obelisk::types::time::Duration as DurationEnum;
-use crate::workflow_ctx::log_activities;
-use crate::workflow_ctx::{
+use crate::workflow::workflow_ctx::host_activities::obelisk::types::time::Duration as DurationEnum;
+use crate::workflow::workflow_ctx::{
     host_activities, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
 };
 use crate::WasmFileError;
@@ -1092,11 +1091,11 @@ pub(crate) mod tests {
         use crate::engines::{EngineConfig, Engines};
         use crate::tests::TestingFnRegistry;
         use crate::webhook_trigger::{RetryConfigOverride, WebhookCompiled};
-        use crate::workflow_worker::tests::compile_workflow;
+        use crate::workflow::workflow_worker::tests::compile_workflow;
         use crate::{
             activity_worker::tests::spawn_activity_fibo,
             webhook_trigger,
-            workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
+            workflow::workflow_worker::{tests::spawn_workflow_fibo, JoinNextBlockingStrategy},
         };
         use assert_matches::assert_matches;
         use concepts::{

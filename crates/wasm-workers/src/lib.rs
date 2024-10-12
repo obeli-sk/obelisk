@@ -7,11 +7,9 @@ pub mod activity_worker;
 mod component_logger;
 pub mod engines;
 pub mod epoch_ticker;
-mod event_history;
 pub mod std_output_stream;
 pub mod webhook_trigger;
-mod workflow_ctx;
-pub mod workflow_worker;
+pub mod workflow;
 
 #[derive(thiserror::Error, Debug)]
 pub enum WasmFileError {
@@ -215,7 +213,8 @@ pub(crate) mod tests {
 
     mod populate_codegen_cache {
         use crate::{
-            activity_worker::tests::compile_activity, workflow_worker::tests::compile_workflow,
+            activity_worker::tests::compile_activity,
+            workflow::workflow_worker::tests::compile_workflow,
         };
 
         #[rstest::rstest(wasm_path => [
