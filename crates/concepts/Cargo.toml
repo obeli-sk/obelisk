@@ -35,6 +35,7 @@ wasmtime.workspace = true
 
 [dev-dependencies]
 madsim.workspace = true
+rstest.workspace = true
 
 [features]
 test = []

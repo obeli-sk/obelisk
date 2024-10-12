@@ -835,7 +835,7 @@ pub enum PendingState {
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
-#[display("_0")]
+#[display("{result_kind}")]
 pub struct PendingStateFinished {
     pub version: usize, // not Version since it must be Copy
     pub finished_at: DateTime<Utc>,
@@ -846,12 +846,12 @@ pub struct PendingStateFinished {
     Debug, Clone, Copy, PartialEq, Eq, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
 )]
 pub struct PendingStateFinishedResultKind(pub Result<(), PendingStateFinishedError>);
-
+const OK_VARIANT: &str = "Ok";
 impl FromStr for PendingStateFinishedResultKind {
     type Err = FromStrError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "ok" {
+        if s == OK_VARIANT {
             Ok(PendingStateFinishedResultKind(Ok(())))
         } else {
             let err = PendingStateFinishedError::from_str(s)?;
@@ -863,7 +863,7 @@ impl FromStr for PendingStateFinishedResultKind {
 impl Display for PendingStateFinishedResultKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.0 {
-            Ok(()) => write!(f, "ok"),
+            Ok(()) => write!(f, "{OK_VARIANT}"),
             Err(err) => write!(f, "{err}"),
         }
     }
@@ -881,7 +881,7 @@ impl From<&FinishedExecutionResult> for PendingStateFinishedResultKind {
 }
 
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, derive_more::FromStr)]
-#[display("_0")]
+#[display("{_0}")]
 pub enum PendingStateFinishedError {
     Timeout,
     NondeterminismDetected,
@@ -948,4 +948,43 @@ impl PendingState {
 pub enum LockKind {
     Extending,
     CreatingNewLock,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PendingStateFinished;
+    use super::PendingStateFinishedError;
+    use super::PendingStateFinishedResultKind;
+    use chrono::Utc;
+    use rstest::rstest;
+
+    #[rstest(expected => [
+        PendingStateFinishedResultKind(Result::Ok(())),
+        PendingStateFinishedResultKind(Result::Err(PendingStateFinishedError::Timeout)),
+    ])]
+    #[test]
+    fn serde_pending_state_finished_result_kind_should_work(
+        expected: PendingStateFinishedResultKind,
+    ) {
+        let ser = serde_json::to_string(&expected).unwrap();
+        let actual: PendingStateFinishedResultKind = serde_json::from_str(&ser).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[rstest(result_kind => [
+        PendingStateFinishedResultKind(Result::Ok(())),
+        PendingStateFinishedResultKind(Result::Err(PendingStateFinishedError::Timeout)),
+    ])]
+    #[test]
+    fn serde_pending_state_finished_should_work(result_kind: PendingStateFinishedResultKind) {
+        let expected = PendingStateFinished {
+            version: 0,
+            finished_at: Utc::now(),
+            result_kind,
+        };
+
+        let ser = serde_json::to_string(&expected).unwrap();
+        let actual: PendingStateFinished = serde_json::from_str(&ser).unwrap();
+        assert_eq!(expected, actual);
+    }
 }

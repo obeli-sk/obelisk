@@ -2422,6 +2422,7 @@ dependencies = [
  "madsim-tokio",
  "obeli-sk-val-json",
  "opentelemetry",
+ "rstest",
  "serde",
  "serde_json",
  "serde_with",
