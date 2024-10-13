@@ -124,21 +124,20 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [x] Forward stdout and stderr (configurable) of activities and webhooks
 - [x] Support for distributed tracing, logging from components collected by OTLP
 - [x] Mapping from any execution result (e.g. traps, timeouts, err variants) to other execution results via `-await-next`
-- [ ] Expose filesystem with directory mapping for activities, webhooks
-- [ ] Spawning processes from WASM activities, reading their outputs
-- [ ] External executors support - starting executions solely based on WIT exports. External executors must share write access to the sqlite database.
-- [ ] External activities gRPC API
-- [ ] Expose network configuration for activities, webhooks
-- [ ] Heterogenous join sets, allowing one join set to combine multiple function signatures and delays
 - [ ] HTML based UI for showing executions, event history and relations
-- [ ] Add examples with C#, Go, JS, Python
-- [ ] Print each component's imports and exports in WIT format
+- [ ] Print each component's imports and exports in the WIT format
+- [ ] Heterogenous join sets, allowing one join set to combine multiple function signatures and delays
+- [ ] Expose filesystem with directory mapping for activities, webhooks
+- [ ] Expose network configuration for activities, webhooks
+- [ ] Examples with C#, Go, JS, Python
 
 ## Future ideas
 * Interactive CLI for execution management
+* External activities gRPC API
 * OpenAPI activity generator
-* Limits on insertion of pending tasks or an eviction strategy like killing the oldest pending tasks.
-* Multi process executors
+* Spawning processes from WASM activities, reading their outputs
+* Backpressure: Limits on pending queues, or an eviction strategy, slow down on `LimitReached`
+* External executors support - starting executions solely based on WIT exports. External executors must share write access to the sqlite database.
 * Labels restricting workflows/activities to executors
 * Periodic scheduling
 * [Deadline propagation](https://sre.google/sre-book/addressing-cascading-failures)
@@ -156,7 +155,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 * Time traveling debugger for workflows, that works accross WASM deployments
 * Ability to hotfix a set of workflows, with an approval system when non determinism is detected
 * Trace strings to their origin accross workflows and activities
-* Webhook functions: translating between HTTP and WIT defined parameters and return value
+* Webhook mappings: running a single function, translating between HTTP and WIT defined parameters and return value
 * Distributed tracing context forwarding for outgoing HTTP as well as webhooks
 * Allow specifying permanent error variants in as annotations in WIT
 * Support for (distributed) sagas - define rollbacks on activities, call them on failed workflows
