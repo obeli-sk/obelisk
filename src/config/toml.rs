@@ -220,6 +220,8 @@ pub(crate) struct ActivityWasmConfigToml {
     pub(crate) forward_stderr: StdOutput,
     #[serde(default)]
     pub(crate) env_vars: Vec<EnvVar>,
+    #[serde(default = "default_retry_on_err")]
+    pub(crate) retry_on_err: bool,
 }
 
 #[derive(Debug)]
@@ -260,6 +262,7 @@ impl ActivityWasmConfigToml {
             forward_stdout: self.forward_stdout.into(),
             forward_stderr: self.forward_stderr.into(),
             env_vars,
+            retry_on_err: self.retry_on_err,
         };
         Ok(ActivityWasmConfigVerified {
             content_digest,
@@ -776,6 +779,9 @@ mod util {
         File,
         Folder,
     }
+}
+const fn default_retry_on_err() -> bool {
+    true
 }
 
 const fn default_max_retries() -> u32 {

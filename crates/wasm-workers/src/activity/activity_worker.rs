@@ -23,6 +23,7 @@ pub struct ActivityConfig {
     pub forward_stdout: Option<StdOutput>,
     pub forward_stderr: Option<StdOutput>,
     pub env_vars: Arc<[EnvVar]>,
+    pub retry_on_err: bool,
 }
 
 #[derive(Clone)]
@@ -140,7 +141,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         };
         let result_types = func.results(&mut store);
         let mut results = vec![Val::Bool(false); result_types.len()];
-
+        let retry_on_err = self.config.retry_on_err;
         let call_function = {
             let worker_span = ctx.worker_span.clone();
             async move {
@@ -175,23 +176,24 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
                     });
                 }
 
-                // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (IntermittentError)
-                // TODO: Allow specifying permanent error variants in as annotations in WIT
-                if let Some(exec_err) = result.fallible_err() {
-                    if ctx.can_be_retried {
-                        let reason = StrVariant::Arc(Arc::from(format!(
-                            "Execution returned an error result: `{exec_err:?}`"
-                        )));
-                        return WorkerResult::Err(WorkerError::IntermittentError {
-                            reason,
-                            err: None,
-                            version: ctx.version,
+                if retry_on_err {
+                    // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (IntermittentError)
+                    if let Some(exec_err) = result.fallible_err() {
+                        if ctx.can_be_retried {
+                            let reason = StrVariant::Arc(Arc::from(format!(
+                                "`result::err`: `{exec_err:?}`"
+                            )));
+                            return WorkerResult::Err(WorkerError::IntermittentError {
+                                reason,
+                                err: None,
+                                version: ctx.version,
+                            });
+                        }
+                        // else: log and pass the retval as is to be stored.
+                        worker_span.in_scope(|| {
+                            info!("Execution returned `result::err`, not able to retry");
                         });
                     }
-                    // else: log and pass the result as is to be stored.
-                    worker_span.in_scope(|| {
-                        info!("Execution returned an error result, not able to retry");
-                    });
                 }
                 WorkerResult::Ok(result, ctx.version)
             }
@@ -265,6 +267,7 @@ pub(crate) mod tests {
             forward_stdout: None,
             forward_stderr: None,
             env_vars: Arc::from([]),
+            retry_on_err: true,
         }
     }
 
