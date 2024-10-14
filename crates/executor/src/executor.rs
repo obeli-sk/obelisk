@@ -206,6 +206,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     executed_at,   // fetch expiring before now
                     self.ffqns.clone(),
                     executed_at, // created at
+                    self.config.config_id.clone(),
                     self.executor_id,
                     lock_expires_at,
                 )

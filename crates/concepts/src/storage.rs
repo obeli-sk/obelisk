@@ -267,8 +267,10 @@ pub enum ExecutionEventInner {
     // Created by an executor.
     // Either immediately followed by an execution request by an executor or
     // after expiry immediately followed by WaitingForExecutor by a scheduler.
-    #[display("Locked(`{lock_expires_at}`, {executor_id})")]
+    #[display("Locked(`{lock_expires_at}`, {config_id})")]
     Locked {
+        #[arbitrary(value = ConfigId::dummy_activity())]
+        config_id: ConfigId,
         executor_id: ExecutorId,
         run_id: RunId,
         lock_expires_at: DateTime<Utc>,
@@ -595,20 +597,24 @@ pub enum ClientError {
 
 #[async_trait]
 pub trait DbConnection: Send + Sync {
+    #[expect(clippy::too_many_arguments)]
     async fn lock_pending(
         &self,
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
+        config_id: ConfigId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError>;
 
     /// Specialized `append` which returns the event history.
+    #[expect(clippy::too_many_arguments)]
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
+        config_id: ConfigId,
         execution_id: ExecutionId,
         run_id: RunId,
         version: Version,
@@ -918,7 +924,7 @@ impl PendingState {
                 run_id: current_pending_state_run_id,
                 ..
             } => {
-                if executor_id == *current_pending_state_executor_id
+                if executor_id == *current_pending_state_executor_id // if the executor_id is same, config_id must be same as well
                     && run_id == *current_pending_state_run_id
                 {
                     // Original executor is extending the lock.

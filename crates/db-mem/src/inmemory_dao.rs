@@ -15,7 +15,7 @@ use concepts::storage::{
     SpecificError, Version,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
-use concepts::{ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant};
+use concepts::{ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant};
 use hashbrown::{HashMap, HashSet};
 use itertools::Either;
 use std::collections::BTreeMap;
@@ -42,6 +42,7 @@ impl DbConnection for InMemoryDbConnection {
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
+        config_id: ConfigId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError> {
@@ -50,6 +51,7 @@ impl DbConnection for InMemoryDbConnection {
             pending_at_or_sooner,
             &ffqns,
             created_at,
+            &config_id,
             executor_id,
             lock_expires_at,
         ))
@@ -64,6 +66,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
+        config_id: ConfigId,
         execution_id: ExecutionId,
         run_id: RunId,
         version: Version,
@@ -75,6 +78,7 @@ impl DbConnection for InMemoryDbConnection {
             .await
             .lock(
                 created_at,
+                config_id,
                 execution_id,
                 run_id,
                 version,
@@ -464,12 +468,14 @@ struct DbHolder {
 }
 
 impl DbHolder {
+    #[expect(clippy::too_many_arguments)]
     fn lock_pending(
         &mut self,
         batch_size: usize,
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: &[FunctionFqn],
         created_at: DateTime<Utc>,
+        config_id: &ConfigId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> LockPendingResponse {
@@ -501,6 +507,7 @@ impl DbHolder {
             let (new_event_history, new_version) = self
                 .lock(
                     created_at,
+                    config_id.clone(),
                     row.execution_id,
                     row.run_id,
                     row.version.clone(),
@@ -539,9 +546,11 @@ impl DbHolder {
         Ok(version)
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn lock(
         &mut self,
         created_at: DateTime<Utc>,
+        config_id: ConfigId,
         execution_id: ExecutionId,
         run_id: RunId,
         version: Version,
@@ -549,6 +558,7 @@ impl DbHolder {
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockResponse, SpecificError> {
         let event = ExecutionEventInner::Locked {
+            config_id,
             executor_id,
             lock_expires_at,
             run_id,

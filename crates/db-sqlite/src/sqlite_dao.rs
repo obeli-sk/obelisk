@@ -11,7 +11,7 @@ use concepts::{
         PendingState, PendingStateFinished, PendingStateFinishedResultKind, SpecificError, Version,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
-    ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
+    ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
 };
 use derivative::Derivative;
 use rusqlite::{
@@ -977,9 +977,11 @@ impl SqlitePool {
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %run_id, %executor_id))]
+    #[expect(clippy::too_many_arguments)]
     fn lock_inner(
         tx: &Transaction,
         created_at: DateTime<Utc>,
+        config_id: ConfigId,
         execution_id: ExecutionId,
         run_id: RunId,
         appending_version: Version,
@@ -998,6 +1000,7 @@ impl SqlitePool {
 
         // Append to `execution_log` table.
         let event = ExecutionEventInner::Locked {
+            config_id,
             executor_id,
             lock_expires_at,
             run_id,
@@ -1152,6 +1155,7 @@ impl SqlitePool {
     ) -> Result<(AppendResponse, Option<PendingAt>), DbError> {
         assert!(!matches!(req.event, ExecutionEventInner::Created { .. }));
         if let ExecutionEventInner::Locked {
+            config_id,
             executor_id,
             run_id,
             lock_expires_at,
@@ -1160,6 +1164,7 @@ impl SqlitePool {
             let locked = Self::lock_inner(
                 tx,
                 req.created_at,
+                config_id.clone(),
                 execution_id,
                 *run_id,
                 appending_version,
@@ -1687,6 +1692,7 @@ impl DbConnection for SqlitePool {
         pending_at_or_sooner: DateTime<Utc>,
         ffqns: Arc<[FunctionFqn]>,
         created_at: DateTime<Utc>,
+        config_id: ConfigId,
         executor_id: ExecutorId,
         lock_expires_at: DateTime<Utc>,
     ) -> Result<LockPendingResponse, DbError> {
@@ -1707,6 +1713,7 @@ impl DbConnection for SqlitePool {
                     let locked = Self::lock_inner(
                         tx,
                         created_at,
+                        config_id.clone(),
                         execution_id,
                         RunId::generate(),
                         version,
@@ -1726,6 +1733,7 @@ impl DbConnection for SqlitePool {
     async fn lock(
         &self,
         created_at: DateTime<Utc>,
+        config_id: ConfigId,
         execution_id: ExecutionId,
         run_id: RunId,
         version: Version,
@@ -1737,6 +1745,7 @@ impl DbConnection for SqlitePool {
             let locked = Self::lock_inner(
                 tx,
                 created_at,
+                config_id,
                 execution_id,
                 run_id,
                 version,

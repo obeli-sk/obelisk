@@ -111,6 +111,7 @@ impl ExecutionJournal {
             executor_id,
             lock_expires_at,
             run_id,
+            config_id: _,
         } = &event
         {
             self.pending_state.can_append_lock(
@@ -173,6 +174,7 @@ impl ExecutionJournal {
                     executor_id,
                     lock_expires_at,
                     run_id,
+                    config_id: _,
                 } => Some(PendingState::Locked {
                     executor_id: *executor_id,
                     lock_expires_at: *lock_expires_at,

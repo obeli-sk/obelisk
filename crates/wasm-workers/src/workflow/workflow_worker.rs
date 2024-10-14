@@ -1132,6 +1132,7 @@ pub(crate) mod tests {
                 sim_clock.now(),
                 Arc::from([RESCHEDULE_FFQN]),
                 sim_clock.now(),
+                ConfigId::dummy_activity(),
                 ExecutorId::generate(),
                 sim_clock.now() + Duration::from_secs(1),
             )
