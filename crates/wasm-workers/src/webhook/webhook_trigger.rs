@@ -260,6 +260,7 @@ impl<T> Default for MethodAwareRouter<T> {
     }
 }
 
+#[expect(clippy::too_many_arguments)]
 pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>(
     listener: TcpListener,
     engine: Arc<Engine>,
@@ -268,6 +269,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
     clock_fn: C,
     fn_registry: Arc<dyn FunctionRegistry>,
     request_timeout: Duration,
+    task_limiter: Option<Arc<tokio::sync::Semaphore>>,
 ) -> Result<(), WebhookServerError> {
     let router = Arc::new(router);
     loop {
@@ -276,39 +278,64 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
             .await
             .map_err(WebhookServerError::SocketError)?;
         let io = TokioIo::new(stream);
-        // Spawn a tokio task for each connection
-        // TODO: cancel on connection drop and on server exit
-        tokio::task::spawn({
-            let router = router.clone();
-            let engine = engine.clone();
-            let clock_fn = clock_fn.clone();
-            let db_pool = db_pool.clone();
-            let fn_registry = fn_registry.clone();
-            async move {
-                let res = http1::Builder::new()
-                    .serve_connection(
-                        io,
-                        hyper::service::service_fn(move |req| {
-                            debug!("method: {}, uri: {}", req.method(), req.uri());
-                            RequestHandler {
-                                engine: engine.clone(),
-                                clock_fn: clock_fn.clone(),
-                                db_pool: db_pool.clone(),
-                                fn_registry: fn_registry.clone(),
-                                request_timeout,
-                                execution_id: ExecutionId::generate(),
-                                router: router.clone(),
-                                phantom_data: PhantomData,
-                            }
-                            .handle_request(req)
-                        }),
-                    )
-                    .await;
-                if let Err(err) = res {
-                    error!("Error serving connection: {err:?}");
+        let task_limiter_guard = if let Some(task_limiter) = task_limiter.clone() {
+            task_limiter.try_acquire_owned().map(Some)
+        } else {
+            Ok(None)
+        };
+        if let Ok(task_limiter_guard) = task_limiter_guard {
+            // Spawn a tokio task for each connection
+            // TODO: cancel on connection drop and on server exit
+            tokio::task::spawn({
+                let router = router.clone();
+                let engine = engine.clone();
+                let clock_fn = clock_fn.clone();
+                let db_pool = db_pool.clone();
+                let fn_registry = fn_registry.clone();
+                async move {
+                    let res = http1::Builder::new()
+                        .serve_connection(
+                            io,
+                            hyper::service::service_fn(move |req| {
+                                debug!("method: {}, uri: {}", req.method(), req.uri());
+                                RequestHandler {
+                                    engine: engine.clone(),
+                                    clock_fn: clock_fn.clone(),
+                                    db_pool: db_pool.clone(),
+                                    fn_registry: fn_registry.clone(),
+                                    request_timeout,
+                                    execution_id: ExecutionId::generate(),
+                                    router: router.clone(),
+                                    phantom_data: PhantomData,
+                                }
+                                .handle_request(req)
+                            }),
+                        )
+                        .await;
+                    if let Err(err) = res {
+                        error!("Error serving connection: {err:?}");
+                    }
+                    drop(task_limiter_guard);
                 }
-            }
-        });
+            });
+        } else {
+            let _ = http1::Builder::new()
+                .serve_connection(
+                    io,
+                    hyper::service::service_fn(move |req| {
+                        debug!(
+                            "method: {}, uri: {} - Out of permits",
+                            req.method(),
+                            req.uri()
+                        );
+                        std::future::ready(Ok::<_, hyper::Error>(resp(
+                            "Out of permits",
+                            StatusCode::SERVICE_UNAVAILABLE,
+                        )))
+                    }),
+                )
+                .await;
+        }
     }
 }
 
@@ -919,6 +946,17 @@ struct RequestHandler<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPoo
     phantom_data: PhantomData<DB>,
 }
 
+fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
+    let body = BoxBody::new(http_body_util::BodyExt::map_err(
+        http_body_util::Full::new(Bytes::copy_from_slice(body.as_bytes())),
+        |_| unreachable!(),
+    ));
+    hyper::Response::builder()
+        .status(status_code)
+        .body(body)
+        .unwrap()
+}
+
 impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     RequestHandler<C, DB, P>
 {
@@ -930,16 +968,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         self.handle_request_inner(req, Span::current())
             .await
             .or_else(|err| {
-                fn resp(body: &str, status_code: StatusCode) -> hyper::Response<HyperOutgoingBody> {
-                    let body = BoxBody::new(http_body_util::BodyExt::map_err(
-                        http_body_util::Full::new(Bytes::copy_from_slice(body.as_bytes())),
-                        |_| unreachable!(),
-                    ));
-                    hyper::Response::builder()
-                        .status(status_code)
-                        .body(body)
-                        .unwrap()
-                }
                 debug!("{err:?}");
                 Ok(match err {
                     HandleRequestError::IncomingRequestError(err) => resp(
@@ -1194,6 +1222,7 @@ pub(crate) mod tests {
                         sim_clock.clone(),
                         fn_registry,
                         Duration::from_secs(1),
+                        None,
                     ))
                     .abort_handle(),
                 );

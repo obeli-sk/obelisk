@@ -175,6 +175,8 @@ pub(crate) struct ExecConfigToml {
     lock_expiry: DurationConfig,
     #[serde(default = "default_tick_sleep")]
     tick_sleep: DurationConfig,
+    #[serde(default)]
+    pub(crate) max_inflight_instances: InflightSemaphore,
 }
 
 impl Default for ExecConfigToml {
@@ -183,6 +185,7 @@ impl Default for ExecConfigToml {
             batch_size: default_batch_size(),
             lock_expiry: default_lock_expiry(),
             tick_sleep: default_tick_sleep(),
+            max_inflight_instances: InflightSemaphore::default(),
         }
     }
 }
@@ -197,6 +200,7 @@ impl ExecConfigToml {
             tick_sleep: self.tick_sleep.into(),
             batch_size: self.batch_size,
             config_id,
+            task_limiter: self.max_inflight_instances.into(),
         }
     }
 }
@@ -611,7 +615,7 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 }
 
 pub(crate) mod webhook {
-    use super::{ComponentCommon, DurationConfig, StdOutput};
+    use super::{ComponentCommon, DurationConfig, InflightSemaphore, StdOutput};
     use anyhow::Context;
     use concepts::{ConfigId, ConfigIdType, ContentDigest, StrVariant};
     use serde::Deserialize;
@@ -630,6 +634,8 @@ pub(crate) mod webhook {
         pub(crate) listening_addr: SocketAddr,
         #[serde(default = "super::default_request_timeout")]
         pub(crate) request_timeout: DurationConfig,
+        #[serde(default)]
+        pub(crate) max_inflight_requests: InflightSemaphore,
     }
 
     #[derive(Debug, Deserialize, Hash)]
@@ -741,6 +747,39 @@ pub(crate) mod webhook {
                     Self { methods, route }
                 }
             })
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Hash)]
+#[serde(untagged)]
+
+pub(crate) enum InflightSemaphore {
+    None(NoneEnum),
+    Some(u32),
+}
+
+impl Default for InflightSemaphore {
+    fn default() -> Self {
+        Self::None(NoneEnum::None)
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Hash)]
+#[serde(rename_all = "snake_case")]
+
+pub(crate) enum NoneEnum {
+    #[default]
+    None,
+}
+
+impl From<InflightSemaphore> for Option<Arc<tokio::sync::Semaphore>> {
+    fn from(value: InflightSemaphore) -> Self {
+        match value {
+            InflightSemaphore::None(_) => None,
+            InflightSemaphore::Some(permits) => Some(Arc::new(tokio::sync::Semaphore::new(
+                usize::try_from(permits).expect("usize >= u32"),
+            ))),
         }
     }
 }

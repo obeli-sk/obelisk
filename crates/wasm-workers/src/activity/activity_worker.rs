@@ -314,13 +314,13 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             config_id,
+            task_limiter: None,
         };
         ExecTask::spawn_new(
             worker,
             exec_config,
             clock_fn,
             db_pool,
-            None,
             ExecutorId::generate(),
         )
     }
@@ -501,13 +501,13 @@ pub(crate) mod tests {
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: TICK_SLEEP,
                 config_id: ConfigId::dummy_activity(),
+                task_limiter: None,
             };
             let exec_task = ExecTask::spawn_new(
                 worker,
                 exec_config,
                 Now,
                 db_pool.clone(),
-                None,
                 ExecutorId::generate(),
             );
 
@@ -642,6 +642,7 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
                 config_id: ConfigId::dummy_activity(),
+                task_limiter: None,
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task = ExecTask::new(
@@ -752,6 +753,7 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: Duration::ZERO,
                 config_id: ConfigId::dummy_activity(),
+                task_limiter: None,
             };
             let ffqns = Arc::from([HTTP_GET_SUCCESSFUL_ACTIVITY]);
             let exec_task = ExecTask::new(

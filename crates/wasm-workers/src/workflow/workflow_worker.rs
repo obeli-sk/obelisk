@@ -507,13 +507,13 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(3),
             tick_sleep: TICK_SLEEP,
             config_id,
+            task_limiter: None,
         };
         ExecTask::spawn_new(
             worker,
             exec_config,
             clock_fn,
             db_pool,
-            None,
             ExecutorId::generate(),
         )
     }
@@ -728,13 +728,13 @@ pub(crate) mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: TICK_SLEEP,
             config_id: ConfigId::dummy_activity(),
+            task_limiter: None,
         };
         ExecTask::spawn_new(
             worker,
             exec_config,
             clock_fn,
             db_pool,
-            None,
             ExecutorId::generate(),
         )
     }
@@ -1102,6 +1102,7 @@ pub(crate) mod tests {
                 lock_expiry: Duration::from_secs(1),
                 tick_sleep: TICK_SLEEP,
                 config_id: ConfigId::dummy_activity(),
+                task_limiter: None,
             },
             sim_clock.clone(),
             db_pool.clone(),

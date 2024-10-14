@@ -861,6 +861,7 @@ async fn start_webhooks(
                 Now,
                 fn_registry.clone(),
                 http_server.request_timeout.into(),
+                http_server.max_inflight_requests.into(),
             ))
             .abort_handle(),
         );
@@ -1190,7 +1191,6 @@ fn prespawn_workflow(
 struct WorkerCompiled {
     worker: Either<Arc<dyn Worker>, WorkflowWorkerCompiled<Now>>,
     exec_config: ExecConfig,
-    task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_id: ExecutorId,
 }
 
@@ -1217,7 +1217,6 @@ impl WorkerCompiled {
             WorkerCompiled {
                 worker: Either::Left(Arc::from(worker)),
                 exec_config,
-                task_limiter: None,
                 executor_id,
             },
             component,
@@ -1245,7 +1244,6 @@ impl WorkerCompiled {
             WorkerCompiled {
                 worker: Either::Right(worker),
                 exec_config,
-                task_limiter: None,
                 executor_id,
             },
             component,
@@ -1262,7 +1260,6 @@ impl WorkerCompiled {
                 }
             },
             exec_config: self.exec_config,
-            task_limiter: self.task_limiter,
             executor_id: self.executor_id,
         })
     }
@@ -1271,7 +1268,6 @@ impl WorkerCompiled {
 struct WorkerLinked {
     worker: Either<Arc<dyn Worker>, WorkflowWorkerLinked<Now, SqlitePool, SqlitePool>>,
     exec_config: ExecConfig,
-    task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_id: ExecutorId,
 }
 impl WorkerLinked {
@@ -1282,14 +1278,7 @@ impl WorkerLinked {
                 Arc::from(workflow_linked.into_worker(db_pool.clone()))
             }
         };
-        ExecTask::spawn_new(
-            worker,
-            self.exec_config,
-            Now,
-            db_pool,
-            self.task_limiter,
-            self.executor_id,
-        )
+        ExecTask::spawn_new(worker, self.exec_config, Now, db_pool, self.executor_id)
     }
 }
 

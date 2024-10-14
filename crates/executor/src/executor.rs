@@ -21,12 +21,13 @@ use tokio::task::{AbortHandle, JoinHandle};
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument, Level, Span};
 use utils::time::ClockFn;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ExecConfig {
     pub lock_expiry: Duration,
     pub tick_sleep: Duration,
     pub batch_size: u32,
     pub config_id: ConfigId,
+    pub task_limiter: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 pub struct ExecTask<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
@@ -34,7 +35,6 @@ pub struct ExecTask<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     config: ExecConfig,
     clock_fn: C, // Used for obtaining current time when the execution finishes.
     db_pool: P,
-    task_limiter: Option<Arc<tokio::sync::Semaphore>>,
     executor_id: ExecutorId,
     phantom_data: PhantomData<DB>,
     ffqns: Arc<[FunctionFqn]>,
@@ -109,7 +109,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         Self {
             worker,
             config,
-            task_limiter: None,
             executor_id: ExecutorId::generate(),
             db_pool,
             phantom_data: PhantomData,
@@ -123,7 +122,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         config: ExecConfig,
         clock_fn: C,
         db_pool: P,
-        task_limiter: Option<Arc<tokio::sync::Semaphore>>,
         executor_id: ExecutorId,
     ) -> ExecutorTaskHandle {
         let is_closing = Arc::new(AtomicBool::default());
@@ -135,7 +133,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             let task = Self {
                 worker,
                 config,
-                task_limiter,
                 executor_id,
                 db_pool,
                 phantom_data: PhantomData,
@@ -164,7 +161,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     }
 
     fn acquire_task_permits(&self) -> Vec<Option<tokio::sync::OwnedSemaphorePermit>> {
-        match &self.task_limiter {
+        match &self.config.task_limiter {
             Some(task_limiter) => {
                 let mut locks = Vec::new();
                 for _ in 0..self.config.batch_size {
@@ -194,11 +191,11 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     #[instrument(level = Level::DEBUG, name = "executor.tick" skip_all, fields(executor_id = %self.executor_id, config_id = %self.config.config_id))]
     async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
         let locked_executions = {
-            let db_connection = self.db_pool.connection();
             let mut permits = self.acquire_task_permits();
             if permits.is_empty() {
                 return Ok(ExecutionProgress::default());
             }
+            let db_connection = self.db_pool.connection();
             let lock_expires_at = executed_at + self.config.lock_expiry;
             let locked_executions = db_connection
                 .lock_pending(
@@ -637,6 +634,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::from_millis(100),
             config_id: ConfigId::dummy_activity(),
+            task_limiter: None,
         };
 
         let execution_log = create_and_tick(
@@ -679,6 +677,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             config_id: ConfigId::dummy_activity(),
+            task_limiter: None,
         };
 
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Ok(
@@ -690,7 +689,6 @@ mod tests {
             exec_config.clone(),
             clock_fn,
             db_pool.clone(),
-            None,
             ExecutorId::generate(),
         );
 
@@ -795,6 +793,7 @@ mod tests {
         execution_log
     }
 
+    #[expect(clippy::too_many_lines)]
     #[tokio::test]
     async fn worker_error_should_trigger_an_execution_retry() {
         set_up();
@@ -805,6 +804,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             config_id: ConfigId::dummy_activity(),
+            task_limiter: None,
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -912,6 +912,7 @@ mod tests {
             lock_expiry: Duration::from_secs(1),
             tick_sleep: Duration::ZERO,
             config_id: ConfigId::dummy_activity(),
+            task_limiter: None,
         };
         let worker = Arc::new(SimpleWorker::with_single_result(WorkerResult::Err(
             WorkerError::IntermittentError {
@@ -997,6 +998,7 @@ mod tests {
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
                 config_id: ConfigId::dummy_activity(),
+                task_limiter: None,
             },
             sim_clock.clone(),
             db_pool.clone(),
@@ -1071,6 +1073,7 @@ mod tests {
                 lock_expiry: LOCK_EXPIRY,
                 tick_sleep: Duration::ZERO,
                 config_id: ConfigId::dummy_activity(),
+                task_limiter: None,
             },
             sim_clock.clone(),
             db_pool.clone(),
@@ -1158,6 +1161,7 @@ mod tests {
             lock_expiry,
             tick_sleep: Duration::ZERO,
             config_id: ConfigId::dummy_activity(),
+            task_limiter: None,
         };
 
         let worker = Arc::new(SleepyWorker {
