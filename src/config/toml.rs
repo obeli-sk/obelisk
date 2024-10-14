@@ -1,7 +1,5 @@
-use super::{
-    ComponentLocation, {ConfigStore, ConfigStoreCommon},
-};
-use concepts::{ComponentRetryConfig, ConfigId, ContentDigest};
+use super::{ComponentLocation, ConfigStoreCommon};
+use concepts::{ComponentRetryConfig, ConfigId, ConfigIdType, ContentDigest, StrVariant};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use directories::ProjectDirs;
 use log::{LoggingConfig, LoggingStyle};
@@ -137,7 +135,7 @@ impl CodegenCache {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Hash)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ComponentCommon {
     pub(crate) name: String,
@@ -168,7 +166,7 @@ impl ComponentCommon {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Hash)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecConfigToml {
     #[serde(default = "default_batch_size")]
@@ -203,7 +201,7 @@ impl ExecConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Hash)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ActivityWasmConfigToml {
     #[serde(flatten)]
@@ -240,22 +238,22 @@ impl ActivityWasmConfigToml {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
     ) -> Result<ActivityWasmConfigVerified, anyhow::Error> {
+        let mut hasher = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&self, &mut hasher);
         let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
+        std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
+        let config_id = crate::config::config_id(
+            ConfigIdType::WebhookWasm,
+            std::hash::Hasher::finish(&hasher),
+            StrVariant::from(common.name.clone()),
+        )?;
+
         let content_digest = common.content_digest.clone();
         let retry_exp_backoff = self.default_retry_exp_backoff.into();
         let env_vars: Arc<[EnvVar]> = Arc::from(self.env_vars);
-        let config_store = ConfigStore::WasmActivityV1 {
-            common,
-            default_max_retries: self.default_max_retries,
-            default_retry_exp_backoff: retry_exp_backoff,
-            env_vars: env_vars.clone(),
-            forward_stdout: self.forward_stdout,
-            forward_stderr: self.forward_stderr,
-        };
-        let config_id = config_store.config_id()?;
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
         let activity_config = ActivityConfig {
             config_id: config_id.clone(),
@@ -277,7 +275,7 @@ impl ActivityWasmConfigToml {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Hash)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowConfigToml {
     #[serde(flatten)]
@@ -309,23 +307,23 @@ impl WorkflowConfigToml {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
+        let mut hasher = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&self, &mut hasher);
         let (common, wasm_path) = self
             .common
             .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
             .await?;
+        std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
+        let config_id = crate::config::config_id(
+            ConfigIdType::WebhookWasm,
+            std::hash::Hasher::finish(&hasher),
+            StrVariant::from(common.name.clone()),
+        )?;
         let child_retry_exp_backoff = self
             .child_retry_exp_backoff_override
             .clone()
             .map(Duration::from);
         let content_digest = common.content_digest.clone();
-        let config_id = ConfigStore::WasmWorkflowV1 {
-            common,
-            join_next_blocking_strategy: self.join_next_blocking_strategy,
-            child_retry_exp_backoff,
-            child_max_retries: self.child_max_retries_override,
-            non_blocking_event_batching: self.non_blocking_event_batching,
-        }
-        .config_id()?;
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
         let workflow_config = WorkflowConfig {
             config_id: config_id.clone(),
@@ -444,7 +442,7 @@ pub(crate) mod otlp {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DurationConfig {
     Secs(u64),
@@ -614,9 +612,8 @@ impl From<StdOutput> for Option<wasm_workers::std_output_stream::StdOutput> {
 
 pub(crate) mod webhook {
     use super::{ComponentCommon, DurationConfig, StdOutput};
-    use crate::config::ConfigStore;
     use anyhow::Context;
-    use concepts::{ConfigId, ContentDigest};
+    use concepts::{ConfigId, ConfigIdType, ContentDigest, StrVariant};
     use serde::Deserialize;
     use std::{
         net::SocketAddr,
@@ -635,7 +632,7 @@ pub(crate) mod webhook {
         pub(crate) request_timeout: DurationConfig,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, Hash)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookComponent {
         // TODO: Rename to WebhookComponentConfigToml
@@ -658,12 +655,20 @@ pub(crate) mod webhook {
             wasm_cache_dir: Arc<Path>,
             metadata_dir: Arc<Path>,
         ) -> Result<WebhookComponentVerified, anyhow::Error> {
+            let mut hasher = std::hash::DefaultHasher::new();
+            std::hash::Hash::hash(&self, &mut hasher);
             let (common, wasm_path) = self
                 .common
                 .fetch_and_verify(&wasm_cache_dir, &metadata_dir)
                 .await?;
+            std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
+            let config_id = crate::config::config_id(
+                ConfigIdType::WebhookWasm,
+                std::hash::Hasher::finish(&hasher),
+                StrVariant::from(common.name.clone()),
+            )?;
+
             let content_digest = common.content_digest.clone();
-            let config_id = ConfigStore::WebhookComponentV1 { common }.config_id()?;
             tracing::Span::current().record("config_id", tracing::field::display(&config_id));
 
             Ok(WebhookComponentVerified {
@@ -682,14 +687,14 @@ pub(crate) mod webhook {
         }
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, Hash)]
     #[serde(untagged)]
     pub(crate) enum WebhookRoute {
         String(String),
         WebhookRouteDetail(WebhookRouteDetail),
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, Hash)]
     #[serde(deny_unknown_fields)]
     pub(crate) struct WebhookRouteDetail {
         // Empty means all methods.

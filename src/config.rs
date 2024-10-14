@@ -12,18 +12,11 @@ use concepts::StrVariant;
 use concepts::{FunctionMetadata, ImportableType};
 use serde_with::serde_as;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
-use toml::StdOutput;
 use tracing::instrument;
-use wasm_workers::envvar::EnvVar;
-use wasm_workers::workflow::workflow_worker::JoinNextBlockingStrategy;
 
+/// Holds information about components, used for gRPC services like `ListComponents`
 #[derive(Debug, Clone)]
 pub(crate) struct ComponentConfig {
-    // Identifier for given configuration.
-    // Uniqueness is not guaranteed.
-    // The id is not persisted, only appears in logs and traces and gRPC responses.
     pub(crate) config_id: ConfigId,
     pub(crate) imports: Vec<FunctionMetadata>,
     pub(crate) importable: Option<ComponentConfigImportable>,
@@ -45,60 +38,15 @@ pub(crate) struct ConfigStoreCommon {
     pub(crate) content_digest: ContentDigest,
 }
 
-/// Holds configuration for `ConfigId` computation.
-#[derive(Debug, Clone, Hash)]
-pub(crate) enum ConfigStore {
-    WasmActivityV1 {
-        common: ConfigStoreCommon,
-        default_max_retries: u32,
-        default_retry_exp_backoff: Duration,
-        forward_stdout: StdOutput,
-        forward_stderr: StdOutput,
-        env_vars: Arc<[EnvVar]>,
-    },
-    WasmWorkflowV1 {
-        common: ConfigStoreCommon,
-        join_next_blocking_strategy: JoinNextBlockingStrategy,
-        child_retry_exp_backoff: Option<Duration>,
-        child_max_retries: Option<u32>,
-        non_blocking_event_batching: u32,
-    },
-    WebhookComponentV1 {
-        common: ConfigStoreCommon,
-    },
-}
-
-impl ConfigStore {
-    fn common(&self) -> &ConfigStoreCommon {
-        match self {
-            Self::WasmActivityV1 { common, .. }
-            | Self::WasmWorkflowV1 { common, .. }
-            | Self::WebhookComponentV1 { common } => common,
-        }
-    }
-
-    /// Create an identifier for given configuration.
-    /// Uniqueness is not guaranteed.
-    /// The id is not persisted, only appears in logs and traces and gRPC responses.
-    pub(crate) fn config_id(&self) -> Result<ConfigId, anyhow::Error> {
-        let hash = {
-            use std::hash::Hash as _;
-            use std::hash::Hasher as _;
-            let mut hasher = std::hash::DefaultHasher::new();
-            self.hash(&mut hasher);
-            StrVariant::from(format!("{:x}", hasher.finish()))
-        };
-        let config_id_type = match self {
-            Self::WasmActivityV1 { .. } => ConfigIdType::ActivityWasm,
-            Self::WasmWorkflowV1 { .. } => ConfigIdType::Workflow,
-            Self::WebhookComponentV1 { .. } => ConfigIdType::WebhookWasm,
-        };
-        Ok(ConfigId::new(
-            config_id_type,
-            StrVariant::from(self.common().name.clone()),
-            hash,
-        )?)
-    }
+/// Create an identifier for given configuration.
+/// Uniqueness of the hash part may not
+pub(crate) fn config_id(
+    config_id_type: ConfigIdType,
+    hash: u64,
+    name: StrVariant,
+) -> Result<ConfigId, anyhow::Error> {
+    let hash = StrVariant::from(format!("{hash:x}"));
+    Ok(ConfigId::new(config_id_type, name, hash)?)
 }
 
 #[serde_as]
