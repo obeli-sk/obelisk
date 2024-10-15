@@ -16,7 +16,7 @@ expression: imports
       "params": [
         {
           "name": "join-set-id",
-          "wit_type": "string"
+          "wit_type": "join-set-id"
         }
       ],
       "return_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
@@ -29,14 +29,14 @@ expression: imports
       "params": [
         {
           "name": "join-set-id",
-          "wit_type": "string"
+          "wit_type": "join-set-id"
         },
         {
           "name": "n",
           "wit_type": "u8"
         }
       ],
-      "return_type": "string"
+      "return_type": "execution-id"
     },
     "testing:fibo-obelisk-ext/fibo",
     "fibo-submit"
@@ -46,7 +46,7 @@ expression: imports
       "params": [
         {
           "name": "join-set-id",
-          "wit_type": "string"
+          "wit_type": "join-set-id"
         }
       ],
       "return_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
@@ -59,7 +59,7 @@ expression: imports
       "params": [
         {
           "name": "join-set-id",
-          "wit_type": "string"
+          "wit_type": "join-set-id"
         },
         {
           "name": "n",
@@ -70,7 +70,7 @@ expression: imports
           "wit_type": "u32"
         }
       ],
-      "return_type": "string"
+      "return_type": "execution-id"
     },
     "testing:fibo-workflow-obelisk-ext/workflow",
     "fiboa-concurrent-submit"

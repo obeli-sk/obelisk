@@ -1,11 +1,11 @@
 use crate::component_logger::{log_activities, ComponentLogger};
 use crate::envvar::EnvVar;
-use crate::std_output_stream::{LogStream, StdOutput};
-use crate::workflow::workflow_ctx::host_activities::obelisk::types::time::Duration as DurationEnum;
-use crate::workflow::workflow_ctx::{
-    host_activities, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
+use crate::host_exports::{
+    execution_id_into_val, execution_id_into_wast_val, val_to_join_set_id, DurationEnum,
+    ValToJoinSetIdError, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
 };
-use crate::{WasmFileError, NAMESPACE_OBELISK_WITH_COLON};
+use crate::std_output_stream::{LogStream, StdOutput};
+use crate::{host_exports, WasmFileError, NAMESPACE_OBELISK_WITH_COLON};
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
     ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner, HistoryEvent,
@@ -465,12 +465,13 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 trace!("Found child response: {result:?}");
                 // TODO: If the child execution succeeded, perform type check between `SupportedFunctionReturnValue`
                 // and what is expected by the `FunctionRegistry`
-                let child_execution_id = WastVal::String(child_execution_id.to_string());
+                let child_execution_id = execution_id_into_wast_val(*child_execution_id);
                 match result {
                     Ok(
                         SupportedFunctionReturnValue::Fallible(v)
                         | SupportedFunctionReturnValue::Infallible(v),
                     ) => {
+                        // Ok(tuple<execution-id, (original return value)>)
                         results[0] = WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
                             child_execution_id,
                             v.value.clone(),
@@ -495,6 +496,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                                 Some(Box::new(WastVal::String(reason.to_string()))),
                             ),
                         };
+                        // Err(tuple<execution-id, execution-error>)
                         results[0] = WastVal::Result(Err(Some(Box::new(WastVal::Tuple(vec![
                             child_execution_id,
                             variant,
@@ -532,32 +534,17 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 debug!("Got `-submit` extension for {ffqn}");
-                if params.is_empty() {
+                let Some((join_set_id, params)) = params.split_first() else {
                     error!("Got empty params, expected JoinSetId");
                     return Err(WebhookFunctionError::UncategorizedError(
                         "error running `-submit` extension function: exepcted at least one parameter with JoinSetId, got empty parameter list",
                     ));
-                    // TODO Replace with `split_at_checked` once stable
-                }
-                if results.len() != 1 {
-                    error!("Unexpected results length");
-                    return Err(WebhookFunctionError::UncategorizedError(
-                        "Unexpected results length",
-                    ));
-                }
-                let (join_set_id, params) = params.split_at(1);
-
-                let join_set_id = join_set_id.first().expect("split so that the size is 1");
-                let Val::String(join_set_id) = join_set_id else {
-                    error!("Wrong type for JoinSetId, expected string, got `{join_set_id:?}`");
-                    return Err(WebhookFunctionError::UncategorizedError(
-                        "error running `-submit` extension function: wrong first parameter type, string parameter containing JoinSetId`"
-                    ));
                 };
-                let join_set_id: JoinSetId = join_set_id.parse().map_err(|parse_err| {
-                    error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
-                    WebhookFunctionError::UncategorizedError("cannot parse JoinSetId")
-                })?;
+                let join_set_id = val_to_join_set_id(join_set_id)
+                    .map_err(|err|WebhookFunctionError::UncategorizedError(match err {
+                        ValToJoinSetIdError::ParseError => "error running `-submit` extension function: cannot parse join-set-id",
+                        ValToJoinSetIdError::TypeError => "error running `-submit` extension function: wrong first parameter type, expected join-set-id",
+                    }))?;
                 let version = self.get_version().await?;
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
@@ -604,31 +591,25 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     )
                     .await?;
                 self.version = Some(version);
-                results[0] = Val::String(child_execution_id.to_string());
+                results[0] = execution_id_into_val(child_execution_id);
                 Ok(())
             } else if let Some(function_name) =
                 ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
             {
                 let version = self.get_version().await?;
                 tracing::Span::current().record("version", tracing::field::display(version));
-                debug!("Got await-next extension for function `{function_name}`"); // FIXME: handle different functions in the same join set
-                if params.len() != 1 {
-                    error!("Expected single parameter with JoinSetId got {params:?}");
+                debug!("Got await-next extension for function `{function_name}`");
+                let [join_set_id] = params else {
+                    error!("Expected single parameter with join-set-id got {params:?}");
                     return Err(WebhookFunctionError::UncategorizedError(
-                        "error running `-await-next` extension function: wrong parameter length, expected single string parameter containing JoinSetId`"
-                    ));
-                }
-                let join_set_id = params.first().expect("checked that the size is 1");
-                let Val::String(join_set_id) = join_set_id else {
-                    error!("Wrong type for JoinSetId, expected string, got `{join_set_id:?}`");
-                    return Err(WebhookFunctionError::UncategorizedError(
-                        "error running `-await-next` extension function: wrong parameter type, expected single string parameter containing JoinSetId`"
+                        "error running `-await-next` extension function: wrong parameter length, expected single string parameter containing join-set-id"
                     ));
                 };
-                let join_set_id: JoinSetId = join_set_id.parse().map_err(|parse_err| {
-                    error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
-                    WebhookFunctionError::UncategorizedError("cannot parse JoinSetId")
-                })?;
+                let join_set_id = val_to_join_set_id(join_set_id).map_err(|err| WebhookFunctionError::UncategorizedError(match err {
+                    ValToJoinSetIdError::ParseError => "error running `-await-next` extension function: cannot parse join-set-id",
+                    ValToJoinSetIdError::TypeError => "error running `-await-next` extension function: wrong parameter type, expected single string parameter containing join-set-id",
+                }))?;
+
                 let conn = self.db_pool.connection();
                 while self
                     .find_response_child_finished(join_set_id, results)?
@@ -651,21 +632,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 debug!("Got `-schedule` extension for {ffqn}");
-                if params.is_empty() {
+                let Some((scheduled_at, params)) = params.split_first() else {
                     error!("Error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list");
                     return Err(WebhookFunctionError::UncategorizedError(
                         "error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list",
                     ));
-                    // TODO Replace with `split_at_checked` once stable
-                }
-                if results.len() != 1 {
-                    error!("Unexpected results length");
-                    return Err(WebhookFunctionError::UncategorizedError(
-                        "Unexpected results length",
-                    ));
-                }
-                let (scheduled_at, params) = params.split_at(1);
-                let scheduled_at = scheduled_at.first().expect("split so that the size is 1");
+                };
                 let scheduled_at = match HistoryEventScheduledAt::try_from(scheduled_at) {
                     Ok(scheduled_at) => scheduled_at,
                     Err(err) => {
@@ -723,7 +695,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     )
                     .await?;
                 self.version = Some(version);
-                results[0] = Val::String(new_execution_id.to_string());
+                results[0] = execution_id_into_val(new_execution_id);
                 Ok(())
             } else {
                 error!("unrecognized extension function {ffqn}");
@@ -803,7 +775,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
     }
 
     fn add_to_linker(linker: &mut Linker<WebhookCtx<C, DB, P>>) -> Result<(), WasmFileError> {
-        host_activities::obelisk::workflow::host_activities::add_to_linker(
+        host_exports::obelisk::workflow::host_activities::add_to_linker(
             linker,
             |state: &mut Self| state,
         )
@@ -876,16 +848,20 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
 
 #[async_trait::async_trait]
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
-    host_activities::obelisk::workflow::host_activities::Host for WebhookCtx<C, DB, P>
+    host_exports::obelisk::workflow::host_activities::Host for WebhookCtx<C, DB, P>
 {
     async fn sleep(&mut self, duration: DurationEnum) -> wasmtime::Result<()> {
         tokio::time::sleep(Duration::from(duration)).await;
         Ok(())
     }
 
-    async fn new_join_set(&mut self) -> wasmtime::Result<String> {
+    async fn new_join_set(
+        &mut self,
+    ) -> wasmtime::Result<crate::host_exports::obelisk::types::execution::JoinSetId> {
         let join_set_id = JoinSetId::generate();
-        Ok(join_set_id.to_string())
+        Ok(host_exports::obelisk::types::execution::JoinSetId {
+            id: join_set_id.to_string(),
+        })
     }
 }
 

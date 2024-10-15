@@ -72,7 +72,24 @@ pub mod obelisk {
             static __FORCE_SECTION_REF: fn() =
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
-            pub type JoinSetId = _rt::String;
+            #[derive(Clone)]
+            pub struct JoinSetId {
+                pub id: _rt::String,
+            }
+            impl ::core::fmt::Debug for JoinSetId {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    f.debug_struct("JoinSetId").field("id", &self.id).finish()
+                }
+            }
+            #[derive(Clone)]
+            pub struct ExecutionId {
+                pub id: _rt::String,
+            }
+            impl ::core::fmt::Debug for ExecutionId {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    f.debug_struct("ExecutionId").field("id", &self.id).finish()
+                }
+            }
         }
     }
     #[allow(dead_code)]
@@ -132,7 +149,9 @@ pub mod obelisk {
                     let l2 = *ptr0.add(4).cast::<usize>();
                     let len3 = l2;
                     let bytes3 = _rt::Vec::from_raw_parts(l1.cast(), len3, len3);
-                    _rt::string_lift(bytes3)
+                    super::super::super::obelisk::types::execution::JoinSetId {
+                        id: _rt::string_lift(bytes3),
+                    }
                 }
             }
         }
@@ -209,6 +228,7 @@ pub mod testing {
             static __FORCE_SECTION_REF: fn() =
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
+            pub type ExecutionId = super::super::super::obelisk::types::execution::ExecutionId;
             pub type Duration = super::super::super::obelisk::types::time::Duration;
             pub type ScheduleAt = super::super::super::obelisk::types::time::ScheduleAt;
             #[allow(unused_unsafe, clippy::all)]
@@ -216,7 +236,7 @@ pub mod testing {
                 schedule: ScheduleAt,
                 duration: Duration,
                 iterations: u8,
-            ) -> _rt::String {
+            ) -> ExecutionId {
                 unsafe {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
@@ -279,7 +299,9 @@ pub mod testing {
                     let l9 = *ptr7.add(4).cast::<usize>();
                     let len10 = l9;
                     let bytes10 = _rt::Vec::from_raw_parts(l8.cast(), len10, len10);
-                    _rt::string_lift(bytes10)
+                    super::super::super::obelisk::types::execution::ExecutionId {
+                        id: _rt::string_lift(bytes10),
+                    }
                 }
             }
         }
@@ -553,31 +575,33 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1066] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb0\x07\x01A\x02\x01\
-A\x0f\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07minutes\x01y\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1137] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf7\x07\x01A\x02\x01\
+A\x10\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07minutes\x01y\
 \0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\
 \x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\
 \x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\
-\0\x01B\x06\x01s\x04\0\x0bjoin-set-id\x03\0\0\x01s\x04\0\x0cexecution-id\x03\0\x02\
-\x01q\x03\x11permanent-failure\x01s\0\x11permanent-timeout\0\0\x0fnon-determinis\
-m\0\0\x04\0\x0fexecution-error\x03\0\x04\x03\x01\x17obelisk:types/execution\x05\x01\
-\x02\x03\0\0\x08duration\x02\x03\0\x01\x0bjoin-set-id\x01B\x08\x02\x03\x02\x01\x02\
-\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01\
-@\x01\x05nanos\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0cnew-join-s\
-et\x01\x05\x03\x01\x20obelisk:workflow/host-activities\x05\x04\x01B\x06\x02\x03\x02\
-\x01\x02\x04\0\x08duration\x03\0\0\x01@\x01\x08duration\x01\x01\0\x04\0\x05sleep\
-\x01\x02\x01@\x02\x08duration\x01\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\x03\
-\x03\x01\x13testing:sleep/sleep\x05\x05\x02\x03\0\0\x0bschedule-at\x01B\x06\x02\x03\
-\x02\x01\x02\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x06\x04\0\x0bschedule-at\x03\
-\0\x02\x01@\x03\x08schedule\x03\x08duration\x01\x0aiterations}\0s\x04\0\x13resch\
-edule-schedule\x01\x04\x03\x01+testing:sleep-workflow-obelisk-ext/workflow\x05\x07\
-\x01B\x07\x02\x03\x02\x01\x02\x04\0\x08duration\x03\0\0\x01@\x01\x08duration\x01\
-\x01\0\x04\0\x13sleep-host-activity\x01\x02\x04\0\x0esleep-activity\x01\x02\x01@\
-\x02\x08duration\x01\x0aiterations}\x01\0\x04\0\x0areschedule\x01\x03\x04\x01\x1f\
-testing:sleep-workflow/workflow\x05\x08\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\
-\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.\
-216.0\x10wit-bindgen-rust\x060.31.0";
+\0\x01B\x08\x01r\x01\x02ids\x04\0\x0bjoin-set-id\x03\0\0\x01r\x01\x02ids\x04\0\x0c\
+execution-id\x03\0\x02\x01r\x01\x02ids\x04\0\x08delay-id\x03\0\x04\x01q\x03\x11p\
+ermanent-failure\x01s\0\x11permanent-timeout\0\0\x0fnon-determinism\0\0\x04\0\x0f\
+execution-error\x03\0\x06\x03\x01\x17obelisk:types/execution\x05\x01\x02\x03\0\0\
+\x08duration\x02\x03\0\x01\x0bjoin-set-id\x01B\x08\x02\x03\x02\x01\x02\x04\0\x08\
+duration\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x05\
+nanos\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0cnew-join-set\x01\x05\
+\x03\x01\x20obelisk:workflow/host-activities\x05\x04\x01B\x06\x02\x03\x02\x01\x02\
+\x04\0\x08duration\x03\0\0\x01@\x01\x08duration\x01\x01\0\x04\0\x05sleep\x01\x02\
+\x01@\x02\x08duration\x01\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\x03\x03\x01\
+\x13testing:sleep/sleep\x05\x05\x02\x03\0\x01\x0cexecution-id\x02\x03\0\0\x0bsch\
+edule-at\x01B\x08\x02\x03\x02\x01\x06\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\
+\x02\x04\0\x08duration\x03\0\x02\x02\x03\x02\x01\x07\x04\0\x0bschedule-at\x03\0\x04\
+\x01@\x03\x08schedule\x05\x08duration\x03\x0aiterations}\0\x01\x04\0\x13reschedu\
+le-schedule\x01\x06\x03\x01+testing:sleep-workflow-obelisk-ext/workflow\x05\x08\x01\
+B\x07\x02\x03\x02\x01\x02\x04\0\x08duration\x03\0\0\x01@\x01\x08duration\x01\x01\
+\0\x04\0\x13sleep-host-activity\x01\x02\x04\0\x0esleep-activity\x01\x02\x01@\x02\
+\x08duration\x01\x0aiterations}\x01\0\x04\0\x0areschedule\x01\x03\x04\x01\x1ftes\
+ting:sleep-workflow/workflow\x05\x09\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03\
+any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.216.0\x10\
+wit-bindgen-rust\x060.31.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

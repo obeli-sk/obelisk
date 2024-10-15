@@ -1,3 +1,7 @@
+use crate::host_exports::delay_id_into_wast_val;
+use crate::host_exports::execution_id_into_wast_val;
+use crate::host_exports::join_set_id_into_wast_val;
+
 use super::event_history::ProcessingStatus::Processed;
 use super::event_history::ProcessingStatus::Unprocessed;
 use super::workflow_ctx::WorkflowFunctionError;
@@ -30,8 +34,39 @@ use tracing::{debug, error, trace};
 use utils::time::ClockFn;
 use val_json::wast_val::WastVal;
 
-/// Replaces `SupportedFunctionReturnValue`
-type ChildReturnValue = Option<WastVal>;
+#[derive(Debug)]
+pub(crate) enum ChildReturnValue {
+    None,
+    WastVal(WastVal),
+    HostActionResp(HostActionResp),
+    // StartAsyncResp(ExecutionId),
+    // DelayRequestResp(DelayId),
+}
+
+#[derive(Debug)]
+pub(crate) enum HostActionResp {
+    CreateJoinSetResp(JoinSetId), // response to `CreateJoinSet`
+}
+
+impl ChildReturnValue {
+    fn from_wast_val_or_none(result: Option<WastVal>) -> Self {
+        if let Some(result) = result {
+            Self::WastVal(result)
+        } else {
+            Self::None
+        }
+    }
+
+    pub(crate) fn into_wast_val(self) -> Option<WastVal> {
+        match self {
+            Self::None => None,
+            Self::WastVal(wast_val) => Some(wast_val),
+            Self::HostActionResp(HostActionResp::CreateJoinSetResp(join_set_id)) => {
+                Some(join_set_id_into_wast_val(join_set_id))
+            }
+        }
+    }
+}
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum ProcessingStatus {
@@ -288,7 +323,9 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%join_set_id, "Matched JoinSet");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
-                Ok(Some(Some(WastVal::String(join_set_id.to_string()))))
+                Ok(Some(ChildReturnValue::HostActionResp(
+                    HostActionResp::CreateJoinSetResp(join_set_id),
+                )))
             }
 
             (
@@ -305,7 +342,9 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::StartAsync`] , return execution id
-                Ok(Some(Some(WastVal::String(execution_id.to_string()))))
+                Ok(Some(ChildReturnValue::WastVal(execution_id_into_wast_val(
+                    execution_id,
+                ))))
             }
 
             (
@@ -325,7 +364,9 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%delay_id, %join_set_id, "Matched JoinSetRequest::DelayRequest");
                 self.event_history[found_idx].1 = Processed;
                 // return delay id
-                Ok(Some(Some(WastVal::String(delay_id.to_string()))))
+                Ok(Some(ChildReturnValue::WastVal(delay_id_into_wast_val(
+                    delay_id,
+                ))))
             }
 
             (
@@ -350,7 +391,9 @@ impl<C: ClockFn> EventHistory<C> {
                         trace!(%join_set_id, "Matched JoinNext & ChildExecutionFinished");
                         match kind {
                             JoinNextKind::DirectCall => match result {
-                                Ok(result) => Ok(Some(result.clone().into_value())),
+                                Ok(result) => Ok(Some(ChildReturnValue::from_wast_val_or_none(
+                                    result.clone().into_value(),
+                                ))),
                                 Err(err) => {
                                     error!(%child_execution_id,
                                             %join_set_id,
@@ -362,21 +405,23 @@ impl<C: ClockFn> EventHistory<C> {
                                 match result {
                                     Ok(SupportedFunctionReturnValue::None) => {
                                         // result<execution-id, tuple<execution-id, execution-error>>
-                                        Ok(Some(Some(WastVal::Result(Ok(Some(Box::new(
-                                            WastVal::String(child_execution_id.to_string()),
-                                        )))))))
+                                        Ok(Some(ChildReturnValue::WastVal(WastVal::Result(Ok(
+                                            Some(Box::new(execution_id_into_wast_val(
+                                                *child_execution_id,
+                                            ))),
+                                        )))))
                                     }
                                     Ok(
                                         SupportedFunctionReturnValue::Fallible(v)
                                         | SupportedFunctionReturnValue::Infallible(v),
                                     ) => {
                                         // result<(execution-id, inner>, tuple<execution-id, execution-error>>
-                                        Ok(Some(Some(WastVal::Result(Ok(Some(Box::new(
-                                            WastVal::Tuple(vec![
-                                                WastVal::String(child_execution_id.to_string()),
+                                        Ok(Some(ChildReturnValue::WastVal(WastVal::Result(Ok(
+                                            Some(Box::new(WastVal::Tuple(vec![
+                                                execution_id_into_wast_val(*child_execution_id),
                                                 v.value.clone(),
-                                            ]),
-                                        )))))))
+                                            ]))),
+                                        )))))
                                     }
                                     Err(err) => {
                                         match kind {
@@ -401,14 +446,16 @@ impl<C: ClockFn> EventHistory<C> {
                                                         Some(Box::new(WastVal::String(reason.to_string()))),
                                                     ),
                                                 };
-                                                Ok(Some(Some(WastVal::Result(Err(Some(
-                                                    Box::new(WastVal::Tuple(vec![
-                                                        WastVal::String(
-                                                            child_execution_id.to_string(),
-                                                        ),
-                                                        variant,
-                                                    ])),
-                                                ))))))
+                                                Ok(Some(ChildReturnValue::WastVal(
+                                                    WastVal::Result(Err(Some(Box::new(
+                                                        WastVal::Tuple(vec![
+                                                            execution_id_into_wast_val(
+                                                                *child_execution_id,
+                                                            ),
+                                                            variant,
+                                                        ]),
+                                                    )))),
+                                                )))
                                             }
                                         }
                                     }
@@ -417,7 +464,12 @@ impl<C: ClockFn> EventHistory<C> {
                         }
                     }
                     None => Ok(None), // no progress, still at JoinNext
-                    _ => unreachable!(),
+                    Some(
+                        delay_event @ JoinSetResponseEvent {
+                            event: JoinSetResponse::DelayFinished { .. },
+                            ..
+                        },
+                    ) => unreachable!("{delay_event:?} not implemented"),
                 }
             }
 
@@ -454,7 +506,9 @@ impl<C: ClockFn> EventHistory<C> {
             ) if execution_id == *found_execution_id => {
                 trace!(%execution_id, "Matched Schedule");
                 // return execution id
-                Ok(Some(Some(WastVal::String(execution_id.to_string()))))
+                Ok(Some(ChildReturnValue::WastVal(execution_id_into_wast_val(
+                    execution_id,
+                ))))
             }
 
             (key, found) => Err(WorkflowFunctionError::NonDeterminismDetected(
@@ -1049,6 +1103,7 @@ mod tests {
     use super::super::event_history::{EventCall, EventHistory};
     use super::super::workflow_ctx::WorkflowFunctionError;
     use super::super::workflow_worker::JoinNextBlockingStrategy;
+    use crate::host_exports::execution_id_into_wast_val;
     use crate::tests::fn_registry_dummy;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
@@ -1375,11 +1430,11 @@ mod tests {
             .unwrap();
 
         let child_resp_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-            WastVal::String(child_execution_id.to_string()),
+            execution_id_into_wast_val(child_execution_id),
             WastVal::U8(1),
         ]))))));
 
-        assert_eq!(child_resp_wrapped, res);
+        assert_eq!(child_resp_wrapped, res.into_wast_val());
 
         drop(db_connection);
         db_pool.close().await.unwrap();
@@ -1457,6 +1512,7 @@ mod tests {
                     fn_registry,
                 )
                 .await
+                .map(super::ChildReturnValue::into_wast_val)
         }
 
         test_utils::set_up();
@@ -1568,7 +1624,7 @@ mod tests {
         .await
         .unwrap();
         let kid_a_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-            WastVal::String(child_execution_id_a.to_string()),
+            execution_id_into_wast_val(child_execution_id_a),
             WastVal::U8(1),
         ]))))));
         assert_eq!(kid_a_wrapped, res);
@@ -1584,10 +1640,10 @@ mod tests {
             .await
             .unwrap();
         let kid_b_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-            WastVal::String(child_execution_id_b.to_string()),
+            execution_id_into_wast_val(child_execution_id_b),
             WastVal::U8(2),
         ]))))));
-        assert_eq!(kid_b_wrapped, res);
+        assert_eq!(kid_b_wrapped, res.into_wast_val());
 
         drop(db_connection);
         db_pool.close().await.unwrap();

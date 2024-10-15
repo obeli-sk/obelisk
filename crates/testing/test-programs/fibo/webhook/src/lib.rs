@@ -35,7 +35,7 @@ impl Guest for Component {
                 n,
                 iterations,
             );
-            format!("submitted: {execution_id}")
+            format!("submitted: {}", execution_id.id)
         } else if n >= 5 {
             // Submit new execution, wait for the result.
             println!("submitting and awaiting");

@@ -6,16 +6,24 @@ expression: imports
   "obelisk:workflow/host-activities.new-join-set": [
     [],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "join-set-id"
     }
   ],
   "testing:http-obelisk-ext/http-get.get-successful-await-next": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "join-set-id"
       }
     ],
     {
@@ -23,7 +31,11 @@ expression: imports
         "Result": {
           "ok": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Result": {
                   "ok": "String",
@@ -34,7 +46,11 @@ expression: imports
           },
           "err": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Variant": {
                   "non-determinism": null,
@@ -52,9 +68,13 @@ expression: imports
   "testing:http-obelisk-ext/http-get.get-successful-submit": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
-        "wit_type": "string"
+        "wit_type": "join-set-id"
       },
       {
         "type_wrapper": "String",
@@ -63,8 +83,12 @@ expression: imports
       }
     ],
     {
-      "type_wrapper": "String",
-      "wit_type": "string"
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
+      "wit_type": "execution-id"
     }
   ],
   "testing:http/http-get.get": [

@@ -7,6 +7,7 @@ pub mod activity;
 mod component_logger;
 pub mod engines;
 pub mod epoch_ticker;
+mod host_exports;
 pub mod std_output_stream;
 pub mod webhook;
 pub mod workflow;

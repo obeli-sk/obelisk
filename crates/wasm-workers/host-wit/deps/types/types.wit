@@ -25,10 +25,16 @@ interface time {
 }
 
 interface execution {
+    record join-set-id {
+        id: string,
+    }
+    record execution-id {
+        id: string,
+    }
 
-    type join-set-id = string;
-
-    type execution-id = string;
+    record delay-id {
+        id: string,
+    }
 
     variant execution-error {
         permanent-failure(string), // trap, instantiation error, non determinism, unhandled child execution error, param/result parsing error

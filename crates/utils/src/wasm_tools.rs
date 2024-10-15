@@ -194,14 +194,19 @@ impl ExIm {
     #[expect(clippy::too_many_lines)]
     fn enrich_exports_with_extensions(exports_hierarchy: &mut Vec<PackageIfcFns>) {
         // initialize values for reuse
+        let execution_id_type_wrapper =
+            TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
+        let join_set_id_type_wrapper =
+            TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
+
         let return_type_execution_id = Some(ReturnType {
-            type_wrapper: TypeWrapper::String,
+            type_wrapper: execution_id_type_wrapper.clone(),
             wit_type: Some(concepts::StrVariant::Static(
                 "/* use obelisk:types/execution.{execution-id} */ execution-id",
             )),
         });
         let param_type_join_set = ParameterType {
-            type_wrapper: TypeWrapper::String,
+            type_wrapper: join_set_id_type_wrapper.clone(),
             name: Some(StrVariant::Static("join-set-id")),
             wit_type: Some(StrVariant::Static(
                 "/* use obelisk:types/execution.{join-set-id} */ join-set-id",
@@ -287,7 +292,7 @@ impl ExIm {
                     parameter_types: ParameterTypes(vec![param_type_join_set.clone()]),
                     return_type: {
                         let error_tuple = Some(Box::new(TypeWrapper::Tuple(Box::new([
-                            TypeWrapper::String, // execution id
+                            execution_id_type_wrapper.clone(),
                             TypeWrapper::Variant(indexmap! {
                                 Box::from("permanent-failure") => Some(TypeWrapper::String),
                                 Box::from("permanent-timeout") => None,
@@ -302,7 +307,7 @@ impl ExIm {
                                 Cow::Owned(format!("tuple</* use obelisk:types/execution.{{execution-id}} */ execution-id, {original_ret}>")),
                                 TypeWrapper::Result {
                                     ok: Some(Box::new(TypeWrapper::Tuple(Box::new([
-                                        TypeWrapper::String,
+                                        execution_id_type_wrapper.clone(),
                                         original_ret.type_wrapper,
                                     ])))), // (execution-id, original_ret)
                                     err: error_tuple,
@@ -314,7 +319,7 @@ impl ExIm {
                                     "/* use obelisk:types/execution.{execution-id} */ execution-id",
                                 ),
                                 TypeWrapper::Result {
-                                    ok: Some(Box::new(TypeWrapper::String)), // execution-id
+                                    ok: Some(Box::new(execution_id_type_wrapper.clone())),
                                     err: error_tuple,
                                 },
                             )

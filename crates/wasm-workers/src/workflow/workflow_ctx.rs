@@ -1,7 +1,11 @@
 use super::event_history::{EventCall, EventHistory};
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::component_logger::{log_activities, ComponentLogger};
-use crate::WasmFileError;
+use crate::host_exports::{
+    val_to_join_set_id, ValToJoinSetIdError, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE,
+    SUFFIX_FN_SUBMIT,
+};
+use crate::{host_exports, WasmFileError};
 use assert_matches::assert_matches;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -20,7 +24,6 @@ use std::time::Duration;
 use tracing::{debug, error, instrument, trace, Span};
 use utils::time::ClockFn;
 use utils::wasm_tools::SUFFIX_PKG_EXT;
-use val_json::wast_val::WastVal;
 use wasmtime::component::{Linker, Val};
 
 #[derive(thiserror::Error, Debug, Clone)]
@@ -151,15 +154,18 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 self.fn_registry.as_ref(),
             )
             .await?;
+        let res = res.into_wast_val();
         match (results.len(), res) {
             (0, None) => {}
             (1, Some(res)) => {
                 results[0] = res.as_val();
             }
             (expected, got) => {
-                error!("Unexpected results length, runtime expects {expected}, got: {got:?}",);
+                error!(
+                    "Unexpected result length or type, runtime expects {expected}, got: {got:?}",
+                );
                 return Err(WorkflowFunctionError::UncategorizedError(
-                    "Unexpected results length",
+                    "Unexpected result length or type",
                 ));
             }
         }
@@ -193,7 +199,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 
     pub(crate) fn add_to_linker(linker: &mut Linker<Self>) -> Result<(), WasmFileError> {
-        host_activities::obelisk::workflow::host_activities::add_to_linker(
+        host_exports::obelisk::workflow::host_activities::add_to_linker(
             linker,
             |state: &mut Self| state,
         )
@@ -209,7 +215,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         Ok(())
     }
 
-    #[expect(clippy::too_many_lines)]
     fn imported_fn_to_event_call(
         &mut self,
         ffqn: FunctionFqn,
@@ -226,26 +231,17 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 debug!("Got `-submit` extension for {ffqn}");
-                if params.is_empty() {
+                let Some((join_set_id, params)) = params.split_first() else {
                     error!("Got empty params, expected JoinSetId");
                     return Err(WorkflowFunctionError::UncategorizedError(
                         "error running `-submit` extension function: exepcted at least one parameter with JoinSetId, got empty parameter list",
                     ));
-                    // TODO Replace with `split_at_checked` once stable
-                }
-                let (join_set_id, params) = params.split_at(1);
-
-                let join_set_id = join_set_id.first().expect("split so that the size is 1");
-                let Val::String(join_set_id) = join_set_id else {
-                    error!("Wrong type for JoinSetId, expected string, got `{join_set_id:?}`");
-                    return Err(WorkflowFunctionError::UncategorizedError(
-                        "error running `-submit` extension function: wrong first parameter type, string parameter containing JoinSetId"
-                    ));
                 };
-                let join_set_id = join_set_id.parse().map_err(|parse_err| {
-                    error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
-                    WorkflowFunctionError::UncategorizedError("cannot parse JoinSetId")
-                })?;
+                let join_set_id = val_to_join_set_id(join_set_id)
+                    .map_err(|err| WorkflowFunctionError::UncategorizedError(match err {
+                        ValToJoinSetIdError::ParseError => "error running `-submit` extension function: cannot parse join-set-id",
+                        ValToJoinSetIdError::TypeError => "error running `-submit` extension function: wrong first parameter type, expected join-set-id",
+                    }))?;
                 let execution_id =
                     ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
                 Ok(EventCall::StartAsync {
@@ -257,39 +253,29 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             } else if let Some(function_name) =
                 ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
             {
-                debug!("Got await-next extension for function `{function_name}`"); // FIXME: handle different functions in the same join set
-                if params.len() != 1 {
-                    error!("Expected single parameter with JoinSetId got {params:?}");
+                debug!("Got await-next extension for function `{function_name}`");
+                let [join_set_id] = params else {
+                    error!("Expected single parameter with join-set-id got {params:?}");
                     return Err(WorkflowFunctionError::UncategorizedError(
-                        "error running `-await-next` extension function: wrong parameter length, expected single string parameter containing JoinSetId"
-                    ));
-                }
-                let join_set_id = params.first().expect("checked that the size is 1");
-                let Val::String(join_set_id) = join_set_id else {
-                    error!("Wrong type for JoinSetId, expected string, got `{join_set_id:?}`");
-                    return Err(WorkflowFunctionError::UncategorizedError(
-                        "error running `-await-next` extension function: wrong parameter type, expected single string parameter containing JoinSetId"
+                        "error running `-await-next` extension function: wrong parameter length, expected single string parameter containing join-set-id"
                     ));
                 };
-                let join_set_id = join_set_id.parse().map_err(|parse_err| {
-                    error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
-                    WorkflowFunctionError::UncategorizedError("cannot parse JoinSetId")
-                })?;
+                let join_set_id = val_to_join_set_id(join_set_id).map_err(|err| WorkflowFunctionError::UncategorizedError(match err {
+                    ValToJoinSetIdError::ParseError => "error running `-await-next` extension function: cannot parse join-set-id",
+                    ValToJoinSetIdError::TypeError => "error running `-await-next` extension function: wrong parameter type, expected single string parameter containing join-set-id",
+                }))?;
                 Ok(EventCall::BlockingChildAwaitNext { join_set_id })
             } else if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
             {
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 debug!("Got `-schedule` extension for {ffqn}");
-                if params.is_empty() {
+                let Some((scheduled_at, params)) = params.split_first() else {
                     error!("Error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list");
                     return Err(WorkflowFunctionError::UncategorizedError(
                         "error running `-schedule` extension function: exepcted at least one parameter of type `scheduled-at`, got empty parameter list",
                     ));
-                    // TODO Replace with `split_at_checked` once stable
-                }
-                let (scheduled_at, params) = params.split_at(1);
-                let scheduled_at = scheduled_at.first().expect("split so that the size is 1");
+                };
                 let scheduled_at = match HistoryEventScheduledAt::try_from(scheduled_at) {
                     Ok(scheduled_at) => scheduled_at,
                     Err(err) => {
@@ -328,44 +314,28 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     }
 }
 
-pub(crate) mod host_activities {
-    use obelisk::types::time::Duration as DurationEnum;
-
+mod host_activities {
     use super::{
         assert_matches, async_trait, ClockFn, DbConnection, DbPool, Duration, EventCall, JoinSetId,
-        WastVal, WorkflowCtx,
+        WorkflowCtx,
+    };
+    use crate::{
+        host_exports::{self, DurationEnum},
+        workflow::event_history::{ChildReturnValue, HostActionResp},
     };
 
-    // Generate `obelisk::workflow::host_activities`
-    wasmtime::component::bindgen!({
-        path: "host-wit/",
-        async: true,
-        interfaces: "import obelisk:workflow/host-activities;",
-        trappable_imports: true,
-    });
-
-    impl From<DurationEnum> for Duration {
-        fn from(value: DurationEnum) -> Self {
-            match value {
-                DurationEnum::Milliseconds(millis) => Duration::from_millis(millis),
-                DurationEnum::Seconds(secs) => Duration::from_secs(secs),
-                DurationEnum::Minutes(mins) => Duration::from_secs(u64::from(mins * 60)),
-                DurationEnum::Hours(hours) => Duration::from_secs(u64::from(hours * 60 * 60)),
-                DurationEnum::Days(days) => Duration::from_secs(u64::from(days * 24 * 60 * 60)),
-            }
-        }
-    }
-
     #[async_trait]
-    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> obelisk::workflow::host_activities::Host
-        for WorkflowCtx<C, DB, P>
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
+        host_exports::obelisk::workflow::host_activities::Host for WorkflowCtx<C, DB, P>
     {
         // TODO: Apply jitter, should be configured on the component level
         async fn sleep(&mut self, duration: DurationEnum) -> wasmtime::Result<()> {
             Ok(self.call_sleep(Duration::from(duration)).await?)
         }
 
-        async fn new_join_set(&mut self) -> wasmtime::Result<String> {
+        async fn new_join_set(
+            &mut self,
+        ) -> wasmtime::Result<host_exports::obelisk::types::execution::JoinSetId> {
             let join_set_id =
                 JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
             let res = self
@@ -377,7 +347,10 @@ pub(crate) mod host_activities {
                     self.fn_registry.as_ref(),
                 )
                 .await?;
-            Ok(assert_matches!(res, Some(WastVal::String(join_set_id)) => join_set_id))
+            let join_set_id = assert_matches!(res, ChildReturnValue::HostActionResp(HostActionResp::CreateJoinSetResp(join_set_id)) => join_set_id);
+            Ok(host_exports::obelisk::types::execution::JoinSetId {
+                id: join_set_id.to_string(),
+            })
         }
     }
 }
@@ -405,10 +378,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::
         self.component_logger.error(&message);
     }
 }
-
-pub(crate) const SUFFIX_FN_SUBMIT: &str = "-submit";
-pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
-pub(crate) const SUFFIX_FN_SCHEDULE: &str = "-schedule";
 
 #[cfg(madsim)]
 #[cfg(test)]

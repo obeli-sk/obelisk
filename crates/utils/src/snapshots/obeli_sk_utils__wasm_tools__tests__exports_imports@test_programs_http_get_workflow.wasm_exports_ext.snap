@@ -6,7 +6,11 @@ expression: exports
   "testing:http-workflow-obelisk-ext/workflow.get-await-next": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -16,7 +20,11 @@ expression: exports
         "Result": {
           "ok": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Result": {
                   "ok": "String",
@@ -27,7 +35,11 @@ expression: exports
           },
           "err": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Variant": {
                   "non-determinism": null,
@@ -75,14 +87,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-submit": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -93,14 +113,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-await-next": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -110,7 +138,11 @@ expression: exports
         "Result": {
           "ok": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Result": {
                   "ok": "String",
@@ -121,7 +153,11 @@ expression: exports
           },
           "err": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Variant": {
                   "non-determinism": null,
@@ -139,7 +175,11 @@ expression: exports
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-await-next": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -149,7 +189,11 @@ expression: exports
         "Result": {
           "ok": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Result": {
                   "ok": {
@@ -162,7 +206,11 @@ expression: exports
           },
           "err": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Variant": {
                   "non-determinism": null,
@@ -212,14 +260,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -229,7 +285,11 @@ expression: exports
         "Result": {
           "ok": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Result": {
                   "ok": {
@@ -242,7 +302,11 @@ expression: exports
           },
           "err": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Variant": {
                   "non-determinism": null,
@@ -295,14 +359,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -318,14 +390,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-submit": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -338,7 +418,11 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
@@ -375,14 +459,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -393,7 +485,11 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],

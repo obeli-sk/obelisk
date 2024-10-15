@@ -6,7 +6,11 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-await-next": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -16,13 +20,21 @@ expression: exports
         "Result": {
           "ok": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               "U64"
             ]
           },
           "err": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Variant": {
                   "non-determinism": null,
@@ -70,14 +82,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-submit": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -88,14 +108,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-await-next": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -105,13 +133,21 @@ expression: exports
         "Result": {
           "ok": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               "U64"
             ]
           },
           "err": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Variant": {
                   "non-determinism": null,
@@ -169,14 +205,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-submit": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -197,14 +241,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -214,13 +266,21 @@ expression: exports
         "Result": {
           "ok": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               "U64"
             ]
           },
           "err": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Variant": {
                   "non-determinism": null,
@@ -238,7 +298,11 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -248,13 +312,21 @@ expression: exports
         "Result": {
           "ok": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               "U64"
             ]
           },
           "err": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Variant": {
                   "non-determinism": null,
@@ -307,14 +379,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -330,7 +410,11 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
@@ -372,14 +456,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -395,14 +487,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -412,13 +512,21 @@ expression: exports
         "Result": {
           "ok": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               "U64"
             ]
           },
           "err": {
             "Tuple": [
-              "String",
+              {
+                "Record": {
+                  "id": "String"
+                }
+              },
               {
                 "Variant": {
                   "non-determinism": null,
@@ -471,14 +579,22 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": {
+          "Record": {
+            "id": "String"
+          }
+        },
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -494,7 +610,11 @@ expression: exports
       }
     ],
     {
-      "type_wrapper": "String",
+      "type_wrapper": {
+        "Record": {
+          "id": "String"
+        }
+      },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
     }
   ],

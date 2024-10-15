@@ -463,7 +463,7 @@ pub(crate) mod tests {
         #[case(10, 10, Ok(SupportedFunctionReturnValue::None))] // 0.1s -> Ok
         #[case(1500, 1, Err(concepts::FinishedExecutionError::PermanentTimeout))] // 1s -> timeout
         #[tokio::test]
-        async fn sleep_should_produce_intermittent_timeout(
+        async fn flaky_sleep_should_produce_intermittent_timeout(
             #[case] sleep_millis: u32,
             #[case] sleep_iterations: u32,
             #[case] expected: concepts::FinishedExecutionResult,
