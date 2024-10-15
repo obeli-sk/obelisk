@@ -1,1 +1,4 @@
 [build]
+
+[env]
+CARGO_WORKSPACE_DIR = { value = "", relative = true } # remove once stable https://doc.rust-lang.org/cargo/reference/environment-variables.html#environment-variables-cargo-reads

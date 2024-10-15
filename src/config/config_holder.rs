@@ -2,7 +2,7 @@ use super::toml::ObeliskConfig;
 use anyhow::bail;
 use config::{builder::AsyncState, ConfigBuilder, Environment, File, FileFormat};
 use directories::ProjectDirs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::debug;
 
 #[cfg(debug_assertions)]
@@ -16,13 +16,12 @@ pub(crate) struct ConfigHolder {
 }
 
 impl ConfigHolder {
-    pub(crate) async fn generate_default_config() -> Result<PathBuf, anyhow::Error> {
-        let path = PathBuf::from("obelisk.toml");
-        if path.try_exists()? {
-            bail!("file already exists: {path:?}");
+    pub(crate) async fn generate_default_config(obelisk_toml: &Path) -> Result<(), anyhow::Error> {
+        if obelisk_toml.try_exists()? {
+            bail!("file already exists: {obelisk_toml:?}");
         }
-        tokio::fs::write(&path, EXAMPLE_TOML).await?;
-        Ok(path)
+        tokio::fs::write(obelisk_toml, EXAMPLE_TOML).await?;
+        Ok(())
     }
 
     pub(crate) fn new(project_dirs: Option<ProjectDirs>, config: Option<PathBuf>) -> Self {

@@ -12,6 +12,7 @@ use clap::Parser;
 use config::config_holder::ConfigHolder;
 use directories::ProjectDirs;
 use grpc_util::{injector::TracingInjector, to_channel};
+use std::path::PathBuf;
 use tonic::{codec::CompressionEncoding, transport::Channel};
 
 pub type StdError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -26,7 +27,7 @@ async fn main() -> Result<(), anyhow::Error> {
             config,
         }) => {
             Box::pin(command::server::run(
-                ProjectDirs::from("com", "obelisk", "obelisk"),
+                project_dirs(),
                 config,
                 clean_db,
                 clean_cache,
@@ -35,8 +36,9 @@ async fn main() -> Result<(), anyhow::Error> {
             .await
         }
         Subcommand::Server(Server::GenerateConfig) => {
-            let path = ConfigHolder::generate_default_config().await?;
-            println!("Generated {path:?}");
+            let obelisk_toml = PathBuf::from("obelisk.toml");
+            ConfigHolder::generate_default_config(&obelisk_toml).await?;
+            println!("Generated {obelisk_toml:?}");
             Ok(())
         }
         Subcommand::Server(Server::Verify {
@@ -46,7 +48,7 @@ async fn main() -> Result<(), anyhow::Error> {
             config,
         }) => {
             command::server::verify(
-                ProjectDirs::from("com", "obelisk", "obelisk"),
+                project_dirs(),
                 config,
                 clean_db,
                 clean_cache,
@@ -109,6 +111,10 @@ async fn main() -> Result<(), anyhow::Error> {
             }
         }
     }
+}
+
+fn project_dirs() -> Option<ProjectDirs> {
+    ProjectDirs::from("com", "obelisk", "obelisk")
 }
 
 type SchedulerClient = command::grpc::scheduler_client::SchedulerClient<

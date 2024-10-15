@@ -1495,3 +1495,30 @@ impl Drop for AbortOnDropHandle {
         self.0.abort();
     }
 }
+
+#[cfg(all(test, not(madsim)))]
+mod tests {
+    use std::path::PathBuf;
+
+    fn get_workspace_dir() -> PathBuf {
+        PathBuf::from(std::env::var("CARGO_WORKSPACE_DIR").unwrap())
+    }
+
+    #[tokio::test(flavor = "multi_thread")] // for WASM component compilation
+    async fn server_verify() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let obelisk_toml = tempdir.path().join("obelisk.toml");
+        tokio::fs::copy(get_workspace_dir().join("obelisk.toml"), &obelisk_toml)
+            .await
+            .unwrap();
+        crate::command::server::verify(
+            crate::project_dirs(),
+            Some(obelisk_toml),
+            false, //clean_db,
+            false, //clean_cache,
+            false, //clean_codegen_cache,
+        )
+        .await
+        .unwrap();
+    }
+}

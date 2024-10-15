@@ -82,44 +82,44 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## Environment variables: Set to a specific value or forward from the host. Default is empty.
 # env_vars = ["ENV1", "ENV2=somevalue"]
 
+[[http_server]]
+name = "external-webhook"
+listening_addr = "0.0.0.0:9090"
+
 [[activity_wasm]]
 name = "fibo_activity"
-location.oci = "docker.io/getobelisk/example_activity_fibo:2024-10-04@sha256:b0915e6bae3083a0dceec80497510c0faf4f5cad71202864da0a99eee2e2bbc2"
+location.oci = "docker.io/getobelisk/example_activity_fibo:2024-10-15@sha256:22ecc9d23282305c0f1bdd10fb157733f7aaf06d321993554842060e573d1fa7"
 default_max_retries = 0
 
 [[workflow]]
 name = "fibo_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-08@sha256:a1293a75704d56602881caaea42b92d11cd88fc7258a3ac30d41a9bc73614483"
+location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-15@sha256:c42ba1a3fc04d218e4404bfe9d0a7bdbbfb625ce20c211f0a018dcf966b86cf4"
 exec.lock_expiry.secs = 2
+
+[[webhook_component]]
+name = "webhook_fibo"
+location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-15@sha256:ee63f044a05f99a7003dd0c3fe2c670a1f73f7b61d18c98b977b00a0a9883062"
+http_server = "external-webhook"
+routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 
 [[activity_wasm]]
 name = "http_get_activity"
-location.oci = "docker.io/getobelisk/example_activity_http_get:2024-09-28@sha256:80bfc8e64fe241040b7c2f11fc6d109cf9b04cddc53404ed2fe71c61aa3b0fdc"
+location.oci = "docker.io/getobelisk/example_activity_http_get:2024-10-15@sha256:620aeb424f507c227b1b9927b5f5048c28afc0044e04d9362b4599e23ef25f9c"
 forward_stdout = "stderr"
 forward_stderr = "stderr"
 
 [[workflow]]
 name = "http_get_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-10-06@sha256:9068bd715a696a33e352268eb3d0da060e460057730314e41c957983b6237241"
-
-[[http_server]]
-name = "external"
-listening_addr = "0.0.0.0:9090"
-
-[[webhook_component]]
-name = "webhook_fibo"
-location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-06@sha256:f36a137c558710989a20f4255db28c4941f3e29e10019b7b09dbb9cbfc2947e5"
-http_server = "external"
-routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
+location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-10-15@sha256:e95cb90db141d00145c33c3f1698baa4b91c3ec1e588dc4620464edbd37b7247"
 
 [[activity_wasm]]
 name = "sleep_activity"
-location.oci = "docker.io/getobelisk/example_activity_sleep:2024-10-06@sha256:af19908f9675e7c14740d3f8428ecbf3f41a2a914cd33bb8af808be3d6e30526"
+location.oci = "docker.io/getobelisk/example_activity_sleep:2024-10-15@sha256:33bcd638ec60951d144c977679f23cb4b389278a6ba92b0ef82a4679834cfd55"
 exec.lock_expiry.secs = 10
 
 [[workflow]]
 name = "sleep_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-10-06@sha256:c1146d25019c5caaa6bb1fc77f1c40eb897e22372dc0c496b16735fc6446d40d"
+location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-10-15@sha256:380cf29f8898851dfddcbdb96a9eb09491edc7181e59da826c67362ebbd842ff"
 
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:
