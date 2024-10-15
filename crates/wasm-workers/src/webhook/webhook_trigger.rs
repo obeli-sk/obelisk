@@ -297,14 +297,15 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                         .serve_connection(
                             io,
                             hyper::service::service_fn(move |req| {
-                                debug!("method: {}, uri: {}", req.method(), req.uri());
+                                let execution_id = ExecutionId::generate();
+                                debug!(%execution_id, method = %req.method(), uri = %req.uri(), "Processing request");
                                 RequestHandler {
                                     engine: engine.clone(),
                                     clock_fn: clock_fn.clone(),
                                     db_pool: db_pool.clone(),
                                     fn_registry: fn_registry.clone(),
                                     request_timeout,
-                                    execution_id: ExecutionId::generate(),
+                                    execution_id,
                                     router: router.clone(),
                                     phantom_data: PhantomData,
                                 }
@@ -323,11 +324,7 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
                 .serve_connection(
                     io,
                     hyper::service::service_fn(move |req| {
-                        debug!(
-                            "method: {}, uri: {} - Out of permits",
-                            req.method(),
-                            req.uri()
-                        );
+                        debug!(method = %req.method(), uri = %req.uri(), "Out of permits");
                         std::future::ready(Ok::<_, hyper::Error>(resp(
                             "Out of permits",
                             StatusCode::SERVICE_UNAVAILABLE,
