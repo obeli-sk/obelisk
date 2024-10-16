@@ -588,9 +588,9 @@ impl<C: ClockFn> EventHistory<C> {
         let (fn_metadata, config_id, child_component_retry_config, import_type) = fn_registry
             .get_by_exported_function(ffqn)
             .await
-            .ok_or_else(|| WorkflowFunctionError::FunctionMetadataNotFound {
-                ffqn: ffqn.clone(),
-            })?;
+            .unwrap_or_else(|| {
+                panic!("imported function must be found during verification: {ffqn}")
+            });
         let resolved_retry_config = self
             .child_retry_config_override
             .resolve(import_type, child_component_retry_config);

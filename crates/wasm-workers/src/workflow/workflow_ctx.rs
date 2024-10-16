@@ -14,7 +14,7 @@ use concepts::storage::{DbConnection, DbError, DbPool, HistoryEventScheduledAt, 
 use concepts::storage::{HistoryEvent, JoinSetResponseEvent};
 use concepts::{ExecutionId, FinishedExecutionError, FunctionRegistry, IfcFqnName, StrVariant};
 use concepts::{FunctionFqn, Params};
-use executor::worker::{FatalError, WorkerError, WorkerResult};
+use executor::worker::FatalError;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use std::fmt::Debug;
@@ -32,12 +32,10 @@ pub(crate) enum WorkflowFunctionError {
     #[error("non deterministic execution: {0}")]
     NonDeterminismDetected(StrVariant),
     #[error("child finished with an execution error: {0}")]
-    ChildExecutionError(FinishedExecutionError), // FIXME Add parameter/result parsing errors
-    #[error("sumbitting failed, metadata for {ffqn} not found")]
-    FunctionMetadataNotFound { ffqn: FunctionFqn }, // FIXME: Remove
+    ChildExecutionError(FinishedExecutionError),
     #[error("uncategorized error - {0}")]
     UncategorizedError(&'static str),
-    // intermittent errors / interrupt requests
+    // retryable errors:
     #[error("interrupt requested")]
     InterruptRequested,
     #[error(transparent)]
@@ -46,51 +44,29 @@ pub(crate) enum WorkflowFunctionError {
 
 pub(crate) struct InterruptRequested;
 
-impl From<InterruptRequested> for WorkerResult {
-    fn from(_value: InterruptRequested) -> Self {
-        WorkerResult::DbUpdatedByWorker
-    }
-}
-
 #[derive(Debug)]
 pub(crate) enum WorkerPartialResult {
+    FatalError(FatalError, Version),
+    // retryable:
     InterruptRequested,
-    Err(WorkerError),
-}
-
-impl From<WorkerPartialResult> for WorkerResult {
-    fn from(value: WorkerPartialResult) -> Self {
-        match value {
-            WorkerPartialResult::InterruptRequested => WorkerResult::DbUpdatedByWorker,
-            WorkerPartialResult::Err(err) => WorkerResult::Err(err),
-        }
-    }
+    DbError(DbError),
 }
 
 impl WorkflowFunctionError {
     pub(crate) fn into_worker_partial_result(self, version: Version) -> WorkerPartialResult {
         match self {
-            Self::NonDeterminismDetected(reason) => WorkerPartialResult::Err(
-                WorkerError::FatalError(FatalError::NonDeterminismDetected(reason), version),
-            ),
             Self::InterruptRequested => WorkerPartialResult::InterruptRequested,
-            Self::DbError(db_error) => WorkerPartialResult::Err(WorkerError::DbError(db_error)),
-            Self::ChildExecutionError(err) => WorkerPartialResult::Err(WorkerError::FatalError(
-                FatalError::ChildExecutionError(err),
-                version,
-            )),
-            Self::FunctionMetadataNotFound { ffqn } => {
-                WorkerPartialResult::Err(WorkerError::IntermittentError { // FIXME: this should be a fatal error, if not a panic
-                    reason: StrVariant::Arc(Arc::from(format!(
-                        "attempted to submit an execution with no active component, function metadata not found for {ffqn}"))),
-                    err: None,
-                    version,
-                })
+            Self::DbError(db_error) => WorkerPartialResult::DbError(db_error),
+            // fatal errors:
+            Self::NonDeterminismDetected(reason) => {
+                WorkerPartialResult::FatalError(FatalError::NonDeterminismDetected(reason), version)
             }
-            Self::UncategorizedError(err) => WorkerPartialResult::Err(WorkerError::FatalError(
-                FatalError::UncategorizedError(err),
-                version,
-            )),
+            Self::ChildExecutionError(err) => {
+                WorkerPartialResult::FatalError(FatalError::ChildExecutionError(err), version)
+            }
+            Self::UncategorizedError(err) => {
+                WorkerPartialResult::FatalError(FatalError::UncategorizedError(err), version)
+            }
         }
     }
 }
@@ -403,6 +379,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> log_activities::obelisk::log::
 #[cfg(madsim)]
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::workflow::workflow_ctx::WorkerPartialResult;
     use crate::{
         tests::fn_registry_dummy, workflow::workflow_ctx::WorkflowCtx,
         workflow::workflow_worker::JoinNextBlockingStrategy,
@@ -433,6 +410,20 @@ pub(crate) mod tests {
 
     const TICK_SLEEP: Duration = Duration::from_millis(1);
     pub const FFQN_MOCK: FunctionFqn = FunctionFqn::new_static("namespace:pkg/ifc", "fn");
+
+    impl From<WorkerPartialResult> for WorkerResult {
+        fn from(worker_partial_result: WorkerPartialResult) -> Self {
+            match worker_partial_result {
+                WorkerPartialResult::FatalError(err, version) => {
+                    WorkerResult::Err(executor::worker::WorkerError::FatalError(err, version))
+                }
+                WorkerPartialResult::InterruptRequested => WorkerResult::DbUpdatedByWorker,
+                WorkerPartialResult::DbError(db_err) => {
+                    WorkerResult::Err(executor::worker::WorkerError::DbError(db_err))
+                }
+            }
+        }
+    }
 
     #[derive(Debug, Clone, arbitrary::Arbitrary)]
     enum WorkflowStep {
