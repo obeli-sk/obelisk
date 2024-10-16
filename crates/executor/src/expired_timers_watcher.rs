@@ -24,6 +24,7 @@ use utils::time::ClockFn;
 pub struct TimersWatcherConfig<C: ClockFn> {
     pub tick_sleep: Duration,
     pub clock_fn: C,
+    pub leeway: Duration,
 }
 
 #[expect(dead_code)]
@@ -72,7 +73,7 @@ pub fn spawn_new<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB>
             debug!("Spawned expired_timers_watcher");
             let mut old_err = None;
             while !is_closing.load(Ordering::Relaxed) {
-                let executed_at = config.clock_fn.now();
+                let executed_at = config.clock_fn.now() - config.leeway;
                 let res = tick(db_pool.connection(), executed_at).await;
                 log_err_if_new(res, &mut old_err);
                 tokio::time::sleep(tick_sleep).await;

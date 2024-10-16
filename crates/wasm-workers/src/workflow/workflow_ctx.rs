@@ -573,6 +573,7 @@ pub(crate) mod tests {
             expired_timers_watcher::TimersWatcherConfig {
                 tick_sleep: TICK_SLEEP,
                 clock_fn: sim_clock.clone(),
+                leeway: Duration::ZERO,
             },
         );
         let created_at = sim_clock.now();

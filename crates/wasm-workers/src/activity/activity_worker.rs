@@ -477,6 +477,7 @@ pub(crate) mod tests {
                 executor::expired_timers_watcher::TimersWatcherConfig {
                     tick_sleep: TICK_SLEEP,
                     clock_fn: Now,
+                    leeway: Duration::ZERO,
                 },
             );
             let engine =

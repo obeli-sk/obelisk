@@ -749,6 +749,7 @@ impl ServerInit {
             TimersWatcherConfig {
                 tick_sleep: Duration::from_millis(100),
                 clock_fn: Now,
+                leeway: Duration::from_millis(100), // TODO: Make configurable
             },
         );
 

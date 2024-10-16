@@ -771,6 +771,7 @@ pub(crate) mod tests {
             expired_timers_watcher::TimersWatcherConfig {
                 tick_sleep: TICK_SLEEP,
                 clock_fn: sim_clock.clone(),
+                leeway: Duration::ZERO,
             },
         );
         let execution_id = ExecutionId::generate();
