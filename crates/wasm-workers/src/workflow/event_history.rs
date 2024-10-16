@@ -1,11 +1,11 @@
+use super::event_history::ProcessingStatus::Processed;
+use super::event_history::ProcessingStatus::Unprocessed;
+use super::workflow_ctx::InterruptRequested;
+use super::workflow_ctx::WorkflowFunctionError;
+use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::host_exports::delay_id_into_wast_val;
 use crate::host_exports::execution_id_into_wast_val;
 use crate::host_exports::join_set_id_into_wast_val;
-
-use super::event_history::ProcessingStatus::Processed;
-use super::event_history::ProcessingStatus::Unprocessed;
-use super::workflow_ctx::WorkflowFunctionError;
-use super::workflow_worker::JoinNextBlockingStrategy;
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{DelayId, JoinSetId};
 use concepts::storage::HistoryEventScheduledAt;
@@ -23,7 +23,6 @@ use concepts::FunctionRegistry;
 use concepts::ImportableType;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
-use executor::worker::WorkerResult;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,8 +38,6 @@ pub(crate) enum ChildReturnValue {
     None,
     WastVal(WastVal),
     HostActionResp(HostActionResp),
-    // StartAsyncResp(ExecutionId),
-    // DelayRequestResp(DelayId),
 }
 
 #[derive(Debug)]
@@ -86,7 +83,7 @@ pub(crate) struct EventHistory<C: ClockFn> {
     non_blocking_event_batch_size: usize,
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     clock_fn: C,
-    timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
+    interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
     topmost_parent: ExecutionId,
     worker_span: Span,
     // TODO: optimize using start_from_idx: usize,
@@ -113,7 +110,7 @@ impl<C: ClockFn> EventHistory<C> {
         child_activity_max_retries: Option<u32>,
         non_blocking_event_batching: u32,
         clock_fn: C,
-        timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
+        interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
         worker_span: Span,
         topmost_parent: ExecutionId,
     ) -> Self {
@@ -141,7 +138,7 @@ impl<C: ClockFn> EventHistory<C> {
                 Some(Vec::with_capacity(non_blocking_event_batch_size))
             },
             clock_fn,
-            timeout_error_container,
+            interrupt_on_timeout_container,
             worker_span,
             topmost_parent,
         }
@@ -221,7 +218,8 @@ impl<C: ClockFn> EventHistory<C> {
             // JoinNext was written, wait for next response.
             let join_set_id = poll_variant.join_set_id();
             debug!(%join_set_id,  "Waiting for {poll_variant:?}");
-            *self.timeout_error_container.lock().unwrap() = poll_variant.as_worker_result();
+            *self.interrupt_on_timeout_container.lock().unwrap() =
+                Some(poll_variant.as_workflow_interrupt());
             let key = poll_variant.as_key();
 
             // Subscribe to the next response.
@@ -930,16 +928,14 @@ impl PollVariant {
 
     fn as_function_error(&self) -> WorkflowFunctionError {
         match self {
-            PollVariant::JoinNextChild { .. } => WorkflowFunctionError::ChildExecutionRequest,
-            PollVariant::JoinNextDelay(_) => WorkflowFunctionError::DelayRequest,
+            PollVariant::JoinNextChild { .. } | PollVariant::JoinNextDelay(_) => {
+                WorkflowFunctionError::InterruptRequested
+            }
         }
     }
 
-    fn as_worker_result(&self) -> WorkerResult {
-        match self {
-            PollVariant::JoinNextChild { .. } => WorkerResult::ChildExecutionRequest,
-            PollVariant::JoinNextDelay(_) => WorkerResult::DelayRequest,
-        }
+    fn as_workflow_interrupt(&self) -> InterruptRequested {
+        InterruptRequested
     }
 }
 
@@ -1114,7 +1110,6 @@ mod tests {
         ConfigId, ExecutionId, FunctionFqn, FunctionRegistry, Params, SupportedFunctionReturnValue,
     };
     use db_tests::Database;
-    use executor::worker::{WorkerError, WorkerResult};
     use rstest::rstest;
     use std::sync::Arc;
     use std::time::Duration;
@@ -1149,9 +1144,7 @@ mod tests {
             None,
             non_blocking_event_batching,
             clock_fn,
-            Arc::new(std::sync::Mutex::new(WorkerResult::Err(
-                WorkerError::IntermittentTimeout,
-            ))),
+            Arc::new(std::sync::Mutex::new(None)),
             info_span!("worker-test"),
             execution_id,
         );
@@ -1250,7 +1243,7 @@ mod tests {
             blocking_join_first(event_history, version, fn_registry.clone())
                 .await
                 .unwrap_err(),
-            WorkflowFunctionError::ChildExecutionRequest,
+            WorkflowFunctionError::InterruptRequested,
             "should have ended with an interrupt"
         );
         db_connection
@@ -1568,7 +1561,7 @@ mod tests {
             )
             .await
             .unwrap_err(),
-            WorkflowFunctionError::ChildExecutionRequest
+            WorkflowFunctionError::InterruptRequested
         );
         // append two responses
         db_connection

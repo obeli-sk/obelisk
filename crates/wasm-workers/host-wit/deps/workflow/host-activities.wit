@@ -4,7 +4,12 @@ interface host-activities {
     use obelisk:types/time.{duration};
     use obelisk:types/execution.{join-set-id};
 
-    sleep: func(nanos: duration);
-    new-join-set: func() -> join-set-id;
+    /// Persistent sleep.
+    sleep: func(duration: duration);
+
+    /// Create new join set. Closing the join set at the execution finish will block until all child executions are finished.
+    new-join-set: func() -> join-set-id; // TODO: rename to new-join-set-awaiting
+
+    // TODO: `new-join-set-terminating` that cancels all remaining child executions on close
 }
 

@@ -339,7 +339,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     parent,
                 })
             }
-            WorkerResult::ChildExecutionRequest | WorkerResult::DelayRequest => None,
+            WorkerResult::DbUpdatedByWorker => None,
             WorkerResult::Err(err) => {
                 let (primary_event, parent, version) = match err {
                     WorkerError::IntermittentTimeout => {
@@ -971,7 +971,7 @@ mod tests {
         let (_guard, db_pool) = Database::Memory.set_up().await;
 
         let parent_worker = Arc::new(SimpleWorker::with_single_result(
-            WorkerResult::ChildExecutionRequest,
+            WorkerResult::DbUpdatedByWorker,
         ));
         let parent_execution_id = ExecutionId::generate();
         db_pool

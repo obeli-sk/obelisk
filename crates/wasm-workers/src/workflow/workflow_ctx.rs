@@ -28,45 +28,66 @@ use wasmtime::component::{Linker, Val};
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub(crate) enum WorkflowFunctionError {
+    // fatal errors:
     #[error("non deterministic execution: {0}")]
     NonDeterminismDetected(StrVariant),
-    #[error("child request")]
-    ChildExecutionRequest,
-    #[error("delay request")]
-    DelayRequest,
-    #[error(transparent)]
-    DbError(#[from] DbError),
     #[error("child finished with an execution error: {0}")]
     ChildExecutionError(FinishedExecutionError), // FIXME Add parameter/result parsing errors
     #[error("sumbitting failed, metadata for {ffqn} not found")]
-    FunctionMetadataNotFound { ffqn: FunctionFqn },
+    FunctionMetadataNotFound { ffqn: FunctionFqn }, // FIXME: Remove
     #[error("uncategorized error - {0}")]
     UncategorizedError(&'static str),
+    // intermittent errors / interrupt requests
+    #[error("interrupt requested")]
+    InterruptRequested,
+    #[error(transparent)]
+    DbError(#[from] DbError),
+}
+
+pub(crate) struct InterruptRequested;
+
+impl From<InterruptRequested> for WorkerResult {
+    fn from(_value: InterruptRequested) -> Self {
+        WorkerResult::DbUpdatedByWorker
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum WorkerPartialResult {
+    InterruptRequested,
+    Err(WorkerError),
+}
+
+impl From<WorkerPartialResult> for WorkerResult {
+    fn from(value: WorkerPartialResult) -> Self {
+        match value {
+            WorkerPartialResult::InterruptRequested => WorkerResult::DbUpdatedByWorker,
+            WorkerPartialResult::Err(err) => WorkerResult::Err(err),
+        }
+    }
 }
 
 impl WorkflowFunctionError {
-    pub(crate) fn into_worker_result(self, version: Version) -> WorkerResult {
+    pub(crate) fn into_worker_partial_result(self, version: Version) -> WorkerPartialResult {
         match self {
-            Self::NonDeterminismDetected(reason) => WorkerResult::Err(WorkerError::FatalError(
-                FatalError::NonDeterminismDetected(reason),
-                version,
-            )),
-            Self::ChildExecutionRequest => WorkerResult::ChildExecutionRequest,
-            Self::DelayRequest => WorkerResult::DelayRequest,
-            Self::DbError(db_error) => WorkerResult::Err(WorkerError::DbError(db_error)),
-            Self::ChildExecutionError(err) => WorkerResult::Err(WorkerError::FatalError(
+            Self::NonDeterminismDetected(reason) => WorkerPartialResult::Err(
+                WorkerError::FatalError(FatalError::NonDeterminismDetected(reason), version),
+            ),
+            Self::InterruptRequested => WorkerPartialResult::InterruptRequested,
+            Self::DbError(db_error) => WorkerPartialResult::Err(WorkerError::DbError(db_error)),
+            Self::ChildExecutionError(err) => WorkerPartialResult::Err(WorkerError::FatalError(
                 FatalError::ChildExecutionError(err),
                 version,
             )),
             Self::FunctionMetadataNotFound { ffqn } => {
-                WorkerResult::Err(WorkerError::IntermittentError {
+                WorkerPartialResult::Err(WorkerError::IntermittentError { // FIXME: this should be a fatal error, if not a panic
                     reason: StrVariant::Arc(Arc::from(format!(
                         "attempted to submit an execution with no active component, function metadata not found for {ffqn}"))),
                     err: None,
                     version,
                 })
             }
-            Self::UncategorizedError(err) => WorkerResult::Err(WorkerError::FatalError(
+            Self::UncategorizedError(err) => WorkerPartialResult::Err(WorkerError::FatalError(
                 FatalError::UncategorizedError(err),
                 version,
             )),
@@ -101,7 +122,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         child_retry_exp_backoff: Option<Duration>,
         child_max_retries: Option<u32>,
         non_blocking_event_batching: u32,
-        timeout_error_container: Arc<std::sync::Mutex<WorkerResult>>,
+        interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
         fn_registry: Arc<dyn FunctionRegistry>,
         worker_span: Span,
         topmost_parent: ExecutionId,
@@ -118,7 +139,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 child_max_retries,
                 non_blocking_event_batching,
                 clock_fn.clone(),
-                timeout_error_container,
+                interrupt_on_timeout_container,
                 worker_span.clone(),
                 topmost_parent,
             ),
@@ -403,7 +424,7 @@ pub(crate) mod tests {
     use executor::{
         executor::{ExecConfig, ExecTask},
         expired_timers_watcher,
-        worker::{Worker, WorkerContext, WorkerError, WorkerResult},
+        worker::{Worker, WorkerContext, WorkerResult},
     };
     use std::{fmt::Debug, marker::PhantomData, sync::Arc, time::Duration};
     use test_utils::{arbitrary::UnstructuredHolder, sim_clock::SimClock};
@@ -480,9 +501,7 @@ pub(crate) mod tests {
                 None,
                 None,
                 0, // TODO: parametrize batch size
-                Arc::new(std::sync::Mutex::new(WorkerResult::Err(
-                    WorkerError::IntermittentTimeout,
-                ))),
+                Arc::new(std::sync::Mutex::new(None)),
                 self.fn_registry.clone(),
                 tracing::info_span!("workflow-test"),
                 ctx.execution_id,
@@ -502,7 +521,7 @@ pub(crate) mod tests {
                 };
                 if let Err(err) = res {
                     info!("Sending {err:?}");
-                    return err.into_worker_result(workflow_ctx.version);
+                    return err.into_worker_partial_result(workflow_ctx.version).into();
                 }
             }
             info!("Finishing");

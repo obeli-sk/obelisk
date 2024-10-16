@@ -1,4 +1,5 @@
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
+use crate::workflow::workflow_ctx::WorkerPartialResult;
 use crate::WasmFileError;
 use crate::NAMESPACE_OBELISK_WITH_COLON;
 use async_trait::async_trait;
@@ -221,17 +222,13 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
     #[expect(clippy::too_many_lines)]
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
-        #[derive(thiserror::Error)]
         enum RunError<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
-            #[error("worker error: `{0}`")]
             WorkerError(WorkerError, WorkflowCtx<C, DB, P>),
-            #[error("wasm function call error: `{0}`")]
             FunctionCall(Box<dyn Error + Send + Sync>, WorkflowCtx<C, DB, P>),
+            WorkerPartialResult(WorkerPartialResult, WorkflowCtx<C, DB, P>),
         }
         trace!("Params: {params:?}", params = ctx.params);
-        let timeout_error_container = Arc::new(std::sync::Mutex::new(WorkerResult::Err(
-            WorkerError::IntermittentTimeout,
-        )));
+        let interrupt_on_timeout_container = Arc::new(std::sync::Mutex::new(None));
         let version_at_start = ctx.version.clone();
         let (instance, mut store) = {
             let seed = ctx.execution_id.random_part();
@@ -248,7 +245,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 self.config.child_retry_exp_backoff,
                 self.config.child_max_retries,
                 self.config.non_blocking_event_batching,
-                timeout_error_container.clone(),
+                interrupt_on_timeout_container.clone(),
                 self.fn_registry.clone(),
                 ctx.worker_span.clone(),
                 ctx.topmost_parent,
@@ -292,15 +289,36 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         let mut results = vec![Val::Bool(false); result_types.len()];
 
         let call_function = async move {
-            if let Err(err) = func.call_async(&mut store, &params, &mut results).await {
-                return Err(RunError::FunctionCall(err.into(), store.into_data()));
-            } // guest panic exits here
+            let func_call_result = func.call_async(&mut store, &params, &mut results).await;
+            let post_return_res = if func_call_result.is_ok() {
+                func.post_return_async(&mut store).await
+            } else {
+                Ok(())
+            };
+            let workflow_ctx = store.into_data();
+            if let Err(err) = func_call_result {
+                // guest panic exits here.
+                // Try to unpack `WorkflowFunctionError`
+                if let Some(err) = err
+                    .source()
+                    .and_then(|source| source.downcast_ref::<WorkflowFunctionError>())
+                {
+                    let worker_partial_result = err
+                        .clone()
+                        .into_worker_partial_result(workflow_ctx.version.clone());
+                    return Err(RunError::WorkerPartialResult(
+                        worker_partial_result,
+                        workflow_ctx,
+                    ));
+                } else {
+                    return Err(RunError::FunctionCall(err.into(), workflow_ctx));
+                }
+            }
             let result = match SupportedFunctionReturnValue::new(
                 results.into_iter().zip(result_types.iter().cloned()),
             ) {
                 Ok(result) => result,
                 Err(err) => {
-                    let workflow_ctx = store.into_data();
                     return Err(RunError::WorkerError(
                         WorkerError::FatalError(
                             FatalError::ResultParsingError(err),
@@ -310,8 +328,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     ));
                 }
             };
-            if let Err(err) = func.post_return_async(&mut store).await {
-                let workflow_ctx = store.into_data();
+            if let Err(err) = post_return_res {
                 return Err(RunError::WorkerError(
                     WorkerError::IntermittentError {
                         reason: StrVariant::Arc(Arc::from(format!(
@@ -324,7 +341,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 ));
             }
 
-            Ok((result, store.into_data()))
+            Ok((result, workflow_ctx))
         };
         let started_at = self.clock_fn.now();
         let deadline_duration = (ctx.execution_deadline - started_at).to_std().unwrap();
@@ -348,37 +365,39 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     Err(RunError::FunctionCall(err, mut workflow_ctx)) => {
                         if let Err(db_err) = workflow_ctx.flush().await {
                             ctx.worker_span.in_scope(||
-                                error!("Database error: {db_err}")
+                                error!("Database flush error: {db_err:?} while handling FunctionCall error: {err:?}")
                             );
                             return WorkerResult::Err(WorkerError::DbError(db_err));
                         }
                         let version = workflow_ctx.version;
-                        if let Some(err) =  err
-                            .source()
-                            .and_then(|source| source.downcast_ref::<WorkflowFunctionError>())
-                        {
-                            let worker_result = err.clone().into_worker_result(version);
+                        let err = WorkerError::IntermittentError {
+                            reason: StrVariant::Arc(Arc::from(format!("uncategorized function call error - {err:?}"))),
+                            err: Some(err),
+                            version,
+                        };
+                        ctx.worker_span.in_scope(||
+                            info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an intermittent error - {err:?}")
+                        );
+                        WorkerResult::Err(err)
+                    }
+                    Err(RunError::WorkerPartialResult(worker_partial_result, mut workflow_ctx)) => {
+                        if let Err(db_err) = workflow_ctx.flush().await {
                             ctx.worker_span.in_scope(||
-                                if let WorkerResult::Err(err) = &worker_result {
-                                    info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with a error");
-                                } else if matches!(worker_result, WorkerResult::ChildExecutionRequest | WorkerResult::DelayRequest) {
-                                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Interrupt requested");
-                                } else {
-                                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished successfuly");
-                                }
+                                error!("Database flush error: {db_err:?} while handling WorkerPartialResult: {worker_partial_result:?}")
                             );
-                            worker_result
-                        } else  {
-                            let err = WorkerError::IntermittentError {
-                                reason: StrVariant::Arc(Arc::from(format!("uncategorized function call error - {err}"))),
-                                err: Some(err),
-                                version,
-                            };
-                            ctx.worker_span.in_scope(||
-                                info!(%err, duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an error")
-                            );
-                            WorkerResult::Err(err)
+                            return WorkerResult::Err(WorkerError::DbError(db_err));
                         }
+                        ctx.worker_span.in_scope(||
+                            match &worker_partial_result {
+                                WorkerPartialResult::Err(err) => {
+                                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with a worker error: {err:?}");
+                                },
+                                WorkerPartialResult::InterruptRequested => {
+                                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Interrupt requested");
+                                }
+                            }
+                        );
+                        WorkerResult::from(worker_partial_result)
                     }
                     Err(RunError::WorkerError(err, mut workflow_ctx)) => {
                         if let Err(db_err) = workflow_ctx.flush().await {
@@ -397,7 +416,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             },
             () = tokio::time::sleep(deadline_duration) => {
                 // not flushing the workflow_ctx as it would introduce locking.
-                let worker_result = std::mem::replace(&mut *timeout_error_container.lock().unwrap(), WorkerResult::Err(WorkerError::IntermittentTimeout));
+                let worker_result = std::mem::replace(&mut *interrupt_on_timeout_container.lock().unwrap(), None).map(WorkerResult::from).unwrap_or(WorkerResult::Err(WorkerError::IntermittentTimeout));
                 ctx.worker_span.in_scope(||
                     info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %self.clock_fn.now(), "Timing out with {worker_result:?}")
                 );

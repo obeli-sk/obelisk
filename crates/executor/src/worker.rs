@@ -28,8 +28,7 @@ pub trait Worker: Send + Sync + 'static {
 #[derive(Debug)]
 pub enum WorkerResult {
     Ok(SupportedFunctionReturnValue, Version),
-    ChildExecutionRequest,
-    DelayRequest,
+    DbUpdatedByWorker,
     Err(WorkerError),
 }
 
@@ -51,6 +50,7 @@ pub struct WorkerContext {
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
+    // retryable errors
     #[error("intermittent error: {reason}")]
     IntermittentError {
         reason: StrVariant,
@@ -61,10 +61,11 @@ pub enum WorkerError {
     LimitReached(String, Version),
     #[error("intermittent timeout")]
     IntermittentTimeout,
-    #[error("fatal error: {0}")]
-    FatalError(FatalError, Version),
     #[error(transparent)]
     DbError(DbError),
+    // non-retryable errors
+    #[error("fatal error: {0}")]
+    FatalError(FatalError, Version),
 }
 
 #[derive(Debug, thiserror::Error)]
