@@ -208,6 +208,79 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerLinked<C, DB, P>
     }
 }
 
+enum RunError<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
+    WorkerError(WorkerError, WorkflowCtx<C, DB, P>),
+    FunctionCall(Box<dyn Error + Send + Sync>, WorkflowCtx<C, DB, P>),
+    WorkerPartialResult(WorkerPartialResult, WorkflowCtx<C, DB, P>),
+}
+
+impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
+    WorkflowWorker<C, DB, P>
+{
+    async fn call_func(
+        mut store: Store<WorkflowCtx<C, DB, P>>,
+        func: wasmtime::component::Func,
+        params: Arc<[Val]>,
+    ) -> Result<(SupportedFunctionReturnValue, WorkflowCtx<C, DB, P>), RunError<C, DB, P>> {
+        let result_types = func.results(&mut store);
+        let mut results = vec![Val::Bool(false); result_types.len()];
+        let func_call_result = func.call_async(&mut store, &params, &mut results).await;
+        let post_return_res = if func_call_result.is_ok() {
+            func.post_return_async(&mut store).await
+        } else {
+            Ok(())
+        };
+        let workflow_ctx = store.into_data();
+
+        if let Err(err) = func_call_result {
+            // guest panic exits here.
+            // Try to unpack `WorkflowFunctionError`
+            if let Some(err) = err
+                .source()
+                .and_then(|source| source.downcast_ref::<WorkflowFunctionError>())
+            {
+                let worker_partial_result = err
+                    .clone()
+                    .into_worker_partial_result(workflow_ctx.version.clone());
+                return Err(RunError::WorkerPartialResult(
+                    worker_partial_result,
+                    workflow_ctx,
+                ));
+            } else {
+                return Err(RunError::FunctionCall(err.into(), workflow_ctx));
+            }
+        }
+        let result = match SupportedFunctionReturnValue::new(
+            results.into_iter().zip(result_types.iter().cloned()),
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                return Err(RunError::WorkerError(
+                    WorkerError::FatalError(
+                        FatalError::ResultParsingError(err),
+                        workflow_ctx.version.clone(),
+                    ),
+                    workflow_ctx,
+                ));
+            }
+        };
+        if let Err(err) = post_return_res {
+            return Err(RunError::WorkerError(
+                WorkerError::IntermittentError {
+                    reason: StrVariant::Arc(Arc::from(format!(
+                        "wasm post function call error - {err}"
+                    ))),
+                    err: Some(err.into()),
+                    version: workflow_ctx.version.clone(),
+                },
+                workflow_ctx,
+            ));
+        }
+
+        Ok((result, workflow_ctx))
+    }
+}
+
 #[async_trait]
 impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
     for WorkflowWorker<C, DB, P>
@@ -222,17 +295,16 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
     #[expect(clippy::too_many_lines)]
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
-        enum RunError<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
-            WorkerError(WorkerError, WorkflowCtx<C, DB, P>),
-            FunctionCall(Box<dyn Error + Send + Sync>, WorkflowCtx<C, DB, P>),
-            WorkerPartialResult(WorkerPartialResult, WorkflowCtx<C, DB, P>),
-        }
         trace!("Params: {params:?}", params = ctx.params);
         let interrupt_on_timeout_container = Arc::new(std::sync::Mutex::new(None));
-        let version_at_start = ctx.version.clone();
-        let (instance, mut store) = {
+        let (store, func, params) = {
+            let version_at_start = ctx.version.clone();
+            let fn_export_index = self
+                .exported_ffqn_to_index
+                .get(&ctx.ffqn)
+                .expect("executor only calls `run` with ffqns that are exported");
             let seed = ctx.execution_id.random_part();
-            let ctx = WorkflowCtx::new(
+            let workflow_ctx = WorkflowCtx::new(
                 ctx.execution_id,
                 ctx.event_history,
                 ctx.responses,
@@ -250,7 +322,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 ctx.worker_span.clone(),
                 ctx.topmost_parent,
             );
-            let mut store = Store::new(&self.engine, ctx);
+            let mut store = Store::new(&self.engine, workflow_ctx);
             let instance = match self.instance_pre.instantiate_async(&mut store).await {
                 Ok(instance) => instance,
                 Err(err) => {
@@ -266,88 +338,29 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     });
                 }
             };
-            (instance, store)
-        };
-        store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
-        let fn_export_index = self
-            .exported_ffqn_to_index
-            .get(&ctx.ffqn)
-            .expect("executor only calls `run` with ffqns that are exported");
-        let func = instance
-            .get_func(&mut store, fn_export_index)
-            .expect("exported function must be found");
-        let params = match ctx.params.as_vals(func.params(&store)) {
-            Ok(params) => params,
-            Err(err) => {
-                return WorkerResult::Err(WorkerError::FatalError(
-                    FatalError::ParamsParsingError(err),
-                    version_at_start,
-                ));
-            }
-        };
-        let result_types = func.results(&mut store);
-        let mut results = vec![Val::Bool(false); result_types.len()];
+            store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
 
-        let call_function = async move {
-            let func_call_result = func.call_async(&mut store, &params, &mut results).await;
-            let post_return_res = if func_call_result.is_ok() {
-                func.post_return_async(&mut store).await
-            } else {
-                Ok(())
-            };
-            let workflow_ctx = store.into_data();
-            if let Err(err) = func_call_result {
-                // guest panic exits here.
-                // Try to unpack `WorkflowFunctionError`
-                if let Some(err) = err
-                    .source()
-                    .and_then(|source| source.downcast_ref::<WorkflowFunctionError>())
-                {
-                    let worker_partial_result = err
-                        .clone()
-                        .into_worker_partial_result(workflow_ctx.version.clone());
-                    return Err(RunError::WorkerPartialResult(
-                        worker_partial_result,
-                        workflow_ctx,
-                    ));
-                } else {
-                    return Err(RunError::FunctionCall(err.into(), workflow_ctx));
-                }
-            }
-            let result = match SupportedFunctionReturnValue::new(
-                results.into_iter().zip(result_types.iter().cloned()),
-            ) {
-                Ok(result) => result,
+            let func = instance
+                .get_func(&mut store, fn_export_index)
+                .expect("exported function must be found");
+
+            let params = match ctx.params.as_vals(func.params(&store)) {
+                Ok(params) => params,
                 Err(err) => {
-                    return Err(RunError::WorkerError(
-                        WorkerError::FatalError(
-                            FatalError::ResultParsingError(err),
-                            workflow_ctx.version.clone(),
-                        ),
-                        workflow_ctx,
+                    return WorkerResult::Err(WorkerError::FatalError(
+                        FatalError::ParamsParsingError(err),
+                        version_at_start,
                     ));
                 }
             };
-            if let Err(err) = post_return_res {
-                return Err(RunError::WorkerError(
-                    WorkerError::IntermittentError {
-                        reason: StrVariant::Arc(Arc::from(format!(
-                            "wasm post function call error - {err}"
-                        ))),
-                        err: Some(err.into()),
-                        version: workflow_ctx.version.clone(),
-                    },
-                    workflow_ctx,
-                ));
-            }
-
-            Ok((result, workflow_ctx))
+            (store, func, params)
         };
+
         let started_at = self.clock_fn.now();
         let deadline_duration = (ctx.execution_deadline - started_at).to_std().unwrap();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! { // future's liveness: Dropping the loser immediately.
-            res = call_function => {
+            res = Self::call_func(store, func, params) => {
                 match res {
                     Ok((supported_result, mut workflow_ctx)) => {
                         ctx.worker_span.in_scope(||
