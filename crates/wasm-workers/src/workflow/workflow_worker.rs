@@ -4,6 +4,7 @@ use crate::workflow::workflow_ctx::WorkerPartialResult;
 use crate::WasmFileError;
 use crate::NAMESPACE_OBELISK_WITH_COLON;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use concepts::storage::{DbConnection, DbPool};
 use concepts::{
     ConfigId, FunctionFqn, FunctionMetadata, PackageIfcFns, ResultParsingError, StrVariant,
@@ -16,7 +17,7 @@ use std::ops::Deref;
 use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn, Span};
 use utils::time::{now_tokio_instant, ClockFn};
 use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
@@ -333,32 +334,16 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         };
         Ok((result, workflow_ctx))
     }
-}
 
-#[async_trait]
-impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
-    for WorkflowWorker<C, DB, P>
-{
-    fn exported_functions(&self) -> &[FunctionMetadata] {
-        &self.exim.exports_flat
-    }
-
-    fn imported_functions(&self) -> &[FunctionMetadata] {
-        &self.exim.imports_flat
-    }
-
-    async fn run(&self, ctx: WorkerContext) -> WorkerResult {
-        trace!("Params: {params:?}", params = ctx.params);
-        let interrupt_on_timeout_container = Arc::new(std::sync::Mutex::new(None));
-        let worker_span = ctx.worker_span.clone();
-        let execution_deadline = ctx.execution_deadline;
-        let (store, func, params) = match self
-            .prepare_func(ctx, interrupt_on_timeout_container.clone())
-            .await
-        {
-            Ok(ok) => ok,
-            Err(err) => return WorkerResult::Err(err), // fatal errors here cannot affect joinset closing
-        };
+    async fn race_func_with_timeout(
+        &self,
+        store: Store<WorkflowCtx<C, DB, P>>,
+        func: wasmtime::component::Func,
+        params: Arc<[Val]>,
+        interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
+        worker_span: Span,
+        execution_deadline: DateTime<Utc>,
+    ) -> WorkerResult {
         let started_at = self.clock_fn.now();
         let deadline_duration = (execution_deadline - started_at).to_std().unwrap();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
@@ -440,6 +425,45 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 return worker_result;
             }
         };
+    }
+}
+
+#[async_trait]
+impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> Worker
+    for WorkflowWorker<C, DB, P>
+{
+    fn exported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.exports_flat
+    }
+
+    fn imported_functions(&self) -> &[FunctionMetadata] {
+        &self.exim.imports_flat
+    }
+
+    async fn run(&self, ctx: WorkerContext) -> WorkerResult {
+        trace!("Params: {params:?}", params = ctx.params);
+        let interrupt_on_timeout_container = Arc::new(std::sync::Mutex::new(None));
+        let worker_span = ctx.worker_span.clone();
+        let execution_deadline = ctx.execution_deadline;
+        let (store, func, params) = match self
+            .prepare_func(ctx, interrupt_on_timeout_container.clone())
+            .await
+        {
+            Ok(ok) => ok,
+            Err(err) => return WorkerResult::Err(err), // fatal errors here cannot affect joinset closing
+        };
+        let worker_result = self
+            .race_func_with_timeout(
+                store,
+                func,
+                params,
+                interrupt_on_timeout_container,
+                worker_span,
+                execution_deadline,
+            )
+            .await;
+
+        worker_result
     }
 }
 
