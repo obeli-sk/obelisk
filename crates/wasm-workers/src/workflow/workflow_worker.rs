@@ -1,3 +1,4 @@
+use super::workflow_ctx::InterruptRequested;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::workflow::workflow_ctx::WorkerPartialResult;
 use crate::WasmFileError;
@@ -217,6 +218,76 @@ enum RunError<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 
 impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     WorkflowWorker<C, DB, P>
 {
+    async fn prepare_func(
+        &self,
+        ctx: WorkerContext,
+        interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
+    ) -> Result<
+        (
+            Store<WorkflowCtx<C, DB, P>>,
+            wasmtime::component::Func,
+            Arc<[Val]>,
+        ),
+        WorkerError,
+    > {
+        let version_at_start = ctx.version.clone();
+        let fn_export_index = self
+            .exported_ffqn_to_index
+            .get(&ctx.ffqn)
+            .expect("executor only calls `run` with ffqns that are exported");
+        let seed = ctx.execution_id.random_part();
+        let workflow_ctx = WorkflowCtx::new(
+            ctx.execution_id,
+            ctx.event_history,
+            ctx.responses,
+            seed,
+            self.clock_fn.clone(),
+            self.config.join_next_blocking_strategy,
+            self.db_pool.clone(),
+            ctx.version,
+            ctx.execution_deadline,
+            self.config.child_retry_exp_backoff,
+            self.config.child_max_retries,
+            self.config.non_blocking_event_batching,
+            interrupt_on_timeout_container,
+            self.fn_registry.clone(),
+            ctx.worker_span,
+            ctx.topmost_parent,
+        );
+        let mut store = Store::new(&self.engine, workflow_ctx);
+        let instance = match self.instance_pre.instantiate_async(&mut store).await {
+            Ok(instance) => instance,
+            Err(err) => {
+                let reason = err.to_string();
+                let version = store.into_data().version;
+                if reason.starts_with("maximum concurrent") {
+                    return Err(WorkerError::LimitReached(reason, version));
+                }
+                return Err(WorkerError::IntermittentError {
+                    reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
+                    err: Some(err.into()),
+                    version,
+                });
+            }
+        };
+        store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
+
+        let func = instance
+            .get_func(&mut store, fn_export_index)
+            .expect("exported function must be found");
+
+        let params = match ctx.params.as_vals(func.params(&store)) {
+            Ok(params) => params,
+            Err(err) => {
+                return Err(WorkerError::FatalError(
+                    FatalError::ParamsParsingError(err),
+                    version_at_start,
+                ));
+            }
+        };
+        Ok((store, func, params))
+    }
+
     async fn call_func(
         mut store: Store<WorkflowCtx<C, DB, P>>,
         func: wasmtime::component::Func,
@@ -297,77 +368,28 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Params: {params:?}", params = ctx.params);
         let interrupt_on_timeout_container = Arc::new(std::sync::Mutex::new(None));
-        let (store, func, params) = {
-            let version_at_start = ctx.version.clone();
-            let fn_export_index = self
-                .exported_ffqn_to_index
-                .get(&ctx.ffqn)
-                .expect("executor only calls `run` with ffqns that are exported");
-            let seed = ctx.execution_id.random_part();
-            let workflow_ctx = WorkflowCtx::new(
-                ctx.execution_id,
-                ctx.event_history,
-                ctx.responses,
-                seed,
-                self.clock_fn.clone(),
-                self.config.join_next_blocking_strategy,
-                self.db_pool.clone(),
-                ctx.version,
-                ctx.execution_deadline,
-                self.config.child_retry_exp_backoff,
-                self.config.child_max_retries,
-                self.config.non_blocking_event_batching,
-                interrupt_on_timeout_container.clone(),
-                self.fn_registry.clone(),
-                ctx.worker_span.clone(),
-                ctx.topmost_parent,
-            );
-            let mut store = Store::new(&self.engine, workflow_ctx);
-            let instance = match self.instance_pre.instantiate_async(&mut store).await {
-                Ok(instance) => instance,
-                Err(err) => {
-                    let reason = err.to_string();
-                    let version = store.into_data().version;
-                    if reason.starts_with("maximum concurrent") {
-                        return WorkerResult::Err(WorkerError::LimitReached(reason, version));
-                    }
-                    return WorkerResult::Err(WorkerError::IntermittentError {
-                        reason: StrVariant::Arc(Arc::from(format!("cannot instantiate - {err}"))),
-                        err: Some(err.into()),
-                        version,
-                    });
-                }
-            };
-            store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
-
-            let func = instance
-                .get_func(&mut store, fn_export_index)
-                .expect("exported function must be found");
-
-            let params = match ctx.params.as_vals(func.params(&store)) {
-                Ok(params) => params,
-                Err(err) => {
-                    return WorkerResult::Err(WorkerError::FatalError(
-                        FatalError::ParamsParsingError(err),
-                        version_at_start,
-                    ));
-                }
-            };
-            (store, func, params)
+        let worker_span = ctx.worker_span.clone();
+        let execution_deadline = ctx.execution_deadline;
+        let (store, func, params) = match self
+            .prepare_func(ctx, interrupt_on_timeout_container.clone())
+            .await
+        {
+            Ok(ok) => ok,
+            Err(err) => return WorkerResult::Err(err),
         };
 
         let started_at = self.clock_fn.now();
-        let deadline_duration = (ctx.execution_deadline - started_at).to_std().unwrap();
+        let deadline_duration = (execution_deadline - started_at).to_std().unwrap();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! { // future's liveness: Dropping the loser immediately.
             res = Self::call_func(store, func, params) => {
                 match res {
                     Ok((supported_result, mut workflow_ctx)) => {
-                        ctx.worker_span.in_scope(||
-                            info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline= %ctx.execution_deadline, "Finished")
+                        worker_span.in_scope(||
+                            info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished")
                         );
                         if let Err(db_err) = workflow_ctx.flush().await {
-                            ctx.worker_span.in_scope(||
+                            worker_span.in_scope(||
                                 error!("Database error: {db_err}")
                             );
                             WorkerResult::Err(WorkerError::DbError(db_err))
@@ -377,7 +399,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     },
                     Err(RunError::FunctionCall(err, mut workflow_ctx)) => {
                         if let Err(db_err) = workflow_ctx.flush().await {
-                            ctx.worker_span.in_scope(||
+                            worker_span.in_scope(||
                                 error!("Database flush error: {db_err:?} while handling FunctionCall error: {err:?}")
                             );
                             return WorkerResult::Err(WorkerError::DbError(db_err));
@@ -388,25 +410,25 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             err: Some(err),
                             version,
                         };
-                        ctx.worker_span.in_scope(||
-                            info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with an intermittent error - {err:?}")
+                        worker_span.in_scope(||
+                            info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an intermittent error - {err:?}")
                         );
                         WorkerResult::Err(err)
                     }
                     Err(RunError::WorkerPartialResult(worker_partial_result, mut workflow_ctx)) => {
                         if let Err(db_err) = workflow_ctx.flush().await {
-                            ctx.worker_span.in_scope(||
+                            worker_span.in_scope(||
                                 error!("Database flush error: {db_err:?} while handling WorkerPartialResult: {worker_partial_result:?}")
                             );
                             return WorkerResult::Err(WorkerError::DbError(db_err));
                         }
-                        ctx.worker_span.in_scope(||
+                        worker_span.in_scope(||
                             match &worker_partial_result {
                                 WorkerPartialResult::Err(err) => {
-                                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Finished with a worker error: {err:?}");
+                                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a worker error: {err:?}");
                                 },
                                 WorkerPartialResult::InterruptRequested => {
-                                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, "Interrupt requested");
+                                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Interrupt requested");
                                 }
                             }
                         );
@@ -414,12 +436,12 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     }
                     Err(RunError::WorkerError(err, mut workflow_ctx)) => {
                         if let Err(db_err) = workflow_ctx.flush().await {
-                            ctx.worker_span.in_scope(||
+                            worker_span.in_scope(||
                                 error!("Database error: {db_err}")
                             );
                             WorkerResult::Err(WorkerError::DbError(db_err))
                         } else {
-                            ctx.worker_span.in_scope(||
+                            worker_span.in_scope(||
                                 error!("Worker error: {err}")
                             );
                             WorkerResult::Err(err)
@@ -430,8 +452,8 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             () = tokio::time::sleep(deadline_duration) => {
                 // not flushing the workflow_ctx as it would introduce locking.
                 let worker_result = std::mem::replace(&mut *interrupt_on_timeout_container.lock().unwrap(), None).map(WorkerResult::from).unwrap_or(WorkerResult::Err(WorkerError::IntermittentTimeout));
-                ctx.worker_span.in_scope(||
-                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, execution_deadline = %ctx.execution_deadline, now = %self.clock_fn.now(), "Timing out with {worker_result:?}")
+                worker_span.in_scope(||
+                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %self.clock_fn.now(), "Timing out with {worker_result:?}")
                 );
                 worker_result
             }
