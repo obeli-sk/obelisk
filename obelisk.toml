@@ -119,7 +119,7 @@ exec.lock_expiry.secs = 10
 
 [[workflow]]
 name = "sleep_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-10-15@sha256:380cf29f8898851dfddcbdb96a9eb09491edc7181e59da826c67362ebbd842ff"
+location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-10-17@sha256:523b98ea4a9f9569ed9f33c8817a930689ed3a97784f0ebc3dfbfb52ef0c174a"
 
 ## Send spans via gRPC to an OTLP collector.
 ## Defaults:

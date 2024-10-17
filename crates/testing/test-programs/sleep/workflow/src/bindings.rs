@@ -222,6 +222,60 @@ pub mod testing {
         }
     }
     #[allow(dead_code)]
+    pub mod sleep_obelisk_ext {
+        #[allow(dead_code, clippy::all)]
+        pub mod sleep {
+            #[used]
+            #[doc(hidden)]
+            static __FORCE_SECTION_REF: fn() =
+                super::super::super::__link_custom_section_describing_imports;
+            use super::super::super::_rt;
+            pub type Duration = super::super::super::obelisk::types::time::Duration;
+            pub type JoinSetId = super::super::super::obelisk::types::execution::JoinSetId;
+            pub type ExecutionId = super::super::super::obelisk::types::execution::ExecutionId;
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn sleep_submit(join_set_id: &JoinSetId, duration: Duration) -> ExecutionId {
+                unsafe {
+                    #[repr(align(4))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
+                    let super::super::super::obelisk::types::execution::JoinSetId { id: id0 } =
+                        join_set_id;
+                    let vec1 = id0;
+                    let ptr1 = vec1.as_ptr().cast::<u8>();
+                    let len1 = vec1.len();
+                    use super::super::super::obelisk::types::time::Duration as V2;
+                    let (result3_0, result3_1) = match duration {
+                        V2::Milliseconds(e) => (0i32, _rt::as_i64(e)),
+                        V2::Seconds(e) => (1i32, _rt::as_i64(e)),
+                        V2::Minutes(e) => (2i32, i64::from(_rt::as_i32(e))),
+                        V2::Hours(e) => (3i32, i64::from(_rt::as_i32(e))),
+                        V2::Days(e) => (4i32, i64::from(_rt::as_i32(e))),
+                    };
+                    let ptr4 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "testing:sleep-obelisk-ext/sleep")]
+                    extern "C" {
+                        #[link_name = "sleep-submit"]
+                        fn wit_import(_: *mut u8, _: usize, _: i32, _: i64, _: *mut u8);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize, _: i32, _: i64, _: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(ptr1.cast_mut(), len1, result3_0, result3_1, ptr4);
+                    let l5 = *ptr4.add(0).cast::<*mut u8>();
+                    let l6 = *ptr4.add(4).cast::<usize>();
+                    let len7 = l6;
+                    let bytes7 = _rt::Vec::from_raw_parts(l5.cast(), len7, len7);
+                    super::super::super::obelisk::types::execution::ExecutionId {
+                        id: _rt::string_lift(bytes7),
+                    }
+                }
+            }
+        }
+    }
+    #[allow(dead_code)]
     pub mod sleep_workflow_obelisk_ext {
         #[allow(dead_code, clippy::all)]
         pub mod workflow {
@@ -323,6 +377,8 @@ pub mod exports {
                     super::super::super::super::__link_custom_section_describing_imports;
                 use super::super::super::super::_rt;
                 pub type Duration = super::super::super::super::obelisk::types::time::Duration;
+                pub type ExecutionId =
+                    super::super::super::super::obelisk::types::execution::ExecutionId;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
                 pub unsafe fn _export_sleep_host_activity_cabi<T: Guest>(arg0: i32, arg1: i64) {
@@ -387,6 +443,58 @@ pub mod exports {
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
+                pub unsafe fn _export_sleep_activity_submit_cabi<T: Guest>(
+                    arg0: i32,
+                    arg1: i64,
+                ) -> *mut u8 {
+                    #[cfg(target_arch = "wasm32")]
+                    _rt::run_ctors_once();
+                    use super::super::super::super::obelisk::types::time::Duration as V0;
+                    let v0 = match arg0 {
+                        0 => {
+                            let e0 = arg1 as u64;
+                            V0::Milliseconds(e0)
+                        }
+                        1 => {
+                            let e0 = arg1 as u64;
+                            V0::Seconds(e0)
+                        }
+                        2 => {
+                            let e0 = arg1 as i32 as u32;
+                            V0::Minutes(e0)
+                        }
+                        3 => {
+                            let e0 = arg1 as i32 as u32;
+                            V0::Hours(e0)
+                        }
+                        n => {
+                            debug_assert_eq!(n, 4, "invalid enum discriminant");
+                            let e0 = arg1 as i32 as u32;
+                            V0::Days(e0)
+                        }
+                    };
+                    let result1 = T::sleep_activity_submit(v0);
+                    let ptr2 = _RET_AREA.0.as_mut_ptr().cast::<u8>();
+                    let super::super::super::super::obelisk::types::execution::ExecutionId {
+                        id: id3,
+                    } = result1;
+                    let vec4 = (id3.into_bytes()).into_boxed_slice();
+                    let ptr4 = vec4.as_ptr().cast::<u8>();
+                    let len4 = vec4.len();
+                    ::core::mem::forget(vec4);
+                    *ptr2.add(4).cast::<usize>() = len4;
+                    *ptr2.add(0).cast::<*mut u8>() = ptr4.cast_mut();
+                    ptr2
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn __post_return_sleep_activity_submit<T: Guest>(arg0: *mut u8) {
+                    let l0 = *arg0.add(0).cast::<*mut u8>();
+                    let l1 = *arg0.add(4).cast::<usize>();
+                    _rt::cabi_dealloc(l0, l1, 1);
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
                 pub unsafe fn _export_reschedule_cabi<T: Guest>(arg0: i32, arg1: i64, arg2: i32) {
                     #[cfg(target_arch = "wasm32")]
                     _rt::run_ctors_once();
@@ -419,6 +527,7 @@ pub mod exports {
                 pub trait Guest {
                     fn sleep_host_activity(duration: Duration);
                     fn sleep_activity(duration: Duration);
+                    fn sleep_activity_submit(duration: Duration) -> ExecutionId;
                     fn reschedule(duration: Duration, iterations: u8);
                 }
                 #[doc(hidden)]
@@ -433,14 +542,26 @@ pub mod exports {
                         "C" fn export_sleep_activity(arg0 : i32, arg1 : i64,) {
                         $($path_to_types)*:: _export_sleep_activity_cabi::<$ty > (arg0,
                         arg1) } #[export_name =
-                        "testing:sleep-workflow/workflow#reschedule"] unsafe extern "C"
-                        fn export_reschedule(arg0 : i32, arg1 : i64, arg2 : i32,) {
-                        $($path_to_types)*:: _export_reschedule_cabi::<$ty > (arg0, arg1,
-                        arg2) } };
+                        "testing:sleep-workflow/workflow#sleep-activity-submit"] unsafe
+                        extern "C" fn export_sleep_activity_submit(arg0 : i32, arg1 :
+                        i64,) -> * mut u8 { $($path_to_types)*::
+                        _export_sleep_activity_submit_cabi::<$ty > (arg0, arg1) }
+                        #[export_name =
+                        "cabi_post_testing:sleep-workflow/workflow#sleep-activity-submit"]
+                        unsafe extern "C" fn _post_return_sleep_activity_submit(arg0 : *
+                        mut u8,) { $($path_to_types)*::
+                        __post_return_sleep_activity_submit::<$ty > (arg0) }
+                        #[export_name = "testing:sleep-workflow/workflow#reschedule"]
+                        unsafe extern "C" fn export_reschedule(arg0 : i32, arg1 : i64,
+                        arg2 : i32,) { $($path_to_types)*:: _export_reschedule_cabi::<$ty
+                        > (arg0, arg1, arg2) } };
                     };
                 }
                 #[doc(hidden)]
                 pub(crate) use __export_testing_sleep_workflow_workflow_cabi;
+                #[repr(align(4))]
+                struct _RetArea([::core::mem::MaybeUninit<u8>; 8]);
+                static mut _RET_AREA: _RetArea = _RetArea([::core::mem::MaybeUninit::uninit(); 8]);
             }
         }
     }
@@ -541,7 +662,15 @@ mod _rt {
     pub fn run_ctors_once() {
         wit_bindgen_rt::run_ctors_once();
     }
+    pub unsafe fn cabi_dealloc(ptr: *mut u8, size: usize, align: usize) {
+        if size == 0 {
+            return;
+        }
+        let layout = alloc::Layout::from_size_align_unchecked(size, align);
+        alloc::dealloc(ptr, layout);
+    }
     extern crate alloc as alloc_crate;
+    pub use alloc_crate::alloc;
 }
 /// Generates `#[no_mangle]` functions to export the specified type as the
 /// root implementation of all generated traits.
@@ -577,9 +706,9 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1140] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xfa\x07\x01A\x02\x01\
-A\x10\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07minutes\x01y\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1352] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xce\x09\x01A\x02\x01\
+A\x12\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07minutes\x01y\
 \0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\
 \x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\
 \x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\
@@ -590,20 +719,25 @@ execution-error\x03\0\x06\x03\x01\x17obelisk:types/execution\x05\x01\x02\x03\0\0
 \x08duration\x02\x03\0\x01\x0bjoin-set-id\x01B\x08\x02\x03\x02\x01\x02\x04\0\x08\
 duration\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x08\
 duration\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0cnew-join-set\x01\
-\x05\x03\x01\x20obelisk:workflow/host-activities\x05\x04\x01B\x06\x02\x03\x02\x01\
-\x02\x04\0\x08duration\x03\0\0\x01@\x01\x08duration\x01\x01\0\x04\0\x05sleep\x01\
-\x02\x01@\x02\x08duration\x01\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\x03\x03\
-\x01\x13testing:sleep/sleep\x05\x05\x02\x03\0\x01\x0cexecution-id\x02\x03\0\0\x0b\
-schedule-at\x01B\x08\x02\x03\x02\x01\x06\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\
-\x01\x02\x04\0\x08duration\x03\0\x02\x02\x03\x02\x01\x07\x04\0\x0bschedule-at\x03\
-\0\x04\x01@\x03\x08schedule\x05\x08duration\x03\x0aiterations}\0\x01\x04\0\x13re\
-schedule-schedule\x01\x06\x03\x01+testing:sleep-workflow-obelisk-ext/workflow\x05\
-\x08\x01B\x07\x02\x03\x02\x01\x02\x04\0\x08duration\x03\0\0\x01@\x01\x08duration\
-\x01\x01\0\x04\0\x13sleep-host-activity\x01\x02\x04\0\x0esleep-activity\x01\x02\x01\
-@\x02\x08duration\x01\x0aiterations}\x01\0\x04\0\x0areschedule\x01\x03\x04\x01\x1f\
-testing:sleep-workflow/workflow\x05\x09\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\
-\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.\
-216.0\x10wit-bindgen-rust\x060.31.0";
+\x05\x03\x01\x20obelisk:workflow/host-activities\x05\x04\x02\x03\0\x01\x0cexecut\
+ion-id\x01B\x08\x02\x03\x02\x01\x02\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x03\
+\x04\0\x0bjoin-set-id\x03\0\x02\x02\x03\x02\x01\x05\x04\0\x0cexecution-id\x03\0\x04\
+\x01@\x02\x0bjoin-set-id\x03\x08duration\x01\0\x05\x04\0\x0csleep-submit\x01\x06\
+\x03\x01\x1ftesting:sleep-obelisk-ext/sleep\x05\x06\x02\x03\0\0\x0bschedule-at\x01\
+B\x08\x02\x03\x02\x01\x05\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x02\x04\0\
+\x08duration\x03\0\x02\x02\x03\x02\x01\x07\x04\0\x0bschedule-at\x03\0\x04\x01@\x03\
+\x08schedule\x05\x08duration\x03\x0aiterations}\0\x01\x04\0\x13reschedule-schedu\
+le\x01\x06\x03\x01+testing:sleep-workflow-obelisk-ext/workflow\x05\x08\x01B\x06\x02\
+\x03\x02\x01\x02\x04\0\x08duration\x03\0\0\x01@\x01\x08duration\x01\x01\0\x04\0\x05\
+sleep\x01\x02\x01@\x02\x08duration\x01\x0aiterationsy\x01\0\x04\0\x0asleep-loop\x01\
+\x03\x03\x01\x13testing:sleep/sleep\x05\x09\x01B\x0b\x02\x03\x02\x01\x02\x04\0\x08\
+duration\x03\0\0\x02\x03\x02\x01\x05\x04\0\x0cexecution-id\x03\0\x02\x01@\x01\x08\
+duration\x01\x01\0\x04\0\x13sleep-host-activity\x01\x04\x04\0\x0esleep-activity\x01\
+\x04\x01@\x01\x08duration\x01\0\x03\x04\0\x15sleep-activity-submit\x01\x05\x01@\x02\
+\x08duration\x01\x0aiterations}\x01\0\x04\0\x0areschedule\x01\x06\x04\x01\x1ftes\
+ting:sleep-workflow/workflow\x05\x0a\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03\
+any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.216.0\x10\
+wit-bindgen-rust\x060.31.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {
