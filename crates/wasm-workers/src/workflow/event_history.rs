@@ -73,7 +73,7 @@ enum ProcessingStatus {
 #[derive(Debug, Clone)]
 pub(crate) enum ApplyError {
     // fatal errors:
-    NonDeterminismDetected(StrVariant),
+    NondeterminismDetected(StrVariant),
     ChildExecutionError(FinishedExecutionError), // only on direct call
     // retryable errors:
     InterruptRequested,
@@ -253,6 +253,71 @@ impl<C: ClockFn> EventHistory<C> {
         } else {
             debug!(join_set_id = %poll_variant.join_set_id(),  "Interrupting on {poll_variant:?}");
             Err(ApplyError::InterruptRequested)
+        }
+    }
+
+    /// Find an open join set, emit `EventCall::BlockingChildAwaitNext` if found.
+    /// Open here means there are more `JoinSetRequest::ChildExecutionRequest`-s than corresponding responses.
+    /// MUST NOT add items to `NonBlockingCache`, as only `EventCall::BlockingChildAwaitNext` and their
+    /// processed responses are appended.
+    pub(crate) async fn await_opened_join_set<DB: DbConnection>(
+        &mut self,
+        db_connection: &DB,
+        version: &mut Version,
+        fn_registry: &dyn FunctionRegistry,
+    ) -> Result<Option<()>, ApplyError> {
+        let mut join_set_to_child_exec_count = hashbrown::HashMap::new();
+        for (event, _processing_sattus) in &self.event_history {
+            match event {
+                HistoryEvent::JoinSet { join_set_id } => {
+                    let old = join_set_to_child_exec_count.insert(*join_set_id, 0);
+                    assert!(old.is_none());
+                }
+                HistoryEvent::JoinSetRequest {
+                    join_set_id,
+                    request: JoinSetRequest::ChildExecutionRequest { .. },
+                } => {
+                    let val = join_set_to_child_exec_count
+                        .get_mut(join_set_id)
+                        .expect("join set must have been created");
+                    *val += 1;
+                }
+                _ => {} // delay requests are ignored
+            }
+        }
+        for processed_response in self.responses.iter().filter_map(|(resp, status)| {
+            if *status == ProcessingStatus::Processed {
+                Some(resp)
+            } else {
+                None
+            }
+        }) {
+            if let JoinSetResponseEvent {
+                join_set_id,
+                event: JoinSetResponse::ChildExecutionFinished { .. },
+            } = processed_response
+            {
+                let val = join_set_to_child_exec_count
+                    .get_mut(join_set_id)
+                    .expect("join set must have been created");
+                *val -= 1;
+            }
+        }
+        if let Some(join_set_id) = join_set_to_child_exec_count
+            .into_iter()
+            .find(|(_, unanswered)| *unanswered > 0)
+            .map(|found| found.0)
+        {
+            self.apply(
+                EventCall::BlockingChildAwaitNext { join_set_id },
+                db_connection,
+                version,
+                fn_registry,
+            )
+            .await
+            .map(|_| Some(())) // The actual child response is not needed, just the fact that there may be more left.
+        } else {
+            Ok(None) // Done closing join sets.
         }
     }
 
@@ -518,7 +583,7 @@ impl<C: ClockFn> EventHistory<C> {
                 ))))
             }
 
-            (key, found) => Err(ApplyError::NonDeterminismDetected(StrVariant::Arc(
+            (key, found) => Err(ApplyError::NondeterminismDetected(StrVariant::Arc(
                 Arc::from(format!(
                     "unexpected key {key:?} not matching {found:?} at index {found_idx}",
                 )),

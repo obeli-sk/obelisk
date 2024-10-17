@@ -71,7 +71,7 @@ pub enum WorkerError {
 #[derive(Debug, thiserror::Error)]
 pub enum FatalError {
     #[error("non-determinism detected: `{0}`")]
-    NonDeterminismDetected(StrVariant),
+    NonDeterminismDetected(StrVariant), //TODO: Rename to `NondeterminismDetected`
     #[error("parameters cannot be parsed: {0}")]
     ParamsParsingError(ParamsParsingError),
     #[error("result cannot be parsed: {0}")]

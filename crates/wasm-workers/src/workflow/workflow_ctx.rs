@@ -30,7 +30,7 @@ use wasmtime::component::{Linker, Val};
 pub(crate) enum WorkflowFunctionError {
     // fatal errors:
     #[error("non deterministic execution: {0}")]
-    NonDeterminismDetected(StrVariant),
+    NondeterminismDetected(StrVariant),
     #[error("child finished with an execution error: {0}")]
     ChildExecutionError(FinishedExecutionError), // only on direct call
     #[error("uncategorized error - {0}")]
@@ -58,7 +58,7 @@ impl WorkflowFunctionError {
             Self::InterruptRequested => WorkerPartialResult::InterruptRequested,
             Self::DbError(db_error) => WorkerPartialResult::DbError(db_error),
             // fatal errors:
-            Self::NonDeterminismDetected(reason) => {
+            Self::NondeterminismDetected(reason) => {
                 WorkerPartialResult::FatalError(FatalError::NonDeterminismDetected(reason), version)
             }
             Self::ChildExecutionError(err) => {
@@ -74,7 +74,7 @@ impl WorkflowFunctionError {
 impl From<ApplyError> for WorkflowFunctionError {
     fn from(value: ApplyError) -> Self {
         match value {
-            ApplyError::NonDeterminismDetected(reason) => Self::NonDeterminismDetected(reason),
+            ApplyError::NondeterminismDetected(reason) => Self::NondeterminismDetected(reason),
             ApplyError::ChildExecutionError(finished_execution_error) => {
                 Self::ChildExecutionError(finished_execution_error)
             }
@@ -223,6 +223,16 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 err: err.into(),
             })?;
         Ok(())
+    }
+
+    pub(crate) async fn await_opened_join_set(&mut self) -> Result<Option<()>, ApplyError> {
+        self.event_history
+            .await_opened_join_set(
+                &self.db_pool.connection(),
+                &mut self.version,
+                self.fn_registry.as_ref(),
+            )
+            .await
     }
 
     fn imported_fn_to_event_call(
