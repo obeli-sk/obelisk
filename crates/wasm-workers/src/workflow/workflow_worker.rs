@@ -1,3 +1,4 @@
+use super::event_history::ApplyError;
 use super::workflow_ctx::InterruptRequested;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::workflow::workflow_ctx::WorkerPartialResult;
@@ -239,6 +240,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> From<WorkerResultRefactored<C,
         }
     }
 }
+type CallFuncResult<C, DB, P> =
+    Result<(SupportedFunctionReturnValue, WorkflowCtx<C, DB, P>), RunError<C, DB, P>>;
 
 impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     WorkflowWorker<C, DB, P>
@@ -317,7 +320,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         mut store: Store<WorkflowCtx<C, DB, P>>,
         func: wasmtime::component::Func,
         params: Arc<[Val]>,
-    ) -> Result<(SupportedFunctionReturnValue, WorkflowCtx<C, DB, P>), RunError<C, DB, P>> {
+    ) -> CallFuncResult<C, DB, P> {
         let result_types = func.results(&mut store);
         let mut results = vec![Val::Bool(false); result_types.len()];
         let func_call_result = func.call_async(&mut store, &params, &mut results).await;
@@ -371,74 +374,8 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! { // future's liveness: Dropping the loser immediately.
             res = Self::call_func(store, func, params) => {
-                match res {
-                    Ok((supported_result, mut workflow_ctx)) => {
-                        worker_span.in_scope(||
-                            info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished")
-                        );
-                        if let Err(db_err) = workflow_ctx.flush().await {
-                            worker_span.in_scope(||
-                                error!("Database error: {db_err}")
-                            );
-                            return WorkerResultRefactored::Retryable(WorkerResult::Err(WorkerError::DbError(db_err)));
-                        } else {
-                            return WorkerResultRefactored::Ok(supported_result, workflow_ctx);
-                        }
-                    },
-                    Err(RunError::FunctionCall(err, mut workflow_ctx)) => {
-                        if let Err(db_err) = workflow_ctx.flush().await {
-                            worker_span.in_scope(||
-                                error!("Database flush error: {db_err:?} while handling FunctionCall error: {err:?}")
-                            );
-                            return WorkerResultRefactored::Retryable(WorkerResult::Err(WorkerError::DbError(db_err)));
-                        }
-                        let version = workflow_ctx.version;
-                        let err = WorkerError::IntermittentError {
-                            reason: StrVariant::Arc(Arc::from(format!("uncategorized function call error - {err:?}"))),
-                            err: Some(err),
-                            version,
-                        };
-                        worker_span.in_scope(||
-                            info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an intermittent error - {err:?}")
-                        );
-                        return WorkerResultRefactored::Retryable(WorkerResult::Err(err));
-                    }
-                    Err(RunError::WorkerPartialResult(worker_partial_result, mut workflow_ctx)) => {
-                        if let Err(db_err) = workflow_ctx.flush().await {
-                            worker_span.in_scope(||
-                                error!("Database flush error: {db_err:?} while handling WorkerPartialResult: {worker_partial_result:?}")
-                            );
-                            return WorkerResultRefactored::Retryable(WorkerResult::Err(WorkerError::DbError(db_err)));
-                        }
-
-                        match worker_partial_result {
-                            WorkerPartialResult::FatalError(err, _version) => {
-                                worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a worker error: {err:?}"));
-                                return WorkerResultRefactored::FatalError(err, workflow_ctx);
-                            },
-                            WorkerPartialResult::InterruptRequested => {
-                                worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Interrupt requested"));
-                                return WorkerResultRefactored::Retryable(WorkerResult::DbUpdatedByWorker);
-                            }
-                            WorkerPartialResult::DbError(db_err) => {
-                                return WorkerResultRefactored::Retryable(WorkerResult::Err(WorkerError::DbError(db_err)));
-                            }
-                        }
-                    }
-                    Err(RunError::ResultParsingError(err, mut workflow_ctx)) => {
-                        if let Err(db_err) = workflow_ctx.flush().await {
-                            worker_span.in_scope(||
-                                error!("Database error: {db_err}")
-                            );
-                            return WorkerResultRefactored::Retryable(WorkerResult::Err(WorkerError::DbError(db_err)));
-                        } else {
-                            worker_span.in_scope(||
-                                error!("Fatal error: Result parsing error: {err}")
-                            );
-                            return WorkerResultRefactored::FatalError(FatalError::ResultParsingError(err), workflow_ctx);
-                        }
-                    },
-                }
+                let worker_result_refactored = self.convert_result(res, worker_span, stopwatch, deadline_duration, execution_deadline).await;
+                return worker_result_refactored
             },
             () = tokio::time::sleep(deadline_duration) => {
                 // Not flushing the workflow_ctx as it would introduce locking.
@@ -456,6 +393,93 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 }
             }
         };
+    }
+
+    async fn convert_result(
+        &self,
+        res: CallFuncResult<C, DB, P>,
+        worker_span: Span,
+        stopwatch: tokio::time::Instant,
+        deadline_duration: Duration,
+        execution_deadline: DateTime<Utc>,
+    ) -> WorkerResultRefactored<C, DB, P> {
+        match res {
+            Ok((supported_result, mut workflow_ctx)) => {
+                worker_span.in_scope(||
+                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished")
+                );
+                if let Err(db_err) = workflow_ctx.flush().await {
+                    worker_span.in_scope(|| error!("Database error: {db_err}"));
+                    return WorkerResultRefactored::Retryable(WorkerResult::Err(
+                        WorkerError::DbError(db_err),
+                    ));
+                } else {
+                    return WorkerResultRefactored::Ok(supported_result, workflow_ctx);
+                }
+            }
+            Err(RunError::FunctionCall(err, mut workflow_ctx)) => {
+                if let Err(db_err) = workflow_ctx.flush().await {
+                    worker_span.in_scope(||
+                        error!("Database flush error: {db_err:?} while handling FunctionCall error: {err:?}")
+                    );
+                    return WorkerResultRefactored::Retryable(WorkerResult::Err(
+                        WorkerError::DbError(db_err),
+                    ));
+                }
+                let version = workflow_ctx.version;
+                let err = WorkerError::IntermittentError {
+                    reason: StrVariant::Arc(Arc::from(format!(
+                        "uncategorized function call error - {err:?}"
+                    ))),
+                    err: Some(err),
+                    version,
+                };
+                worker_span.in_scope(||
+                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an intermittent error - {err:?}")
+                );
+                return WorkerResultRefactored::Retryable(WorkerResult::Err(err));
+            }
+            Err(RunError::WorkerPartialResult(worker_partial_result, mut workflow_ctx)) => {
+                if let Err(db_err) = workflow_ctx.flush().await {
+                    worker_span.in_scope(||
+                        error!("Database flush error: {db_err:?} while handling WorkerPartialResult: {worker_partial_result:?}")
+                    );
+                    return WorkerResultRefactored::Retryable(WorkerResult::Err(
+                        WorkerError::DbError(db_err),
+                    ));
+                }
+
+                match worker_partial_result {
+                    WorkerPartialResult::FatalError(err, _version) => {
+                        worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a worker error: {err:?}"));
+                        return WorkerResultRefactored::FatalError(err, workflow_ctx);
+                    }
+                    WorkerPartialResult::InterruptRequested => {
+                        worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Interrupt requested"));
+                        return WorkerResultRefactored::Retryable(WorkerResult::DbUpdatedByWorker);
+                    }
+                    WorkerPartialResult::DbError(db_err) => {
+                        return WorkerResultRefactored::Retryable(WorkerResult::Err(
+                            WorkerError::DbError(db_err),
+                        ));
+                    }
+                }
+            }
+            Err(RunError::ResultParsingError(err, mut workflow_ctx)) => {
+                if let Err(db_err) = workflow_ctx.flush().await {
+                    worker_span.in_scope(|| error!("Database error: {db_err}"));
+                    return WorkerResultRefactored::Retryable(WorkerResult::Err(
+                        WorkerError::DbError(db_err),
+                    ));
+                } else {
+                    worker_span.in_scope(|| error!("Fatal error: Result parsing error: {err}"));
+                    return WorkerResultRefactored::FatalError(
+                        FatalError::ResultParsingError(err),
+                        workflow_ctx,
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -481,7 +505,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             .await
         {
             Ok(ok) => ok,
-            Err(err) => return WorkerResult::Err(err), // fatal errors here cannot affect joinset closing
+            Err(err) => return WorkerResult::Err(err), // errors here cannot affect joinset closing, as they happen before fn invocation
         };
         let worker_result_refactored = self
             .race_func_with_timeout(
@@ -493,7 +517,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 execution_deadline,
             )
             .await;
-
         WorkerResult::from(worker_result_refactored)
     }
 }
