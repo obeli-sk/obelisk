@@ -1,4 +1,4 @@
-use super::event_history::{EventCall, EventHistory};
+use super::event_history::{ApplyError, EventCall, EventHistory};
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::component_logger::{log_activities, ComponentLogger};
 use crate::host_exports::{
@@ -32,14 +32,14 @@ pub(crate) enum WorkflowFunctionError {
     #[error("non deterministic execution: {0}")]
     NonDeterminismDetected(StrVariant),
     #[error("child finished with an execution error: {0}")]
-    ChildExecutionError(FinishedExecutionError),
+    ChildExecutionError(FinishedExecutionError), // only on direct call
     #[error("uncategorized error - {0}")]
-    UncategorizedError(&'static str),
+    UncategorizedError(&'static str), // Added with `WorkflowFunctionError`, others are from `ApplyError`
     // retryable errors:
     #[error("interrupt requested")]
     InterruptRequested,
     #[error(transparent)]
-    DbError(#[from] DbError),
+    DbError(DbError),
 }
 
 pub(crate) struct InterruptRequested;
@@ -67,6 +67,19 @@ impl WorkflowFunctionError {
             Self::UncategorizedError(err) => {
                 WorkerPartialResult::FatalError(FatalError::UncategorizedError(err), version)
             }
+        }
+    }
+}
+
+impl From<ApplyError> for WorkflowFunctionError {
+    fn from(value: ApplyError) -> Self {
+        match value {
+            ApplyError::NonDeterminismDetected(reason) => Self::NonDeterminismDetected(reason),
+            ApplyError::ChildExecutionError(finished_execution_error) => {
+                Self::ChildExecutionError(finished_execution_error)
+            }
+            ApplyError::InterruptRequested => Self::InterruptRequested,
+            ApplyError::DbError(db_error) => Self::DbError(db_error),
         }
     }
 }
@@ -314,7 +327,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 mod host_activities {
     use super::{
         assert_matches, async_trait, ClockFn, DbConnection, DbPool, Duration, EventCall, JoinSetId,
-        WorkflowCtx,
+        WorkflowCtx, WorkflowFunctionError,
     };
     use crate::{
         host_exports::{self, DurationEnum},
@@ -327,7 +340,10 @@ mod host_activities {
     {
         // TODO: Apply jitter, should be configured on the component level
         async fn sleep(&mut self, duration: DurationEnum) -> wasmtime::Result<()> {
-            Ok(self.call_sleep(Duration::from(duration)).await?)
+            Ok(self
+                .call_sleep(Duration::from(duration))
+                .await
+                .map_err(WorkflowFunctionError::from)?)
         }
 
         async fn new_join_set(
@@ -343,7 +359,8 @@ mod host_activities {
                     &mut self.version,
                     self.fn_registry.as_ref(),
                 )
-                .await?;
+                .await
+                .map_err(WorkflowFunctionError::from)?;
             let join_set_id = assert_matches!(res, ChildReturnValue::HostActionResp(HostActionResp::CreateJoinSetResp(join_set_id)) => join_set_id);
             Ok(host_exports::obelisk::types::execution::JoinSetId {
                 id: join_set_id.to_string(),

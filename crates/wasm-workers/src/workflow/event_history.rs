@@ -1,7 +1,6 @@
 use super::event_history::ProcessingStatus::Processed;
 use super::event_history::ProcessingStatus::Unprocessed;
 use super::workflow_ctx::InterruptRequested;
-use super::workflow_ctx::WorkflowFunctionError;
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::host_exports::delay_id_into_wast_val;
 use crate::host_exports::execution_id_into_wast_val;
@@ -69,6 +68,16 @@ impl ChildReturnValue {
 enum ProcessingStatus {
     Unprocessed,
     Processed,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ApplyError {
+    // fatal errors:
+    NonDeterminismDetected(StrVariant),
+    ChildExecutionError(FinishedExecutionError), // only on direct call
+    // retryable errors:
+    InterruptRequested,
+    DbError(DbError),
 }
 
 #[expect(clippy::struct_field_names)]
@@ -152,7 +161,7 @@ impl<C: ClockFn> EventHistory<C> {
         db_connection: &DB,
         version: &mut Version,
         fn_registry: &dyn FunctionRegistry,
-    ) -> Result<ChildReturnValue, WorkflowFunctionError> {
+    ) -> Result<ChildReturnValue, ApplyError> {
         trace!("replay_or_interrupt: {event_call:?}");
         if let Some(accept_resp) = self.find_matching_atomic(&event_call)? {
             return Ok(accept_resp);
@@ -179,7 +188,8 @@ impl<C: ClockFn> EventHistory<C> {
                         lock_expires_at,
                         version,
                     )
-                    .await?;
+                    .await
+                    .map_err(ApplyError::DbError)?;
                 self.event_history
                     .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
                 return Ok(self
@@ -197,7 +207,8 @@ impl<C: ClockFn> EventHistory<C> {
                         lock_expires_at,
                         version,
                     )
-                    .await?;
+                    .await
+                    .map_err(ApplyError::DbError)?;
                 self.event_history
                     .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
                 let keys_len = keys.len();
@@ -218,15 +229,15 @@ impl<C: ClockFn> EventHistory<C> {
             // JoinNext was written, wait for next response.
             let join_set_id = poll_variant.join_set_id();
             debug!(%join_set_id,  "Waiting for {poll_variant:?}");
-            *self.interrupt_on_timeout_container.lock().unwrap() =
-                Some(poll_variant.as_workflow_interrupt());
+            *self.interrupt_on_timeout_container.lock().unwrap() = Some(InterruptRequested);
             let key = poll_variant.as_key();
 
             // Subscribe to the next response.
             loop {
                 let next_responses = db_connection
                     .subscribe_to_next_responses(self.execution_id, self.responses.len())
-                    .await?;
+                    .await
+                    .map_err(ApplyError::DbError)?;
                 debug!("Got next responses {next_responses:?}");
                 self.responses.extend(
                     next_responses
@@ -241,14 +252,14 @@ impl<C: ClockFn> EventHistory<C> {
             }
         } else {
             debug!(join_set_id = %poll_variant.join_set_id(),  "Interrupting on {poll_variant:?}");
-            Err(poll_variant.as_function_error())
+            Err(ApplyError::InterruptRequested)
         }
     }
 
     fn find_matching_atomic(
         &mut self,
         event_call: &EventCall,
-    ) -> Result<Option<ChildReturnValue>, WorkflowFunctionError> {
+    ) -> Result<Option<ChildReturnValue>, ApplyError> {
         // None means no progress
         let keys = event_call.as_keys();
         assert!(!keys.is_empty());
@@ -306,7 +317,7 @@ impl<C: ClockFn> EventHistory<C> {
     fn process_event_by_key(
         &mut self,
         key: EventHistoryKey,
-    ) -> Result<Option<ChildReturnValue>, WorkflowFunctionError> {
+    ) -> Result<Option<ChildReturnValue>, ApplyError> {
         let Some((found_idx, (found_request_event, _))) = self.next_unprocessed_request() else {
             return Ok(None);
         };
@@ -396,7 +407,7 @@ impl<C: ClockFn> EventHistory<C> {
                                     error!(%child_execution_id,
                                             %join_set_id,
                                             "Child execution finished with an execution error, failing the parent");
-                                    Err(WorkflowFunctionError::ChildExecutionError(err.clone()))
+                                    Err(ApplyError::ChildExecutionError(err.clone()))
                                 }
                             },
                             JoinNextKind::AwaitNext => {
@@ -427,9 +438,7 @@ impl<C: ClockFn> EventHistory<C> {
                                                 error!(%child_execution_id,
                                                     %join_set_id,
                                                     "Child execution finished with an execution error, failing the parent");
-                                                Err(WorkflowFunctionError::ChildExecutionError(
-                                                    err.clone(),
-                                                ))
+                                                Err(ApplyError::ChildExecutionError(err.clone()))
                                             }
                                             JoinNextKind::AwaitNext => {
                                                 let variant = match err { // TODO: copied from webhook_trigger
@@ -509,11 +518,11 @@ impl<C: ClockFn> EventHistory<C> {
                 ))))
             }
 
-            (key, found) => Err(WorkflowFunctionError::NonDeterminismDetected(
-                StrVariant::Arc(Arc::from(format!(
+            (key, found) => Err(ApplyError::NonDeterminismDetected(StrVariant::Arc(
+                Arc::from(format!(
                     "unexpected key {key:?} not matching {found:?} at index {found_idx}",
-                ))),
-            )),
+                )),
+            ))),
         }
     }
 
@@ -584,7 +593,7 @@ impl<C: ClockFn> EventHistory<C> {
         &self,
         fn_registry: &dyn FunctionRegistry,
         ffqn: &FunctionFqn,
-    ) -> Result<(FunctionMetadata, ConfigId, ComponentRetryConfig), WorkflowFunctionError> {
+    ) -> (FunctionMetadata, ConfigId, ComponentRetryConfig) {
         let (fn_metadata, config_id, child_component_retry_config, import_type) = fn_registry
             .get_by_exported_function(ffqn)
             .await
@@ -594,7 +603,7 @@ impl<C: ClockFn> EventHistory<C> {
         let resolved_retry_config = self
             .child_retry_config_override
             .resolve(import_type, child_component_retry_config);
-        Ok((fn_metadata, config_id, resolved_retry_config))
+        (fn_metadata, config_id, resolved_retry_config)
     }
 
     #[instrument(level = Level::DEBUG, skip_all, fields(%version))]
@@ -606,7 +615,7 @@ impl<C: ClockFn> EventHistory<C> {
         called_at: DateTime<Utc>,
         lock_expires_at: DateTime<Utc>,
         version: &mut Version,
-    ) -> Result<Vec<HistoryEvent>, WorkflowFunctionError> {
+    ) -> Result<Vec<HistoryEvent>, DbError> {
         trace!(%version, "append_to_db");
         match event_call {
             EventCall::CreateJoinSet { join_set_id } => {
@@ -644,9 +653,7 @@ impl<C: ClockFn> EventHistory<C> {
                     },
                     config_id,
                     resolved_retry_config,
-                ) = self
-                    .get_called_function_metadata(fn_registry, &ffqn)
-                    .await?;
+                ) = self.get_called_function_metadata(fn_registry, &ffqn).await;
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: child_execution_id,
@@ -707,9 +714,7 @@ impl<C: ClockFn> EventHistory<C> {
                     },
                     config_id,
                     resolved_retry_config,
-                ) = self
-                    .get_called_function_metadata(fn_registry, &ffqn)
-                    .await?;
+                ) = self.get_called_function_metadata(fn_registry, &ffqn).await;
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: new_execution_id,
@@ -800,9 +805,7 @@ impl<C: ClockFn> EventHistory<C> {
                     },
                     config_id,
                     resolved_retry_config,
-                ) = self
-                    .get_called_function_metadata(fn_registry, &ffqn)
-                    .await?;
+                ) = self.get_called_function_metadata(fn_registry, &ffqn).await;
                 let child = CreateRequest {
                     created_at: called_at,
                     execution_id: child_execution_id,
@@ -924,18 +927,6 @@ impl PollVariant {
                 join_set_id: *join_set_id,
             },
         }
-    }
-
-    fn as_function_error(&self) -> WorkflowFunctionError {
-        match self {
-            PollVariant::JoinNextChild { .. } | PollVariant::JoinNextDelay(_) => {
-                WorkflowFunctionError::InterruptRequested
-            }
-        }
-    }
-
-    fn as_workflow_interrupt(&self) -> InterruptRequested {
-        InterruptRequested
     }
 }
 
@@ -1097,10 +1088,10 @@ impl EventCall {
 #[cfg(test)]
 mod tests {
     use super::super::event_history::{EventCall, EventHistory};
-    use super::super::workflow_ctx::WorkflowFunctionError;
     use super::super::workflow_worker::JoinNextBlockingStrategy;
     use crate::host_exports::execution_id_into_wast_val;
     use crate::tests::fn_registry_dummy;
+    use crate::workflow::event_history::ApplyError;
     use assert_matches::assert_matches;
     use chrono::{DateTime, Utc};
     use concepts::prefixed_ulid::JoinSetId;
@@ -1243,7 +1234,7 @@ mod tests {
             blocking_join_first(event_history, version, fn_registry.clone())
                 .await
                 .unwrap_err(),
-            WorkflowFunctionError::InterruptRequested,
+            ApplyError::InterruptRequested,
             "should have ended with an interrupt"
         );
         db_connection
@@ -1459,7 +1450,7 @@ mod tests {
             join_set_id: JoinSetId,
             child_execution_id_a: ExecutionId,
             child_execution_id_b: ExecutionId,
-        ) -> Result<Option<WastVal>, WorkflowFunctionError> {
+        ) -> Result<Option<WastVal>, ApplyError> {
             event_history
                 .apply(
                     EventCall::CreateJoinSet { join_set_id },
@@ -1561,7 +1552,7 @@ mod tests {
             )
             .await
             .unwrap_err(),
-            WorkflowFunctionError::InterruptRequested
+            ApplyError::InterruptRequested
         );
         // append two responses
         db_connection
