@@ -316,33 +316,34 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         }
         let workflow_ctx = store.into_data();
 
-        if let Err(err) = func_call_result {
-            // guest panic exits here.
-            // Try to unpack `WorkflowFunctionError`
-            if let Some(err) = err
-                .source()
-                .and_then(|source| source.downcast_ref::<WorkflowFunctionError>())
-            {
-                let worker_partial_result = err
-                    .clone()
-                    .into_worker_partial_result(workflow_ctx.version.clone());
-                return Err(RunError::WorkerPartialResult(
-                    worker_partial_result,
-                    workflow_ctx,
-                ));
-            } else {
-                return Err(RunError::FunctionCall(err.into(), workflow_ctx));
+        match func_call_result {
+            Ok(()) => {
+                match SupportedFunctionReturnValue::new(
+                    results.into_iter().zip(result_types.iter().cloned()),
+                ) {
+                    Ok(result) => Ok((result, workflow_ctx)),
+                    Err(err) => Err(RunError::ResultParsingError(err, workflow_ctx)),
+                }
+            }
+            Err(err) => {
+                // guest panic exits here.
+                // Try to unpack `WorkflowFunctionError`
+                if let Some(err) = err
+                    .source()
+                    .and_then(|source| source.downcast_ref::<WorkflowFunctionError>())
+                {
+                    let worker_partial_result = err
+                        .clone()
+                        .into_worker_partial_result(workflow_ctx.version.clone());
+                    Err(RunError::WorkerPartialResult(
+                        worker_partial_result,
+                        workflow_ctx,
+                    ))
+                } else {
+                    Err(RunError::FunctionCall(err.into(), workflow_ctx))
+                }
             }
         }
-        let result = match SupportedFunctionReturnValue::new(
-            results.into_iter().zip(result_types.iter().cloned()),
-        ) {
-            Ok(result) => result,
-            Err(err) => {
-                return Err(RunError::ResultParsingError(err, workflow_ctx));
-            }
-        };
-        Ok((result, workflow_ctx))
     }
 
     async fn race_func_with_timeout(
@@ -415,7 +416,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                         WorkerError::DbError(db_err),
                     ));
                 }
-                return WorkerResultRefactored::Ok(supported_result, workflow_ctx);
+                WorkerResultRefactored::Ok(supported_result, workflow_ctx)
             }
             Err(RunError::FunctionCall(err, mut workflow_ctx)) => {
                 if let Err(db_err) = workflow_ctx.flush().await {
@@ -437,7 +438,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 worker_span.in_scope(||
                     info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an intermittent error - {err:?}")
                 );
-                return WorkerResultRefactored::Retryable(WorkerResult::Err(err));
+                WorkerResultRefactored::Retryable(WorkerResult::Err(err))
             }
             Err(RunError::WorkerPartialResult(worker_partial_result, mut workflow_ctx)) => {
                 if let Err(db_err) = workflow_ctx.flush().await {
@@ -451,17 +452,15 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 match worker_partial_result {
                     WorkerPartialResult::FatalError(err, _version) => {
                         worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a worker error: {err:?}"));
-                        return WorkerResultRefactored::FatalError(err, workflow_ctx);
+                        WorkerResultRefactored::FatalError(err, workflow_ctx)
                     }
                     WorkerPartialResult::InterruptRequested => {
                         worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Interrupt requested"));
-                        return WorkerResultRefactored::Retryable(WorkerResult::DbUpdatedByWorker);
+                        WorkerResultRefactored::Retryable(WorkerResult::DbUpdatedByWorker)
                     }
-                    WorkerPartialResult::DbError(db_err) => {
-                        return WorkerResultRefactored::Retryable(WorkerResult::Err(
-                            WorkerError::DbError(db_err),
-                        ));
-                    }
+                    WorkerPartialResult::DbError(db_err) => WorkerResultRefactored::Retryable(
+                        WorkerResult::Err(WorkerError::DbError(db_err)),
+                    ),
                 }
             }
             Err(RunError::ResultParsingError(err, mut workflow_ctx)) => {
@@ -472,10 +471,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     ));
                 }
                 worker_span.in_scope(|| error!("Fatal error: Result parsing error: {err}"));
-                return WorkerResultRefactored::FatalError(
+                WorkerResultRefactored::FatalError(
                     FatalError::ResultParsingError(err),
                     workflow_ctx,
-                );
+                )
             }
         }
     }
