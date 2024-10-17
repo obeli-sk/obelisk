@@ -17,7 +17,6 @@ crate-type = ["cdylib"]
 [package.metadata.component.target.dependencies]
 "obelisk:log".path = "../../../../wasm-workers/host-wit/deps/log/"
 "obelisk:types".path = "../../../../wasm-workers/host-wit/deps/types/"
-"obelisk:workflow".path = "../../../../wasm-workers/host-wit/deps/workflow/"
 "testing:fibo-workflow-obelisk-ext".path = "../workflow/wit/ifc-ext"
 "testing:fibo-workflow".path = "../workflow/wit/ifc"
 "wasi:cli".path = "wit/deps/cli"

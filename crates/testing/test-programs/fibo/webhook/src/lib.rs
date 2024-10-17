@@ -27,31 +27,14 @@ impl Guest for Component {
             .expect("parameter `ITERATIONS` must be of type u32"); // Panic here means we send 200 anyway.
 
         let fibo_res = if n >= 10 {
-            println!("submitting");
-            // Submit new execution, do not wait for the result.
-            let join_set_id = crate::bindings::obelisk::workflow::host_activities::new_join_set();
-            let execution_id = bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_submit(
-                &join_set_id,
-                n,
-                iterations,
-            );
-            format!("submitted: {}", execution_id.id)
-        } else if n >= 5 {
-            // Submit new execution, wait for the result.
-            println!("submitting and awaiting");
-            let join_set_id = crate::bindings::obelisk::workflow::host_activities::new_join_set();
-            bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_submit(
-                &join_set_id,
-                n,
-                iterations,
-            );
-            let fibo_res =
-                bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_await_next(
-                    &join_set_id,
-                )
-                .unwrap()
-                .1;
-            format!("submit/await-next: {fibo_res}")
+            println!("scheduling");
+            let execution_id =
+                bindings::testing::fibo_workflow_obelisk_ext::workflow::fiboa_schedule(
+                    crate::bindings::obelisk::types::time::ScheduleAt::Now,
+                    n,
+                    iterations,
+                );
+            format!("scheduled: {}", execution_id.id)
         } else if n > 1 {
             // Call the execution directly.
             println!("direct call");

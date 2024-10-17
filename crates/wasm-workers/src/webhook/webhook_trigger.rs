@@ -1,20 +1,21 @@
+// TODO: simplify - remove host activities to get rid of join set creation,
+// effectively leaving only direct call and -schedule.
+// Investigate wrapping join sets in a Result, otherwise -submit and -await-next are still callable.
 use crate::component_logger::{log_activities, ComponentLogger};
 use crate::envvar::EnvVar;
 use crate::host_exports::{
-    execution_id_into_val, execution_id_into_wast_val, val_to_join_set_id, DurationEnum,
-    ValToJoinSetIdError, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
+    execution_id_into_val, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
 };
 use crate::std_output_stream::{LogStream, StdOutput};
-use crate::{host_exports, WasmFileError, NAMESPACE_OBELISK_WITH_COLON};
+use crate::{WasmFileError, NAMESPACE_OBELISK_WITH_COLON};
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
     ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner, HistoryEvent,
-    HistoryEventScheduledAt, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent, Version,
+    HistoryEventScheduledAt, JoinSetRequest, Version,
 };
 use concepts::{
     ConfigId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
     FunctionMetadata, FunctionRegistry, IfcFqnName, ImportableType, Params, StrVariant,
-    SupportedFunctionReturnValue,
 };
 use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
@@ -32,7 +33,6 @@ use tokio::net::TcpListener;
 use tracing::{debug, error, info, instrument, trace, warn, Instrument, Level, Span};
 use utils::time::ClockFn;
 use utils::wasm_tools::{ExIm, WasmComponent, SUFFIX_PKG_EXT};
-use val_json::wast_val::WastVal;
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};
@@ -113,7 +113,7 @@ impl WebhookCompiled {
                 err: err.into(),
             }
         })?;
-        // Link obelisk: host-activities and log
+        // Link obelisk:log
         WebhookCtx::add_to_linker(&mut linker)?;
 
         // Mock imported functions
@@ -375,17 +375,10 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
     retry_config: RetryConfigOverride,
-    responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     execution_id: ExecutionId,
     version: Option<Version>,
     component_logger: ComponentLogger,
     phantom_data: PhantomData<DB>,
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-enum ProcessingStatus {
-    Unprocessed,
-    Processed,
 }
 
 #[derive(thiserror::Error, Debug, Clone)]
@@ -432,89 +425,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         Ok(version)
     }
 
-    // No support for combined delay finished / child finished yet.
-    fn find_response_child_finished(
-        &mut self,
-        join_set_id: JoinSetId,
-        results: &mut [Val],
-    ) -> Result<Option<()>, WebhookFunctionError> {
-        if results.len() != 1 {
-            // either
-            // result<execution-id, tuple<execution-id, error-result>> or
-            // result<tuple<execution-id>, inner>, tuple<execution-id, error-result>>
-            error!("Unexpected results length for -await-next");
-            return Err(WebhookFunctionError::UncategorizedError(
-                "Unexpected results length for -await-next",
-            ));
-        }
-        if let Some((response, status)) = self
-            .responses
-            .iter_mut()
-            .find(|(r, s)| *s == ProcessingStatus::Unprocessed && r.join_set_id == join_set_id)
-        {
-            *status = ProcessingStatus::Processed;
-            if let JoinSetResponseEvent {
-                event:
-                    JoinSetResponse::ChildExecutionFinished {
-                        result,
-                        child_execution_id,
-                    },
-                join_set_id: _,
-            } = response
-            {
-                trace!("Found child response: {result:?}");
-                // TODO: If the child execution succeeded, perform type check between `SupportedFunctionReturnValue`
-                // and what is expected by the `FunctionRegistry`
-                let child_execution_id = execution_id_into_wast_val(*child_execution_id);
-                match result {
-                    Ok(
-                        SupportedFunctionReturnValue::Fallible(v)
-                        | SupportedFunctionReturnValue::Infallible(v),
-                    ) => {
-                        // Ok(tuple<execution-id, (original return value)>)
-                        results[0] = WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-                            child_execution_id,
-                            v.value.clone(),
-                        ])))))
-                        .as_val();
-                    }
-                    Ok(SupportedFunctionReturnValue::None) => {
-                        results[0] =
-                            WastVal::Result(Ok(Some(Box::new(child_execution_id)))).as_val();
-                    }
-
-                    Err(err) => {
-                        let variant = match err {
-                            FinishedExecutionError::PermanentTimeout => {
-                                WastVal::Variant("permanent-timeout".to_string(), None)
-                            }
-                            FinishedExecutionError::NondeterminismDetected(_) => {
-                                WastVal::Variant("non-determinism".to_string(), None)
-                            }
-                            FinishedExecutionError::PermanentFailure(reason) => WastVal::Variant(
-                                "permanent-failure".to_string(),
-                                Some(Box::new(WastVal::String(reason.to_string()))),
-                            ),
-                        };
-                        // Err(tuple<execution-id, execution-error>)
-                        results[0] = WastVal::Result(Err(Some(Box::new(WastVal::Tuple(vec![
-                            child_execution_id,
-                            variant,
-                        ])))))
-                        .as_val();
-                    }
-                }
-                Ok(Some(()))
-            } else {
-                Err(WebhookFunctionError::UncategorizedError(
-                    "wrong join set id",
-                ))
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
     #[instrument(level = Level::DEBUG, skip_all, fields(%ffqn, version), err)]
     async fn call_imported_fn(
         &mut self,
@@ -530,103 +440,24 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 ffqn.ifc_fqn.ifc_name(),
                 ffqn.ifc_fqn.version(),
             );
-            if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SUBMIT) {
-                let ffqn =
-                    FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
-                debug!("Got `-submit` extension for {ffqn}");
-                let Some((join_set_id, params)) = params.split_first() else {
-                    error!("Got empty params, expected JoinSetId");
-                    return Err(WebhookFunctionError::UncategorizedError(
-                        "error running `-submit` extension function: exepcted at least one parameter with JoinSetId, got empty parameter list",
-                    ));
-                };
-                let join_set_id = val_to_join_set_id(join_set_id)
-                    .map_err(|err|WebhookFunctionError::UncategorizedError(match err {
-                        ValToJoinSetIdError::ParseError => "error running `-submit` extension function: cannot parse join-set-id",
-                        ValToJoinSetIdError::TypeError => "error running `-submit` extension function: wrong first parameter type, expected join-set-id",
-                    }))?;
-                let version = self.get_version().await?;
-                let span = Span::current();
-                span.record("version", tracing::field::display(&version));
-                let child_execution_id = ExecutionId::generate();
-                let Some((function_metadata, config_id, child_retry_config, import_type)) =
-                    self.fn_registry.get_by_exported_function(&ffqn).await
-                else {
-                    return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
-                };
-                // Write to db
-                let created_at = self.clock_fn.now();
-                let child_exec_req = ExecutionEventInner::HistoryEvent {
-                    event: HistoryEvent::JoinSetRequest {
-                        join_set_id,
-                        request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
-                    },
-                };
-                let create_child_req = CreateRequest {
-                    created_at,
-                    execution_id: child_execution_id,
-                    ffqn,
-                    params: Params::from_wasmtime(Arc::from(params)),
-                    parent: Some((self.execution_id, join_set_id)),
-                    metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
-                    scheduled_at: created_at,
-                    max_retries: self
-                        .retry_config
-                        .max_retries(import_type, child_retry_config.max_retries),
-                    retry_exp_backoff: self
-                        .retry_config
-                        .retry_exp_backoff(import_type, child_retry_config.retry_exp_backoff),
-                    config_id,
-                    return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
-                    topmost_parent: self.execution_id,
-                };
-                let db_connection = self.db_pool.connection();
-                let version = db_connection
-                    .append_batch_create_new_execution(
-                        created_at,
-                        vec![child_exec_req],
-                        self.execution_id,
-                        version.clone(),
-                        vec![create_child_req],
-                    )
-                    .await?;
-                self.version = Some(version);
-                results[0] = execution_id_into_val(child_execution_id);
-                Ok(())
-            } else if let Some(function_name) =
-                ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
-            {
-                let version = self.get_version().await?;
-                tracing::Span::current().record("version", tracing::field::display(version));
-                debug!("Got await-next extension for function `{function_name}`");
-                let [join_set_id] = params else {
-                    error!("Expected single parameter with join-set-id got {params:?}");
-                    return Err(WebhookFunctionError::UncategorizedError(
-                        "error running `-await-next` extension function: wrong parameter length, expected single string parameter containing join-set-id"
-                    ));
-                };
-                let join_set_id = val_to_join_set_id(join_set_id).map_err(|err| WebhookFunctionError::UncategorizedError(match err {
-                    ValToJoinSetIdError::ParseError => "error running `-await-next` extension function: cannot parse join-set-id",
-                    ValToJoinSetIdError::TypeError => "error running `-await-next` extension function: wrong parameter type, expected single string parameter containing join-set-id",
-                }))?;
-
-                let conn = self.db_pool.connection();
-                while self
-                    .find_response_child_finished(join_set_id, results)?
-                    .is_none()
-                {
-                    let next_responses = conn
-                        .subscribe_to_next_responses(self.execution_id, self.responses.len())
-                        .await?;
-                    debug!("Got next responses {next_responses:?}");
-                    self.responses.extend(
-                        next_responses
-                            .into_iter()
-                            .map(|outer| (outer.event, ProcessingStatus::Unprocessed)),
-                    );
-                    trace!("All responses: {:?}", self.responses);
-                }
-                Ok(())
+            if ffqn.function_name.ends_with(SUFFIX_FN_SUBMIT) {
+                error!(%ffqn, "Webhooks do not support extension function {SUFFIX_FN_SUBMIT}");
+                return Err(WebhookFunctionError::UncategorizedError(
+                    const_format::formatcp!(
+                        "webhooks do not support extension function {}",
+                        SUFFIX_FN_SUBMIT
+                    ),
+                ));
+            } else if ffqn.function_name.ends_with(SUFFIX_FN_AWAIT_NEXT) {
+                error!(%ffqn,
+                    "Webhooks do not support extension function {SUFFIX_FN_AWAIT_NEXT}"
+                );
+                return Err(WebhookFunctionError::UncategorizedError(
+                    const_format::formatcp!(
+                        "webhooks do not support extension function {}",
+                        SUFFIX_FN_AWAIT_NEXT
+                    ),
+                ));
             } else if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
             {
                 let ffqn =
@@ -775,14 +606,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
     }
 
     fn add_to_linker(linker: &mut Linker<WebhookCtx<C, DB, P>>) -> Result<(), WasmFileError> {
-        host_exports::obelisk::workflow::host_activities::add_to_linker(
-            linker,
-            |state: &mut Self| state,
-        )
-        .map_err(|err| WasmFileError::LinkingError {
-            context: StrVariant::Static("linking host activities"),
-            err: err.into(),
-        })?;
         log_activities::obelisk::log::log::add_to_linker(linker, |state: &mut Self| state)
             .map_err(|err| WasmFileError::LinkingError {
                 context: StrVariant::Static("linking log activities"),
@@ -834,7 +657,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             http_ctx: WasiHttpCtx::new(),
             retry_config,
             version: None,
-            responses: Vec::new(),
             config_id,
             execution_id,
             component_logger: ComponentLogger { span: request_span },
@@ -843,25 +665,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         let mut store = Store::new(engine, ctx);
         store.epoch_deadline_callback(|_store_ctx| Ok(UpdateDeadline::Yield(1)));
         store
-    }
-}
-
-#[async_trait::async_trait]
-impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
-    host_exports::obelisk::workflow::host_activities::Host for WebhookCtx<C, DB, P>
-{
-    async fn sleep(&mut self, duration: DurationEnum) -> wasmtime::Result<()> {
-        tokio::time::sleep(Duration::from(duration)).await;
-        Ok(())
-    }
-
-    async fn new_join_set(
-        &mut self,
-    ) -> wasmtime::Result<crate::host_exports::obelisk::types::execution::JoinSetId> {
-        let join_set_id = JoinSetId::generate();
-        Ok(host_exports::obelisk::types::execution::JoinSetId {
-            id: join_set_id.to_string(),
-        })
     }
 }
 
@@ -1244,11 +1047,11 @@ pub(crate) mod tests {
         }
 
         #[tokio::test]
-        async fn submitting_and_not_waiting_should_work() {
+        async fn scheduling_should_work() {
             test_utils::set_up();
             let fibo_webhook_harness = SetUpFiboWebhook::new().await;
             let resp = fibo_webhook_harness.fetch(10, 200).await;
-            let execution_id = resp.strip_prefix("fiboa(10, 1) = submitted: ").unwrap();
+            let execution_id = resp.strip_prefix("fiboa(10, 1) = scheduled: ").unwrap();
             let execution_id = ExecutionId::from_str(execution_id).unwrap();
             let conn = fibo_webhook_harness.db_pool.connection();
             let res = conn
@@ -1260,16 +1063,6 @@ pub(crate) mod tests {
             let res = assert_matches!(res, WastValWithType{ value: WastVal::U64(actual), r#type: TypeWrapper::U64} => actual);
             assert_eq!(FIBO_10_OUTPUT, res,);
             fibo_webhook_harness.close().await;
-        }
-
-        #[tokio::test]
-        async fn submit_await_next_should_work() {
-            test_utils::set_up();
-            let fibo_webhook_harness = SetUpFiboWebhook::new().await;
-            assert_eq!(
-                "fiboa(5, 1) = submit/await-next: 5",
-                fibo_webhook_harness.fetch(5, 200).await
-            );
         }
 
         #[tokio::test]

@@ -1,7 +1,6 @@
 package any:any;
 
 world any {
-    import obelisk:workflow/host-activities;
     import obelisk:log/log;
     import testing:fibo-workflow-obelisk-ext/workflow;
     import testing:fibo-workflow/workflow;

@@ -138,6 +138,37 @@ pub mod obelisk {
                     }
                 }
             }
+            /// A time and date in seconds plus nanoseconds.
+            /// Extracted from wasi:clocks@0.2.0 to avoid dependency on wasi:io
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct Datetime {
+                pub seconds: u64,
+                pub nanoseconds: u32,
+            }
+            impl ::core::fmt::Debug for Datetime {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    f.debug_struct("Datetime")
+                        .field("seconds", &self.seconds)
+                        .field("nanoseconds", &self.nanoseconds)
+                        .finish()
+                }
+            }
+            #[derive(Clone, Copy)]
+            pub enum ScheduleAt {
+                Now,
+                At(Datetime),
+                In(Duration),
+            }
+            impl ::core::fmt::Debug for ScheduleAt {
+                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    match self {
+                        ScheduleAt::Now => f.debug_tuple("ScheduleAt::Now").finish(),
+                        ScheduleAt::At(e) => f.debug_tuple("ScheduleAt::At").field(e).finish(),
+                        ScheduleAt::In(e) => f.debug_tuple("ScheduleAt::In").field(e).finish(),
+                    }
+                }
+            }
         }
         #[allow(dead_code, clippy::all)]
         pub mod execution {
@@ -536,6 +567,7 @@ pub mod testing {
             pub type JoinSetId = super::super::super::obelisk::types::execution::JoinSetId;
             pub type ExecutionError =
                 super::super::super::obelisk::types::execution::ExecutionError;
+            pub type ScheduleAt = super::super::super::obelisk::types::time::ScheduleAt;
             #[allow(unused_unsafe, clippy::all)]
             pub fn fiboa_submit(join_set_id: &JoinSetId, n: u8, iterations: u32) -> ExecutionId {
                 unsafe {
@@ -653,6 +685,66 @@ pub mod testing {
                             Err(e)
                         }
                         _ => _rt::invalid_enum_discriminant(),
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn fiboa_schedule(schedule_at: ScheduleAt, n: u8, iterations: u32) -> ExecutionId {
+                unsafe {
+                    #[repr(align(4))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
+                    use super::super::super::obelisk::types::time::ScheduleAt as V3;
+                    let (result4_0, result4_1, result4_2) = match schedule_at {
+                        V3::Now => (0i32, 0i64, 0i64),
+                        V3::At(e) => {
+                            let super::super::super::obelisk::types::time::Datetime {
+                                seconds: seconds0,
+                                nanoseconds: nanoseconds0,
+                            } = e;
+                            (
+                                1i32,
+                                _rt::as_i64(seconds0),
+                                i64::from(_rt::as_i32(nanoseconds0)),
+                            )
+                        }
+                        V3::In(e) => {
+                            use super::super::super::obelisk::types::time::Duration as V1;
+                            let (result2_0, result2_1) = match e {
+                                V1::Milliseconds(e) => (0i32, _rt::as_i64(e)),
+                                V1::Seconds(e) => (1i32, _rt::as_i64(e)),
+                                V1::Minutes(e) => (2i32, i64::from(_rt::as_i32(e))),
+                                V1::Hours(e) => (3i32, i64::from(_rt::as_i32(e))),
+                                V1::Days(e) => (4i32, i64::from(_rt::as_i32(e))),
+                            };
+                            (2i32, i64::from(result2_0), result2_1)
+                        }
+                    };
+                    let ptr5 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
+                    extern "C" {
+                        #[link_name = "fiboa-schedule"]
+                        fn wit_import(_: i32, _: i64, _: i64, _: i32, _: i32, _: *mut u8);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: i32, _: i64, _: i64, _: i32, _: i32, _: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(
+                        result4_0,
+                        result4_1,
+                        result4_2,
+                        _rt::as_i32(&n),
+                        _rt::as_i32(&iterations),
+                        ptr5,
+                    );
+                    let l6 = *ptr5.add(0).cast::<*mut u8>();
+                    let l7 = *ptr5.add(4).cast::<usize>();
+                    let len8 = l7;
+                    let bytes8 = _rt::Vec::from_raw_parts(l6.cast(), len8, len8);
+                    super::super::super::obelisk::types::execution::ExecutionId {
+                        id: _rt::string_lift(bytes8),
                     }
                 }
             }
@@ -1038,9 +1130,9 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1785] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xff\x0c\x01A\x02\x01\
-A\x1a\x01B\x06\x01@\x01\x07messages\x01\0\x04\0\x05trace\x01\0\x04\0\x05debug\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1875] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd9\x0d\x01A\x02\x01\
+A\x1b\x01B\x06\x01@\x01\x07messages\x01\0\x04\0\x05trace\x01\0\x04\0\x05debug\x01\
 \0\x04\0\x04info\x01\0\x04\0\x04warn\x01\0\x04\0\x05error\x01\0\x03\x01\x0fobeli\
 sk:log/log\x05\0\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07m\
 inutes\x01y\0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07\
@@ -1059,26 +1151,28 @@ execution-id\x02\x03\0\x02\x0fexecution-error\x01B\x0d\x02\x03\x02\x01\x06\x04\0
 \x02\x01\x07\x04\0\x0fexecution-error\x03\0\x04\x01@\x02\x0bjoin-set-id\x03\x01n\
 }\0\x01\x04\0\x0bfibo-submit\x01\x06\x01o\x02\x01w\x01o\x02\x01\x05\x01j\x01\x07\
 \x01\x08\x01@\x01\x0bjoin-set-id\x03\0\x09\x04\0\x0ffibo-await-next\x01\x0a\x03\x01\
-\x1dtesting:fibo-obelisk-ext/fibo\x05\x08\x01B\x0f\x02\x03\x02\x01\x06\x04\0\x0c\
-execution-id\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin-set-id\x03\0\x02\x02\x03\x02\
-\x01\x07\x04\0\x0fexecution-error\x03\0\x04\x01@\x03\x0bjoin-set-id\x03\x01n}\x0a\
-iterationsy\0\x01\x04\0\x0cfiboa-submit\x01\x06\x01o\x02\x01w\x01o\x02\x01\x05\x01\
-j\x01\x07\x01\x08\x01@\x01\x0bjoin-set-id\x03\0\x09\x04\0\x10fiboa-await-next\x01\
-\x0a\x04\0\x17fiboa-concurrent-submit\x01\x06\x04\0\x1bfiboa-concurrent-await-ne\
-xt\x01\x0a\x03\x01*testing:fibo-workflow-obelisk-ext/workflow\x05\x09\x01B\x04\x01\
-@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14\
-iterations-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x03\x01&testing:fibo\
--workflow/workflow-nesting\x05\x0a\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\
-\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x03\x01\x1e\
-testing:fibo-workflow/workflow\x05\x0b\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04fibo\x01\
-\0\x03\x01\x11testing:fibo/fibo\x05\x0c\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo\
--nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14iterations-per-fiboay\0w\x04\
-\0\x11fibo-start-fiboas\x01\x01\x04\x01&testing:fibo-workflow/workflow-nesting\x05\
-\x0d\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fib\
-oa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1etesting:fibo-workflow/workfl\
-ow\x05\x0e\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09produ\
-cers\x01\x0cprocessed-by\x02\x0dwit-component\x070.216.0\x10wit-bindgen-rust\x06\
-0.31.0";
+\x1dtesting:fibo-obelisk-ext/fibo\x05\x08\x02\x03\0\x01\x0bschedule-at\x01B\x13\x02\
+\x03\x02\x01\x06\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin\
+-set-id\x03\0\x02\x02\x03\x02\x01\x07\x04\0\x0fexecution-error\x03\0\x04\x02\x03\
+\x02\x01\x09\x04\0\x0bschedule-at\x03\0\x06\x01@\x03\x0bjoin-set-id\x03\x01n}\x0a\
+iterationsy\0\x01\x04\0\x0cfiboa-submit\x01\x08\x01o\x02\x01w\x01o\x02\x01\x05\x01\
+j\x01\x09\x01\x0a\x01@\x01\x0bjoin-set-id\x03\0\x0b\x04\0\x10fiboa-await-next\x01\
+\x0c\x01@\x03\x0bschedule-at\x07\x01n}\x0aiterationsy\0\x01\x04\0\x0efiboa-sched\
+ule\x01\x0d\x04\0\x17fiboa-concurrent-submit\x01\x08\x04\0\x1bfiboa-concurrent-a\
+wait-next\x01\x0c\x03\x01*testing:fibo-workflow-obelisk-ext/workflow\x05\x0a\x01\
+B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fi\
+boasy\x14iterations-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x03\x01&tes\
+ting:fibo-workflow/workflow-nesting\x05\x0b\x01B\x04\x01@\x02\x01n}\x0aiteration\
+sy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x03\
+\x01\x1etesting:fibo-workflow/workflow\x05\x0c\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04\
+fibo\x01\0\x03\x01\x11testing:fibo/fibo\x05\x0d\x01B\x04\x01@\x01\x01n}\0w\x04\0\
+\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14iterations-per-fiboa\
+y\0w\x04\0\x11fibo-start-fiboas\x01\x01\x04\x01&testing:fibo-workflow/workflow-n\
+esting\x05\x0e\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\
+\0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1etesting:fibo-workfl\
+ow/workflow\x05\x0f\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\
+\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.216.0\x10wit-bindgen\
+-rust\x060.31.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

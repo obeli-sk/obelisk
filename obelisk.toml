@@ -98,7 +98,7 @@ exec.lock_expiry.secs = 2
 
 [[webhook_component]]
 name = "webhook_fibo"
-location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-15@sha256:ee63f044a05f99a7003dd0c3fe2c670a1f73f7b61d18c98b977b00a0a9883062"
+location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-17@sha256:5bc3ce9671dc6245d508550d1c52e95ddddb160eeb788e02520a661c8471bb4d"
 http_server = "external-webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 
