@@ -96,10 +96,11 @@ pub mod obelisk {
             pub type Duration = super::super::super::obelisk::types::time::Duration;
             pub type JoinSetId = super::super::super::obelisk::types::execution::JoinSetId;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn sleep(nanos: Duration) {
+            /// Persistent sleep.
+            pub fn sleep(duration: Duration) {
                 unsafe {
                     use super::super::super::obelisk::types::time::Duration as V0;
-                    let (result1_0, result1_1) = match nanos {
+                    let (result1_0, result1_1) = match duration {
                         V0::Milliseconds(e) => (0i32, _rt::as_i64(e)),
                         V0::Seconds(e) => (1i32, _rt::as_i64(e)),
                         V0::Minutes(e) => (2i32, i64::from(_rt::as_i32(e))),
@@ -120,6 +121,7 @@ pub mod obelisk {
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
+            /// Create new join set. Closing the join set at the execution finish will block until all child executions are finished.
             pub fn new_join_set() -> JoinSetId {
                 unsafe {
                     #[repr(align(4))]
@@ -925,8 +927,8 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:testing:http-workflow:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1206] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xbc\x08\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1209] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xbf\x08\x01A\x02\x01\
 A\x10\x01B\x04\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0e\
 get-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x08\x01r\x01\x02\
 ids\x04\0\x0bjoin-set-id\x03\0\0\x01r\x01\x02ids\x04\0\x0cexecution-id\x03\0\x02\
@@ -944,15 +946,15 @@ y\0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07seconds
 w\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\
 \x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\
 \x06\x02\x03\0\x03\x08duration\x01B\x08\x02\x03\x02\x01\x07\x04\0\x08duration\x03\
-\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x05nanos\x01\x01\
-\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0cnew-join-set\x01\x05\x03\x01\x20\
-obelisk:workflow/host-activities\x05\x08\x01B\x0a\x01j\x01s\x01s\x01@\x01\x03url\
-s\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-successful\x01\x01\x01ps\x01j\x01\x02\x01\
-s\x01@\x01\x04urls\x02\0\x03\x04\0\x1bget-successful-concurrently\x01\x04\x01@\x02\
-\x03urls\x0bconcurrencyy\0\x03\x04\0\"get-successful-concurrently-stress\x01\x05\
-\x04\x01\x1etesting:http-workflow/workflow\x05\x09\x04\x01\x19testing:http-workf\
-low/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\
-\x0dwit-component\x070.216.0\x10wit-bindgen-rust\x060.31.0";
+\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x08duration\x01\
+\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0cnew-join-set\x01\x05\x03\x01\
+\x20obelisk:workflow/host-activities\x05\x08\x01B\x0a\x01j\x01s\x01s\x01@\x01\x03\
+urls\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-successful\x01\x01\x01ps\x01j\x01\x02\
+\x01s\x01@\x01\x04urls\x02\0\x03\x04\0\x1bget-successful-concurrently\x01\x04\x01\
+@\x02\x03urls\x0bconcurrencyy\0\x03\x04\0\"get-successful-concurrently-stress\x01\
+\x05\x04\x01\x1etesting:http-workflow/workflow\x05\x09\x04\x01\x19testing:http-w\
+orkflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-\
+by\x02\x0dwit-component\x070.216.0\x10wit-bindgen-rust\x060.31.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

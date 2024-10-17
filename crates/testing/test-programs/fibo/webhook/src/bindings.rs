@@ -201,10 +201,11 @@ pub mod obelisk {
             pub type Duration = super::super::super::obelisk::types::time::Duration;
             pub type JoinSetId = super::super::super::obelisk::types::execution::JoinSetId;
             #[allow(unused_unsafe, clippy::all)]
-            pub fn sleep(nanos: Duration) {
+            /// Persistent sleep.
+            pub fn sleep(duration: Duration) {
                 unsafe {
                     use super::super::super::obelisk::types::time::Duration as V0;
-                    let (result1_0, result1_1) = match nanos {
+                    let (result1_0, result1_1) = match duration {
                         V0::Milliseconds(e) => (0i32, _rt::as_i64(e)),
                         V0::Seconds(e) => (1i32, _rt::as_i64(e)),
                         V0::Minutes(e) => (2i32, i64::from(_rt::as_i32(e))),
@@ -225,6 +226,7 @@ pub mod obelisk {
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
+            /// Create new join set. Closing the join set at the execution finish will block until all child executions are finished.
             pub fn new_join_set() -> JoinSetId {
                 unsafe {
                     #[repr(align(4))]
@@ -7694,8 +7696,8 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 7328] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xa68\x01A\x02\x01A#\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 7331] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xa98\x01A\x02\x01A#\x01\
 B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07minutes\x01y\0\x05hou\
 rs\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\x0bnanos\
 econdsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\x02in\x01\
@@ -7705,10 +7707,10 @@ econdsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\x02in\x0
 failure\x01s\0\x11permanent-timeout\0\0\x0fnon-determinism\0\0\x04\0\x0fexecutio\
 n-error\x03\0\x06\x03\x01\x17obelisk:types/execution\x05\x01\x02\x03\0\0\x08dura\
 tion\x02\x03\0\x01\x0bjoin-set-id\x01B\x08\x02\x03\x02\x01\x02\x04\0\x08duration\
-\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x05nanos\x01\
-\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0cnew-join-set\x01\x05\x03\x01\
-\x20obelisk:workflow/host-activities\x05\x04\x01B\x06\x01@\x01\x07messages\x01\0\
-\x04\0\x05trace\x01\0\x04\0\x05debug\x01\0\x04\0\x04info\x01\0\x04\0\x04warn\x01\
+\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x08duration\
+\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0cnew-join-set\x01\x05\x03\
+\x01\x20obelisk:workflow/host-activities\x05\x04\x01B\x06\x01@\x01\x07messages\x01\
+\0\x04\0\x05trace\x01\0\x04\0\x05debug\x01\0\x04\0\x04info\x01\0\x04\0\x04warn\x01\
 \0\x04\0\x05error\x01\0\x03\x01\x0fobelisk:log/log\x05\x05\x02\x03\0\x01\x0cexec\
 ution-id\x02\x03\0\x01\x0fexecution-error\x01B\x0f\x02\x03\x02\x01\x06\x04\0\x0c\
 execution-id\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x02\x03\x02\
