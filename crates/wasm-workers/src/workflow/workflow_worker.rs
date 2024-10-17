@@ -359,25 +359,8 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let deadline_duration = (execution_deadline - started_at).to_std().unwrap();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! { // future's liveness: Dropping the loser immediately.
-            res = Self::call_func(store, func, params) => {
-                let worker_result_refactored = self.convert_result(res, worker_span, stopwatch, deadline_duration, execution_deadline).await;
-                match worker_result_refactored {
-                    WorkerResultRefactored::Ok(res, mut workflow_ctx) => {
-                        match self.close_join_sets(&mut workflow_ctx).await {
-                            Err(worker_result) => worker_result,
-                            Ok(()) => WorkerResult::Ok(res, workflow_ctx.version)
-                        }
-                    },
-                    WorkerResultRefactored::FatalError(err, mut workflow_ctx) => {
-                        match self.close_join_sets(&mut workflow_ctx).await {
-                            Err(worker_result) => worker_result,
-                            Ok(()) => WorkerResult::Err(WorkerError::FatalError(err, workflow_ctx.version))
-                        }
-                    },
-                    WorkerResultRefactored::Retryable(retryable) => {
-                        retryable
-                    }
-                }
+            res = Self::race_func_internal(store, func, params, &worker_span, stopwatch, deadline_duration, execution_deadline) => {
+                res
             },
             () = tokio::time::sleep(deadline_duration) => {
                 // Not flushing the workflow_ctx as it would introduce locking.
@@ -397,10 +380,44 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         }
     }
 
+    async fn race_func_internal(
+        store: Store<WorkflowCtx<C, DB, P>>,
+        func: wasmtime::component::Func,
+        params: Arc<[Val]>,
+        worker_span: &Span,
+        stopwatch: tokio::time::Instant,
+        deadline_duration: Duration,
+        execution_deadline: DateTime<Utc>,
+    ) -> WorkerResult {
+        let res = Self::call_func(store, func, params).await;
+        let worker_result_refactored = Self::convert_result(
+            res,
+            worker_span,
+            stopwatch,
+            deadline_duration,
+            execution_deadline,
+        )
+        .await;
+        match worker_result_refactored {
+            WorkerResultRefactored::Ok(res, mut workflow_ctx) => {
+                match Self::close_join_sets(&mut workflow_ctx).await {
+                    Err(worker_result) => worker_result,
+                    Ok(()) => WorkerResult::Ok(res, workflow_ctx.version),
+                }
+            }
+            WorkerResultRefactored::FatalError(err, mut workflow_ctx) => {
+                match Self::close_join_sets(&mut workflow_ctx).await {
+                    Err(worker_result) => worker_result,
+                    Ok(()) => WorkerResult::Err(WorkerError::FatalError(err, workflow_ctx.version)),
+                }
+            }
+            WorkerResultRefactored::Retryable(retryable) => retryable,
+        }
+    }
+
     async fn convert_result(
-        &self,
         res: CallFuncResult<C, DB, P>,
-        worker_span: Span,
+        worker_span: &Span,
         stopwatch: tokio::time::Instant,
         deadline_duration: Duration,
         execution_deadline: DateTime<Utc>,
@@ -479,10 +496,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         }
     }
 
-    async fn close_join_sets(
-        &self,
-        workflow_ctx: &mut WorkflowCtx<C, DB, P>,
-    ) -> Result<(), WorkerResult> {
+    async fn close_join_sets(workflow_ctx: &mut WorkflowCtx<C, DB, P>) -> Result<(), WorkerResult> {
         loop {
             match workflow_ctx.await_opened_join_set().await {
                 Ok(None) => return Ok(()),

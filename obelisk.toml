@@ -34,7 +34,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## Common settings for all components - see above.
 ## Common executor settings - see above.
 ## Specific settings for activity_wasm:
-## Retry customization: All executions are retried on trap (panic) and timeouts.
+## Retry customization: All activities are retried on trap (panic) and timeouts.
 # default_max_retries = 5
 # default_retry_exp_backoff.millis = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
 # retry_on_err = true # When a function with a return type `result` returns the `Err` variant, attept to retry the execution.
