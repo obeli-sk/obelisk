@@ -8,6 +8,6 @@ RUN /cargo-binstall obelisk --no-track --install-path . -y
 RUN ldd obelisk
 RUN ./obelisk --version
 WORKDIR /root/musl
-RUN /cargo-binstall obelisk --targets x86_64-unknown-linux-musl --no-track --install-path . -y
+RUN /cargo-binstall obelisk --no-track --install-path . -y
 RUN ldd obelisk
 RUN ./obelisk --version
