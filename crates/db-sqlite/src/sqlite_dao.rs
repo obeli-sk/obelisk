@@ -51,6 +51,8 @@ PRAGMA foreign_keys = true;
 PRAGMA busy_timeout = 1000;
 PRAGMA cache_size = 10000;
 PRAGMA temp_store = MEMORY;
+PRAGMA mmap_size = 2147483648;
+PRAGMA page_size = 8192;
 ";
 
 // TODO metadata table with current schema version, migrations
