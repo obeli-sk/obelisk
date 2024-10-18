@@ -49,7 +49,6 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## Common settings for all components - see above.
 ## Common executor settings - see above.
 ## Retry customization: All workflows are retried on trap (panic) and timeouts.
-# default_max_retries = 5
 # default_retry_exp_backoff.millis = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
 ## Joining strategy: When workflow requests a child execution result, it can either be interrupted, or kept in the memory.
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.

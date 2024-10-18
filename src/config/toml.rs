@@ -8,7 +8,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::Duration, u32,
 };
 use tracing::instrument;
 use util::{replace_path_prefix_mkdir, FileOrFolder};
@@ -285,8 +285,6 @@ pub(crate) struct WorkflowConfigToml {
     pub(crate) common: ComponentCommon,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
-    #[serde(default = "default_max_retries")]
-    pub(crate) default_max_retries: u32,
     #[serde(default = "default_retry_exp_backoff")]
     pub(crate) default_retry_exp_backoff: DurationConfig,
     #[serde(default = "default_strategy")]
@@ -336,7 +334,7 @@ impl WorkflowConfigToml {
             workflow_config,
             exec_config: self.exec.into_exec_exec_config(config_id),
             retry_config: ComponentRetryConfig {
-                max_retries: self.default_max_retries,
+                max_retries: u32::MAX,
                 retry_exp_backoff: self.default_retry_exp_backoff.into(),
             },
         })

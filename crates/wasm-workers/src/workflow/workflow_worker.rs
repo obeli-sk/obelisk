@@ -535,6 +535,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
     async fn run(&self, ctx: WorkerContext) -> WorkerResult {
         trace!("Params: {params:?}", params = ctx.params);
+        if !ctx.can_be_retried {
+            warn!("Workflow configuration set to not retry anymore. This can lead to nondeterministic results.");
+        }
         let interrupt_on_timeout_container = Arc::new(std::sync::Mutex::new(None));
         let worker_span = ctx.worker_span.clone();
         let execution_deadline = ctx.execution_deadline;
@@ -582,7 +585,7 @@ pub(crate) mod tests {
     };
     use rstest::rstest;
     use serde_json::json;
-    use std::time::Duration;
+    use std::{time::Duration, u32};
     use test_utils::sim_clock::SimClock;
     use val_json::{
         type_wrapper::TypeWrapper,
@@ -758,7 +761,7 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
+                max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
@@ -1045,7 +1048,7 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
+                max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
@@ -1150,7 +1153,7 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::from_millis(0),
-                max_retries: concurrency - 1, // response can conflict with next ChildExecutionRequest
+                max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
@@ -1229,7 +1232,7 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
+                max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
@@ -1354,7 +1357,7 @@ pub(crate) mod tests {
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: created_at,
                 retry_exp_backoff: Duration::ZERO,
-                max_retries: 0,
+                max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
                 return_type: None,
                 topmost_parent: execution_id,
