@@ -3,6 +3,63 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/obeli-sk/obelisk/compare/v0.5.0...v0.6.0) - 2024-10-18
+
+### Added
+
+- [**breaking**] Remove `default_max_retries` config for workflows
+- Add retry config to workflows
+- Remove retry override in workflows
+- Remove retry override in webhooks
+- [**breaking**] Add `closing` flag to `BlockedByJoinSet`
+- [**breaking**] Limit webhook calls to direct and `-schedule`
+- Add leeway to `TimersWatcherConfig`
+- Allow configuring limits for `max_inflight_*`
+- Allow disabling `retry_on_err` in activities
+- [**breaking**] Add `result_kind` to `PendingStateFinished`
+- [**breaking**] Track `config_id` in `Locked` state
+- [**breaking**] Implement structured concurency for child executions
+
+### Fixed
+
+- Subject joinset closing to the execution timeout
+- Fix serde of `PendingStateFinishedError`
+- Set sqlite's `cache_size` to 10MB
+
+### Other
+
+- Change type of `join-set-id` to a `Resource`
+- Update the readme
+- Update version of `oci-wasm`
+- Run `cargo upgrade`
+- Fix clippy
+- Bump rust to 1.82
+- [**breaking**] Rename `non-determinism` to `nondeterminism`
+- Remove `ImportableType`
+- Update docs
+- Add `sleep-activity-submit` for join set testing
+- Add `server_verify` test
+- Removev `ConfigStore`
+- Update the milestones
+- Extract `webhook` module
+- Extract `activity` module
+- Extract `workflow` module
+- Change sqlite's `mmap_size`, `page_size`
+- Set sqlite's `temp_store` to `MEMORY`
+- Merge `ChildExecutionRequest`,`DelayRequest` into `DbUpdatedByWorker`
+- [**breaking**] Use newtypes for `execution_id`,`join-set-id`
+- Fix clippy
+- Extract `WorkflowWorker::convert_result`
+- Extract `ApplyError`
+- Remove `FunctionMetadataNotFound`
+- Extract `WorkflowWorker::race_func_with_timeout`
+- Ignore post return fn errors in workflow worker
+- Extract `WorkflowWorker::prepare_func`
+- Extract `WorkflowWorker::call_func`
+- Log `execution_id` upon processing the request
+- Extract `get_called_function_metadata`
+- Add `http_get_fallible_err`
+
 ## [0.5.0](https://github.com/obeli-sk/obelisk/compare/v0.4.0...v0.5.0) - 2024-10-11
 
 ### Added
