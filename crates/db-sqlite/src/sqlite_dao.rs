@@ -49,7 +49,7 @@ const PRAGMA: &str = r"
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = true;
 PRAGMA busy_timeout = 1000;
-PRAGMA cache_size = 1000000000;
+PRAGMA cache_size = 10000;
 ";
 
 // TODO metadata table with current schema version, migrations
