@@ -585,7 +585,7 @@ pub(crate) mod tests {
     };
     use rstest::rstest;
     use serde_json::json;
-    use std::{time::Duration, u32};
+    use std::time::Duration;
     use test_utils::sim_clock::SimClock;
     use val_json::{
         type_wrapper::TypeWrapper,

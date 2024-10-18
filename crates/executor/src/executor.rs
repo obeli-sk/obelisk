@@ -161,25 +161,22 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     }
 
     fn acquire_task_permits(&self) -> Vec<Option<tokio::sync::OwnedSemaphorePermit>> {
-        match &self.config.task_limiter {
-            Some(task_limiter) => {
-                let mut locks = Vec::new();
-                for _ in 0..self.config.batch_size {
-                    if let Ok(permit) = task_limiter.clone().try_acquire_owned() {
-                        locks.push(Some(permit));
-                    } else {
-                        break;
-                    }
+        if let Some(task_limiter) = &self.config.task_limiter {
+            let mut locks = Vec::new();
+            for _ in 0..self.config.batch_size {
+                if let Ok(permit) = task_limiter.clone().try_acquire_owned() {
+                    locks.push(Some(permit));
+                } else {
+                    break;
                 }
-                locks
             }
-            None => {
-                let mut vec = Vec::with_capacity(self.config.batch_size as usize);
-                for _ in 0..self.config.batch_size {
-                    vec.push(None);
-                }
-                vec
+            locks
+        } else {
+            let mut vec = Vec::with_capacity(self.config.batch_size as usize);
+            for _ in 0..self.config.batch_size {
+                vec.push(None);
             }
+            vec
         }
     }
 

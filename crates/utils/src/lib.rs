@@ -51,7 +51,7 @@ pub mod time {
     }
 }
 
-pub fn tracing_panic_hook(panic_info: &std::panic::PanicInfo) {
+pub fn tracing_panic_hook(panic_info: &std::panic::PanicHookInfo) {
     let payload = panic_info.payload();
     #[expect(clippy::manual_map)]
     let payload = if let Some(s) = payload.downcast_ref::<&str>() {

@@ -8,7 +8,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration, u32,
+    time::Duration,
 };
 use tracing::instrument;
 use util::{replace_path_prefix_mkdir, FileOrFolder};
