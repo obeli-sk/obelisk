@@ -288,10 +288,6 @@ pub(crate) struct WorkflowConfigToml {
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_strategy")]
     pub(crate) join_next_blocking_strategy: JoinNextBlockingStrategy,
-    #[serde(default)]
-    pub(crate) child_retry_exp_backoff_override: Option<DurationConfig>,
-    #[serde(default)]
-    pub(crate) child_max_retries_override: Option<u32>,
     #[serde(default = "default_non_blocking_event_batching")]
     pub(crate) non_blocking_event_batching: u32,
 }
@@ -323,17 +319,11 @@ impl WorkflowConfigToml {
             std::hash::Hasher::finish(&hasher),
             StrVariant::from(common.name.clone()),
         )?;
-        let child_retry_exp_backoff = self
-            .child_retry_exp_backoff_override
-            .clone()
-            .map(Duration::from);
         let content_digest = common.content_digest.clone();
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
         let workflow_config = WorkflowConfig {
             config_id: config_id.clone(),
             join_next_blocking_strategy: self.join_next_blocking_strategy,
-            child_retry_exp_backoff,
-            child_max_retries: self.child_max_retries_override,
             non_blocking_event_batching: self.non_blocking_event_batching,
         };
         Ok(WorkflowConfigVerified {

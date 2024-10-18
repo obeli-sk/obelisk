@@ -41,8 +41,6 @@ pub enum JoinNextBlockingStrategy {
 pub struct WorkflowConfig {
     pub config_id: ConfigId,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
-    pub child_retry_exp_backoff: Option<Duration>,
-    pub child_max_retries: Option<u32>,
     pub non_blocking_event_batching: u32,
 }
 
@@ -259,8 +257,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             self.db_pool.clone(),
             ctx.version,
             ctx.execution_deadline,
-            self.config.child_retry_exp_backoff,
-            self.config.child_max_retries,
             self.config.non_blocking_event_batching,
             interrupt_on_timeout_container,
             self.fn_registry.clone(),
@@ -643,8 +639,6 @@ pub(crate) mod tests {
                 WorkflowConfig {
                     config_id: config_id.clone(),
                     join_next_blocking_strategy,
-                    child_retry_exp_backoff: None,
-                    child_max_retries: None,
                     non_blocking_event_batching,
                 },
                 workflow_engine,
@@ -844,8 +838,6 @@ pub(crate) mod tests {
                 WorkflowConfig {
                     config_id: ConfigId::dummy_activity(),
                     join_next_blocking_strategy,
-                    child_retry_exp_backoff: None,
-                    child_max_retries: None,
                     non_blocking_event_batching,
                 },
                 Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap(),

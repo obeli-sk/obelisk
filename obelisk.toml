@@ -51,8 +51,6 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## Joining strategy: When workflow requests a child execution result, it can either be interrupted, or kept in the memory.
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.
 # join_next_blocking_strategy = "await" # Default strategy is "await"/
-# child_max_retries_override = 10 # When calling an activity, overrides its default `default_max_retries`
-# child_retry_exp_backoff_override.millis = 200 # When calling an activity, overrides its default `default_retry_exp_backoff`
 # non_blocking_event_batching = 100 # Number of non-blocking events that can be cached and written in a batch.
 
 ### Webhook section

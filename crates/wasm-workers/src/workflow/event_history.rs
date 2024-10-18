@@ -19,12 +19,10 @@ use concepts::ExecutionMetadata;
 use concepts::FinishedExecutionError;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
-use concepts::ImportableType;
 use concepts::{ExecutionId, StrVariant};
 use concepts::{FunctionFqn, Params, SupportedFunctionReturnValue};
 use std::fmt::Debug;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::instrument;
 use tracing::Level;
 use tracing::Span;
@@ -86,7 +84,6 @@ pub(crate) struct EventHistory<C: ClockFn> {
     execution_id: ExecutionId,
     join_next_blocking_strategy: JoinNextBlockingStrategy,
     execution_deadline: DateTime<Utc>,
-    child_retry_config_override: ChildRetryConfigOverride,
     event_history: Vec<(HistoryEvent, ProcessingStatus)>,
     responses: Vec<(JoinSetResponseEvent, ProcessingStatus)>,
     non_blocking_event_batch_size: usize,
@@ -115,8 +112,6 @@ impl<C: ClockFn> EventHistory<C> {
         responses: Vec<JoinSetResponseEvent>,
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         execution_deadline: DateTime<Utc>,
-        child_activity_retry_exp_backoff: Option<Duration>,
-        child_activity_max_retries: Option<u32>,
         non_blocking_event_batching: u32,
         clock_fn: C,
         interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
@@ -136,10 +131,6 @@ impl<C: ClockFn> EventHistory<C> {
                 .collect(),
             join_next_blocking_strategy,
             execution_deadline,
-            child_retry_config_override: ChildRetryConfigOverride {
-                child_activity_max_retries,
-                child_activity_retry_exp_backoff,
-            },
             non_blocking_event_batch_size,
             non_blocking_event_batch: if non_blocking_event_batch_size == 0 {
                 None
@@ -662,15 +653,13 @@ impl<C: ClockFn> EventHistory<C> {
         fn_registry: &dyn FunctionRegistry,
         ffqn: &FunctionFqn,
     ) -> (FunctionMetadata, ConfigId, ComponentRetryConfig) {
-        let (fn_metadata, config_id, child_component_retry_config, import_type) = fn_registry
+        let (fn_metadata, config_id, child_component_retry_config, _import_type) = fn_registry
             .get_by_exported_function(ffqn)
             .await
             .unwrap_or_else(|| {
                 panic!("imported function must be found during verification: {ffqn}")
             });
-        let resolved_retry_config = self
-            .child_retry_config_override
-            .resolve(import_type, child_component_retry_config);
+        let resolved_retry_config = child_component_retry_config;
         (fn_metadata, config_id, resolved_retry_config)
     }
 
@@ -947,35 +936,6 @@ impl<C: ClockFn> EventHistory<C> {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ChildRetryConfigOverride {
-    child_activity_max_retries: Option<u32>,
-    child_activity_retry_exp_backoff: Option<Duration>,
-}
-
-impl ChildRetryConfigOverride {
-    fn resolve(
-        &self,
-        import_type: ImportableType,
-        child_config: ComponentRetryConfig,
-    ) -> ComponentRetryConfig {
-        ComponentRetryConfig {
-            max_retries: match import_type {
-                ImportableType::ActivityWasm => self
-                    .child_activity_max_retries
-                    .unwrap_or(child_config.max_retries),
-                ImportableType::Workflow => 0,
-            },
-            retry_exp_backoff: match import_type {
-                ImportableType::ActivityWasm => self
-                    .child_activity_retry_exp_backoff
-                    .unwrap_or(child_config.retry_exp_backoff),
-                ImportableType::Workflow => Duration::ZERO,
-            },
-        }
-    }
-}
-
 #[derive(Debug)]
 enum PollVariant {
     JoinNextChild {
@@ -1212,8 +1172,6 @@ mod tests {
                 .collect(),
             join_next_blocking_strategy,
             execution_deadline,
-            None,
-            None,
             non_blocking_event_batching,
             clock_fn,
             Arc::new(std::sync::Mutex::new(None)),
