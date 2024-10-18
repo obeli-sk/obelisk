@@ -93,12 +93,12 @@ default_max_retries = 0
 
 [[workflow]]
 name = "fibo_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-18@sha256:85650593c0cc49717fe1203bfb2ad2df21f049534bf21f91725217a6b6ed800a"
+location.oci = "docker.io/getobelisk/example_workflow_fibo:2024-10-18-2@sha256:9ea595f470bebbc88ebeee69a4e02383331c2f16ffc45dd83c0e5d1f7dd7236a"
 exec.lock_expiry.secs = 2
 
 [[webhook_component]]
 name = "webhook_fibo"
-location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-18@sha256:19fcc6d431fce0c5debf98efa4e3cece141e9f517ee29f9a65e9fef3c2c426df"
+location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-18-2@sha256:9933abb506fa6cc9e33b9e46eee3fc193933ce4910ee6b720593546007ecc981"
 http_server = "external-webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 
@@ -110,7 +110,7 @@ forward_stderr = "stderr"
 
 [[workflow]]
 name = "http_get_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-10-18@sha256:3062805b9d038608c2d1d87730d014b403bcaf18506a112a5066151b730a836a"
+location.oci = "docker.io/getobelisk/example_workflow_http_get:2024-10-18-2@sha256:fe49c164b3a843aa63286c3b83ba9254a52b70a5197d68a895316d426da7a61e"
 
 [[activity_wasm]]
 name = "sleep_activity"
@@ -119,8 +119,7 @@ exec.lock_expiry.secs = 10
 
 [[workflow]]
 name = "sleep_workflow"
-location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-10-18@sha256:5f1c75b37843ac7a1ab75da5658fa7ce6e9b5644257f0695ced3c9c77fe3a3d4"
-
+location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-10-18-2@sha256:1e8df12a9bb50bc9f9f538858afcd481e21e80e60996df826d562fde559a4c47"
 
 ## Send spans via gRPC to an OTLP collector.
 # [otlp] # Uncomment the table and run `docker run --rm -it  -p 4317:4317 -p 16686:16686 jaegertracing/all-in-one:1.60` to start collecting traces.

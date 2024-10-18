@@ -1,6 +1,7 @@
 use super::event_history::ApplyError;
 use super::workflow_ctx::InterruptRequested;
 use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
+use crate::host_exports::{val_to_join_set_id, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SUBMIT};
 use crate::workflow::workflow_ctx::WorkerPartialResult;
 use crate::WasmFileError;
 use crate::NAMESPACE_OBELISK_WITH_COLON;
@@ -14,13 +15,14 @@ use concepts::{FunctionRegistry, SupportedFunctionReturnValue};
 use executor::worker::{FatalError, WorkerContext, WorkerResult};
 use executor::worker::{Worker, WorkerError};
 use std::error::Error;
+use std::future;
 use std::ops::Deref;
 use std::path::Path;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
-use tracing::{debug, error, info, instrument, trace, warn, Span};
+use tracing::{error, info, instrument, trace, warn, Span};
 use utils::time::{now_tokio_instant, ClockFn};
-use utils::wasm_tools::{ExIm, WasmComponent};
+use utils::wasm_tools::{ExIm, WasmComponent, SUFFIX_PKG_EXT};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
@@ -132,10 +134,26 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                               params: &[Val],
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
+                            let join_set_id = if !params.is_empty()
+                                && ffqn.ifc_fqn.package_name().ends_with(SUFFIX_PKG_EXT)
+                                && (ffqn.function_name.ends_with(SUFFIX_FN_SUBMIT)
+                                    || ffqn.function_name.ends_with(SUFFIX_FN_AWAIT_NEXT))
+                            {
+                                match val_to_join_set_id(&params[0], &mut store_ctx) {
+                                    Ok(join_set_id) => Some(join_set_id),
+                                    Err(err) => {
+                                        return Box::new(future::ready(Result::Err(
+                                            wasmtime::Error::new(err),
+                                        )))
+                                    }
+                                }
+                            } else {
+                                None
+                            };
                             Box::new(async move {
                                 Ok(store_ctx
                                     .data_mut()
-                                    .call_imported_fn(ffqn, params, results)
+                                    .call_imported_fn(ffqn, join_set_id, params, results)
                                     .await?)
                             })
                         }
@@ -143,7 +161,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                     if let Err(err) = res {
                         if err.to_string() == format!("import `{function_name}` not found") {
                             // FIXME: Add test for error message stability
-                            debug!("Skipping mocking of {ffqn}");
+                            warn!("Skipping mocking of {ffqn}");
                         } else {
                             return Err(WasmFileError::LinkingError {
                                 context: StrVariant::Arc(Arc::from(format!(
@@ -989,6 +1007,7 @@ pub(crate) mod tests {
         use crate::activity::activity_worker::tests::spawn_activity;
         use chrono::DateTime;
         use std::ops::Deref;
+        use tracing::debug;
         use wiremock::{
             matchers::{method, path},
             Mock, MockServer, ResponseTemplate,
@@ -1085,6 +1104,7 @@ pub(crate) mod tests {
         use crate::activity::activity_worker::tests::spawn_activity;
         use chrono::DateTime;
         use std::ops::Deref;
+        use tracing::debug;
         use wiremock::{
             matchers::{method, path},
             Mock, MockServer, ResponseTemplate,

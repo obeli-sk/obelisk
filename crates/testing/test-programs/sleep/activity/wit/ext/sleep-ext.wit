@@ -4,5 +4,5 @@ interface sleep {
     use obelisk:types/time.{duration};
     use obelisk:types/execution.{join-set-id, execution-id};
 
-    sleep-submit: func(join-set-id: join-set-id, duration: duration) -> execution-id;
+    sleep-submit: func(join-set-id: borrow<join-set-id>, duration: duration) -> execution-id;
 }

@@ -4,20 +4,25 @@ wasmtime::component::bindgen!({
     async: true,
     interfaces: "import obelisk:workflow/host-activities;",
     trappable_imports: true,
+    with: {
+        "obelisk:types/execution/join-set-id": concepts::prefixed_ulid::JoinSetId,
+    }
 });
 
-use std::time::Duration;
-
-use assert_matches::assert_matches;
 use concepts::{
     prefixed_ulid::{DelayId, JoinSetId},
+    storage::{DbConnection, DbPool},
     ExecutionId,
 };
 use indexmap::indexmap;
 pub(crate) use obelisk::types::time::Duration as DurationEnum;
+use std::time::Duration;
 use tracing::error;
+use utils::time::ClockFn;
 use val_json::wast_val::WastVal;
-use wasmtime::component::Val;
+use wasmtime::component::{Resource, Val};
+
+use crate::workflow::workflow_ctx::WorkflowCtx;
 
 pub(crate) const SUFFIX_FN_SUBMIT: &str = "-submit";
 pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";
@@ -35,26 +40,29 @@ impl From<DurationEnum> for Duration {
     }
 }
 
-pub(crate) enum ValToJoinSetIdError {
-    ParseError,
-    TypeError,
-}
+#[derive(Debug, thiserror::Error)]
+#[error("cannot get join set from the first parameter")]
+pub(crate) struct ValToJoinSetIdError;
 
-pub(crate) fn val_to_join_set_id(join_set_id: &Val) -> Result<JoinSetId, ValToJoinSetIdError> {
-    match join_set_id {
-        Val::Record(attrs)
-            if attrs.len() == 1 || attrs[0].0 != "id" || !matches!(attrs[0].1, Val::String(_)) =>
-        {
-            let join_set_id = assert_matches!(&attrs[0].1, Val::String(s) => s);
-            join_set_id.parse().map_err(|parse_err| {
-                error!("Cannot parse JoinSetId `{join_set_id}` - {parse_err:?}");
-                ValToJoinSetIdError::ParseError
-            })
-        }
-        _ => {
-            error!("Wrong type for JoinSetId, expected join-set-id, got `{join_set_id:?}`");
-            Err(ValToJoinSetIdError::TypeError)
-        }
+pub(crate) fn val_to_join_set_id<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
+    join_set_id: &Val,
+    mut store_ctx: &mut wasmtime::StoreContextMut<'_, WorkflowCtx<C, DB, P>>,
+) -> Result<JoinSetId, ValToJoinSetIdError> {
+    if let Val::Resource(resource) = join_set_id {
+        let resource: Resource<JoinSetId> = resource
+            .try_into_resource(&mut store_ctx)
+            .inspect_err(|err| error!("Cannot turn `ResourceAny` into a `Resource` - {err:?}"))
+            .map_err(|_| ValToJoinSetIdError)?;
+        let join_set_id = store_ctx
+            .data()
+            .resource_table
+            .get(&resource)
+            .inspect_err(|err| error!("Cannot get resource - {err:?}"))
+            .map_err(|_| ValToJoinSetIdError)?;
+        Ok(*join_set_id)
+    } else {
+        error!("Wrong type for JoinSetId, expected join-set-id, got `{join_set_id:?}`");
+        Err(ValToJoinSetIdError)
     }
 }
 

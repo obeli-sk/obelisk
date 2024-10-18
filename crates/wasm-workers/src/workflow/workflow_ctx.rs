@@ -1,10 +1,7 @@
 use super::event_history::{ApplyError, EventCall, EventHistory};
 use super::workflow_worker::JoinNextBlockingStrategy;
 use crate::component_logger::{log_activities, ComponentLogger};
-use crate::host_exports::{
-    val_to_join_set_id, ValToJoinSetIdError, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE,
-    SUFFIX_FN_SUBMIT,
-};
+use crate::host_exports::{SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT};
 use crate::{host_exports, WasmFileError};
 use assert_matches::assert_matches;
 use async_trait::async_trait;
@@ -93,6 +90,7 @@ pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     pub(crate) version: Version,
     fn_registry: Arc<dyn FunctionRegistry>,
     component_logger: ComponentLogger,
+    pub(crate) resource_table: wasmtime::component::ResourceTable,
     phantom_data: PhantomData<DB>,
 }
 
@@ -134,6 +132,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             version,
             fn_registry,
             component_logger: ComponentLogger { span: worker_span },
+            resource_table: wasmtime::component::ResourceTable::default(),
             phantom_data: PhantomData,
         }
     }
@@ -146,11 +145,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     pub(crate) async fn call_imported_fn(
         &mut self,
         ffqn: FunctionFqn,
+        join_set_id: Option<JoinSetId>,
         params: &[Val],
         results: &mut [Val],
     ) -> Result<(), WorkflowFunctionError> {
         trace!(?params, "call_imported_fn start");
-        let event_call = self.imported_fn_to_event_call(ffqn, params)?;
+        let event_call = self.imported_fn_to_event_call(ffqn, join_set_id, params)?;
         let res = self
             .event_history
             .apply(
@@ -218,6 +218,11 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 context: StrVariant::Static("linking log activities"),
                 err: err.into(),
             })?;
+        host_exports::obelisk::types::execution::add_to_linker(linker, |state: &mut Self| state)
+            .map_err(|err| WasmFileError::LinkingError {
+                context: StrVariant::Static("linking join set resource"),
+                err: err.into(),
+            })?;
         Ok(())
     }
 
@@ -234,6 +239,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     fn imported_fn_to_event_call(
         &mut self,
         ffqn: FunctionFqn,
+        join_set_id: Option<JoinSetId>,
         params: &[Val],
     ) -> Result<EventCall, WorkflowFunctionError> {
         if let Some(package_name) = ffqn.ifc_fqn.package_name().strip_suffix(SUFFIX_PKG_EXT) {
@@ -247,17 +253,15 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 let ffqn =
                     FunctionFqn::new_arc(Arc::from(ifc_fqn.to_string()), Arc::from(function_name));
                 debug!("Got `-submit` extension for {ffqn}");
-                let Some((join_set_id, params)) = params.split_first() else {
+                let Some((_join_set_id, params)) = params.split_first() else {
                     error!("Got empty params, expected JoinSetId");
                     return Err(WorkflowFunctionError::UncategorizedError(
                         "error running `-submit` extension function: exepcted at least one parameter with JoinSetId, got empty parameter list",
                     ));
                 };
-                let join_set_id = val_to_join_set_id(join_set_id)
-                    .map_err(|err| WorkflowFunctionError::UncategorizedError(match err {
-                        ValToJoinSetIdError::ParseError => "error running `-submit` extension function: cannot parse join-set-id",
-                        ValToJoinSetIdError::TypeError => "error running `-submit` extension function: wrong first parameter type, expected join-set-id",
-                    }))?;
+                let join_set_id = join_set_id.ok_or(WorkflowFunctionError::UncategorizedError(
+                    "error running `-submit` extension function: cannot get join-set-id",
+                ))?;
                 let execution_id =
                     ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
                 Ok(EventCall::StartAsync {
@@ -270,16 +274,15 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
             {
                 debug!("Got await-next extension for function `{function_name}`");
-                let [join_set_id] = params else {
+                if params.len() != 1 {
                     error!("Expected single parameter with join-set-id got {params:?}");
                     return Err(WorkflowFunctionError::UncategorizedError(
                         "error running `-await-next` extension function: wrong parameter length, expected single string parameter containing join-set-id"
                     ));
                 };
-                let join_set_id = val_to_join_set_id(join_set_id).map_err(|err| WorkflowFunctionError::UncategorizedError(match err {
-                    ValToJoinSetIdError::ParseError => "error running `-await-next` extension function: cannot parse join-set-id",
-                    ValToJoinSetIdError::TypeError => "error running `-await-next` extension function: wrong parameter type, expected single string parameter containing join-set-id",
-                }))?;
+                let join_set_id = join_set_id.ok_or(WorkflowFunctionError::UncategorizedError(
+                    "error running `-submit` extension function: cannot get join-set-id",
+                ))?;
                 Ok(EventCall::BlockingChildAwaitNext {
                     join_set_id,
                     closing: false,
@@ -334,6 +337,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
 }
 
 mod host_activities {
+    use wasmtime::component::Resource;
+
     use super::{
         assert_matches, async_trait, ClockFn, DbConnection, DbPool, Duration, EventCall, JoinSetId,
         WorkflowCtx, WorkflowFunctionError,
@@ -342,6 +347,26 @@ mod host_activities {
         host_exports::{self, DurationEnum},
         workflow::event_history::{ChildReturnValue, HostActionResp},
     };
+
+    #[async_trait]
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
+        host_exports::obelisk::types::execution::HostJoinSetId for WorkflowCtx<C, DB, P>
+    {
+        async fn id(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<String> {
+            let join_set_id = self.resource_table.get(&resource)?;
+            Ok(join_set_id.to_string())
+        }
+
+        async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
+            self.resource_table.delete(resource)?;
+            Ok(())
+        }
+    }
+
+    impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> host_exports::obelisk::types::execution::Host
+        for WorkflowCtx<C, DB, P>
+    {
+    }
 
     #[async_trait]
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
@@ -355,9 +380,7 @@ mod host_activities {
                 .map_err(WorkflowFunctionError::from)?)
         }
 
-        async fn new_join_set(
-            &mut self,
-        ) -> wasmtime::Result<host_exports::obelisk::types::execution::JoinSetId> {
+        async fn new_join_set(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
             let join_set_id =
                 JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
             let res = self
@@ -371,9 +394,8 @@ mod host_activities {
                 .await
                 .map_err(WorkflowFunctionError::from)?;
             let join_set_id = assert_matches!(res, ChildReturnValue::HostActionResp(HostActionResp::CreateJoinSetResp(join_set_id)) => join_set_id);
-            Ok(host_exports::obelisk::types::execution::JoinSetId {
-                id: join_set_id.to_string(),
-            })
+            let join_set_id = self.resource_table.push(join_set_id)?;
+            Ok(join_set_id)
         }
     }
 }
@@ -530,7 +552,7 @@ pub(crate) mod tests {
                     }
                     WorkflowStep::Call { ffqn } => {
                         workflow_ctx
-                            .call_imported_fn(ffqn.clone(), &[], &mut [])
+                            .call_imported_fn(ffqn.clone(), None, &[], &mut [])
                             .await
                     }
                 };

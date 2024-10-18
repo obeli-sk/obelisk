@@ -196,8 +196,7 @@ impl ExIm {
         // initialize values for reuse
         let execution_id_type_wrapper =
             TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
-        let join_set_id_type_wrapper =
-            TypeWrapper::Record(indexmap! {"id".into() => TypeWrapper::String});
+        let join_set_id_type_wrapper = TypeWrapper::Borrow;
 
         let return_type_execution_id = Some(ReturnType {
             type_wrapper: execution_id_type_wrapper.clone(),

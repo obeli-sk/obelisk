@@ -177,13 +177,41 @@ pub mod obelisk {
             static __FORCE_SECTION_REF: fn() =
                 super::super::super::__link_custom_section_describing_imports;
             use super::super::super::_rt;
-            #[derive(Clone)]
+            #[derive(Debug)]
+            #[repr(transparent)]
             pub struct JoinSetId {
-                pub id: _rt::String,
+                handle: _rt::Resource<JoinSetId>,
             }
-            impl ::core::fmt::Debug for JoinSetId {
-                fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                    f.debug_struct("JoinSetId").field("id", &self.id).finish()
+            impl JoinSetId {
+                #[doc(hidden)]
+                pub unsafe fn from_handle(handle: u32) -> Self {
+                    Self {
+                        handle: _rt::Resource::from_handle(handle),
+                    }
+                }
+                #[doc(hidden)]
+                pub fn take_handle(&self) -> u32 {
+                    _rt::Resource::take_handle(&self.handle)
+                }
+                #[doc(hidden)]
+                pub fn handle(&self) -> u32 {
+                    _rt::Resource::handle(&self.handle)
+                }
+            }
+            unsafe impl _rt::WasmResource for JoinSetId {
+                #[inline]
+                unsafe fn drop(_handle: u32) {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    unreachable!();
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        #[link(wasm_import_module = "obelisk:types/execution")]
+                        extern "C" {
+                            #[link_name = "[resource-drop]join-set-id"]
+                            fn drop(_: u32);
+                        }
+                        drop(_handle);
+                    }
                 }
             }
             #[derive(Clone)]
@@ -215,6 +243,33 @@ pub mod obelisk {
                         ExecutionError::Nondeterminism => {
                             f.debug_tuple("ExecutionError::Nondeterminism").finish()
                         }
+                    }
+                }
+            }
+            impl JoinSetId {
+                #[allow(unused_unsafe, clippy::all)]
+                pub fn id(&self) -> _rt::String {
+                    unsafe {
+                        #[repr(align(4))]
+                        struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
+                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
+                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                        #[cfg(target_arch = "wasm32")]
+                        #[link(wasm_import_module = "obelisk:types/execution")]
+                        extern "C" {
+                            #[link_name = "[method]join-set-id.id"]
+                            fn wit_import(_: i32, _: *mut u8);
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        fn wit_import(_: i32, _: *mut u8) {
+                            unreachable!()
+                        }
+                        wit_import((self).handle() as i32, ptr0);
+                        let l1 = *ptr0.add(0).cast::<*mut u8>();
+                        let l2 = *ptr0.add(4).cast::<usize>();
+                        let len3 = l2;
+                        let bytes3 = _rt::Vec::from_raw_parts(l1.cast(), len3, len3);
+                        _rt::string_lift(bytes3)
                     }
                 }
             }
@@ -260,28 +315,20 @@ pub mod obelisk {
             /// Create new join set. Closing the join set at the execution finish will block until all child executions are finished.
             pub fn new_join_set() -> JoinSetId {
                 unsafe {
-                    #[repr(align(4))]
-                    struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
-                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
-                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "obelisk:workflow/host-activities")]
                     extern "C" {
                         #[link_name = "new-join-set"]
-                        fn wit_import(_: *mut u8);
+                        fn wit_import() -> i32;
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8) {
+                    fn wit_import() -> i32 {
                         unreachable!()
                     }
-                    wit_import(ptr0);
-                    let l1 = *ptr0.add(0).cast::<*mut u8>();
-                    let l2 = *ptr0.add(4).cast::<usize>();
-                    let len3 = l2;
-                    let bytes3 = _rt::Vec::from_raw_parts(l1.cast(), len3, len3);
-                    super::super::super::obelisk::types::execution::JoinSetId {
-                        id: _rt::string_lift(bytes3),
-                    }
+                    let ret = wit_import();
+                    super::super::super::obelisk::types::execution::JoinSetId::from_handle(
+                        ret as u32,
+                    )
                 }
             }
         }
@@ -336,29 +383,24 @@ pub mod testing {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
                     let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
-                    let super::super::super::obelisk::types::execution::JoinSetId { id: id0 } =
-                        join_set_id;
-                    let vec1 = id0;
-                    let ptr1 = vec1.as_ptr().cast::<u8>();
-                    let len1 = vec1.len();
-                    let ptr2 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:fibo-obelisk-ext/fibo")]
                     extern "C" {
                         #[link_name = "fibo-submit"]
-                        fn wit_import(_: *mut u8, _: usize, _: i32, _: *mut u8);
+                        fn wit_import(_: i32, _: i32, _: *mut u8);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8, _: usize, _: i32, _: *mut u8) {
+                    fn wit_import(_: i32, _: i32, _: *mut u8) {
                         unreachable!()
                     }
-                    wit_import(ptr1.cast_mut(), len1, _rt::as_i32(&n), ptr2);
-                    let l3 = *ptr2.add(0).cast::<*mut u8>();
-                    let l4 = *ptr2.add(4).cast::<usize>();
-                    let len5 = l4;
-                    let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
+                    wit_import((join_set_id).handle() as i32, _rt::as_i32(&n), ptr0);
+                    let l1 = *ptr0.add(0).cast::<*mut u8>();
+                    let l2 = *ptr0.add(4).cast::<usize>();
+                    let len3 = l2;
+                    let bytes3 = _rt::Vec::from_raw_parts(l1.cast(), len3, len3);
                     super::super::super::obelisk::types::execution::ExecutionId {
-                        id: _rt::string_lift(bytes5),
+                        id: _rt::string_lift(bytes3),
                     }
                 }
             }
@@ -370,72 +412,67 @@ pub mod testing {
                     #[repr(align(8))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 32]);
                     let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 32]);
-                    let super::super::super::obelisk::types::execution::JoinSetId { id: id0 } =
-                        join_set_id;
-                    let vec1 = id0;
-                    let ptr1 = vec1.as_ptr().cast::<u8>();
-                    let len1 = vec1.len();
-                    let ptr2 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:fibo-obelisk-ext/fibo")]
                     extern "C" {
                         #[link_name = "fibo-await-next"]
-                        fn wit_import(_: *mut u8, _: usize, _: *mut u8);
+                        fn wit_import(_: i32, _: *mut u8);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8, _: usize, _: *mut u8) {
+                    fn wit_import(_: i32, _: *mut u8) {
                         unreachable!()
                     }
-                    wit_import(ptr1.cast_mut(), len1, ptr2);
-                    let l3 = i32::from(*ptr2.add(0).cast::<u8>());
-                    match l3 {
+                    wit_import((join_set_id).handle() as i32, ptr0);
+                    let l1 = i32::from(*ptr0.add(0).cast::<u8>());
+                    match l1 {
                         0 => {
                             let e = {
-                                let l4 = *ptr2.add(8).cast::<*mut u8>();
-                                let l5 = *ptr2.add(12).cast::<usize>();
-                                let len6 = l5;
-                                let bytes6 = _rt::Vec::from_raw_parts(l4.cast(), len6, len6);
-                                let l7 = *ptr2.add(16).cast::<i64>();
+                                let l2 = *ptr0.add(8).cast::<*mut u8>();
+                                let l3 = *ptr0.add(12).cast::<usize>();
+                                let len4 = l3;
+                                let bytes4 = _rt::Vec::from_raw_parts(l2.cast(), len4, len4);
+                                let l5 = *ptr0.add(16).cast::<i64>();
                                 (
                                     super::super::super::obelisk::types::execution::ExecutionId {
-                                        id: _rt::string_lift(bytes6),
+                                        id: _rt::string_lift(bytes4),
                                     },
-                                    l7 as u64,
+                                    l5 as u64,
                                 )
                             };
                             Ok(e)
                         }
                         1 => {
                             let e = {
-                                let l8 = *ptr2.add(8).cast::<*mut u8>();
-                                let l9 = *ptr2.add(12).cast::<usize>();
-                                let len10 = l9;
-                                let bytes10 = _rt::Vec::from_raw_parts(l8.cast(), len10, len10);
-                                let l11 = i32::from(*ptr2.add(16).cast::<u8>());
-                                use super::super::super::obelisk::types::execution::ExecutionError as V15;
-                                let v15 = match l11 {
+                                let l6 = *ptr0.add(8).cast::<*mut u8>();
+                                let l7 = *ptr0.add(12).cast::<usize>();
+                                let len8 = l7;
+                                let bytes8 = _rt::Vec::from_raw_parts(l6.cast(), len8, len8);
+                                let l9 = i32::from(*ptr0.add(16).cast::<u8>());
+                                use super::super::super::obelisk::types::execution::ExecutionError as V13;
+                                let v13 = match l9 {
                                     0 => {
-                                        let e15 = {
-                                            let l12 = *ptr2.add(20).cast::<*mut u8>();
-                                            let l13 = *ptr2.add(24).cast::<usize>();
-                                            let len14 = l13;
-                                            let bytes14 =
-                                                _rt::Vec::from_raw_parts(l12.cast(), len14, len14);
-                                            _rt::string_lift(bytes14)
+                                        let e13 = {
+                                            let l10 = *ptr0.add(20).cast::<*mut u8>();
+                                            let l11 = *ptr0.add(24).cast::<usize>();
+                                            let len12 = l11;
+                                            let bytes12 =
+                                                _rt::Vec::from_raw_parts(l10.cast(), len12, len12);
+                                            _rt::string_lift(bytes12)
                                         };
-                                        V15::PermanentFailure(e15)
+                                        V13::PermanentFailure(e13)
                                     }
-                                    1 => V15::PermanentTimeout,
+                                    1 => V13::PermanentTimeout,
                                     n => {
                                         debug_assert_eq!(n, 2, "invalid enum discriminant");
-                                        V15::Nondeterminism
+                                        V13::Nondeterminism
                                     }
                                 };
                                 (
                                     super::super::super::obelisk::types::execution::ExecutionId {
-                                        id: _rt::string_lift(bytes10),
+                                        id: _rt::string_lift(bytes8),
                                     },
-                                    v15,
+                                    v13,
                                 )
                             };
                             Err(e)
@@ -574,35 +611,29 @@ pub mod testing {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
                     let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
-                    let super::super::super::obelisk::types::execution::JoinSetId { id: id0 } =
-                        join_set_id;
-                    let vec1 = id0;
-                    let ptr1 = vec1.as_ptr().cast::<u8>();
-                    let len1 = vec1.len();
-                    let ptr2 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
                     extern "C" {
                         #[link_name = "fiboa-submit"]
-                        fn wit_import(_: *mut u8, _: usize, _: i32, _: i32, _: *mut u8);
+                        fn wit_import(_: i32, _: i32, _: i32, _: *mut u8);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8, _: usize, _: i32, _: i32, _: *mut u8) {
+                    fn wit_import(_: i32, _: i32, _: i32, _: *mut u8) {
                         unreachable!()
                     }
                     wit_import(
-                        ptr1.cast_mut(),
-                        len1,
+                        (join_set_id).handle() as i32,
                         _rt::as_i32(&n),
                         _rt::as_i32(&iterations),
-                        ptr2,
+                        ptr0,
                     );
-                    let l3 = *ptr2.add(0).cast::<*mut u8>();
-                    let l4 = *ptr2.add(4).cast::<usize>();
-                    let len5 = l4;
-                    let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
+                    let l1 = *ptr0.add(0).cast::<*mut u8>();
+                    let l2 = *ptr0.add(4).cast::<usize>();
+                    let len3 = l2;
+                    let bytes3 = _rt::Vec::from_raw_parts(l1.cast(), len3, len3);
                     super::super::super::obelisk::types::execution::ExecutionId {
-                        id: _rt::string_lift(bytes5),
+                        id: _rt::string_lift(bytes3),
                     }
                 }
             }
@@ -614,72 +645,67 @@ pub mod testing {
                     #[repr(align(8))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 32]);
                     let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 32]);
-                    let super::super::super::obelisk::types::execution::JoinSetId { id: id0 } =
-                        join_set_id;
-                    let vec1 = id0;
-                    let ptr1 = vec1.as_ptr().cast::<u8>();
-                    let len1 = vec1.len();
-                    let ptr2 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
                     extern "C" {
                         #[link_name = "fiboa-await-next"]
-                        fn wit_import(_: *mut u8, _: usize, _: *mut u8);
+                        fn wit_import(_: i32, _: *mut u8);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8, _: usize, _: *mut u8) {
+                    fn wit_import(_: i32, _: *mut u8) {
                         unreachable!()
                     }
-                    wit_import(ptr1.cast_mut(), len1, ptr2);
-                    let l3 = i32::from(*ptr2.add(0).cast::<u8>());
-                    match l3 {
+                    wit_import((join_set_id).handle() as i32, ptr0);
+                    let l1 = i32::from(*ptr0.add(0).cast::<u8>());
+                    match l1 {
                         0 => {
                             let e = {
-                                let l4 = *ptr2.add(8).cast::<*mut u8>();
-                                let l5 = *ptr2.add(12).cast::<usize>();
-                                let len6 = l5;
-                                let bytes6 = _rt::Vec::from_raw_parts(l4.cast(), len6, len6);
-                                let l7 = *ptr2.add(16).cast::<i64>();
+                                let l2 = *ptr0.add(8).cast::<*mut u8>();
+                                let l3 = *ptr0.add(12).cast::<usize>();
+                                let len4 = l3;
+                                let bytes4 = _rt::Vec::from_raw_parts(l2.cast(), len4, len4);
+                                let l5 = *ptr0.add(16).cast::<i64>();
                                 (
                                     super::super::super::obelisk::types::execution::ExecutionId {
-                                        id: _rt::string_lift(bytes6),
+                                        id: _rt::string_lift(bytes4),
                                     },
-                                    l7 as u64,
+                                    l5 as u64,
                                 )
                             };
                             Ok(e)
                         }
                         1 => {
                             let e = {
-                                let l8 = *ptr2.add(8).cast::<*mut u8>();
-                                let l9 = *ptr2.add(12).cast::<usize>();
-                                let len10 = l9;
-                                let bytes10 = _rt::Vec::from_raw_parts(l8.cast(), len10, len10);
-                                let l11 = i32::from(*ptr2.add(16).cast::<u8>());
-                                use super::super::super::obelisk::types::execution::ExecutionError as V15;
-                                let v15 = match l11 {
+                                let l6 = *ptr0.add(8).cast::<*mut u8>();
+                                let l7 = *ptr0.add(12).cast::<usize>();
+                                let len8 = l7;
+                                let bytes8 = _rt::Vec::from_raw_parts(l6.cast(), len8, len8);
+                                let l9 = i32::from(*ptr0.add(16).cast::<u8>());
+                                use super::super::super::obelisk::types::execution::ExecutionError as V13;
+                                let v13 = match l9 {
                                     0 => {
-                                        let e15 = {
-                                            let l12 = *ptr2.add(20).cast::<*mut u8>();
-                                            let l13 = *ptr2.add(24).cast::<usize>();
-                                            let len14 = l13;
-                                            let bytes14 =
-                                                _rt::Vec::from_raw_parts(l12.cast(), len14, len14);
-                                            _rt::string_lift(bytes14)
+                                        let e13 = {
+                                            let l10 = *ptr0.add(20).cast::<*mut u8>();
+                                            let l11 = *ptr0.add(24).cast::<usize>();
+                                            let len12 = l11;
+                                            let bytes12 =
+                                                _rt::Vec::from_raw_parts(l10.cast(), len12, len12);
+                                            _rt::string_lift(bytes12)
                                         };
-                                        V15::PermanentFailure(e15)
+                                        V13::PermanentFailure(e13)
                                     }
-                                    1 => V15::PermanentTimeout,
+                                    1 => V13::PermanentTimeout,
                                     n => {
                                         debug_assert_eq!(n, 2, "invalid enum discriminant");
-                                        V15::Nondeterminism
+                                        V13::Nondeterminism
                                     }
                                 };
                                 (
                                     super::super::super::obelisk::types::execution::ExecutionId {
-                                        id: _rt::string_lift(bytes10),
+                                        id: _rt::string_lift(bytes8),
                                     },
-                                    v15,
+                                    v13,
                                 )
                             };
                             Err(e)
@@ -758,35 +784,29 @@ pub mod testing {
                     #[repr(align(4))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
                     let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
-                    let super::super::super::obelisk::types::execution::JoinSetId { id: id0 } =
-                        join_set_id;
-                    let vec1 = id0;
-                    let ptr1 = vec1.as_ptr().cast::<u8>();
-                    let len1 = vec1.len();
-                    let ptr2 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
                     extern "C" {
                         #[link_name = "fiboa-concurrent-submit"]
-                        fn wit_import(_: *mut u8, _: usize, _: i32, _: i32, _: *mut u8);
+                        fn wit_import(_: i32, _: i32, _: i32, _: *mut u8);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8, _: usize, _: i32, _: i32, _: *mut u8) {
+                    fn wit_import(_: i32, _: i32, _: i32, _: *mut u8) {
                         unreachable!()
                     }
                     wit_import(
-                        ptr1.cast_mut(),
-                        len1,
+                        (join_set_id).handle() as i32,
                         _rt::as_i32(&n),
                         _rt::as_i32(&iterations),
-                        ptr2,
+                        ptr0,
                     );
-                    let l3 = *ptr2.add(0).cast::<*mut u8>();
-                    let l4 = *ptr2.add(4).cast::<usize>();
-                    let len5 = l4;
-                    let bytes5 = _rt::Vec::from_raw_parts(l3.cast(), len5, len5);
+                    let l1 = *ptr0.add(0).cast::<*mut u8>();
+                    let l2 = *ptr0.add(4).cast::<usize>();
+                    let len3 = l2;
+                    let bytes3 = _rt::Vec::from_raw_parts(l1.cast(), len3, len3);
                     super::super::super::obelisk::types::execution::ExecutionId {
-                        id: _rt::string_lift(bytes5),
+                        id: _rt::string_lift(bytes3),
                     }
                 }
             }
@@ -798,72 +818,67 @@ pub mod testing {
                     #[repr(align(8))]
                     struct RetArea([::core::mem::MaybeUninit<u8>; 32]);
                     let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 32]);
-                    let super::super::super::obelisk::types::execution::JoinSetId { id: id0 } =
-                        join_set_id;
-                    let vec1 = id0;
-                    let ptr1 = vec1.as_ptr().cast::<u8>();
-                    let len1 = vec1.len();
-                    let ptr2 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "testing:fibo-workflow-obelisk-ext/workflow")]
                     extern "C" {
                         #[link_name = "fiboa-concurrent-await-next"]
-                        fn wit_import(_: *mut u8, _: usize, _: *mut u8);
+                        fn wit_import(_: i32, _: *mut u8);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8, _: usize, _: *mut u8) {
+                    fn wit_import(_: i32, _: *mut u8) {
                         unreachable!()
                     }
-                    wit_import(ptr1.cast_mut(), len1, ptr2);
-                    let l3 = i32::from(*ptr2.add(0).cast::<u8>());
-                    match l3 {
+                    wit_import((join_set_id).handle() as i32, ptr0);
+                    let l1 = i32::from(*ptr0.add(0).cast::<u8>());
+                    match l1 {
                         0 => {
                             let e = {
-                                let l4 = *ptr2.add(8).cast::<*mut u8>();
-                                let l5 = *ptr2.add(12).cast::<usize>();
-                                let len6 = l5;
-                                let bytes6 = _rt::Vec::from_raw_parts(l4.cast(), len6, len6);
-                                let l7 = *ptr2.add(16).cast::<i64>();
+                                let l2 = *ptr0.add(8).cast::<*mut u8>();
+                                let l3 = *ptr0.add(12).cast::<usize>();
+                                let len4 = l3;
+                                let bytes4 = _rt::Vec::from_raw_parts(l2.cast(), len4, len4);
+                                let l5 = *ptr0.add(16).cast::<i64>();
                                 (
                                     super::super::super::obelisk::types::execution::ExecutionId {
-                                        id: _rt::string_lift(bytes6),
+                                        id: _rt::string_lift(bytes4),
                                     },
-                                    l7 as u64,
+                                    l5 as u64,
                                 )
                             };
                             Ok(e)
                         }
                         1 => {
                             let e = {
-                                let l8 = *ptr2.add(8).cast::<*mut u8>();
-                                let l9 = *ptr2.add(12).cast::<usize>();
-                                let len10 = l9;
-                                let bytes10 = _rt::Vec::from_raw_parts(l8.cast(), len10, len10);
-                                let l11 = i32::from(*ptr2.add(16).cast::<u8>());
-                                use super::super::super::obelisk::types::execution::ExecutionError as V15;
-                                let v15 = match l11 {
+                                let l6 = *ptr0.add(8).cast::<*mut u8>();
+                                let l7 = *ptr0.add(12).cast::<usize>();
+                                let len8 = l7;
+                                let bytes8 = _rt::Vec::from_raw_parts(l6.cast(), len8, len8);
+                                let l9 = i32::from(*ptr0.add(16).cast::<u8>());
+                                use super::super::super::obelisk::types::execution::ExecutionError as V13;
+                                let v13 = match l9 {
                                     0 => {
-                                        let e15 = {
-                                            let l12 = *ptr2.add(20).cast::<*mut u8>();
-                                            let l13 = *ptr2.add(24).cast::<usize>();
-                                            let len14 = l13;
-                                            let bytes14 =
-                                                _rt::Vec::from_raw_parts(l12.cast(), len14, len14);
-                                            _rt::string_lift(bytes14)
+                                        let e13 = {
+                                            let l10 = *ptr0.add(20).cast::<*mut u8>();
+                                            let l11 = *ptr0.add(24).cast::<usize>();
+                                            let len12 = l11;
+                                            let bytes12 =
+                                                _rt::Vec::from_raw_parts(l10.cast(), len12, len12);
+                                            _rt::string_lift(bytes12)
                                         };
-                                        V15::PermanentFailure(e15)
+                                        V13::PermanentFailure(e13)
                                     }
-                                    1 => V15::PermanentTimeout,
+                                    1 => V13::PermanentTimeout,
                                     n => {
                                         debug_assert_eq!(n, 2, "invalid enum discriminant");
-                                        V15::Nondeterminism
+                                        V13::Nondeterminism
                                     }
                                 };
                                 (
                                     super::super::super::obelisk::types::execution::ExecutionId {
-                                        id: _rt::string_lift(bytes10),
+                                        id: _rt::string_lift(bytes8),
                                     },
-                                    v15,
+                                    v13,
                                 )
                             };
                             Err(e)
@@ -989,7 +1004,91 @@ pub mod exports {
     }
 }
 mod _rt {
+    use core::fmt;
+    use core::marker;
+    use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
+    /// A type which represents a component model resource, either imported or
+    /// exported into this component.
+    ///
+    /// This is a low-level wrapper which handles the lifetime of the resource
+    /// (namely this has a destructor). The `T` provided defines the component model
+    /// intrinsics that this wrapper uses.
+    ///
+    /// One of the chief purposes of this type is to provide `Deref` implementations
+    /// to access the underlying data when it is owned.
+    ///
+    /// This type is primarily used in generated code for exported and imported
+    /// resources.
+    #[repr(transparent)]
+    pub struct Resource<T: WasmResource> {
+        handle: AtomicU32,
+        _marker: marker::PhantomData<T>,
+    }
+    /// A trait which all wasm resources implement, namely providing the ability to
+    /// drop a resource.
+    ///
+    /// This generally is implemented by generated code, not user-facing code.
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe trait WasmResource {
+        /// Invokes the `[resource-drop]...` intrinsic.
+        unsafe fn drop(handle: u32);
+    }
+    impl<T: WasmResource> Resource<T> {
+        #[doc(hidden)]
+        pub unsafe fn from_handle(handle: u32) -> Self {
+            debug_assert!(handle != u32::MAX);
+            Self {
+                handle: AtomicU32::new(handle),
+                _marker: marker::PhantomData,
+            }
+        }
+        /// Takes ownership of the handle owned by `resource`.
+        ///
+        /// Note that this ideally would be `into_handle` taking `Resource<T>` by
+        /// ownership. The code generator does not enable that in all situations,
+        /// unfortunately, so this is provided instead.
+        ///
+        /// Also note that `take_handle` is in theory only ever called on values
+        /// owned by a generated function. For example a generated function might
+        /// take `Resource<T>` as an argument but then call `take_handle` on a
+        /// reference to that argument. In that sense the dynamic nature of
+        /// `take_handle` should only be exposed internally to generated code, not
+        /// to user code.
+        #[doc(hidden)]
+        pub fn take_handle(resource: &Resource<T>) -> u32 {
+            resource.handle.swap(u32::MAX, Relaxed)
+        }
+        #[doc(hidden)]
+        pub fn handle(resource: &Resource<T>) -> u32 {
+            resource.handle.load(Relaxed)
+        }
+    }
+    impl<T: WasmResource> fmt::Debug for Resource<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("Resource")
+                .field("handle", &self.handle)
+                .finish()
+        }
+    }
+    impl<T: WasmResource> Drop for Resource<T> {
+        fn drop(&mut self) {
+            unsafe {
+                match self.handle.load(Relaxed) {
+                    u32::MAX => {}
+                    other => T::drop(other),
+                }
+            }
+        }
+    }
     pub use alloc_crate::string::String;
+    pub use alloc_crate::vec::Vec;
+    pub unsafe fn string_lift(bytes: Vec<u8>) -> String {
+        if cfg!(debug_assertions) {
+            String::from_utf8(bytes).unwrap()
+        } else {
+            String::from_utf8_unchecked(bytes)
+        }
+    }
     pub fn as_i64<T: AsI64>(t: T) -> i64 {
         t.as_i64()
     }
@@ -1072,14 +1171,6 @@ mod _rt {
             self as i32
         }
     }
-    pub use alloc_crate::vec::Vec;
-    pub unsafe fn string_lift(bytes: Vec<u8>) -> String {
-        if cfg!(debug_assertions) {
-            String::from_utf8(bytes).unwrap()
-        } else {
-            String::from_utf8_unchecked(bytes)
-        }
-    }
     pub unsafe fn invalid_enum_discriminant<T>() -> T {
         if cfg!(debug_assertions) {
             panic!("invalid enum discriminant")
@@ -1130,49 +1221,50 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1874] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd8\x0d\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1916] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x82\x0e\x01A\x02\x01\
 A\x1b\x01B\x06\x01@\x01\x07messages\x01\0\x04\0\x05trace\x01\0\x04\0\x05debug\x01\
 \0\x04\0\x04info\x01\0\x04\0\x04warn\x01\0\x04\0\x05error\x01\0\x03\x01\x0fobeli\
 sk:log/log\x05\0\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07m\
 inutes\x01y\0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07\
 secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\
 \x03\0\x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/t\
-ime\x05\x01\x01B\x08\x01r\x01\x02ids\x04\0\x0bjoin-set-id\x03\0\0\x01r\x01\x02id\
-s\x04\0\x0cexecution-id\x03\0\x02\x01r\x01\x02ids\x04\0\x08delay-id\x03\0\x04\x01\
-q\x03\x11permanent-failure\x01s\0\x11permanent-timeout\0\0\x0enondeterminism\0\0\
-\x04\0\x0fexecution-error\x03\0\x06\x03\x01\x17obelisk:types/execution\x05\x02\x02\
-\x03\0\x01\x08duration\x02\x03\0\x02\x0bjoin-set-id\x01B\x08\x02\x03\x02\x01\x03\
-\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin-set-id\x03\0\x02\x01\
-@\x01\x08duration\x01\x01\0\x04\0\x05sleep\x01\x04\x01@\0\0\x03\x04\0\x0cnew-joi\
-n-set\x01\x05\x03\x01\x20obelisk:workflow/host-activities\x05\x05\x02\x03\0\x02\x0c\
-execution-id\x02\x03\0\x02\x0fexecution-error\x01B\x0d\x02\x03\x02\x01\x06\x04\0\
-\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin-set-id\x03\0\x02\x02\x03\
-\x02\x01\x07\x04\0\x0fexecution-error\x03\0\x04\x01@\x02\x0bjoin-set-id\x03\x01n\
-}\0\x01\x04\0\x0bfibo-submit\x01\x06\x01o\x02\x01w\x01o\x02\x01\x05\x01j\x01\x07\
-\x01\x08\x01@\x01\x0bjoin-set-id\x03\0\x09\x04\0\x0ffibo-await-next\x01\x0a\x03\x01\
-\x1dtesting:fibo-obelisk-ext/fibo\x05\x08\x02\x03\0\x01\x0bschedule-at\x01B\x13\x02\
+ime\x05\x01\x01B\x0a\x04\0\x0bjoin-set-id\x03\x01\x01r\x01\x02ids\x04\0\x0cexecu\
+tion-id\x03\0\x01\x01r\x01\x02ids\x04\0\x08delay-id\x03\0\x03\x01q\x03\x11perman\
+ent-failure\x01s\0\x11permanent-timeout\0\0\x0enondeterminism\0\0\x04\0\x0fexecu\
+tion-error\x03\0\x05\x01h\0\x01@\x01\x04self\x07\0s\x04\0\x16[method]join-set-id\
+.id\x01\x08\x03\x01\x17obelisk:types/execution\x05\x02\x02\x03\0\x01\x08duration\
+\x02\x03\0\x02\x0bjoin-set-id\x01B\x09\x02\x03\x02\x01\x03\x04\0\x08duration\x03\
+\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x08duration\x01\
+\x01\0\x04\0\x05sleep\x01\x04\x01i\x03\x01@\0\0\x05\x04\0\x0cnew-join-set\x01\x06\
+\x03\x01\x20obelisk:workflow/host-activities\x05\x05\x02\x03\0\x02\x0cexecution-\
+id\x02\x03\0\x02\x0fexecution-error\x01B\x0e\x02\x03\x02\x01\x06\x04\0\x0cexecut\
+ion-id\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin-set-id\x03\0\x02\x02\x03\x02\x01\
+\x07\x04\0\x0fexecution-error\x03\0\x04\x01h\x03\x01@\x02\x0bjoin-set-id\x06\x01\
+n}\0\x01\x04\0\x0bfibo-submit\x01\x07\x01o\x02\x01w\x01o\x02\x01\x05\x01j\x01\x08\
+\x01\x09\x01@\x01\x0bjoin-set-id\x06\0\x0a\x04\0\x0ffibo-await-next\x01\x0b\x03\x01\
+\x1dtesting:fibo-obelisk-ext/fibo\x05\x08\x02\x03\0\x01\x0bschedule-at\x01B\x14\x02\
 \x03\x02\x01\x06\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin\
 -set-id\x03\0\x02\x02\x03\x02\x01\x07\x04\0\x0fexecution-error\x03\0\x04\x02\x03\
-\x02\x01\x09\x04\0\x0bschedule-at\x03\0\x06\x01@\x03\x0bjoin-set-id\x03\x01n}\x0a\
-iterationsy\0\x01\x04\0\x0cfiboa-submit\x01\x08\x01o\x02\x01w\x01o\x02\x01\x05\x01\
-j\x01\x09\x01\x0a\x01@\x01\x0bjoin-set-id\x03\0\x0b\x04\0\x10fiboa-await-next\x01\
-\x0c\x01@\x03\x0bschedule-at\x07\x01n}\x0aiterationsy\0\x01\x04\0\x0efiboa-sched\
-ule\x01\x0d\x04\0\x17fiboa-concurrent-submit\x01\x08\x04\0\x1bfiboa-concurrent-a\
-wait-next\x01\x0c\x03\x01*testing:fibo-workflow-obelisk-ext/workflow\x05\x0a\x01\
-B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fi\
-boasy\x14iterations-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x03\x01&tes\
-ting:fibo-workflow/workflow-nesting\x05\x0b\x01B\x04\x01@\x02\x01n}\x0aiteration\
-sy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x03\
-\x01\x1etesting:fibo-workflow/workflow\x05\x0c\x01B\x02\x01@\x01\x01n}\0w\x04\0\x04\
-fibo\x01\0\x03\x01\x11testing:fibo/fibo\x05\x0d\x01B\x04\x01@\x01\x01n}\0w\x04\0\
-\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14iterations-per-fiboa\
-y\0w\x04\0\x11fibo-start-fiboas\x01\x01\x04\x01&testing:fibo-workflow/workflow-n\
-esting\x05\x0e\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\
-\0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1etesting:fibo-workfl\
-ow/workflow\x05\x0f\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\
-\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.216.0\x10wit-bindgen\
--rust\x060.31.0";
+\x02\x01\x09\x04\0\x0bschedule-at\x03\0\x06\x01h\x03\x01@\x03\x0bjoin-set-id\x08\
+\x01n}\x0aiterationsy\0\x01\x04\0\x0cfiboa-submit\x01\x09\x01o\x02\x01w\x01o\x02\
+\x01\x05\x01j\x01\x0a\x01\x0b\x01@\x01\x0bjoin-set-id\x08\0\x0c\x04\0\x10fiboa-a\
+wait-next\x01\x0d\x01@\x03\x0bschedule-at\x07\x01n}\x0aiterationsy\0\x01\x04\0\x0e\
+fiboa-schedule\x01\x0e\x04\0\x17fiboa-concurrent-submit\x01\x09\x04\0\x1bfiboa-c\
+oncurrent-await-next\x01\x0d\x03\x01*testing:fibo-workflow-obelisk-ext/workflow\x05\
+\x0a\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01\
+n}\x06fiboasy\x14iterations-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x03\
+\x01&testing:fibo-workflow/workflow-nesting\x05\x0b\x01B\x04\x01@\x02\x01n}\x0ai\
+terationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurren\
+t\x01\0\x03\x01\x1etesting:fibo-workflow/workflow\x05\x0c\x01B\x02\x01@\x01\x01n\
+}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:fibo/fibo\x05\x0d\x01B\x04\x01@\x01\x01\
+n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14iteration\
+s-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x04\x01&testing:fibo-workflow\
+/workflow-nesting\x05\x0e\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fib\
+ow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1etesting\
+:fibo-workflow/workflow\x05\x0f\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03an\
+y\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.216.0\x10\
+wit-bindgen-rust\x060.31.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

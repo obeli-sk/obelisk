@@ -6,11 +6,7 @@ expression: exports
   "testing:http-workflow-obelisk-ext/workflow.get-await-next": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -98,11 +94,7 @@ expression: exports
   "testing:http-workflow-obelisk-ext/workflow.get-submit": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -124,11 +116,7 @@ expression: exports
   "testing:http-workflow-obelisk-ext/workflow.get-successful-await-next": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -175,11 +163,7 @@ expression: exports
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-await-next": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -271,11 +255,7 @@ expression: exports
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
@@ -370,11 +350,7 @@ expression: exports
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -401,11 +377,7 @@ expression: exports
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-submit": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
@@ -470,11 +442,7 @@ expression: exports
   "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },

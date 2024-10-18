@@ -6,24 +6,16 @@ expression: imports
   "obelisk:workflow/host-activities.new-join-set": [
     [],
     {
-      "type_wrapper": {
-        "Record": {
-          "id": "String"
-        }
-      },
+      "type_wrapper": "Own",
       "wit_type": "join-set-id"
     }
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       }
     ],
     {
@@ -63,13 +55,9 @@ expression: imports
   "testing:fibo-obelisk-ext/fibo.fibo-submit": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       },
       {
         "type_wrapper": "U8",
@@ -89,13 +77,9 @@ expression: imports
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       }
     ],
     {
@@ -135,13 +119,9 @@ expression: imports
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       },
       {
         "type_wrapper": "U8",

@@ -25,8 +25,8 @@ interface time {
 }
 
 interface execution {
-    record join-set-id {
-        id: string,
+    resource join-set-id {
+        id: func() -> string;
     }
     record execution-id {
         id: string,

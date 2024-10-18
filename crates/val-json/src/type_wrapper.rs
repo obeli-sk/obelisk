@@ -29,8 +29,8 @@ pub enum TypeWrapper {
         err: Option<Box<TypeWrapper>>,
     },
     Flags(IndexSet<Box<str>>),
-    Own(ResourceTypeWrapper),
-    Borrow(ResourceTypeWrapper),
+    Own,
+    Borrow,
 }
 
 impl Debug for TypeWrapper {
@@ -75,15 +75,12 @@ impl Debug for TypeWrapper {
                 ok: None,
                 err: None,
             } => f.debug_struct("Result").finish(),
-            Self::Flags(arg0) => f.debug_tuple("Flags").field(arg0).finish(),
-            Self::Own(arg0) => f.debug_tuple("Own").field(arg0).finish(),
-            Self::Borrow(arg0) => f.debug_tuple("Borrow").field(arg0).finish(),
+            Self::Flags(flags) => f.debug_tuple("Flags").field(flags).finish(),
+            Self::Own => f.debug_tuple("Own").finish(),
+            Self::Borrow => f.debug_tuple("Borrow").finish(),
         }
     }
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResourceTypeWrapper {}
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum TypeConversionError {
@@ -150,14 +147,8 @@ impl TryFrom<wasmtime::component::Type> for TypeWrapper {
                     .collect::<Result<_, _>>()?,
             )),
             Type::Enum(names) => Ok(Self::Enum(names.names().map(Box::from).collect())),
-            Type::Borrow(_) => {
-                // TODO finish
-                Ok(Self::Borrow(ResourceTypeWrapper {}))
-            }
-            Type::Own(_) => {
-                // TODO finish
-                Ok(Self::Own(ResourceTypeWrapper {}))
-            }
+            Type::Borrow(_) => Ok(Self::Borrow),
+            Type::Own(_) => Ok(Self::Own),
             Type::Flags(flags) => Ok(Self::Flags(flags.names().map(Box::from).collect())),
         }
     }

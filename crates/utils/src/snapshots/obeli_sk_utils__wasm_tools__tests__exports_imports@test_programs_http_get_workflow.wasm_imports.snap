@@ -6,24 +6,16 @@ expression: imports
   "obelisk:workflow/host-activities.new-join-set": [
     [],
     {
-      "type_wrapper": {
-        "Record": {
-          "id": "String"
-        }
-      },
+      "type_wrapper": "Own",
       "wit_type": "join-set-id"
     }
   ],
   "testing:http-obelisk-ext/http-get.get-successful-await-next": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       }
     ],
     {
@@ -68,13 +60,9 @@ expression: imports
   "testing:http-obelisk-ext/http-get.get-successful-submit": [
     [
       {
-        "type_wrapper": {
-          "Record": {
-            "id": "String"
-          }
-        },
+        "type_wrapper": "Borrow",
         "name": "join-set-id",
-        "wit_type": "join-set-id"
+        "wit_type": "borrow<join-set-id>"
       },
       {
         "type_wrapper": "String",

@@ -16,7 +16,7 @@ expression: imports
       "params": [
         {
           "name": "join-set-id",
-          "wit_type": "join-set-id"
+          "wit_type": "borrow<join-set-id>"
         }
       ],
       "return_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
@@ -29,7 +29,7 @@ expression: imports
       "params": [
         {
           "name": "join-set-id",
-          "wit_type": "join-set-id"
+          "wit_type": "borrow<join-set-id>"
         },
         {
           "name": "n",
@@ -46,7 +46,7 @@ expression: imports
       "params": [
         {
           "name": "join-set-id",
-          "wit_type": "join-set-id"
+          "wit_type": "borrow<join-set-id>"
         }
       ],
       "return_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
@@ -59,7 +59,7 @@ expression: imports
       "params": [
         {
           "name": "join-set-id",
-          "wit_type": "join-set-id"
+          "wit_type": "borrow<join-set-id>"
         },
         {
           "name": "n",
