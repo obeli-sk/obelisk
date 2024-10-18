@@ -1157,8 +1157,8 @@ fn prespawn_activity(
     Ok(WorkerCompiled::new_activity(
         worker,
         activity.content_digest,
-        activity.retry_config,
         activity.exec_config,
+        activity.retry_config,
         executor_id,
     ))
 }
@@ -1185,6 +1185,7 @@ fn prespawn_workflow(
         worker,
         workflow.content_digest,
         workflow.exec_config,
+        workflow.retry_config,
         executor_id,
     ))
 }
@@ -1199,8 +1200,8 @@ impl WorkerCompiled {
     fn new_activity(
         worker: ActivityWorker<Now>,
         content_digest: ContentDigest,
-        retry_config: ComponentRetryConfig,
         exec_config: ExecConfig,
+        retry_config: ComponentRetryConfig,
         executor_id: ExecutorId,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -1227,6 +1228,7 @@ impl WorkerCompiled {
         worker: WorkflowWorkerCompiled<Now>,
         content_digest: ContentDigest,
         exec_config: ExecConfig,
+        retry_config: ComponentRetryConfig,
         executor_id: ExecutorId,
     ) -> (WorkerCompiled, ComponentConfig) {
         let component = ComponentConfig {
@@ -1235,7 +1237,7 @@ impl WorkerCompiled {
             importable: Some(ComponentConfigImportable {
                 exports: worker.exported_functions().to_vec(),
                 exports_hierarchy: worker.exports_hierarchy().to_vec(),
-                retry_config: ComponentRetryConfig::default(), // no retries
+                retry_config,
             }),
             imports: worker.imported_functions().to_vec(),
         };

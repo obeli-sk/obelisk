@@ -88,7 +88,7 @@ pub mod envvar {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use async_trait::async_trait;
     use concepts::{
@@ -125,7 +125,10 @@ pub(crate) mod tests {
                                 return_type: exported_function.return_type.clone(),
                             },
                             config_id.clone(),
-                            ComponentRetryConfig::default(),
+                            ComponentRetryConfig {
+                                max_retries: 0,
+                                retry_exp_backoff: Duration::ZERO,
+                            },
                         ),
                     );
 
@@ -181,7 +184,10 @@ pub(crate) mod tests {
                         return_type: None,
                     },
                     component_id.clone(),
-                    ComponentRetryConfig::default(),
+                    ComponentRetryConfig {
+                        max_retries: 0,
+                        retry_exp_backoff: Duration::ZERO,
+                    },
                 ),
             );
             let index_map = export_hierarchy.entry(ffqn.ifc_fqn.clone()).or_default();

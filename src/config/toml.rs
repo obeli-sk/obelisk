@@ -256,7 +256,6 @@ impl ActivityWasmConfigToml {
         )?;
 
         let content_digest = common.content_digest.clone();
-        let retry_exp_backoff = self.default_retry_exp_backoff.into();
         let env_vars: Arc<[EnvVar]> = Arc::from(self.env_vars);
         tracing::Span::current().record("config_id", tracing::field::display(&config_id));
         let activity_config = ActivityConfig {
@@ -273,7 +272,7 @@ impl ActivityWasmConfigToml {
             exec_config: self.exec.into_exec_exec_config(config_id),
             retry_config: ComponentRetryConfig {
                 max_retries: self.default_max_retries,
-                retry_exp_backoff,
+                retry_exp_backoff: self.default_retry_exp_backoff.into(),
             },
         })
     }
@@ -286,6 +285,10 @@ pub(crate) struct WorkflowConfigToml {
     pub(crate) common: ComponentCommon,
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
+    #[serde(default = "default_max_retries")]
+    pub(crate) default_max_retries: u32,
+    #[serde(default = "default_retry_exp_backoff")]
+    pub(crate) default_retry_exp_backoff: DurationConfig,
     #[serde(default = "default_strategy")]
     pub(crate) join_next_blocking_strategy: JoinNextBlockingStrategy,
     #[serde(default = "default_non_blocking_event_batching")]
@@ -298,6 +301,7 @@ pub(crate) struct WorkflowConfigVerified {
     pub(crate) wasm_path: PathBuf,
     pub(crate) workflow_config: WorkflowConfig,
     pub(crate) exec_config: executor::executor::ExecConfig,
+    pub(crate) retry_config: ComponentRetryConfig,
 }
 
 impl WorkflowConfigToml {
@@ -331,6 +335,10 @@ impl WorkflowConfigToml {
             wasm_path,
             workflow_config,
             exec_config: self.exec.into_exec_exec_config(config_id),
+            retry_config: ComponentRetryConfig {
+                max_retries: self.default_max_retries,
+                retry_exp_backoff: self.default_retry_exp_backoff.into(),
+            },
         })
     }
 }
