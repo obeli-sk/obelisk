@@ -21,7 +21,7 @@ Please exercise caution if attempting to use it for production.
     * Replay and fork existing workflows(planned). Fix problems and continue.
 
 ## Concepts and features
-* *Activities* that must be idempotent, so that they can be stopped and retried at any moment. This contract must be fulfilled by the activity itself.
+* *Activities* that must be idempotent (retryable), so that they can be stopped and retried at any moment. This contract must be fulfilled by the activity itself.
     * WASI activities are executed in a WASM sandbox
         * Able to contact HTTP servers using the WASI 0.2 HTTP client.
         * Able to read/write to the filesystem (planned).
@@ -32,11 +32,13 @@ Please exercise caution if attempting to use it for production.
     * Performance option to keep the parent workflow execution hot or unload and replay the event history.
 
 * *Deterministic workflows*
+    * Are replayable
     * Running in a WASM sandbox
     * Isolated from the environment
+    * Automatically retried on intermittent failures like database errors or timeouts
     * Able to spawn child workflows or activities, either blocking or awaiting the result eventually
     * Execution is persisted at every state change, so that it can be replayed after an interrupt or an error.
-    * Ability to replay workflows with added log messages and other changes that do not alter the determinism of the execution (planned)
+    * Workflows can be replayed with added log messages and other changes that do not alter the determinism of the execution (planned)
 
 * *WASI webhooks*
     * Mounted as a URL path, serving HTTP traffic.
@@ -124,6 +126,7 @@ obelisk client execution submit testing:fibo-workflow/workflow.fiboa '[10, 500]'
 - [x] Forward stdout and stderr (configurable) of activities and webhooks
 - [x] Support for distributed tracing, logging from components collected by OTLP
 - [x] Mapping from any execution result (e.g. traps, timeouts, err variants) to other execution results via `-await-next`
+- [x] Structured concurrency for join sets - blocking parent until all child executions are finished
 - [ ] HTML based UI for showing executions, event history and relations
 - [ ] Print each component's imports and exports in the WIT format
 - [ ] Heterogenous join sets, allowing one join set to combine multiple function signatures and delays

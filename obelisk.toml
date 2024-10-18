@@ -122,8 +122,8 @@ name = "sleep_workflow"
 location.oci = "docker.io/getobelisk/example_workflow_sleep:2024-10-17@sha256:523b98ea4a9f9569ed9f33c8817a930689ed3a97784f0ebc3dfbfb52ef0c174a"
 
 ## Send spans via gRPC to an OTLP collector.
+# [otlp] # Uncomment the table and run `docker run --rm -it  -p 4317:4317 -p 16686:16686 jaegertracing/all-in-one:1.60` to start collecting traces.
 ## Defaults:
-# [otlp]
 # level = "info,app=debug"
 # service_name = "obelisk-server"
 # otlp_endpoint = "http://localhost:4317"
