@@ -15,7 +15,7 @@ use concepts::storage::{
 };
 use concepts::{
     ConfigId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
-    FunctionMetadata, FunctionRegistry, IfcFqnName, ImportableType, Params, StrVariant,
+    FunctionMetadata, FunctionRegistry, IfcFqnName, Params, StrVariant,
 };
 use derivative::Derivative;
 use http_body_util::combinators::BoxBody;
@@ -61,7 +61,6 @@ pub struct WebhookCompiled {
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
-    retry_config: RetryConfigOverride,
 
     wasm_component: WasmComponent,
 }
@@ -74,7 +73,6 @@ impl WebhookCompiled {
         forward_stdout: Option<StdOutput>,
         forward_stderr: Option<StdOutput>,
         env_vars: Arc<[EnvVar]>,
-        retry_config: RetryConfigOverride,
     ) -> Result<Self, WasmFileError> {
         let wasm_component = WasmComponent::new(wasm_path, engine)?;
         Ok(Self {
@@ -82,7 +80,6 @@ impl WebhookCompiled {
             forward_stdout,
             forward_stderr,
             env_vars,
-            retry_config,
             wasm_component,
         })
     }
@@ -193,7 +190,6 @@ impl WebhookCompiled {
             forward_stdout: self.forward_stdout,
             forward_stderr: self.forward_stderr,
             env_vars: self.env_vars,
-            retry_config: self.retry_config,
             exim: self.wasm_component.exim,
             proxy_pre,
         })
@@ -210,7 +206,6 @@ pub struct WebhookInstance<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     forward_stdout: Option<StdOutput>,
     forward_stderr: Option<StdOutput>,
     env_vars: Arc<[EnvVar]>,
-    retry_config: RetryConfigOverride,
     exim: ExIm,
 }
 
@@ -336,36 +331,6 @@ pub async fn server<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<
     }
 }
 
-#[derive(Clone, Copy, Default, Debug)]
-pub struct RetryConfigOverride {
-    activity_max_retries_override: Option<u32>,
-    activity_retry_exp_backoff_override: Option<Duration>,
-}
-
-impl RetryConfigOverride {
-    fn max_retries(&self, import_type: ImportableType, component_default: u32) -> u32 {
-        match import_type {
-            ImportableType::ActivityWasm => self
-                .activity_max_retries_override
-                .unwrap_or(component_default),
-            ImportableType::Workflow => 0,
-        }
-    }
-
-    fn retry_exp_backoff(
-        &self,
-        import_type: ImportableType,
-        component_default: Duration,
-    ) -> Duration {
-        match import_type {
-            ImportableType::ActivityWasm => self
-                .activity_retry_exp_backoff_override
-                .unwrap_or(component_default),
-            ImportableType::Workflow => Duration::ZERO,
-        }
-    }
-}
-
 struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     config_id: ConfigId,
     clock_fn: C,
@@ -374,7 +339,6 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     table: ResourceTable,
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
-    retry_config: RetryConfigOverride,
     execution_id: ExecutionId,
     version: Option<Version>,
     component_logger: ComponentLogger,
@@ -483,7 +447,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let new_execution_id = ExecutionId::generate();
-                let Some((function_metadata, config_id, default_retry_config, import_type)) =
+                let Some((function_metadata, config_id, import_retry_config, _import_type)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
                 else {
                     return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
@@ -505,12 +469,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
                     metadata: ExecutionMetadata::from_linked_span(&self.component_logger.span),
                     scheduled_at,
-                    max_retries: self
-                        .retry_config
-                        .max_retries(import_type, default_retry_config.max_retries),
-                    retry_exp_backoff: self
-                        .retry_config
-                        .retry_exp_backoff(import_type, default_retry_config.retry_exp_backoff),
+                    max_retries: import_retry_config.max_retries,
+                    retry_exp_backoff: import_retry_config.retry_exp_backoff,
                     config_id,
                     return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.execution_id,
@@ -541,7 +501,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             span.record("version", tracing::field::display(&version));
             let child_execution_id = ExecutionId::generate();
             let created_at = self.clock_fn.now();
-            let Some((function_metadata, config_id, default_retry_config, import_type)) =
+            let Some((function_metadata, config_id, import_retry_config, _import_type)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
             else {
                 return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
@@ -561,12 +521,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 parent: Some((self.execution_id, join_set_id)),
                 metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
                 scheduled_at: created_at,
-                max_retries: self
-                    .retry_config
-                    .max_retries(import_type, default_retry_config.max_retries),
-                retry_exp_backoff: self
-                    .retry_config
-                    .retry_exp_backoff(import_type, default_retry_config.retry_exp_backoff),
+                max_retries: import_retry_config.max_retries,
+                retry_exp_backoff: import_retry_config.retry_exp_backoff,
                 config_id,
                 return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
                 topmost_parent: self.execution_id,
@@ -624,7 +580,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         clock_fn: C,
         db_pool: P,
         fn_registry: Arc<dyn FunctionRegistry>,
-        retry_config: RetryConfigOverride,
         params: impl Iterator<Item = (&'a str, &'a str)>,
         execution_id: ExecutionId,
         forward_stdout: Option<StdOutput>,
@@ -655,7 +610,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             table: ResourceTable::new(),
             wasi_ctx,
             http_ctx: WasiHttpCtx::new(),
-            retry_config,
             version: None,
             config_id,
             execution_id,
@@ -791,7 +745,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 self.clock_fn,
                 self.db_pool,
                 self.fn_registry,
-                found_instance.retry_config,
                 matched.params().iter(),
                 self.execution_id,
                 found_instance.forward_stdout,
@@ -892,7 +845,7 @@ pub(crate) mod tests {
         use crate::activity::activity_worker::tests::{compile_activity, FIBO_10_OUTPUT};
         use crate::engines::{EngineConfig, Engines};
         use crate::tests::TestingFnRegistry;
-        use crate::webhook::webhook_trigger::{self, RetryConfigOverride, WebhookCompiled};
+        use crate::webhook::webhook_trigger::{self, WebhookCompiled};
         use crate::workflow::workflow_worker::tests::compile_workflow;
         use crate::{
             activity::activity_worker::tests::spawn_activity_fibo,
@@ -976,7 +929,6 @@ pub(crate) mod tests {
                         None,
                         None,
                         Arc::from([]),
-                        RetryConfigOverride::default(),
                     )
                     .unwrap()
                     .link(&engine, fn_registry.as_ref())

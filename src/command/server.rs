@@ -1086,7 +1086,6 @@ async fn compile_and_verify(
                         webhook.forward_stdout,
                         webhook.forward_stderr,
                         Arc::from(webhook.env_vars),
-                        webhook_trigger::RetryConfigOverride::default(), // TODO make configurable
                     )?;
                     Ok(Either::Right((
                         name,
