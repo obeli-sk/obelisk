@@ -193,6 +193,7 @@ impl ExecutionJournal {
                         HistoryEvent::JoinNext {
                             join_set_id: expected_join_set_id,
                             lock_expires_at,
+                            closing,
                         },
                     ..
                 } => {
@@ -226,9 +227,11 @@ impl ExecutionJournal {
                         let scheduled_at = max(*lock_expires_at, *nth_created_at);
                         Some(PendingState::PendingAt { scheduled_at })
                     } else {
+                        // Still waiting for response
                         Some(PendingState::BlockedByJoinSet {
                             join_set_id: *expected_join_set_id,
                             lock_expires_at: *lock_expires_at,
+                            closing: *closing,
                         })
                     }
                 }

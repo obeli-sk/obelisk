@@ -1038,6 +1038,7 @@ mod tests {
                 event: HistoryEvent::JoinNext {
                     join_set_id,
                     lock_expires_at: sim_clock.now(),
+                    closing: false,
                 },
             };
             db_pool

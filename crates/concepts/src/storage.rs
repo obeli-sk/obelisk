@@ -368,6 +368,8 @@ pub enum HistoryEvent {
         join_set_id: JoinSetId,
         /// Set to a future time if the worker is keeping the execution warm waiting for the result.
         lock_expires_at: DateTime<Utc>,
+        /// Is the joinset being closed?
+        closing: bool,
     },
     #[display("Schedule({execution_id}, {scheduled_at})")]
     Schedule {
@@ -835,6 +837,8 @@ pub enum PendingState {
         join_set_id: JoinSetId,
         /// See [`HistoryEvent::JoinNext::lock_expires_at`].
         lock_expires_at: DateTime<Utc>,
+        /// Blocked by closing of the join set
+        closing: bool,
     },
     #[display("Finished({finished})")]
     Finished { finished: PendingStateFinished },

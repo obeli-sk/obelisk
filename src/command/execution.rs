@@ -1,4 +1,5 @@
 use super::grpc;
+use super::grpc::execution_status::BlockedByJoinSet;
 use crate::command::grpc::execution_status::Finished;
 use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use crate::SchedulerClient;
@@ -75,7 +76,12 @@ fn print_pending_status(
     let new_pending_status = match status {
         Status::Locked(_) => "Locked".to_string(),
         Status::PendingAt(_) => "Pending".to_string(),
-        Status::BlockedByJoinSet(_) => "BlockedByJoinSet".to_string(),
+        Status::BlockedByJoinSet(BlockedByJoinSet { closing: false, .. }) => {
+            "BlockedByJoinSet".to_string()
+        }
+        Status::BlockedByJoinSet(BlockedByJoinSet { closing: true, .. }) => {
+            "BlockedByJoinSetClosing".to_string()
+        }
         Status::Finished(Finished {
             result,
             created_at,

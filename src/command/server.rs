@@ -428,9 +428,11 @@ async fn convert_execution_status(
             PendingState::BlockedByJoinSet {
                 join_set_id,
                 lock_expires_at,
+                closing,
             } => Status::BlockedByJoinSet(BlockedByJoinSet {
                 join_set_id: Some(join_set_id.into()),
                 lock_expires_at: Some(lock_expires_at.into()),
+                closing,
             }),
             PendingState::Finished { finished } => {
                 let (result, finished_at) = conn

@@ -112,6 +112,7 @@ message ExecutionStatus {
     message BlockedByJoinSet {
         JoinSetId join_set_id = 1;
         google.protobuf.Timestamp lock_expires_at = 2;
+        bool closing = 3;
     }
     message Finished {
         google.protobuf.Any result = 1;

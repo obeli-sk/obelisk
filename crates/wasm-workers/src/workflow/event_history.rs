@@ -260,7 +260,7 @@ impl<C: ClockFn> EventHistory<C> {
     /// Open here means there are more `JoinSetRequest::ChildExecutionRequest`-s than corresponding responses.
     /// MUST NOT add items to `NonBlockingCache`, as only `EventCall::BlockingChildAwaitNext` and their
     /// processed responses are appended.
-    pub(crate) async fn await_opened_join_set<DB: DbConnection>(
+    pub(crate) async fn close_opened_join_set<DB: DbConnection>(
         &mut self,
         db_connection: &DB,
         version: &mut Version,
@@ -309,7 +309,10 @@ impl<C: ClockFn> EventHistory<C> {
             .map(|found| found.0)
         {
             self.apply(
-                EventCall::BlockingChildAwaitNext { join_set_id },
+                EventCall::BlockingChildAwaitNext {
+                    join_set_id,
+                    closing: true,
+                },
                 db_connection,
                 version,
                 fn_registry,
@@ -818,12 +821,16 @@ impl<C: ClockFn> EventHistory<C> {
                 Ok(history_events)
             }
 
-            EventCall::BlockingChildAwaitNext { join_set_id } => {
+            EventCall::BlockingChildAwaitNext {
+                join_set_id,
+                closing,
+            } => {
                 self.flush_non_blocking_event_cache(db_connection, called_at)
                     .await?;
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
                     lock_expires_at,
+                    closing,
                 };
                 let history_events = vec![event.clone()];
                 let join_next = AppendRequest {
@@ -837,7 +844,7 @@ impl<C: ClockFn> EventHistory<C> {
                 Ok(history_events)
             }
 
-            EventCall::BlockingChildExecutionRequest {
+            EventCall::BlockingChildDirectCall {
                 ffqn,
                 join_set_id,
                 child_execution_id,
@@ -858,6 +865,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
                     lock_expires_at,
+                    closing: false,
                 };
                 history_events.push(event.clone());
                 let join_next = ExecutionEventInner::HistoryEvent { event };
@@ -920,6 +928,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
                     lock_expires_at,
+                    closing: false,
                 };
                 history_events.push(event.clone());
                 let join_next = ExecutionEventInner::HistoryEvent { event };
@@ -1014,10 +1023,11 @@ pub(crate) enum EventCall {
     },
     BlockingChildAwaitNext {
         join_set_id: JoinSetId,
+        closing: bool,
     },
     /// combines [`Self::CreateJoinSet`] [`Self::StartAsync`] [`Self::BlockingChildJoinNext`]
     /// Direct call
-    BlockingChildExecutionRequest {
+    BlockingChildDirectCall {
         ffqn: FunctionFqn,
         join_set_id: JoinSetId,
         child_execution_id: ExecutionId,
@@ -1034,13 +1044,16 @@ impl EventCall {
     fn poll_variant(&self) -> Option<PollVariant> {
         match &self {
             // Blocking calls can be polled for JoinSetResponse
-            EventCall::BlockingChildExecutionRequest { join_set_id, .. } => {
+            EventCall::BlockingChildDirectCall { join_set_id, .. } => {
                 Some(PollVariant::JoinNextChild {
                     join_set_id: *join_set_id,
                     kind: JoinNextKind::DirectCall,
                 })
             }
-            EventCall::BlockingChildAwaitNext { join_set_id } => Some(PollVariant::JoinNextChild {
+            EventCall::BlockingChildAwaitNext {
+                join_set_id,
+                closing: _,
+            } => Some(PollVariant::JoinNextChild {
                 join_set_id: *join_set_id,
                 kind: JoinNextKind::AwaitNext,
             }),
@@ -1102,13 +1115,16 @@ impl EventCall {
                 join_set_id: *join_set_id,
                 child_execution_id: *child_execution_id,
             }],
-            EventCall::BlockingChildAwaitNext { join_set_id } => {
+            EventCall::BlockingChildAwaitNext {
+                join_set_id,
+                closing: _,
+            } => {
                 vec![EventHistoryKey::JoinNextChild {
                     join_set_id: *join_set_id,
                     kind: JoinNextKind::AwaitNext,
                 }]
             }
-            EventCall::BlockingChildExecutionRequest {
+            EventCall::BlockingChildDirectCall {
                 join_set_id,
                 child_execution_id,
                 ..
@@ -1286,7 +1302,10 @@ mod tests {
                         .unwrap();
                     event_history
                         .apply(
-                            EventCall::BlockingChildAwaitNext { join_set_id },
+                            EventCall::BlockingChildAwaitNext {
+                                join_set_id,
+                                closing: false,
+                            },
                             &db_pool.connection(),
                             &mut version,
                             fn_registry.as_ref(),
@@ -1470,7 +1489,10 @@ mod tests {
         // issue BlockingChildJoinNext
         let res = event_history
             .apply(
-                EventCall::BlockingChildAwaitNext { join_set_id },
+                EventCall::BlockingChildAwaitNext {
+                    join_set_id,
+                    closing: false,
+                },
                 &db_pool.connection(),
                 &mut version,
                 fn_registry.as_ref(),
@@ -1555,7 +1577,10 @@ mod tests {
                 .unwrap();
             event_history
                 .apply(
-                    EventCall::BlockingChildAwaitNext { join_set_id },
+                    EventCall::BlockingChildAwaitNext {
+                        join_set_id,
+                        closing: false,
+                    },
                     &db_pool.connection(),
                     version,
                     fn_registry,
@@ -1681,7 +1706,10 @@ mod tests {
         // second child result should be found
         let res = event_history
             .apply(
-                EventCall::BlockingChildAwaitNext { join_set_id },
+                EventCall::BlockingChildAwaitNext {
+                    join_set_id,
+                    closing: false,
+                },
                 &db_pool.connection(),
                 &mut version,
                 fn_registry.as_ref(),

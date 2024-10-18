@@ -225,9 +225,9 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         Ok(())
     }
 
-    pub(crate) async fn await_opened_join_set(&mut self) -> Result<Option<()>, ApplyError> {
+    pub(crate) async fn close_opened_join_set(&mut self) -> Result<Option<()>, ApplyError> {
         self.event_history
-            .await_opened_join_set(
+            .close_opened_join_set(
                 &self.db_pool.connection(),
                 &mut self.version,
                 self.fn_registry.as_ref(),
@@ -284,7 +284,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     ValToJoinSetIdError::ParseError => "error running `-await-next` extension function: cannot parse join-set-id",
                     ValToJoinSetIdError::TypeError => "error running `-await-next` extension function: wrong parameter type, expected single string parameter containing join-set-id",
                 }))?;
-                Ok(EventCall::BlockingChildAwaitNext { join_set_id })
+                Ok(EventCall::BlockingChildAwaitNext {
+                    join_set_id,
+                    closing: false,
+                })
             } else if let Some(function_name) = ffqn.function_name.strip_suffix(SUFFIX_FN_SCHEDULE)
             {
                 let ffqn =
@@ -324,7 +327,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
             let execution_id =
                 ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
-            Ok(EventCall::BlockingChildExecutionRequest {
+            Ok(EventCall::BlockingChildDirectCall {
                 ffqn,
                 join_set_id,
                 params: Params::from_wasmtime(Arc::from(params)),

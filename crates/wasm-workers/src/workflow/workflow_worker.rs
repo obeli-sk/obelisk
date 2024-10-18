@@ -498,7 +498,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
 
     async fn close_join_sets(workflow_ctx: &mut WorkflowCtx<C, DB, P>) -> Result<(), WorkerResult> {
         loop {
-            match workflow_ctx.await_opened_join_set().await {
+            match workflow_ctx.close_opened_join_set().await {
                 Ok(None) => return Ok(()),
                 Err(apply_err) => {
                     match apply_err {

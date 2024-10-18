@@ -636,6 +636,7 @@ pub async fn append_batch_respond_to_parent(
                         event: HistoryEvent::JoinNext {
                             join_set_id,
                             lock_expires_at: sim_clock.now(),
+                            closing: false,
                         },
                     },
                 },
@@ -645,7 +646,7 @@ pub async fn append_batch_respond_to_parent(
         let parent_exe = db_connection.get(parent_id).await.unwrap();
         assert_matches!(
             parent_exe.pending_state,
-            PendingState::BlockedByJoinSet { join_set_id: found_join_set_id, lock_expires_at }
+            PendingState::BlockedByJoinSet { join_set_id: found_join_set_id, lock_expires_at, closing: false }
             if found_join_set_id == join_set_id && lock_expires_at == sim_clock.now()
         );
 
@@ -729,6 +730,7 @@ pub async fn append_batch_respond_to_parent(
                         event: HistoryEvent::JoinNext {
                             join_set_id,
                             lock_expires_at: sim_clock.now(),
+                            closing: false,
                         },
                     },
                 },

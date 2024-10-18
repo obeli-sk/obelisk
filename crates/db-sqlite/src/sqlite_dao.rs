@@ -87,7 +87,7 @@ CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_created_at ON t_
 /// Stores executions in `PendingState`
 /// State to column mapping:
 /// `PendingAt`:            `ffqn`
-/// `BlockedByJoinSet`:     `join_set_id`
+/// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
 /// `Locked`:               `executor_id`, `run_id`, `intermittent_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>, `return_type`
 /// `Finished` :            `finished_version` -> `next_version`, `result`
 //FIXME: Remove `return_type`
@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     ffqn TEXT,
 
     join_set_id TEXT,
+    join_set_closing INTEGER,
 
     executor_id TEXT,
     run_id TEXT,
@@ -218,6 +219,7 @@ struct CombinedStateDTO {
     executor_id: Option<ExecutorId>,
     run_id: Option<RunId>,
     join_set_id: Option<JoinSetId>,
+    join_set_closing: Option<bool>,
     result_kind: Option<PendingStateFinishedResultKind>,
 }
 
@@ -247,6 +249,7 @@ impl CombinedState {
                 executor_id: None,
                 run_id: None,
                 join_set_id: None,
+                join_set_closing: None,
                 result_kind: None,
             } => Ok(PendingState::PendingAt {
                 scheduled_at: *scheduled_at,
@@ -257,6 +260,7 @@ impl CombinedState {
                 executor_id: Some(executor_id),
                 run_id: Some(run_id),
                 join_set_id: None,
+                join_set_closing: None,
                 result_kind: None,
             } => Ok(PendingState::Locked {
                 executor_id: *executor_id,
@@ -269,9 +273,11 @@ impl CombinedState {
                 executor_id: None,
                 run_id: None,
                 join_set_id: Some(join_set_id),
+                join_set_closing: Some(join_set_closing),
                 result_kind: None,
             } => Ok(PendingState::BlockedByJoinSet {
                 join_set_id: *join_set_id,
+                closing: *join_set_closing,
                 lock_expires_at: *lock_expires_at,
             }),
             CombinedStateDTO {
@@ -280,6 +286,7 @@ impl CombinedState {
                 executor_id: None,
                 run_id: None,
                 join_set_id: None,
+                join_set_closing: None,
                 result_kind: Some(result_kind),
             } => Ok(PendingState::Finished {
                 finished: PendingStateFinished {
@@ -849,17 +856,19 @@ impl SqlitePool {
             PendingState::BlockedByJoinSet {
                 join_set_id,
                 lock_expires_at,
+                closing: join_set_closing,
             } => {
                 debug!(%join_set_id, "Setting state `BlockedByJoinSet({next_version},{lock_expires_at})`");
                 let mut stmt = tx.prepare_cached(
-                    "INSERT INTO t_state (execution_id, next_version, pending_expires_finished, join_set_id) \
-                                  VALUES (:execution_id, :next_version, :pending_expires_finished, :join_set_id)",
+                    "INSERT INTO t_state (execution_id, next_version, pending_expires_finished, join_set_id, join_set_closing) \
+                                  VALUES (:execution_id, :next_version, :pending_expires_finished, :join_set_id, :join_set_closing)",
                 ).map_err(convert_err)?;
                 stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
                     ":next_version": next_version.0,
                     ":pending_expires_finished": lock_expires_at,
                     ":join_set_id": join_set_id.to_string(),
+                    ":join_set_closing": join_set_closing,
                 })
                 .map_err(convert_err)?;
                 Ok(IndexUpdated::default())
@@ -943,7 +952,7 @@ impl SqlitePool {
         execution_id: ExecutionId,
     ) -> Result<CombinedState, DbError> {
         let mut stmt = tx.prepare(
-            "SELECT ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, result_kind FROM t_state WHERE \
+            "SELECT ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind FROM t_state WHERE \
         execution_id = :execution_id",
         ).map_err(convert_err)?;
         stmt.query_row(
@@ -963,6 +972,7 @@ impl SqlitePool {
                         join_set_id: row
                             .get::<_, Option<JoinSetIdW>>("join_set_id")?
                             .map(|w| w.0),
+                        join_set_closing: row.get::<_, Option<bool>>("join_set_closing")?,
                         result_kind: row
                             .get::<_, Option<FromStrWrapper<PendingStateFinishedResultKind>>>(
                                 "result_kind",
@@ -1268,6 +1278,7 @@ impl SqlitePool {
                     HistoryEvent::JoinNext {
                         join_set_id,
                         lock_expires_at,
+                        closing,
                     },
             } => {
                 // Did the response arrive already?
@@ -1288,6 +1299,7 @@ impl SqlitePool {
                     IndexAction::PendingStateChanged(PendingState::BlockedByJoinSet {
                         join_set_id: *join_set_id,
                         lock_expires_at: *lock_expires_at,
+                        closing: *closing,
                     })
                 }
             }
@@ -1368,6 +1380,7 @@ impl SqlitePool {
             PendingState::BlockedByJoinSet {
                 join_set_id: found_join_set_id,
                 lock_expires_at, // Set to a future time if the worker is keeping the execution warm waiting for the result.
+                closing: _,
             } if join_set_id == found_join_set_id => {
                 // update the pending state.
                 let pending_state = PendingState::PendingAt {
