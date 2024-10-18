@@ -12,7 +12,7 @@ Please exercise caution if attempting to use it for production.
 * Linux x64
 
 ## Core principles
-* Schema first, using [WIT](https://component-model.bytecodealliance.org/design/wit.html) as the interface between workflows and activities.
+* Schema first, using [WASM Component model](https://component-model.bytecodealliance.org/)'s [WIT](https://component-model.bytecodealliance.org/design/wit.html) language as the interface between workflows and activities.
 * Backend developer's delight
     * Single process for running the executor, workflows and activities, with an escape hatch for external activities (planned).
     * Automatic retries on errors, timeouts, workflow executions continuing after a server crash.
