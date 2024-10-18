@@ -375,10 +375,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                         (ExecutionEventInner::Unlocked, None, new_version)
                     }
                     WorkerError::FatalError(
-                        FatalError::NonDeterminismDetected(reason),
+                        FatalError::NondeterminismDetected(reason),
                         version,
                     ) => {
-                        info!("Non-determinism detected - {reason}");
+                        info!("Nondeterminism detected - {reason}");
                         let result = Err(FinishedExecutionError::NondeterminismDetected(reason));
                         let parent = parent.map(|(p, j)| (p, j, result.clone()));
                         (ExecutionEventInner::Finished { result }, parent, version)

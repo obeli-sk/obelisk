@@ -48,7 +48,7 @@ expression: imports
               },
               {
                 "Variant": {
-                  "non-determinism": null,
+                  "nondeterminism": null,
                   "permanent-failure": "String",
                   "permanent-timeout": null
                 }
@@ -120,7 +120,7 @@ expression: imports
               },
               {
                 "Variant": {
-                  "non-determinism": null,
+                  "nondeterminism": null,
                   "permanent-failure": "String",
                   "permanent-timeout": null
                 }

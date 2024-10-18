@@ -706,15 +706,15 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1352] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xce\x09\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1351] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xcd\x09\x01A\x02\x01\
 A\x12\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07minutes\x01y\
 \0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\
 \x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\
 \x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\
 \0\x01B\x08\x01r\x01\x02ids\x04\0\x0bjoin-set-id\x03\0\0\x01r\x01\x02ids\x04\0\x0c\
 execution-id\x03\0\x02\x01r\x01\x02ids\x04\0\x08delay-id\x03\0\x04\x01q\x03\x11p\
-ermanent-failure\x01s\0\x11permanent-timeout\0\0\x0fnon-determinism\0\0\x04\0\x0f\
+ermanent-failure\x01s\0\x11permanent-timeout\0\0\x0enondeterminism\0\0\x04\0\x0f\
 execution-error\x03\0\x06\x03\x01\x17obelisk:types/execution\x05\x01\x02\x03\0\0\
 \x08duration\x02\x03\0\x01\x0bjoin-set-id\x01B\x08\x02\x03\x02\x01\x02\x04\0\x08\
 duration\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x08\

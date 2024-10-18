@@ -505,7 +505,7 @@ impl<C: ClockFn> EventHistory<C> {
                                                         WastVal::Variant("permanent-timeout".to_string(), None)
                                                     }
                                                     FinishedExecutionError::NondeterminismDetected(_) => {
-                                                        WastVal::Variant("non-determinism".to_string(), None)
+                                                        WastVal::Variant("nondeterminism".to_string(), None)
                                                     }
                                                     FinishedExecutionError::PermanentFailure(reason) => WastVal::Variant(
                                                         "permanent-failure".to_string(),

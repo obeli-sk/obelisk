@@ -500,7 +500,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     match apply_err {
                         ApplyError::NondeterminismDetected(reason) => {
                             return Err(WorkerResult::Err(WorkerError::FatalError(
-                                FatalError::NonDeterminismDetected(reason),
+                                FatalError::NondeterminismDetected(reason),
                                 workflow_ctx.version.clone(),
                             )));
                         }

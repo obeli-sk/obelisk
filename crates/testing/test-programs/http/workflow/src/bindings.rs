@@ -32,7 +32,7 @@ pub mod obelisk {
                 PermanentFailure(_rt::String),
                 /// trap, instantiation error, non determinism, unhandled child execution error, param/result parsing error
                 PermanentTimeout,
-                NonDeterminism,
+                Nondeterminism,
             }
             impl ::core::fmt::Debug for ExecutionError {
                 fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
@@ -44,8 +44,8 @@ pub mod obelisk {
                         ExecutionError::PermanentTimeout => {
                             f.debug_tuple("ExecutionError::PermanentTimeout").finish()
                         }
-                        ExecutionError::NonDeterminism => {
-                            f.debug_tuple("ExecutionError::NonDeterminism").finish()
+                        ExecutionError::Nondeterminism => {
+                            f.debug_tuple("ExecutionError::Nondeterminism").finish()
                         }
                     }
                 }
@@ -405,7 +405,7 @@ pub mod testing {
                                     1 => V21::PermanentTimeout,
                                     n => {
                                         debug_assert_eq!(n, 2, "invalid enum discriminant");
-                                        V21::NonDeterminism
+                                        V21::Nondeterminism
                                     }
                                 };
                                 (
@@ -927,13 +927,13 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:testing:http-workflow:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1209] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xbf\x08\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1208] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xbe\x08\x01A\x02\x01\
 A\x10\x01B\x04\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0e\
 get-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x08\x01r\x01\x02\
 ids\x04\0\x0bjoin-set-id\x03\0\0\x01r\x01\x02ids\x04\0\x0cexecution-id\x03\0\x02\
 \x01r\x01\x02ids\x04\0\x08delay-id\x03\0\x04\x01q\x03\x11permanent-failure\x01s\0\
-\x11permanent-timeout\0\0\x0fnon-determinism\0\0\x04\0\x0fexecution-error\x03\0\x06\
+\x11permanent-timeout\0\0\x0enondeterminism\0\0\x04\0\x0fexecution-error\x03\0\x06\
 \x03\x01\x17obelisk:types/execution\x05\x01\x02\x03\0\x01\x0cexecution-id\x02\x03\
 \0\x01\x0bjoin-set-id\x02\x03\0\x01\x0fexecution-error\x01B\x0e\x02\x03\x02\x01\x02\
 \x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\

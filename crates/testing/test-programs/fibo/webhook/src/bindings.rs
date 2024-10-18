@@ -137,7 +137,7 @@ pub mod obelisk {
                 PermanentFailure(_rt::String),
                 /// trap, instantiation error, non determinism, unhandled child execution error, param/result parsing error
                 PermanentTimeout,
-                NonDeterminism,
+                Nondeterminism,
             }
             impl ::core::fmt::Debug for ExecutionError {
                 fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
@@ -149,8 +149,8 @@ pub mod obelisk {
                         ExecutionError::PermanentTimeout => {
                             f.debug_tuple("ExecutionError::PermanentTimeout").finish()
                         }
-                        ExecutionError::NonDeterminism => {
-                            f.debug_tuple("ExecutionError::NonDeterminism").finish()
+                        ExecutionError::Nondeterminism => {
+                            f.debug_tuple("ExecutionError::Nondeterminism").finish()
                         }
                     }
                 }
@@ -403,7 +403,7 @@ pub mod testing {
                                     1 => V15::PermanentTimeout,
                                     n => {
                                         debug_assert_eq!(n, 2, "invalid enum discriminant");
-                                        V15::NonDeterminism
+                                        V15::Nondeterminism
                                     }
                                 };
                                 (
@@ -587,7 +587,7 @@ pub mod testing {
                                     1 => V15::PermanentTimeout,
                                     n => {
                                         debug_assert_eq!(n, 2, "invalid enum discriminant");
-                                        V15::NonDeterminism
+                                        V15::Nondeterminism
                                     }
                                 };
                                 (
@@ -7722,14 +7722,14 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 7280] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf67\x01A\x02\x01A!\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 7279] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf57\x01A\x02\x01A!\x01\
 B\x06\x01@\x01\x07messages\x01\0\x04\0\x05trace\x01\0\x04\0\x05debug\x01\0\x04\0\
 \x04info\x01\0\x04\0\x04warn\x01\0\x04\0\x05error\x01\0\x03\x01\x0fobelisk:log/l\
 og\x05\0\x01B\x08\x01r\x01\x02ids\x04\0\x0bjoin-set-id\x03\0\0\x01r\x01\x02ids\x04\
 \0\x0cexecution-id\x03\0\x02\x01r\x01\x02ids\x04\0\x08delay-id\x03\0\x04\x01q\x03\
-\x11permanent-failure\x01s\0\x11permanent-timeout\0\0\x0fnon-determinism\0\0\x04\
-\0\x0fexecution-error\x03\0\x06\x03\x01\x17obelisk:types/execution\x05\x01\x01B\x06\
+\x11permanent-failure\x01s\0\x11permanent-timeout\0\0\x0enondeterminism\0\0\x04\0\
+\x0fexecution-error\x03\0\x06\x03\x01\x17obelisk:types/execution\x05\x01\x01B\x06\
 \x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07minutes\x01y\0\x05hours\x01\
 y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\x0bnanoseconds\
 y\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\x02in\x01\x01\0\

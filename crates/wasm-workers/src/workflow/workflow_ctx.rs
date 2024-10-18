@@ -59,7 +59,7 @@ impl WorkflowFunctionError {
             Self::DbError(db_error) => WorkerPartialResult::DbError(db_error),
             // fatal errors:
             Self::NondeterminismDetected(reason) => {
-                WorkerPartialResult::FatalError(FatalError::NonDeterminismDetected(reason), version)
+                WorkerPartialResult::FatalError(FatalError::NondeterminismDetected(reason), version)
             }
             Self::ChildExecutionError(err) => {
                 WorkerPartialResult::FatalError(FatalError::ChildExecutionError(err), version)
@@ -552,7 +552,7 @@ pub(crate) mod tests {
         }
     }
 
-    // TODO: verify non-determinism detection:
+    // TODO: verify nondeterminism detection:
     // Start WorkflowWorkerMock, wait until it completes.
     // Copy its execution history to a new database
     // A. Swap two event history items

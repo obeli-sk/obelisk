@@ -296,7 +296,7 @@ impl ExIm {
                             TypeWrapper::Variant(indexmap! {
                                 Box::from("permanent-failure") => Some(TypeWrapper::String),
                                 Box::from("permanent-timeout") => None,
-                                Box::from("non-determinism") => None,
+                                Box::from("nondeterminism") => None,
                             }),
                         ]))));
                         let (ok_part, type_wrapper) = if let Some(original_ret) =

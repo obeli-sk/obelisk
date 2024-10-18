@@ -42,7 +42,7 @@ expression: exports
               },
               {
                 "Variant": {
-                  "non-determinism": null,
+                  "nondeterminism": null,
                   "permanent-failure": "String",
                   "permanent-timeout": null
                 }
@@ -160,7 +160,7 @@ expression: exports
               },
               {
                 "Variant": {
-                  "non-determinism": null,
+                  "nondeterminism": null,
                   "permanent-failure": "String",
                   "permanent-timeout": null
                 }
@@ -213,7 +213,7 @@ expression: exports
               },
               {
                 "Variant": {
-                  "non-determinism": null,
+                  "nondeterminism": null,
                   "permanent-failure": "String",
                   "permanent-timeout": null
                 }
@@ -309,7 +309,7 @@ expression: exports
               },
               {
                 "Variant": {
-                  "non-determinism": null,
+                  "nondeterminism": null,
                   "permanent-failure": "String",
                   "permanent-timeout": null
                 }
