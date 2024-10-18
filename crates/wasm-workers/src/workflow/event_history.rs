@@ -653,7 +653,7 @@ impl<C: ClockFn> EventHistory<C> {
         fn_registry: &dyn FunctionRegistry,
         ffqn: &FunctionFqn,
     ) -> (FunctionMetadata, ConfigId, ComponentRetryConfig) {
-        let (fn_metadata, config_id, child_component_retry_config, _import_type) = fn_registry
+        let (fn_metadata, config_id, child_component_retry_config) = fn_registry
             .get_by_exported_function(ffqn)
             .await
             .unwrap_or_else(|| {

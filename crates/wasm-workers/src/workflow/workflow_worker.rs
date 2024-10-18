@@ -572,7 +572,7 @@ pub(crate) mod tests {
     use concepts::{
         prefixed_ulid::ExecutorId,
         storage::{wait_for_pending_state_fn, CreateRequest, DbConnection, PendingState},
-        ConfigIdType, ImportableType,
+        ConfigIdType,
     };
     use concepts::{ExecutionId, Params};
     use db_tests::Database;
@@ -600,9 +600,7 @@ pub(crate) mod tests {
     #[cfg(not(madsim))]
     const HTTP_GET_SUCCESSFUL_WORKFLOW_FFQN: FunctionFqn = FunctionFqn::new_static_tuple(test_programs_http_get_workflow_builder::exports::testing::http_workflow::workflow::GET_SUCCESSFUL);
 
-    pub(crate) async fn compile_workflow(
-        wasm_path: &str,
-    ) -> (WasmComponent, ConfigId, ImportableType) {
+    pub(crate) async fn compile_workflow(wasm_path: &str) -> (WasmComponent, ConfigId) {
         let engine = Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap();
         let config_id = ConfigId::new(
             ConfigIdType::Workflow,
@@ -610,11 +608,7 @@ pub(crate) mod tests {
             StrVariant::Static("dummy hash"),
         )
         .unwrap();
-        (
-            WasmComponent::new(wasm_path, &engine).unwrap(),
-            config_id,
-            ImportableType::Workflow,
-        )
+        (WasmComponent::new(wasm_path, &engine).unwrap(), config_id)
     }
 
     async fn spawn_workflow<DB: DbConnection + 'static, P: DbPool<DB> + 'static>(

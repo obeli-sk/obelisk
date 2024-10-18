@@ -447,7 +447,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let new_execution_id = ExecutionId::generate();
-                let Some((function_metadata, config_id, import_retry_config, _import_type)) =
+                let Some((function_metadata, config_id, import_retry_config)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
                 else {
                     return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
@@ -501,7 +501,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             span.record("version", tracing::field::display(&version));
             let child_execution_id = ExecutionId::generate();
             let created_at = self.clock_fn.now();
-            let Some((function_metadata, config_id, import_retry_config, _import_type)) =
+            let Some((function_metadata, config_id, import_retry_config)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
             else {
                 return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });

@@ -1037,12 +1037,6 @@ impl FromStr for Digest {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImportableType {
-    ActivityWasm,
-    Workflow,
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Derivative, Eq)]
 #[derivative(PartialEq)]
 pub struct ReturnType {
@@ -1135,12 +1129,7 @@ pub trait FunctionRegistry: Send + Sync {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(
-        FunctionMetadata,
-        ConfigId,
-        ComponentRetryConfig,
-        ImportableType,
-    )>;
+    ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)>;
 
     fn all_exports(&self) -> &[PackageIfcFns];
 }

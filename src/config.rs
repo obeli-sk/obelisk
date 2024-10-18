@@ -7,9 +7,9 @@ use concepts::ComponentRetryConfig;
 use concepts::ConfigId;
 use concepts::ConfigIdType;
 use concepts::ContentDigest;
+use concepts::FunctionMetadata;
 use concepts::PackageIfcFns;
 use concepts::StrVariant;
-use concepts::{FunctionMetadata, ImportableType};
 use serde_with::serde_as;
 use std::path::{Path, PathBuf};
 use tracing::instrument;
@@ -25,7 +25,6 @@ pub(crate) struct ComponentConfig {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ComponentConfigImportable {
-    pub(crate) importable_type: ImportableType,
     pub(crate) exports: Vec<FunctionMetadata>,
     pub(crate) exports_hierarchy: Vec<PackageIfcFns>,
     pub(crate) retry_config: ComponentRetryConfig,

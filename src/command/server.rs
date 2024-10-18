@@ -36,7 +36,6 @@ use concepts::ExecutionId;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
-use concepts::ImportableType;
 use concepts::PackageIfcFns;
 use concepts::ParameterType;
 use concepts::Params;
@@ -1210,7 +1209,6 @@ impl WorkerCompiled {
             importable: Some(ComponentConfigImportable {
                 exports: worker.exported_functions().to_vec(),
                 exports_hierarchy: worker.exports_hierarchy().to_vec(),
-                importable_type: ImportableType::ActivityWasm,
                 retry_config,
             }),
             imports: worker.imported_functions().to_vec(),
@@ -1237,7 +1235,6 @@ impl WorkerCompiled {
             importable: Some(ComponentConfigImportable {
                 exports: worker.exported_functions().to_vec(),
                 exports_hierarchy: worker.exports_hierarchy().to_vec(),
-                importable_type: ImportableType::Workflow,
                 retry_config: ComponentRetryConfig::default(), // no retries
             }),
             imports: worker.imported_functions().to_vec(),
@@ -1291,15 +1288,8 @@ struct ComponentConfigRegistry {
 
 #[derive(Default, Debug)]
 struct ComponentConfigRegistryInner {
-    exported_ffqns: hashbrown::HashMap<
-        FunctionFqn,
-        (
-            ConfigId,
-            FunctionMetadata,
-            ComponentRetryConfig,
-            ImportableType,
-        ),
-    >,
+    exported_ffqns:
+        hashbrown::HashMap<FunctionFqn, (ConfigId, FunctionMetadata, ComponentRetryConfig)>,
     export_hierarchy: Vec<PackageIfcFns>,
     ids_to_components: hashbrown::HashMap<ConfigId, ComponentConfig>,
 }
@@ -1316,8 +1306,7 @@ impl ComponentConfigRegistry {
         }
         if let Some(importable) = &component.importable {
             for exported_ffqn in importable.exports.iter().map(|f| &f.ffqn) {
-                if let Some((offending_id, _, _, _)) = self.inner.exported_ffqns.get(exported_ffqn)
-                {
+                if let Some((offending_id, _, _)) = self.inner.exported_ffqns.get(exported_ffqn) {
                     bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
                 }
             }
@@ -1330,7 +1319,6 @@ impl ComponentConfigRegistry {
                         component.config_id.clone(),
                         exported_fn_metadata.clone(),
                         importable.retry_config,
-                        importable.importable_type,
                     ),
                 );
                 assert!(old.is_none());
@@ -1397,7 +1385,7 @@ impl ComponentConfigRegistry {
         errors: &mut Vec<String>,
     ) {
         for imported_fn_metadata in imports {
-            if let Some((exported_config_id, exported_fn_metadata, _, _)) =
+            if let Some((exported_config_id, exported_fn_metadata, _)) =
                 self.inner.exported_ffqns.get(&imported_fn_metadata.ffqn)
             {
                 // check parameters
@@ -1434,16 +1422,10 @@ impl ComponentConfigRegistryRO {
         &self,
         ffqn: &FunctionFqn,
     ) -> Option<(&ConfigId, ComponentRetryConfig, &FunctionMetadata)> {
-        self.inner.exported_ffqns.get(ffqn).map(
-            |(config_id, fn_metadata, retry_config, _importable)| {
-                (
-                    config_id,
-                    *retry_config,
-                    // self.inner.ids_to_components.get(id).unwrap().clone(),
-                    fn_metadata,
-                )
-            },
-        )
+        self.inner
+            .exported_ffqns
+            .get(ffqn)
+            .map(|(config_id, fn_metadata, retry_config)| (config_id, *retry_config, fn_metadata))
     }
 
     fn list(&self, extensions: bool) -> Vec<ComponentConfig> {
@@ -1472,18 +1454,11 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
     async fn get_by_exported_function(
         &self,
         ffqn: &FunctionFqn,
-    ) -> Option<(
-        FunctionMetadata,
-        ConfigId,
-        ComponentRetryConfig,
-        ImportableType,
-    )> {
+    ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)> {
         self.inner
             .exported_ffqns
             .get(ffqn)
-            .map(|(id, metadata, retry, import_type)| {
-                (metadata.clone(), id.clone(), *retry, *import_type)
-            })
+            .map(|(id, metadata, retry)| (metadata.clone(), id.clone(), *retry))
     }
 
     fn all_exports(&self) -> &[PackageIfcFns] {
