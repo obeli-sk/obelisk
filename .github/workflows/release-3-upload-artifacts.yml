@@ -5,6 +5,11 @@ permissions:
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'The ref (branch or SHA) to process'
+        required: false
+        type: string
   release:
     types: [released]
 
@@ -35,6 +40,9 @@ jobs:
           #   nix_target: obeliskMusl
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}  # Use the ref if provided, otherwise defaults to the current branch/commit
+
       - id: git-info
         run: |
           echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
