@@ -1,5 +1,5 @@
 [package]
-name = "obeli-sk"
+name = "obelisk"
 description = "Deterministic workflow engine"
 readme = "README.md"
 
