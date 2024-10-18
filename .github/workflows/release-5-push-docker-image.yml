@@ -7,6 +7,11 @@ on:
         description: 'The ref (branch or SHA) to process'
         required: false
         type: string
+      latest:
+        description: 'Tag with `latest` if $image == this value'
+        required: false
+        type: string
+        default: ubuntu
 
 defaults:
   run:
@@ -22,11 +27,9 @@ jobs:
           - tarfile: obelisk-x86_64-unknown-linux-gnu.tar.gz
             dockerfile: ubuntu-24.04.Dockerfile
             image_tag: ubuntu
-            latest: true
           - tarfile: obelisk-x86_64-unknown-linux-musl.tar.gz
             dockerfile: alpine.Dockerfile
             image_tag: alpine
-            latest: false
 
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +66,7 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ matrix.latest }}" = "true" ]; then
+          if [ "${{ github.event.inputs.latest }}" = "${{ matrix.image_tag }}" ]; then
             docker tag $IMAGE $IMAGE_BASE
             docker push $IMAGE_BASE
           fi
