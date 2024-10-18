@@ -192,10 +192,10 @@ insta = { version = "1.40.0", features = ["json"] }
 itertools = "0.13"
 lazy_static = "1.5"
 madsim = "0.2.31"
-oci-client = { version = "0.12.1", default-features = false, features = [ # Must match oci-wasm
+oci-client = { version = "0.13.0", default-features = false, features = [ # Must match oci-wasm
     "rustls-tls",
 ] }
-oci-wasm = { version = "0.0.5", default-features = false, features = [
+oci-wasm = { version = "0.1.0", default-features = false, features = [
     "rustls-tls",
 ] }
 prost = "0.13.3"
