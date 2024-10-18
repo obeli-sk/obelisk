@@ -61,16 +61,16 @@ docker exec $CONTAINER_ID obelisk client component list
 ```
 
 ### Pre-built binary
-Download [latest release](https://github.com/obeli-sk/obeli-sk/releases/latest) from the GitHub Release page.
+Download [latest release](https://github.com/obeli-sk/obelisk/releases/latest) from the GitHub Release page.
 
 ### Using latest version from crates.io
 Download using [cargo-binstall](https://crates.io/crates/cargo-binstall)
 ```sh
-cargo binstall obeli-sk
+cargo binstall obelisk
 ```
 or build
 ```sh
-cargo install --locked obeli-sk
+cargo install --locked obelisk
 ```
 
 ### Nix flakes
@@ -79,6 +79,10 @@ nix --extra-experimental-features nix-command --extra-experimental-features flak
 ```
 
 ## Usage
+### Generating a sample configuration file
+```sh
+obelisk server generate-config
+```
 
 ### Starting the server
 ```sh
@@ -88,11 +92,6 @@ obelisk server run
 ### Getting the list of loaded functions
 ```sh
 obelisk client component list
-
-wasm_workflow   fibo_workflow   wasm_workflow:sha256:885d60e8d9b09fadecae99d6143ec65ad819e1991275cba78e2431619381da75
-Exports:
-        testing:fibo-workflow/workflow.fiboa : func(n: u8, iterations: u32) -> u64
-...
 ```
 
 ### Submitting a function to execute (either workflow or activity)
