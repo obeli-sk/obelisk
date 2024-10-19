@@ -36,9 +36,9 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
             nix_target: obeliskPatchForGenericLinux
-          # - target: x86_64-unknown-linux-musl
-          #   os: ubuntu-24.04
-          #   nix_target: obeliskMusl
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+            nix_target: obeliskMusl
     steps:
       - uses: actions/checkout@v4
         with:
