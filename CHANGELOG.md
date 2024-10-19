@@ -3,6 +3,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/obeli-sk/obelisk/compare/v0.6.0...v0.6.1) - 2024-10-19
+
+### Other
+
+- Rollback to a previous `flake.lock` to unblock musl build
+- Use libc variant in `ubuntu-24.04-binstall`
+- Disable `fail-fast`
+- Make `latest` configurable in `release-5`
+- Decouple yaml source from target ref for `release-3`
+- Disable musl build
+- Update the readme
+
 ## [0.6.0](https://github.com/obeli-sk/obelisk/compare/v0.5.0...v0.6.0) - 2024-10-18
 
 ### Added
