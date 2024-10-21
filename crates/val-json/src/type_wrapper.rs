@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TypeWrapper {
     Bool,
     S8,
@@ -160,7 +161,7 @@ mod tests {
 
     #[test]
     fn deserialize_type_u64() {
-        let json = r#"["U64"]"#;
+        let json = r#"["u64"]"#;
         let actual: Vec<TypeWrapper> = serde_json::from_str(json).unwrap();
         assert_eq!(vec![TypeWrapper::U64], actual);
     }

@@ -6,35 +6,35 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-await-next": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
+        "result": {
           "ok": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
-              "U64"
+              "u64"
             ]
           },
           "err": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
               {
-                "Variant": {
+                "variant": {
                   "nondeterminism": null,
-                  "permanent-failure": "String",
+                  "permanent-failure": "string",
                   "permanent-timeout": null
                 }
               }
@@ -50,20 +50,20 @@ expression: exports
     [
       {
         "type_wrapper": {
-          "Variant": {
+          "variant": {
             "at": {
-              "Record": {
-                "nanoseconds": "U32",
-                "seconds": "U64"
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
               }
             },
             "in": {
-              "Variant": {
-                "days": "U32",
-                "hours": "U32",
-                "milliseconds": "U64",
-                "minutes": "U32",
-                "seconds": "U64"
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
               }
             },
             "now": null
@@ -73,15 +73,15 @@ expression: exports
         "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
@@ -91,20 +91,20 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-submit": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
@@ -114,35 +114,35 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-await-next": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
+        "result": {
           "ok": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
-              "U64"
+              "u64"
             ]
           },
           "err": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
               {
-                "Variant": {
+                "variant": {
                   "nondeterminism": null,
-                  "permanent-failure": "String",
+                  "permanent-failure": "string",
                   "permanent-timeout": null
                 }
               }
@@ -158,20 +158,20 @@ expression: exports
     [
       {
         "type_wrapper": {
-          "Variant": {
+          "variant": {
             "at": {
-              "Record": {
-                "nanoseconds": "U32",
-                "seconds": "U64"
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
               }
             },
             "in": {
-              "Variant": {
-                "days": "U32",
-                "hours": "U32",
-                "milliseconds": "U64",
-                "minutes": "U32",
-                "seconds": "U64"
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
               }
             },
             "now": null
@@ -181,25 +181,25 @@ expression: exports
         "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "fiboas",
         "wit_type": "u32"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations-per-fiboa",
         "wit_type": "u32"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
@@ -209,30 +209,30 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-submit": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "fiboas",
         "wit_type": "u32"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations-per-fiboa",
         "wit_type": "u32"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
@@ -242,35 +242,35 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
+        "result": {
           "ok": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
-              "U64"
+              "u64"
             ]
           },
           "err": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
               {
-                "Variant": {
+                "variant": {
                   "nondeterminism": null,
-                  "permanent-failure": "String",
+                  "permanent-failure": "string",
                   "permanent-timeout": null
                 }
               }
@@ -285,35 +285,35 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
+        "result": {
           "ok": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
-              "U64"
+              "u64"
             ]
           },
           "err": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
               {
-                "Variant": {
+                "variant": {
                   "nondeterminism": null,
-                  "permanent-failure": "String",
+                  "permanent-failure": "string",
                   "permanent-timeout": null
                 }
               }
@@ -329,20 +329,20 @@ expression: exports
     [
       {
         "type_wrapper": {
-          "Variant": {
+          "variant": {
             "at": {
-              "Record": {
-                "nanoseconds": "U32",
-                "seconds": "U64"
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
               }
             },
             "in": {
-              "Variant": {
-                "days": "U32",
-                "hours": "U32",
-                "milliseconds": "U64",
-                "minutes": "U32",
-                "seconds": "U64"
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
               }
             },
             "now": null
@@ -352,20 +352,20 @@ expression: exports
         "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
@@ -375,25 +375,25 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
@@ -404,20 +404,20 @@ expression: exports
     [
       {
         "type_wrapper": {
-          "Variant": {
+          "variant": {
             "at": {
-              "Record": {
-                "nanoseconds": "U32",
-                "seconds": "U64"
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
               }
             },
             "in": {
-              "Variant": {
-                "days": "U32",
-                "hours": "U32",
-                "milliseconds": "U64",
-                "minutes": "U32",
-                "seconds": "U64"
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
               }
             },
             "now": null
@@ -427,20 +427,20 @@ expression: exports
         "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
@@ -450,25 +450,25 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
@@ -478,35 +478,35 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
+        "result": {
           "ok": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
-              "U64"
+              "u64"
             ]
           },
           "err": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
               {
-                "Variant": {
+                "variant": {
                   "nondeterminism": null,
-                  "permanent-failure": "String",
+                  "permanent-failure": "string",
                   "permanent-timeout": null
                 }
               }
@@ -522,20 +522,20 @@ expression: exports
     [
       {
         "type_wrapper": {
-          "Variant": {
+          "variant": {
             "at": {
-              "Record": {
-                "nanoseconds": "U32",
-                "seconds": "U64"
+              "record": {
+                "nanoseconds": "u32",
+                "seconds": "u64"
               }
             },
             "in": {
-              "Variant": {
-                "days": "U32",
-                "hours": "U32",
-                "milliseconds": "U64",
-                "minutes": "U32",
-                "seconds": "U64"
+              "variant": {
+                "days": "u32",
+                "hours": "u32",
+                "milliseconds": "u64",
+                "minutes": "u32",
+                "seconds": "u64"
               }
             },
             "now": null
@@ -545,20 +545,20 @@ expression: exports
         "wit_type": "/* use obelisk:types/time.{schedule-at} */ schedule-at"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
@@ -568,25 +568,25 @@ expression: exports
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "/* use obelisk:types/execution.{join-set-id} */ join-set-id"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
@@ -596,13 +596,13 @@ expression: exports
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null
@@ -610,23 +610,23 @@ expression: exports
   "testing:fibo-workflow/workflow-nesting.fibo-start-fiboas": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "fiboas",
         "wit_type": "u32"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations-per-fiboa",
         "wit_type": "u32"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null
@@ -634,18 +634,18 @@ expression: exports
   "testing:fibo-workflow/workflow.fiboa": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null
@@ -653,18 +653,18 @@ expression: exports
   "testing:fibo-workflow/workflow.fiboa-concurrent": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null
@@ -672,18 +672,18 @@ expression: exports
   "testing:fibo-workflow/workflow.fibow": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null

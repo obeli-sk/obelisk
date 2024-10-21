@@ -6,7 +6,7 @@ expression: imports
   "obelisk:workflow/host-activities.new-join-set": [
     [],
     {
-      "type_wrapper": "Own",
+      "type_wrapper": "own",
       "wit_type": "join-set-id"
     },
     null
@@ -14,40 +14,40 @@ expression: imports
   "testing:http-obelisk-ext/http-get.get-successful-await-next": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "borrow<join-set-id>"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
+        "result": {
           "ok": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
               {
-                "Result": {
-                  "ok": "String",
-                  "err": "String"
+                "result": {
+                  "ok": "string",
+                  "err": "string"
                 }
               }
             ]
           },
           "err": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
               {
-                "Variant": {
+                "variant": {
                   "nondeterminism": null,
-                  "permanent-failure": "String",
+                  "permanent-failure": "string",
                   "permanent-timeout": null
                 }
               }
@@ -62,20 +62,20 @@ expression: imports
   "testing:http-obelisk-ext/http-get.get-successful-submit": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "borrow<join-set-id>"
       },
       {
-        "type_wrapper": "String",
+        "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "execution-id"
@@ -85,16 +85,16 @@ expression: imports
   "testing:http/http-get.get": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
-          "ok": "String",
-          "err": "String"
+        "result": {
+          "ok": "string",
+          "err": "string"
         }
       },
       "wit_type": "result<string, string>"
@@ -104,16 +104,16 @@ expression: imports
   "testing:http/http-get.get-successful": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
-          "ok": "String",
-          "err": "String"
+        "result": {
+          "ok": "string",
+          "err": "string"
         }
       },
       "wit_type": "result<string, string>"

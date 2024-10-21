@@ -6,13 +6,13 @@ expression: exports
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null
@@ -20,23 +20,23 @@ expression: exports
   "testing:fibo-workflow/workflow-nesting.fibo-start-fiboas": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "fiboas",
         "wit_type": "u32"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations-per-fiboa",
         "wit_type": "u32"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null
@@ -44,18 +44,18 @@ expression: exports
   "testing:fibo-workflow/workflow.fiboa": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null
@@ -63,18 +63,18 @@ expression: exports
   "testing:fibo-workflow/workflow.fiboa-concurrent": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null
@@ -82,18 +82,18 @@ expression: exports
   "testing:fibo-workflow/workflow.fibow": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null

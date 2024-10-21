@@ -6,7 +6,7 @@ expression: imports
   "obelisk:workflow/host-activities.new-join-set": [
     [],
     {
-      "type_wrapper": "Own",
+      "type_wrapper": "own",
       "wit_type": "join-set-id"
     },
     null
@@ -14,35 +14,35 @@ expression: imports
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "borrow<join-set-id>"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
+        "result": {
           "ok": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
-              "U64"
+              "u64"
             ]
           },
           "err": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
               {
-                "Variant": {
+                "variant": {
                   "nondeterminism": null,
-                  "permanent-failure": "String",
+                  "permanent-failure": "string",
                   "permanent-timeout": null
                 }
               }
@@ -57,20 +57,20 @@ expression: imports
   "testing:fibo-obelisk-ext/fibo.fibo-submit": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "borrow<join-set-id>"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "execution-id"
@@ -80,35 +80,35 @@ expression: imports
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "borrow<join-set-id>"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
+        "result": {
           "ok": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
-              "U64"
+              "u64"
             ]
           },
           "err": {
-            "Tuple": [
+            "tuple": [
               {
-                "Record": {
-                  "id": "String"
+                "record": {
+                  "id": "string"
                 }
               },
               {
-                "Variant": {
+                "variant": {
                   "nondeterminism": null,
-                  "permanent-failure": "String",
+                  "permanent-failure": "string",
                   "permanent-timeout": null
                 }
               }
@@ -123,25 +123,25 @@ expression: imports
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
     [
       {
-        "type_wrapper": "Borrow",
+        "type_wrapper": "borrow",
         "name": "join-set-id",
         "wit_type": "borrow<join-set-id>"
       },
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "iterations",
         "wit_type": "u32"
       }
     ],
     {
       "type_wrapper": {
-        "Record": {
-          "id": "String"
+        "record": {
+          "id": "string"
         }
       },
       "wit_type": "execution-id"
@@ -151,13 +151,13 @@ expression: imports
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null
@@ -165,13 +165,13 @@ expression: imports
   "testing:fibo/fibo.fibo": [
     [
       {
-        "type_wrapper": "U8",
+        "type_wrapper": "u8",
         "name": "n",
         "wit_type": "u8"
       }
     ],
     {
-      "type_wrapper": "U64",
+      "type_wrapper": "u64",
       "wit_type": "u64"
     },
     null

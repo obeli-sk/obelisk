@@ -770,7 +770,7 @@ mod tests {
     #[test]
     fn test_deserialize_sequence() {
         let expected = vec![WastVal::Bool(true), WastVal::U8(8), WastVal::S16(-16)];
-        let param_types = r#"["Bool", "U8", "S16"]"#;
+        let param_types = r#"["bool", "u8", "s16"]"#;
         let param_vals = "[true, 8, -16]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
         let actual = deserialize_str(param_vals, param_types.iter()).unwrap();
@@ -779,7 +779,7 @@ mod tests {
 
     #[test]
     fn deserialize_sequence_too_many_types() {
-        let param_types = r#"["Bool", "U8", "S16"]"#;
+        let param_types = r#"["bool", "u8", "s16"]"#;
         let param_vals = "[true, 8]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
         let err = deserialize_str(param_vals, &param_types).unwrap_err();
@@ -788,7 +788,7 @@ mod tests {
 
     #[test]
     fn deserialize_sequence_too_many_values() {
-        let param_types = r#"["Bool", "U8"]"#;
+        let param_types = r#"["bool", "u8"]"#;
         let param_vals = "[true, 8, false]";
         let param_types: Vec<TypeWrapper> = serde_json::from_str(param_types).unwrap();
         let err = deserialize_str(param_vals, &param_types).unwrap_err();
@@ -813,7 +813,7 @@ mod tests {
             value: WastVal::Bool(true),
         };
         let json = serde_json::to_value(&expected).unwrap();
-        assert_eq!(json!({"type":"Bool","value":true}), json);
+        assert_eq!(json!({"type":"bool","value":true}), json);
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -829,7 +829,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Result":{"ok":null, "err":null}},"value":{"ok":null}}),
+            json!({"type":{"result":{"ok":null, "err":null}},"value":{"ok":null}}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -839,11 +839,11 @@ mod tests {
     #[test]
     fn serde_result_none_invalid() {
         let json =
-            serde_json::json!({"type":{"Result":{"err":null,"ok":null}},"value":{"ok":true}});
+            serde_json::json!({"type":{"result":{"err":null,"ok":null}},"value":{"ok":true}});
         let actual = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!("invalid result value, expected null", actual.to_string());
         let json =
-            serde_json::json!({"type":{"Result":{"err":null,"ok":null}},"value":{"err":true}});
+            serde_json::json!({"type":{"result":{"err":null,"ok":null}},"value":{"err":true}});
         let actual = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!("invalid result value, expected null", actual.to_string());
     }
@@ -859,7 +859,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Result":{"ok":"Bool", "err":null}},"value":{"ok":true}}),
+            json!({"type":{"result":{"ok":"bool", "err":null}},"value":{"ok":true}}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -877,7 +877,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Result":{"ok":null, "err":null}},"value":{"err":null}}),
+            json!({"type":{"result":{"ok":null, "err":null}},"value":{"err":null}}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -895,7 +895,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Result":{"ok":"Bool", "err":"String"}},"value":{"err":"test"}}),
+            json!({"type":{"result":{"ok":"bool", "err":"string"}},"value":{"err":"test"}}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -909,7 +909,7 @@ mod tests {
             value: WastVal::Option(Some(WastVal::Bool(true).into())),
         };
         let json = serde_json::to_value(&expected).unwrap();
-        assert_eq!(json!({"type":{"Option":"Bool"},"value":true}), json);
+        assert_eq!(json!({"type":{"option":"bool"},"value":true}), json);
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -921,7 +921,7 @@ mod tests {
             value: WastVal::Option(None),
         };
         let json = serde_json::to_value(&expected).unwrap();
-        assert_eq!(json!({"type":{"Option":"Bool"},"value":null}), json);
+        assert_eq!(json!({"type":{"option":"bool"},"value":null}), json);
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -933,7 +933,7 @@ mod tests {
             value: WastVal::List(vec![WastVal::Bool(true)]),
         };
         let json = serde_json::to_value(&expected).unwrap();
-        assert_eq!(json!({"type":{"List":"Bool"},"value":[true]}), json);
+        assert_eq!(json!({"type":{"list":"bool"},"value":[true]}), json);
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -952,7 +952,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Record":{"field1":"Bool","field2":"U32"}},"value":{"field1":true,"field2":1}}),
+            json!({"type":{"record":{"field1":"bool","field2":"u32"}},"value":{"field1":true,"field2":1}}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -974,7 +974,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Variant":{"milliseconds":"U64","seconds":"U64","minutes":"U32","hours":"U32","days":"U32"}},
+            json!({"type":{"variant":{"milliseconds":"u64","seconds":"u64","minutes":"u32","hours":"u32","days":"u32"}},
                 "value":{"seconds":1}}),
             json
         );
@@ -993,7 +993,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Variant":{"a":null,"b":null}},"value":"a"}),
+            json!({"type":{"variant":{"a":null,"b":null}},"value":"a"}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -1003,7 +1003,7 @@ mod tests {
     #[test]
     fn serde_variant_wrong_tag() {
         let err = serde_json::from_value::<WastValWithType>(
-            json!({"type":{"Variant":{"a":null,"b":null}},"value":{"c":null}}),
+            json!({"type":{"variant":{"a":null,"b":null}},"value":{"c":null}}),
         )
         .unwrap_err();
         assert_eq!(
@@ -1015,7 +1015,7 @@ mod tests {
     #[test]
     fn serde_variant_unexpected_string() {
         let err = serde_json::from_value::<WastValWithType>(
-            json!({"type":{"Variant":{"string":null,"map":"U64"}},"value":"map"}),
+            json!({"type":{"variant":{"string":null,"map":"u64"}},"value":"map"}),
         )
         .unwrap_err();
         assert_eq!(
@@ -1027,7 +1027,7 @@ mod tests {
     #[test]
     fn serde_variant_unexpected_map() {
         let err = serde_json::from_value::<WastValWithType>(
-            json!({"type":{"Variant":{"string":null,"map":"U64"}},"value":{"string": true}}),
+            json!({"type":{"variant":{"string":null,"map":"u64"}},"value":{"string": true}}),
         )
         .unwrap_err();
         assert_eq!(
@@ -1046,14 +1046,14 @@ mod tests {
             value: WastVal::Enum("a".to_string()),
         };
         let json = serde_json::to_value(&expected).unwrap();
-        assert_eq!(json!({"type":{"Enum":["a","b"]},"value":{"a":null}}), json);
+        assert_eq!(json!({"type":{"enum":["a","b"]},"value":{"a":null}}), json);
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
 
     #[test]
     fn serde_enum_deser_wrong_key_should_fail() {
-        let json = json!({"type":{"Enum":["a","b"]},"value":{"c":null}});
+        let json = json!({"type":{"enum":["a","b"]},"value":{"c":null}});
         let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "cannot deserialize enum: `c` not found in the following list: `{\"a\", \"b\"}`",
@@ -1063,14 +1063,14 @@ mod tests {
 
     #[test]
     fn serde_enum_deser_with_value_should_fail() {
-        let json = json!({"type":{"Enum":["a","b"]},"value":{"a":1}});
+        let json = json!({"type":{"enum":["a","b"]},"value":{"a":1}});
         let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!("invalid type: integer `1`, expected unit", err.to_string());
     }
 
     #[test]
     fn serde_enum_deser_with_too_few_values_should_fail() {
-        let json = json!({"type":{"Tuple":["Bool","U32"]},"value":[false]});
+        let json = json!({"type":{"tuple":["bool","u32"]},"value":[false]});
         let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "invalid length 1, expected value matching Tuple([Bool, U32])",
@@ -1080,7 +1080,7 @@ mod tests {
 
     #[test]
     fn serde_enum_deser_with_too_many_values_should_fail() {
-        let json = json!({"type":{"Tuple":["Bool","U32"]},"value":[false, 1, false]});
+        let json = json!({"type":{"tuple":["bool","u32"]},"value":[false, 1, false]});
         let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "invalid length 3, expected value matching Tuple([Bool, U32])",
@@ -1096,7 +1096,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Tuple":["Bool","U32"]},"value":[false,1]}),
+            json!({"type":{"tuple":["bool","u32"]},"value":[false,1]}),
             json,
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -1111,7 +1111,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Flags":["a","b","c"]},"value":["a","b"]}),
+            json!({"type":{"flags":["a","b","c"]},"value":["a","b"]}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -1120,7 +1120,7 @@ mod tests {
 
     #[test]
     fn serde_flags_duplicates_should_fail() {
-        let json = json!({"type":{"Flags":["a","b","c"]},"value":["a","a"]});
+        let json = json!({"type":{"flags":["a","b","c"]},"value":["a","a"]});
         let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "cannot deserialize flags: flag `a` was found more than once",
@@ -1130,7 +1130,7 @@ mod tests {
 
     #[test]
     fn serde_flags_unknown_flags_should_fail() {
-        let json = json!({"type":{"Flags":["a","b","c"]},"value":["a","d"]});
+        let json = json!({"type":{"flags":["a","b","c"]},"value":["a","d"]});
         let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!(
             "cannot deserialize flags: flag `d` not found in the list: `{\"a\", \"b\", \"c\"}`",

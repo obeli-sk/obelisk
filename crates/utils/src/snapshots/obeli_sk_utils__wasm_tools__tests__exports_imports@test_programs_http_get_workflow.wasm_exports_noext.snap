@@ -6,16 +6,16 @@ expression: exports
   "testing:http-workflow/workflow.get": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
-          "ok": "String",
-          "err": "String"
+        "result": {
+          "ok": "string",
+          "err": "string"
         }
       },
       "wit_type": "result<string, string>"
@@ -25,16 +25,16 @@ expression: exports
   "testing:http-workflow/workflow.get-successful": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
-          "ok": "String",
-          "err": "String"
+        "result": {
+          "ok": "string",
+          "err": "string"
         }
       },
       "wit_type": "result<string, string>"
@@ -45,7 +45,7 @@ expression: exports
     [
       {
         "type_wrapper": {
-          "List": "String"
+          "list": "string"
         },
         "name": "urls",
         "wit_type": "list<string>"
@@ -53,11 +53,11 @@ expression: exports
     ],
     {
       "type_wrapper": {
-        "Result": {
+        "result": {
           "ok": {
-            "List": "String"
+            "list": "string"
           },
-          "err": "String"
+          "err": "string"
         }
       },
       "wit_type": "result<list<string>, string>"
@@ -67,23 +67,23 @@ expression: exports
   "testing:http-workflow/workflow.get-successful-concurrently-stress": [
     [
       {
-        "type_wrapper": "String",
+        "type_wrapper": "string",
         "name": "url",
         "wit_type": "string"
       },
       {
-        "type_wrapper": "U32",
+        "type_wrapper": "u32",
         "name": "concurrency",
         "wit_type": "u32"
       }
     ],
     {
       "type_wrapper": {
-        "Result": {
+        "result": {
           "ok": {
-            "List": "String"
+            "list": "string"
           },
-          "err": "String"
+          "err": "string"
         }
       },
       "wit_type": "result<list<string>, string>"
