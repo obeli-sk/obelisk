@@ -43,7 +43,8 @@ impl Serialize for WastVal {
                 }
                 ser.end()
             }
-            WastVal::Variant(key, value) => {
+            WastVal::Variant(key, None) => serializer.serialize_str(key),
+            WastVal::Variant(key, Some(value)) => {
                 use serde::ser::SerializeMap;
                 let mut ser = serializer.serialize_map(Some(1))?;
                 ser.serialize_entry(key, value)?;
@@ -354,10 +355,23 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
             where
                 E: Error,
             {
-                if matches!(self.0, TypeWrapper::String) {
-                    Ok(WastVal::String(val.into()))
-                } else {
-                    Err(Error::invalid_type(Unexpected::Str(val), &self))
+                match self.0 {
+                    TypeWrapper::String => Ok(WastVal::String(val.into())),
+                    TypeWrapper::Variant(variants) => {
+                        if let Some(found) = variants.get(val) {
+                            if found.is_none() {
+                                Ok(WastVal::Variant(val.to_string(), None))
+                            } else {
+                                Err(Error::custom(format!(
+                                    "cannot deserialize variant: `{val}` must be serialized as map"
+                                )))
+                            }
+                        } else {
+                            Err(Error::custom(format!("cannot deserialize enum: `{val}` not found in the following list: `{variants:?}`")))
+                        }
+                    }
+
+                    _ => Err(Error::invalid_type(Unexpected::Str(val), &self)),
                 }
             }
 
@@ -424,9 +438,9 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                                         .next_value_seed(WastValDeserialize(variant_field_type))?;
                                     Ok(WastVal::Variant(variant_name, Some(Box::new(value))))
                                 } else {
-                                    // consume null
-                                    let _none: Option<()> = map.next_value()?;
-                                    Ok(WastVal::Variant(variant_name, None))
+                                    Err(Error::custom(format!(
+                                        "cannot deserialize variant: `{variant_name}` must be serialized as string"
+                                    )))
                                 }
                             } else {
                                 Err(Error::custom(format!(
@@ -960,7 +974,8 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Variant":{"milliseconds":"U64","seconds":"U64","minutes":"U32","hours":"U32","days":"U32"}},"value":{"seconds":1}}),
+            json!({"type":{"Variant":{"milliseconds":"U64","seconds":"U64","minutes":"U32","hours":"U32","days":"U32"}},
+                "value":{"seconds":1}}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -978,7 +993,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Variant":{"a":null,"b":null}},"value":{"a":null}}),
+            json!({"type":{"Variant":{"a":null,"b":null}},"value":"a"}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -986,13 +1001,37 @@ mod tests {
     }
 
     #[test]
-    fn serde_variant_wrong_field_deser() {
+    fn serde_variant_wrong_tag() {
         let err = serde_json::from_value::<WastValWithType>(
             json!({"type":{"Variant":{"a":null,"b":null}},"value":{"c":null}}),
         )
         .unwrap_err();
         assert_eq!(
             "cannot deserialize variant: `c` not found in the following list: `[\"a\", \"b\"]`",
+            err.to_string()
+        );
+    }
+
+    #[test]
+    fn serde_variant_unexpected_string() {
+        let err = serde_json::from_value::<WastValWithType>(
+            json!({"type":{"Variant":{"string":null,"map":"U64"}},"value":"map"}),
+        )
+        .unwrap_err();
+        assert_eq!(
+            "cannot deserialize variant: `map` must be serialized as map",
+            err.to_string()
+        );
+    }
+
+    #[test]
+    fn serde_variant_unexpected_map() {
+        let err = serde_json::from_value::<WastValWithType>(
+            json!({"type":{"Variant":{"string":null,"map":"U64"}},"value":{"string": true}}),
+        )
+        .unwrap_err();
+        assert_eq!(
+            "cannot deserialize variant: `string` must be serialized as string",
             err.to_string()
         );
     }
