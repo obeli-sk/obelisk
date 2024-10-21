@@ -76,7 +76,6 @@ use tracing::{debug, info, trace};
 use utils::time::now_tokio_instant;
 use utils::time::ClockFn;
 use utils::time::Now;
-use utils::wasm_tools::SUFFIX_PKG_EXT;
 use wasm_workers::activity::activity_worker::ActivityWorker;
 use wasm_workers::engines::Engines;
 use wasm_workers::epoch_ticker::EpochTicker;
@@ -1214,8 +1213,8 @@ impl WorkerCompiled {
             config_id: exec_config.config_id.clone(),
             content_digest,
             importable: Some(ComponentConfigImportable {
-                exports: worker.exported_functions().to_vec(),
-                exports_hierarchy: worker.exports_hierarchy().to_vec(),
+                exports: worker.exported_functions_ext().to_vec(),
+                exports_hierarchy: worker.exports_hierarchy_ext().to_vec(),
                 retry_config,
             }),
             imports: worker.imported_functions().to_vec(),
@@ -1241,8 +1240,8 @@ impl WorkerCompiled {
             config_id: exec_config.config_id.clone(),
             content_digest,
             importable: Some(ComponentConfigImportable {
-                exports: worker.exported_functions().to_vec(),
-                exports_hierarchy: worker.exports_hierarchy().to_vec(),
+                exports: worker.exported_functions_ext().to_vec(),
+                exports_hierarchy: worker.exports_hierarchy_ext().to_vec(),
                 retry_config,
             }),
             imports: worker.imported_functions().to_vec(),
@@ -1442,14 +1441,11 @@ impl ComponentConfigRegistryRO {
             .values()
             .cloned()
             .map(|mut component| {
+                // If no extensions are requested, retain those that are !ext
                 if let (Some(importable), false) = (&mut component.importable, extensions) {
-                    importable.exports.retain(|fn_metadata| {
-                        !fn_metadata
-                            .ffqn
-                            .ifc_fqn
-                            .package_name()
-                            .ends_with(SUFFIX_PKG_EXT)
-                    });
+                    importable
+                        .exports
+                        .retain(|fn_metadata| !fn_metadata.ffqn.ifc_fqn.is_extension());
                 }
                 component
             })

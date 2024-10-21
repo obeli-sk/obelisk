@@ -70,7 +70,7 @@ fn build_internal(tripple: &str) {
             WasmComponent::new(wasm_path, &engine).expect("cannot decode wasm component");
         generated_code += "pub mod exports {\n";
         let mut outer_map: IndexMap<String, Value> = IndexMap::new();
-        for export in component.exim.exports_hierarchy {
+        for export in component.exim.get_exports_hierarchy_noext() {
             let ifc_fqn_split = export
                 .ifc_fqn
                 .split_terminator([':', '/', '@'])
@@ -92,14 +92,8 @@ fn build_internal(tripple: &str) {
             let vec = export
                 .fns
                 .iter()
-                .filter_map(|(function_name, (parameter_types, ret_type, extension))| {
-                    if extension.is_none() {
-                        Some((function_name, (parameter_types, ret_type)))
-                    } else {
-                        None
-                    }
-                })
-                .map(|(function_name, (parameter_types, ret_type))| {
+                .map(|(function_name, (parameter_types, ret_type, extension))| {
+                    assert!(extension.is_none(), "filtered above with `get_exports_hierarchy_noext");
                     // FIXME: Use WIT format in the comment
                     format!(
                         "pub const r#{name_upper}: (&str, &str) = (\"{ifc}\", \"{fn}\"); // func{parameter_types:?} {arrow_ret_type}\n",

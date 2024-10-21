@@ -1,7 +1,7 @@
 use crate::wit_printer::WitPrinter;
 use concepts::{
     FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName, PackageIfcFns,
-    ParameterType, ParameterTypes, ReturnType, StrVariant,
+    ParameterType, ParameterTypes, ReturnType, StrVariant, SUFFIX_PKG_EXT,
 };
 use indexmap::{indexmap, IndexMap};
 use std::{borrow::Cow, path::Path, sync::Arc};
@@ -12,8 +12,6 @@ use wasmtime::{
     Engine,
 };
 use wit_parser::{decoding::DecodedWasm, Resolve, Results, WorldItem, WorldKey};
-
-pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
 
 #[derive(derivative::Derivative)]
 #[derivative(Debug)]
@@ -76,7 +74,7 @@ impl WasmComponent {
     #[must_use]
     pub fn exported_functions(&self, extensions: bool) -> &[FunctionMetadata] {
         if extensions {
-            &self.exim.exports_flat
+            &self.exim.exports_flat_ext
         } else {
             &self.exim.exports_flat_noext
         }
@@ -138,13 +136,33 @@ pub enum DecodeError {
 
 #[derive(Debug, Clone)]
 pub struct ExIm {
-    pub exports_hierarchy: Vec<PackageIfcFns>,
+    exports_hierarchy_ext: Vec<PackageIfcFns>,
     exports_flat_noext: Vec<FunctionMetadata>,
-    pub exports_flat: Vec<FunctionMetadata>,
+    exports_flat_ext: Vec<FunctionMetadata>,
     pub imports_flat: Vec<FunctionMetadata>,
 }
 
 impl ExIm {
+    #[must_use]
+    pub fn get_exports(&self, extensions: bool) -> &[FunctionMetadata] {
+        if extensions {
+            &self.exports_flat_ext
+        } else {
+            &self.exports_flat_noext
+        }
+    }
+
+    #[must_use]
+    pub fn get_exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
+        &self.exports_hierarchy_ext
+    }
+
+    pub fn get_exports_hierarchy_noext(&self) -> impl Iterator<Item = &PackageIfcFns> {
+        self.exports_hierarchy_ext
+            .iter()
+            .filter(|pif| !pif.extension)
+    }
+
     fn decode(
         component: &Component,
         engine: &Engine,
@@ -158,23 +176,32 @@ impl ExIm {
         >,
     ) -> Result<ExIm, DecodeError> {
         let component_type = component.component_type();
-        let mut exports_hierarchy = enrich_function_params(
+        let mut exports_hierarchy_ext = enrich_function_params(
             component_type.exports(engine),
             engine,
             exported_ffqns_to_wit_parsed_meta,
         )?;
         // Verify that there is no -obelisk-ext export
-        for PackageIfcFns { ifc_fqn, fns: _ } in &exports_hierarchy {
-            if ifc_fqn.package_name().ends_with(SUFFIX_PKG_EXT) {
+        for PackageIfcFns {
+            ifc_fqn,
+            fns: _,
+            extension,
+        } in &exports_hierarchy_ext
+        {
+            assert!(
+                !extension,
+                "the list must not be enriched with extensions yet"
+            );
+            if ifc_fqn.is_extension() {
                 return Err(DecodeError::ReservedPackageSuffix(
                     ifc_fqn.package_name().to_string(),
                 ));
             }
         }
 
-        let exports_flat_noext = Self::flatten(&exports_hierarchy);
-        Self::enrich_exports_with_extensions(&mut exports_hierarchy);
-        let exports_flat = Self::flatten(&exports_hierarchy);
+        let exports_flat_noext = Self::flatten(&exports_hierarchy_ext);
+        Self::enrich_exports_with_extensions(&mut exports_hierarchy_ext);
+        let exports_flat_ext = Self::flatten(&exports_hierarchy_ext);
         let imports_hierarchy = enrich_function_params(
             component_type.imports(engine),
             engine,
@@ -182,9 +209,9 @@ impl ExIm {
         )?;
         let imports_flat = Self::flatten(&imports_hierarchy);
         Ok(Self {
-            exports_hierarchy,
+            exports_hierarchy_ext,
             exports_flat_noext,
-            exports_flat,
+            exports_flat_ext,
             imports_flat,
         })
     }
@@ -232,7 +259,13 @@ impl ExIm {
         };
 
         let mut extensions = Vec::with_capacity(exports_hierarchy.len());
-        for PackageIfcFns { ifc_fqn, fns } in exports_hierarchy.iter() {
+        for PackageIfcFns {
+            ifc_fqn,
+            fns,
+            extension,
+        } in exports_hierarchy.iter()
+        {
+            assert!(!extension);
             let obelisk_extended_ifc = IfcFqnName::from_parts(
                 ifc_fqn.namespace(),
                 &format!("{}{SUFFIX_PKG_EXT}", ifc_fqn.package_name()),
@@ -363,6 +396,7 @@ impl ExIm {
             exports_hierarchy.push(PackageIfcFns {
                 ifc_fqn: obelisk_extended_ifc,
                 fns: extension_fns,
+                extension: true,
             });
         }
     }
@@ -483,6 +517,7 @@ fn enrich_function_params<'a>(
             vec.push(PackageIfcFns {
                 ifc_fqn: IfcFqnName::new_arc(ifc_fqn),
                 fns,
+                extension: false,
             });
         } else {
             return Err(DecodeError::CannotReadComponent(format!(

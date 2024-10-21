@@ -81,15 +81,19 @@ impl<C: ClockFn> ActivityWorker<C> {
         })
     }
 
-    pub fn exports_hierarchy(&self) -> &[PackageIfcFns] {
-        &self.exim.exports_hierarchy
+    pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
+        self.exim.get_exports(true)
+    }
+
+    pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
+        self.exim.get_exports_hierarchy_ext()
     }
 }
 
 #[async_trait]
 impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
     fn exported_functions(&self) -> &[FunctionMetadata] {
-        &self.exim.exports_flat
+        self.exim.get_exports(false)
     }
 
     fn imported_functions(&self) -> &[FunctionMetadata] {

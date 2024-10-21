@@ -27,6 +27,9 @@ use val_json::{
 use wasmtime::component::{Type, Val};
 pub mod storage;
 
+pub const NAMESPACE_OBELISK: &str = "obelisk";
+pub const SUFFIX_PKG_EXT: &str = "-obelisk-ext";
+
 pub type FinishedExecutionResult = Result<SupportedFunctionReturnValue, FinishedExecutionError>;
 
 #[derive(thiserror::Error, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -253,6 +256,21 @@ impl IfcFqnName {
             str += version;
         }
         Self::new_arc(Arc::from(str))
+    }
+
+    #[must_use]
+    pub fn is_extension(&self) -> bool {
+        self.package_name().ends_with(SUFFIX_PKG_EXT)
+    }
+
+    #[must_use]
+    pub fn package_strip_extension_suffix(&self) -> Option<&str> {
+        self.package_name().strip_suffix(SUFFIX_PKG_EXT)
+    }
+
+    #[must_use]
+    pub fn is_namespace_obelisk(&self) -> bool {
+        self.namespace() == NAMESPACE_OBELISK
     }
 }
 
@@ -1120,6 +1138,7 @@ impl Display for ParameterTypes {
 #[derive(Debug, Clone)]
 pub struct PackageIfcFns {
     pub ifc_fqn: IfcFqnName,
+    pub extension: bool,
     pub fns: IndexMap<
         FnName,
         (
@@ -1135,8 +1154,6 @@ pub struct ComponentRetryConfig {
     pub max_retries: u32,
     pub retry_exp_backoff: Duration,
 }
-
-pub const NAMESPACE_OBELISK: &str = "obelisk";
 
 /// Implementation must not return `-obelisk-ext` suffix in any package name, nor `obelisk` namespace.
 #[async_trait]

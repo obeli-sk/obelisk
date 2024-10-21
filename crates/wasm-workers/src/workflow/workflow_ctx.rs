@@ -20,7 +20,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, instrument, trace, Span};
 use utils::time::ClockFn;
-use utils::wasm_tools::SUFFIX_PKG_EXT;
 use wasmtime::component::{Linker, Val};
 
 #[derive(thiserror::Error, Debug, Clone)]
@@ -242,7 +241,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         join_set_id: Option<JoinSetId>,
         params: &[Val],
     ) -> Result<EventCall, WorkflowFunctionError> {
-        if let Some(package_name) = ffqn.ifc_fqn.package_name().strip_suffix(SUFFIX_PKG_EXT) {
+        if let Some(package_name) = ffqn.ifc_fqn.package_strip_extension_suffix() {
             let ifc_fqn = IfcFqnName::from_parts(
                 ffqn.ifc_fqn.namespace(),
                 package_name,
@@ -281,7 +280,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                     ));
                 };
                 let join_set_id = join_set_id.ok_or(WorkflowFunctionError::UncategorizedError(
-                    "error running `-submit` extension function: cannot get join-set-id",
+                    "error running `-await-next` extension function: cannot get join-set-id",
                 ))?;
                 Ok(EventCall::BlockingChildAwaitNext {
                     join_set_id,

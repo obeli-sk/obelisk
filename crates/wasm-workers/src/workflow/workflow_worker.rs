@@ -4,7 +4,6 @@ use super::workflow_ctx::{WorkflowCtx, WorkflowFunctionError};
 use crate::host_exports::{val_to_join_set_id, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SUBMIT};
 use crate::workflow::workflow_ctx::WorkerPartialResult;
 use crate::WasmFileError;
-use crate::NAMESPACE_OBELISK_WITH_COLON;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use concepts::storage::{DbConnection, DbPool};
@@ -22,7 +21,7 @@ use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 use tracing::{error, info, instrument, trace, warn, Span};
 use utils::time::{now_tokio_instant, ClockFn};
-use utils::wasm_tools::{ExIm, WasmComponent, SUFFIX_PKG_EXT};
+use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::{ComponentExportIndex, InstancePre};
 use wasmtime::{component::Val, Engine};
 use wasmtime::{Store, UpdateDeadline};
@@ -106,11 +105,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
 
         // Mock imported functions
         for import in fn_registry.all_exports() {
-            if import
-                .ifc_fqn
-                .deref()
-                .starts_with(NAMESPACE_OBELISK_WITH_COLON)
-            {
+            if import.ifc_fqn.is_namespace_obelisk() {
                 warn!(ifc_fqn = %import.ifc_fqn, "Skipping mock of reserved interface");
                 continue;
             }
@@ -135,7 +130,7 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
                               results: &mut [Val]| {
                             let ffqn = ffqn.clone();
                             let join_set_id = if !params.is_empty()
-                                && ffqn.ifc_fqn.package_name().ends_with(SUFFIX_PKG_EXT)
+                                && ffqn.ifc_fqn.is_extension()
                                 && (ffqn.function_name.ends_with(SUFFIX_FN_SUBMIT)
                                     || ffqn.function_name.ends_with(SUFFIX_FN_AWAIT_NEXT))
                             {
@@ -201,12 +196,12 @@ impl<C: ClockFn> WorkflowWorkerCompiled<C> {
         })
     }
 
-    pub fn exported_functions(&self) -> &[FunctionMetadata] {
-        &self.wasm_component.exim.exports_flat
+    pub fn exported_functions_ext(&self) -> &[FunctionMetadata] {
+        self.wasm_component.exim.get_exports(true)
     }
 
-    pub fn exports_hierarchy(&self) -> &[PackageIfcFns] {
-        &self.wasm_component.exim.exports_hierarchy
+    pub fn exports_hierarchy_ext(&self) -> &[PackageIfcFns] {
+        self.wasm_component.exim.get_exports_hierarchy_ext()
     }
 
     pub fn imported_functions(&self) -> &[FunctionMetadata] {
@@ -544,7 +539,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
     for WorkflowWorker<C, DB, P>
 {
     fn exported_functions(&self) -> &[FunctionMetadata] {
-        &self.exim.exports_flat
+        self.exim.get_exports(false)
     }
 
     fn imported_functions(&self) -> &[FunctionMetadata] {

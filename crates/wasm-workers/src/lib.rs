@@ -1,5 +1,4 @@
 use concepts::StrVariant;
-use concepts::NAMESPACE_OBELISK;
 use std::{error::Error, fmt::Debug};
 use utils::wasm_tools::{self};
 
@@ -11,8 +10,6 @@ mod host_exports;
 pub mod std_output_stream;
 pub mod webhook;
 pub mod workflow;
-
-const NAMESPACE_OBELISK_WITH_COLON: &str = const_format::formatcp!("{}:", NAMESPACE_OBELISK);
 
 #[derive(thiserror::Error, Debug)]
 pub enum WasmFileError {
@@ -109,6 +106,7 @@ pub(crate) mod tests {
             wasm_components: Vec<(WasmComponent, ConfigId)>,
         ) -> Arc<dyn FunctionRegistry> {
             let mut ffqn_to_fn_details = hashbrown::HashMap::new();
+            #[expect(clippy::type_complexity)]
             let mut export_hierarchy: hashbrown::HashMap<
                 IfcFqnName,
                 IndexMap<
@@ -121,17 +119,12 @@ pub(crate) mod tests {
                 >,
             > = hashbrown::HashMap::new();
             for (wasm_component, config_id) in wasm_components {
-                for exported_function in wasm_component.exim.exports_flat {
-                    let ffqn = exported_function.ffqn;
+                for exported_function in wasm_component.exim.get_exports(true) {
+                    let ffqn = exported_function.ffqn.clone();
                     ffqn_to_fn_details.insert(
                         ffqn.clone(),
                         (
-                            FunctionMetadata {
-                                ffqn: ffqn.clone(),
-                                parameter_types: exported_function.parameter_types.clone(),
-                                return_type: exported_function.return_type.clone(),
-                                extension: exported_function.extension,
-                            },
+                            exported_function.clone(),
                             config_id.clone(),
                             ComponentRetryConfig {
                                 max_retries: 0,
@@ -144,8 +137,8 @@ pub(crate) mod tests {
                     index_map.insert(
                         ffqn.function_name.clone(),
                         (
-                            exported_function.parameter_types,
-                            exported_function.return_type,
+                            exported_function.parameter_types.clone(),
+                            exported_function.return_type.clone(),
                             exported_function.extension,
                         ),
                     );
@@ -153,7 +146,11 @@ pub(crate) mod tests {
             }
             let export_hierarchy = export_hierarchy
                 .into_iter()
-                .map(|(ifc_fqn, fns)| PackageIfcFns { ifc_fqn, fns })
+                .map(|(ifc_fqn, fns)| PackageIfcFns {
+                    extension: ifc_fqn.is_extension(),
+                    ifc_fqn,
+                    fns,
+                })
                 .collect();
             Arc::from(TestingFnRegistry {
                 ffqn_to_fn_details,
@@ -179,6 +176,7 @@ pub(crate) mod tests {
     pub(crate) fn fn_registry_dummy(ffqns: &[FunctionFqn]) -> Arc<dyn FunctionRegistry> {
         let component_id = ConfigId::dummy_activity();
         let mut ffqn_to_fn_details = hashbrown::HashMap::new();
+        #[expect(clippy::type_complexity)]
         let mut export_hierarchy: hashbrown::HashMap<
             IfcFqnName,
             IndexMap<
@@ -215,7 +213,11 @@ pub(crate) mod tests {
         }
         let export_hierarchy = export_hierarchy
             .into_iter()
-            .map(|(ifc_fqn, fns)| PackageIfcFns { ifc_fqn, fns })
+            .map(|(ifc_fqn, fns)| PackageIfcFns {
+                extension: ifc_fqn.is_extension(),
+                ifc_fqn,
+                fns,
+            })
             .collect();
         Arc::new(TestingFnRegistry {
             ffqn_to_fn_details,

@@ -250,7 +250,7 @@ impl ActivityWasmConfigToml {
             .await?;
         std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
         let config_id = crate::config::config_id(
-            ConfigIdType::WebhookWasm,
+            ConfigIdType::ActivityWasm,
             std::hash::Hasher::finish(&hasher),
             StrVariant::from(common.name.clone()),
         )?;
@@ -317,7 +317,7 @@ impl WorkflowConfigToml {
             .await?;
         std::hash::Hash::hash(&common, &mut hasher); // Add `common` which contains the actual `content_digest`
         let config_id = crate::config::config_id(
-            ConfigIdType::WebhookWasm,
+            ConfigIdType::Workflow,
             std::hash::Hasher::finish(&hasher),
             StrVariant::from(common.name.clone()),
         )?;

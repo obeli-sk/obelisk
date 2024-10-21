@@ -7,7 +7,7 @@ use crate::host_exports::{
     execution_id_into_val, SUFFIX_FN_AWAIT_NEXT, SUFFIX_FN_SCHEDULE, SUFFIX_FN_SUBMIT,
 };
 use crate::std_output_stream::{LogStream, StdOutput};
-use crate::{WasmFileError, NAMESPACE_OBELISK_WITH_COLON};
+use crate::WasmFileError;
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
     ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner, HistoryEvent,
@@ -32,7 +32,7 @@ use std::{fmt::Debug, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, instrument, trace, warn, Instrument, Level, Span};
 use utils::time::ClockFn;
-use utils::wasm_tools::{ExIm, WasmComponent, SUFFIX_PKG_EXT};
+use utils::wasm_tools::{ExIm, WasmComponent};
 use wasmtime::component::ResourceTable;
 use wasmtime::component::{Linker, Val};
 use wasmtime::{Engine, Store, UpdateDeadline};
@@ -115,10 +115,7 @@ impl WebhookCompiled {
 
         // Mock imported functions
         for import in fn_registry.all_exports() {
-            if import
-                .ifc_fqn
-                .deref()
-                .starts_with(NAMESPACE_OBELISK_WITH_COLON)
+            if import.ifc_fqn.is_namespace_obelisk()
                 || import
                     .ifc_fqn
                     .deref()
@@ -397,7 +394,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         results: &mut [Val],
     ) -> Result<(), WebhookFunctionError> {
         debug!(?params, "call_imported_fn start");
-        if let Some(package_name) = ffqn.ifc_fqn.package_name().strip_suffix(SUFFIX_PKG_EXT) {
+        if let Some(package_name) = ffqn.ifc_fqn.package_strip_extension_suffix() {
             let ifc_fqn = IfcFqnName::from_parts(
                 ffqn.ifc_fqn.namespace(),
                 package_name,
