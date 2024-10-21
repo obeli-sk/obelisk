@@ -799,6 +799,7 @@ mod tests {
             value: WastVal::Bool(true),
         };
         let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(json!({"type":"Bool","value":true}), json);
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -813,6 +814,10 @@ mod tests {
             value: WastVal::Result(Ok(None)),
         };
         let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            json!({"type":{"Result":{"ok":null, "err":null}},"value":{"Ok":null}}),
+            json
+        );
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -839,6 +844,10 @@ mod tests {
             value: WastVal::Result(Ok(Some(WastVal::Bool(true).into()))),
         };
         let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            json!({"type":{"Result":{"ok":"Bool", "err":null}},"value":{"Ok":true}}),
+            json
+        );
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -853,6 +862,10 @@ mod tests {
             value: WastVal::Result(Err(None)),
         };
         let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            json!({"type":{"Result":{"ok":null, "err":null}},"value":{"Err":null}}),
+            json
+        );
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -867,6 +880,10 @@ mod tests {
             value: WastVal::Result(Err(Some(WastVal::String("test".into()).into()))),
         };
         let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            json!({"type":{"Result":{"ok":"Bool", "err":"String"}},"value":{"Err":"test"}}),
+            json
+        );
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -878,6 +895,7 @@ mod tests {
             value: WastVal::Option(Some(WastVal::Bool(true).into())),
         };
         let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(json!({"type":{"Option":"Bool"},"value":true}), json);
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -889,6 +907,7 @@ mod tests {
             value: WastVal::Option(None),
         };
         let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(json!({"type":{"Option":"Bool"},"value":null}), json);
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -900,6 +919,7 @@ mod tests {
             value: WastVal::List(vec![WastVal::Bool(true)]),
         };
         let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(json!({"type":{"List":"Bool"},"value":[true]}), json);
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -918,8 +938,8 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json,
-            json!({"type":{"Record":{"field1":"Bool","field2":"U32"}},"value":{"field1":true,"field2":1}})
+            json!({"type":{"Record":{"field1":"Bool","field2":"U32"}},"value":{"field1":true,"field2":1}}),
+            json
         );
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
@@ -940,8 +960,8 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json,
-            json!({"type":{"Variant":{"milliseconds":"U64","seconds":"U64","minutes":"U32","hours":"U32","days":"U32"}},"value":{"seconds":1}})
+            json!({"type":{"Variant":{"milliseconds":"U64","seconds":"U64","minutes":"U32","hours":"U32","days":"U32"}},"value":{"seconds":1}}),
+            json
         );
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
@@ -958,8 +978,8 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json,
-            json!({"type":{"Variant":{"a":null,"b":null}},"value":{"a":null}})
+            json!({"type":{"Variant":{"a":null,"b":null}},"value":{"a":null}}),
+            json
         );
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
@@ -987,7 +1007,7 @@ mod tests {
             value: WastVal::Enum("a".to_string()),
         };
         let json = serde_json::to_value(&expected).unwrap();
-        assert_eq!(json, json!({"type":{"Enum":["a","b"]},"value":{"a":null}}));
+        assert_eq!(json!({"type":{"Enum":["a","b"]},"value":{"a":null}}), json);
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
     }
@@ -1007,21 +1027,6 @@ mod tests {
         let json = json!({"type":{"Enum":["a","b"]},"value":{"a":1}});
         let err = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!("invalid type: integer `1`, expected unit", err.to_string());
-    }
-
-    #[test]
-    fn serde_tuple() {
-        let expected = WastValWithType {
-            r#type: TypeWrapper::Tuple(Box::new([TypeWrapper::Bool, TypeWrapper::U32])),
-            value: WastVal::Tuple(vec![WastVal::Bool(false), WastVal::U32(1)]),
-        };
-        let json = serde_json::to_value(&expected).unwrap();
-        assert_eq!(
-            json,
-            json!({"type":{"Tuple":["Bool","U32"]},"value":[false,1]})
-        );
-        let actual = serde_json::from_value(json).unwrap();
-        assert_eq!(expected, actual);
     }
 
     #[test]
@@ -1045,6 +1050,21 @@ mod tests {
     }
 
     #[test]
+    fn serde_tuple() {
+        let expected = WastValWithType {
+            r#type: TypeWrapper::Tuple(Box::new([TypeWrapper::Bool, TypeWrapper::U32])),
+            value: WastVal::Tuple(vec![WastVal::Bool(false), WastVal::U32(1)]),
+        };
+        let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            json!({"type":{"Tuple":["Bool","U32"]},"value":[false,1]}),
+            json,
+        );
+        let actual = serde_json::from_value(json).unwrap();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
     fn serde_flags() {
         let expected = WastValWithType {
             r#type: TypeWrapper::Flags(indexset! {Box::from("a"), Box::from("b"), Box::from("c")}),
@@ -1052,8 +1072,8 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json,
-            json!({"type":{"Flags":["a","b","c"]},"value":["a","b"]})
+            json!({"type":{"Flags":["a","b","c"]},"value":["a","b"]}),
+            json
         );
         let actual = serde_json::from_value(json).unwrap();
         assert_eq!(expected, actual);
