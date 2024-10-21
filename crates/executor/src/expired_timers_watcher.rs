@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use concepts::storage::DbConnection;
 use concepts::storage::DbError;
 use concepts::storage::DbPool;
+use concepts::storage::ExecutionLog;
 use concepts::storage::JoinSetResponseEvent;
 use concepts::{
     storage::{ExecutionEventInner, ExpiredTimer, JoinSetResponse},
@@ -117,9 +118,11 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                 retry_exp_backoff,
                 parent,
             } => {
-                let append = if intermittent_event_count < max_retries {
-                    let duration =
-                        retry_exp_backoff * 2_u32.saturating_pow(intermittent_event_count);
+                let append = if let Some(duration) = ExecutionLog::can_be_retried_after(
+                    intermittent_event_count + 1,
+                    max_retries,
+                    retry_exp_backoff,
+                ) {
                     let expires_at = executed_at + duration;
                     debug!(%execution_id, "Retrying execution with expired lock after {duration:?} at {expires_at}");
                     Append {

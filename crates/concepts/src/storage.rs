@@ -44,6 +44,7 @@ impl ExecutionLog {
         max_retries: u32,
         retry_exp_backoff: Duration,
     ) -> Option<Duration> {
+        // If max_retries == u32::MAX, wrapping is OK after this succeeds - we want to retry forever.
         if intermittent_event_count <= max_retries {
             // TODO: Add test for number of retries
             let duration = retry_exp_backoff * 2_u32.saturating_pow(intermittent_event_count - 1);
@@ -808,6 +809,7 @@ pub enum ExpiredTimer {
     Lock {
         execution_id: ExecutionId,
         version: Version,
+        /// As the execution may still be running, this represents the number of intermittent failures prior to this execution.
         intermittent_event_count: u32,
         max_retries: u32,
         retry_exp_backoff: Duration,
