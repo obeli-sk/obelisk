@@ -331,7 +331,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 config_id: Some(component.config_id.into()),
                 digest: component.content_digest.to_string(),
                 exports: if let Some(exports) = component.importable {
-                    inspect_fns(exports.exports)
+                    inspect_fns(exports.exports_ext)
                 } else {
                     vec![]
                 },
@@ -1213,8 +1213,8 @@ impl WorkerCompiled {
             config_id: exec_config.config_id.clone(),
             content_digest,
             importable: Some(ComponentConfigImportable {
-                exports: worker.exported_functions_ext().to_vec(),
-                exports_hierarchy: worker.exports_hierarchy_ext().to_vec(),
+                exports_ext: worker.exported_functions_ext().to_vec(),
+                exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
                 retry_config,
             }),
             imports: worker.imported_functions().to_vec(),
@@ -1240,8 +1240,8 @@ impl WorkerCompiled {
             config_id: exec_config.config_id.clone(),
             content_digest,
             importable: Some(ComponentConfigImportable {
-                exports: worker.exported_functions_ext().to_vec(),
-                exports_hierarchy: worker.exports_hierarchy_ext().to_vec(),
+                exports_ext: worker.exported_functions_ext().to_vec(),
+                exports_hierarchy_ext: worker.exports_hierarchy_ext().to_vec(),
                 retry_config,
             }),
             imports: worker.imported_functions().to_vec(),
@@ -1295,7 +1295,7 @@ struct ComponentConfigRegistry {
 
 #[derive(Default, Debug)]
 struct ComponentConfigRegistryInner {
-    exported_ffqns:
+    exported_ffqns_ext:
         hashbrown::HashMap<FunctionFqn, (ConfigId, FunctionMetadata, ComponentRetryConfig)>,
     export_hierarchy: Vec<PackageIfcFns>,
     ids_to_components: hashbrown::HashMap<ConfigId, ComponentConfig>,
@@ -1312,15 +1312,16 @@ impl ComponentConfigRegistry {
             bail!("component {} is already inserted", component.config_id);
         }
         if let Some(importable) = &component.importable {
-            for exported_ffqn in importable.exports.iter().map(|f| &f.ffqn) {
-                if let Some((offending_id, _, _)) = self.inner.exported_ffqns.get(exported_ffqn) {
+            for exported_ffqn in importable.exports_ext.iter().map(|f| &f.ffqn) {
+                if let Some((offending_id, _, _)) = self.inner.exported_ffqns_ext.get(exported_ffqn)
+                {
                     bail!("function {exported_ffqn} is already exported by component {offending_id}, cannot insert {}", component.config_id);
                 }
             }
 
-            // insert to `exported_ffqns`
-            for exported_fn_metadata in &importable.exports {
-                let old = self.inner.exported_ffqns.insert(
+            // insert to `exported_ffqns_ext`
+            for exported_fn_metadata in &importable.exports_ext {
+                let old = self.inner.exported_ffqns_ext.insert(
                     exported_fn_metadata.ffqn.clone(),
                     (
                         component.config_id.clone(),
@@ -1333,7 +1334,7 @@ impl ComponentConfigRegistry {
             // insert to `export_hierarchy`
             self.inner
                 .export_hierarchy
-                .extend_from_slice(&importable.exports_hierarchy);
+                .extend_from_slice(&importable.exports_hierarchy_ext);
         }
         // insert to `ids_to_components`
         let old = self
@@ -1392,8 +1393,10 @@ impl ComponentConfigRegistry {
         errors: &mut Vec<String>,
     ) {
         for imported_fn_metadata in imports {
-            if let Some((exported_config_id, exported_fn_metadata, _)) =
-                self.inner.exported_ffqns.get(&imported_fn_metadata.ffqn)
+            if let Some((exported_config_id, exported_fn_metadata, _)) = self
+                .inner
+                .exported_ffqns_ext
+                .get(&imported_fn_metadata.ffqn)
             {
                 // check parameters
                 if imported_fn_metadata.parameter_types != exported_fn_metadata.parameter_types {
@@ -1430,7 +1433,7 @@ impl ComponentConfigRegistryRO {
         ffqn: &FunctionFqn,
     ) -> Option<(&ConfigId, ComponentRetryConfig, &FunctionMetadata)> {
         self.inner
-            .exported_ffqns
+            .exported_ffqns_ext
             .get(ffqn)
             .map(|(config_id, fn_metadata, retry_config)| (config_id, *retry_config, fn_metadata))
     }
@@ -1444,7 +1447,7 @@ impl ComponentConfigRegistryRO {
                 // If no extensions are requested, retain those that are !ext
                 if let (Some(importable), false) = (&mut component.importable, extensions) {
                     importable
-                        .exports
+                        .exports_ext
                         .retain(|fn_metadata| !fn_metadata.ffqn.ifc_fqn.is_extension());
                 }
                 component
@@ -1459,10 +1462,14 @@ impl FunctionRegistry for ComponentConfigRegistryRO {
         &self,
         ffqn: &FunctionFqn,
     ) -> Option<(FunctionMetadata, ConfigId, ComponentRetryConfig)> {
-        self.inner
-            .exported_ffqns
-            .get(ffqn)
-            .map(|(id, metadata, retry)| (metadata.clone(), id.clone(), *retry))
+        if ffqn.ifc_fqn.is_extension() {
+            None
+        } else {
+            self.inner
+                .exported_ffqns_ext
+                .get(ffqn)
+                .map(|(id, metadata, retry)| (metadata.clone(), id.clone(), *retry))
+        }
     }
 
     fn all_exports(&self) -> &[PackageIfcFns] {

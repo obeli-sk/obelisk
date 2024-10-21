@@ -25,8 +25,9 @@ pub(crate) struct ComponentConfig {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ComponentConfigImportable {
-    pub(crate) exports: Vec<FunctionMetadata>,
-    pub(crate) exports_hierarchy: Vec<PackageIfcFns>,
+    // Workflows or Activities, not Webhooks
+    pub(crate) exports_ext: Vec<FunctionMetadata>,
+    pub(crate) exports_hierarchy_ext: Vec<PackageIfcFns>,
     pub(crate) retry_config: ComponentRetryConfig,
 }
 
