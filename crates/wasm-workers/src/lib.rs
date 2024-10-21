@@ -92,8 +92,8 @@ pub(crate) mod tests {
 
     use async_trait::async_trait;
     use concepts::{
-        ComponentRetryConfig, ConfigId, FnName, FunctionFqn, FunctionMetadata, FunctionRegistry,
-        IfcFqnName, PackageIfcFns, ParameterTypes, ReturnType,
+        ComponentRetryConfig, ConfigId, FnName, FunctionExtension, FunctionFqn, FunctionMetadata,
+        FunctionRegistry, IfcFqnName, PackageIfcFns, ParameterTypes, ReturnType,
     };
     use indexmap::IndexMap;
     use utils::wasm_tools::WasmComponent;
@@ -111,7 +111,14 @@ pub(crate) mod tests {
             let mut ffqn_to_fn_details = hashbrown::HashMap::new();
             let mut export_hierarchy: hashbrown::HashMap<
                 IfcFqnName,
-                IndexMap<FnName, (ParameterTypes, Option<ReturnType>)>,
+                IndexMap<
+                    FnName,
+                    (
+                        ParameterTypes,
+                        Option<ReturnType>,
+                        Option<FunctionExtension>,
+                    ),
+                >,
             > = hashbrown::HashMap::new();
             for (wasm_component, config_id) in wasm_components {
                 for exported_function in wasm_component.exim.exports_flat {
@@ -123,6 +130,7 @@ pub(crate) mod tests {
                                 ffqn: ffqn.clone(),
                                 parameter_types: exported_function.parameter_types.clone(),
                                 return_type: exported_function.return_type.clone(),
+                                extension: exported_function.extension,
                             },
                             config_id.clone(),
                             ComponentRetryConfig {
@@ -138,6 +146,7 @@ pub(crate) mod tests {
                         (
                             exported_function.parameter_types,
                             exported_function.return_type,
+                            exported_function.extension,
                         ),
                     );
                 }
@@ -172,7 +181,14 @@ pub(crate) mod tests {
         let mut ffqn_to_fn_details = hashbrown::HashMap::new();
         let mut export_hierarchy: hashbrown::HashMap<
             IfcFqnName,
-            IndexMap<FnName, (ParameterTypes, Option<ReturnType>)>,
+            IndexMap<
+                FnName,
+                (
+                    ParameterTypes,
+                    Option<ReturnType>,
+                    Option<FunctionExtension>,
+                ),
+            >,
         > = hashbrown::HashMap::new();
         for ffqn in ffqns {
             ffqn_to_fn_details.insert(
@@ -182,6 +198,7 @@ pub(crate) mod tests {
                         ffqn: ffqn.clone(),
                         parameter_types: ParameterTypes::default(),
                         return_type: None,
+                        extension: None,
                     },
                     component_id.clone(),
                     ComponentRetryConfig {
@@ -193,7 +210,7 @@ pub(crate) mod tests {
             let index_map = export_hierarchy.entry(ffqn.ifc_fqn.clone()).or_default();
             index_map.insert(
                 ffqn.function_name.clone(),
-                (ParameterTypes::default(), None),
+                (ParameterTypes::default(), None, None),
             );
         }
         let export_hierarchy = export_hierarchy

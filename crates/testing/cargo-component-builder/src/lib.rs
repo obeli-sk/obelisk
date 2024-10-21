@@ -92,6 +92,13 @@ fn build_internal(tripple: &str) {
             let vec = export
                 .fns
                 .iter()
+                .filter_map(|(function_name, (parameter_types, ret_type, extension))| {
+                    if extension.is_none() {
+                        Some((function_name, (parameter_types, ret_type)))
+                    } else {
+                        None
+                    }
+                })
                 .map(|(function_name, (parameter_types, ret_type))| {
                     // FIXME: Use WIT format in the comment
                     format!(

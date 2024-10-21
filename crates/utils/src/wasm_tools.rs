@@ -1,7 +1,7 @@
 use crate::wit_printer::WitPrinter;
 use concepts::{
-    FnName, FunctionFqn, FunctionMetadata, IfcFqnName, PackageIfcFns, ParameterType,
-    ParameterTypes, ReturnType, StrVariant,
+    FnName, FunctionExtension, FunctionFqn, FunctionMetadata, IfcFqnName, PackageIfcFns,
+    ParameterType, ParameterTypes, ReturnType, StrVariant,
 };
 use indexmap::{indexmap, IndexMap};
 use std::{borrow::Cow, path::Path, sync::Arc};
@@ -139,8 +139,7 @@ pub enum DecodeError {
 #[derive(Debug, Clone)]
 pub struct ExIm {
     pub exports_hierarchy: Vec<PackageIfcFns>,
-    pub imports_hierarchy: Vec<PackageIfcFns>,
-    pub exports_flat_noext: Vec<FunctionMetadata>,
+    exports_flat_noext: Vec<FunctionMetadata>,
     pub exports_flat: Vec<FunctionMetadata>,
     pub imports_flat: Vec<FunctionMetadata>,
 }
@@ -184,7 +183,6 @@ impl ExIm {
         let imports_flat = Self::flatten(&imports_hierarchy);
         Ok(Self {
             exports_hierarchy,
-            imports_hierarchy,
             exports_flat_noext,
             exports_flat,
             imports_flat,
@@ -246,10 +244,15 @@ impl ExIm {
                 //(fun, (param_types, return_type))
                 extension_fns.insert(
                     fn_metadata.ffqn.function_name,
-                    (fn_metadata.parameter_types, fn_metadata.return_type),
+                    (
+                        fn_metadata.parameter_types,
+                        fn_metadata.return_type,
+                        fn_metadata.extension,
+                    ),
                 );
             };
-            for (fun, (param_types, return_type)) in fns {
+            for (fun, (param_types, return_type, none)) in fns {
+                assert!(none.is_none());
                 let exported_fn_metadata = FunctionMetadata {
                     ffqn: FunctionFqn {
                         ifc_fqn: ifc_fqn.clone(),
@@ -257,6 +260,7 @@ impl ExIm {
                     },
                     parameter_types: param_types.clone(),
                     return_type: return_type.clone(),
+                    extension: None,
                 };
 
                 // -submit(join-set-id: join-set-id, original params) -> execution id
@@ -276,6 +280,7 @@ impl ExIm {
                         ParameterTypes(params)
                     },
                     return_type: return_type_execution_id.clone(),
+                    extension: Some(FunctionExtension::Submit),
                 };
                 insert(fn_submit);
 
@@ -328,6 +333,7 @@ impl ExIm {
                             "result<{ok_part}, tuple</* use obelisk:types/execution.{{execution-id}} */ execution-id, /* use obelisk:types/execution.{{execution-error}} */ execution-error>>"
                         ))) })
                     },
+                    extension: Some(FunctionExtension::AwaitNext),
                 };
                 insert(fn_await_next);
                 // -schedule(schedule: schedule-at, original params) -> string (execution id)
@@ -347,6 +353,7 @@ impl ExIm {
                         ParameterTypes(params)
                     },
                     return_type: return_type_execution_id.clone(),
+                    extension: Some(FunctionExtension::Schedule),
                 };
                 insert(fn_schedule);
             }
@@ -366,14 +373,17 @@ impl ExIm {
             .flat_map(|pif| {
                 pif.fns
                     .iter()
-                    .map(|(fun, (param_types, return_type))| FunctionMetadata {
-                        ffqn: FunctionFqn {
-                            ifc_fqn: pif.ifc_fqn.clone(),
-                            function_name: fun.clone(),
+                    .map(
+                        |(fun, (param_types, return_type, extension))| FunctionMetadata {
+                            ffqn: FunctionFqn {
+                                ifc_fqn: pif.ifc_fqn.clone(),
+                                function_name: fun.clone(),
+                            },
+                            parameter_types: param_types.clone(),
+                            return_type: return_type.clone(),
+                            extension: *extension,
                         },
-                        parameter_types: param_types.clone(),
-                        return_type: return_type.clone(),
-                    })
+                    )
             })
             .collect()
     }
@@ -381,12 +391,13 @@ impl ExIm {
 
 // Attempt to merge parameter names obtained using the wit-parser passed as `ffqns_to_wit_parsed_meta`
 fn enrich_function_params<'a>(
-    iterator: impl ExactSizeIterator<Item = (&'a str /* ifc_fqn */, ComponentItem)> + 'a,
+    wasmtime_parsed_interfaces: impl ExactSizeIterator<Item = (&'a str /* ifc_fqn */, ComponentItem)>
+        + 'a,
     engine: &Engine,
     mut ffqns_to_wit_parsed_meta: hashbrown::HashMap<FunctionFqn, WitParsedFunctionMetadata>,
 ) -> Result<Vec<PackageIfcFns>, DecodeError> {
     let mut vec = Vec::new();
-    for (ifc_fqn, item) in iterator {
+    for (ifc_fqn, item) in wasmtime_parsed_interfaces {
         let ifc_fqn: Arc<str> = Arc::from(ifc_fqn);
         if let ComponentItem::ComponentInstance(instance) = item {
             let exports = instance.exports(engine);
@@ -461,7 +472,10 @@ fn enrich_function_params<'a>(
                                 .collect(),
                         )
                     };
-                    fns.insert(FnName::new_arc(function_name), (params, return_type));
+                    fns.insert(
+                        FnName::new_arc(function_name),
+                        (params, return_type, None /* no extensions yet */),
+                    );
                 } else {
                     debug!("Ignoring export - not a ComponentFunc: {export:?}");
                 }
@@ -600,7 +614,8 @@ mod tests {
                      ffqn,
                      parameter_types,
                      return_type,
-                 }| (ffqn.to_string(), (parameter_types, return_type)),
+                     extension,
+                 }| (ffqn.to_string(), (parameter_types, return_type, extension)),
             )
             .collect::<hashbrown::HashMap<_, _>>();
 
@@ -614,7 +629,8 @@ mod tests {
                      ffqn,
                      parameter_types,
                      return_type,
-                 }| (ffqn.to_string(), (parameter_types, return_type)),
+                     extension,
+                 }| (ffqn.to_string(), (parameter_types, return_type, extension)),
             )
             .collect::<hashbrown::HashMap<_, _>>();
 
@@ -628,7 +644,8 @@ mod tests {
                      ffqn,
                      parameter_types,
                      return_type,
-                 }| (ffqn.to_string(), (parameter_types, return_type)),
+                     extension,
+                 }| (ffqn.to_string(), (parameter_types, return_type, extension)),
             )
             .collect::<hashbrown::HashMap<_, _>>();
         insta::with_settings!({sort_maps => true, snapshot_suffix => format!("{wasm_file}_imports")}, {insta::assert_json_snapshot!(imports)});

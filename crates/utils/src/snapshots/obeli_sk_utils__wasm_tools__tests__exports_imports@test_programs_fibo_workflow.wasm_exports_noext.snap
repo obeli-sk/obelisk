@@ -14,7 +14,8 @@ expression: exports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ],
   "testing:fibo-workflow/workflow-nesting.fibo-start-fiboas": [
     [
@@ -37,7 +38,8 @@ expression: exports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ],
   "testing:fibo-workflow/workflow.fiboa": [
     [
@@ -55,7 +57,8 @@ expression: exports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ],
   "testing:fibo-workflow/workflow.fiboa-concurrent": [
     [
@@ -73,7 +76,8 @@ expression: exports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ],
   "testing:fibo-workflow/workflow.fibow": [
     [
@@ -91,6 +95,7 @@ expression: exports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ]
 }

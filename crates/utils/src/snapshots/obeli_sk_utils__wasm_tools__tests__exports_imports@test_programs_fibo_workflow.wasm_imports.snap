@@ -8,7 +8,8 @@ expression: imports
     {
       "type_wrapper": "Own",
       "wit_type": "join-set-id"
-    }
+    },
+    null
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-await-next": [
     [
@@ -50,7 +51,8 @@ expression: imports
         }
       },
       "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
-    }
+    },
+    null
   ],
   "testing:fibo-obelisk-ext/fibo.fibo-submit": [
     [
@@ -72,7 +74,8 @@ expression: imports
         }
       },
       "wit_type": "execution-id"
-    }
+    },
+    null
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": [
     [
@@ -114,7 +117,8 @@ expression: imports
         }
       },
       "wit_type": "result<tuple<execution-id, u64>, tuple<execution-id, execution-error>>"
-    }
+    },
+    null
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
     [
@@ -141,7 +145,8 @@ expression: imports
         }
       },
       "wit_type": "execution-id"
-    }
+    },
+    null
   ],
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     [
@@ -154,7 +159,8 @@ expression: imports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ],
   "testing:fibo/fibo.fibo": [
     [
@@ -167,6 +173,7 @@ expression: imports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ]
 }

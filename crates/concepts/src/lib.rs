@@ -475,11 +475,19 @@ impl Default for Params {
     }
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum FunctionExtension {
+    Submit,
+    AwaitNext,
+    Schedule,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FunctionMetadata {
     pub ffqn: FunctionFqn,
     pub parameter_types: ParameterTypes,
     pub return_type: Option<ReturnType>,
+    pub extension: Option<FunctionExtension>,
 }
 impl Display for FunctionMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1112,7 +1120,14 @@ impl Display for ParameterTypes {
 #[derive(Debug, Clone)]
 pub struct PackageIfcFns {
     pub ifc_fqn: IfcFqnName,
-    pub fns: IndexMap<FnName, (ParameterTypes, Option<ReturnType>)>,
+    pub fns: IndexMap<
+        FnName,
+        (
+            ParameterTypes,
+            Option<ReturnType>,
+            Option<FunctionExtension>,
+        ),
+    >,
 }
 
 #[derive(Debug, Clone, Copy)]

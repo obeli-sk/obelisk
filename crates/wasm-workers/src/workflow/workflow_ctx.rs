@@ -509,6 +509,7 @@ pub(crate) mod tests {
                     ffqn: ffqn.clone(),
                     parameter_types: ParameterTypes::default(),
                     return_type: None,
+                    extension: None,
                 }],
                 ffqn,
                 steps,

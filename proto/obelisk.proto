@@ -38,7 +38,13 @@ message FunctionDetails {
     FunctionName function = 1;
     repeated FunctionParameter params = 2;
     optional WitType return_type = 3;
+    optional FunctionExtension extension = 4;
+}
 
+enum FunctionExtension {
+    SUBMIT = 0;
+    AWAIT_NEXT = 1;
+    SCHEDULE = 2;
 }
 
 message FunctionParameter {

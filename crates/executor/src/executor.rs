@@ -510,6 +510,7 @@ pub mod simple_worker {
                     ffqn: ffqn.clone(),
                     parameter_types: ParameterTypes::default(),
                     return_type: None,
+                    extension: None,
                 }],
                 ffqn,
             }
@@ -524,6 +525,7 @@ pub mod simple_worker {
                     ffqn: FFQN_SOME,
                     parameter_types: ParameterTypes::default(),
                     return_type: None,
+                    extension: None,
                 }],
             }
         }
@@ -1169,6 +1171,7 @@ mod tests {
                 ffqn: FFQN_SOME,
                 parameter_types: ParameterTypes::default(),
                 return_type: None,
+                extension: None,
             }],
         });
         // Create an execution

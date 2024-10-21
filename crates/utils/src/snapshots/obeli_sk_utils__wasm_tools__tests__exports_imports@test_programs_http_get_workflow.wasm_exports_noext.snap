@@ -19,7 +19,8 @@ expression: exports
         }
       },
       "wit_type": "result<string, string>"
-    }
+    },
+    null
   ],
   "testing:http-workflow/workflow.get-successful": [
     [
@@ -37,7 +38,8 @@ expression: exports
         }
       },
       "wit_type": "result<string, string>"
-    }
+    },
+    null
   ],
   "testing:http-workflow/workflow.get-successful-concurrently": [
     [
@@ -59,7 +61,8 @@ expression: exports
         }
       },
       "wit_type": "result<list<string>, string>"
-    }
+    },
+    null
   ],
   "testing:http-workflow/workflow.get-successful-concurrently-stress": [
     [
@@ -84,6 +87,7 @@ expression: exports
         }
       },
       "wit_type": "result<list<string>, string>"
-    }
+    },
+    null
   ]
 }

@@ -33,6 +33,7 @@ use concepts::ConfigId;
 use concepts::ConfigIdType;
 use concepts::ContentDigest;
 use concepts::ExecutionId;
+use concepts::FunctionExtension;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
 use concepts::FunctionRegistry;
@@ -331,11 +332,11 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 config_id: Some(component.config_id.into()),
                 digest: component.content_digest.to_string(),
                 exports: if let Some(exports) = component.importable {
-                    inspect_fns(exports.exports, true)
+                    inspect_fns(exports.exports)
                 } else {
                     vec![]
                 },
-                imports: inspect_fns(component.imports, true),
+                imports: inspect_fns(component.imports),
             };
             res_components.push(res_component);
         }
@@ -345,33 +346,30 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     }
 }
 
-fn inspect_fns(functions: Vec<FunctionMetadata>, show_params: bool) -> Vec<grpc::FunctionDetails> {
+fn inspect_fns(functions: Vec<FunctionMetadata>) -> Vec<grpc::FunctionDetails> {
     let mut vec = Vec::with_capacity(functions.len());
     for FunctionMetadata {
         ffqn,
         parameter_types,
         return_type,
+        extension,
     } in functions
     {
         let fun = grpc::FunctionDetails {
-            params: if show_params {
-                parameter_types
-                    .0
-                    .into_iter()
-                    .map(|p| grpc::FunctionParameter {
-                        name: p.name.map(|s| s.to_string()),
-                        r#type: Some(grpc::WitType {
-                            wit_type: p.wit_type.map(|s| s.to_string()),
-                            internal: to_any(
-                                &p.type_wrapper,
-                                format!("urn:obelisk:json:params:{ffqn}"),
-                            ),
-                        }),
-                    })
-                    .collect()
-            } else {
-                Vec::default()
-            },
+            params: parameter_types
+                .0
+                .into_iter()
+                .map(|p| grpc::FunctionParameter {
+                    name: p.name.map(|s| s.to_string()),
+                    r#type: Some(grpc::WitType {
+                        wit_type: p.wit_type.map(|s| s.to_string()),
+                        internal: to_any(
+                            &p.type_wrapper,
+                            format!("urn:obelisk:json:params:{ffqn}"),
+                        ),
+                    }),
+                })
+                .collect(),
             return_type: return_type.map(
                 |ReturnType {
                      type_wrapper,
@@ -382,6 +380,14 @@ fn inspect_fns(functions: Vec<FunctionMetadata>, show_params: bool) -> Vec<grpc:
                 },
             ),
             function: Some(ffqn.into()),
+            extension: extension.map(|it| {
+                match it {
+                    FunctionExtension::Submit => grpc::FunctionExtension::Submit,
+                    FunctionExtension::AwaitNext => grpc::FunctionExtension::AwaitNext,
+                    FunctionExtension::Schedule => grpc::FunctionExtension::Schedule,
+                }
+                .into()
+            }),
         };
         vec.push(fun);
     }

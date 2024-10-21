@@ -43,7 +43,8 @@ expression: exports
         }
       },
       "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, u64>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
-    }
+    },
+    "AwaitNext"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-schedule": [
     [
@@ -84,7 +85,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Schedule"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-nested-workflow-submit": [
     [
@@ -106,7 +108,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Submit"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-await-next": [
     [
@@ -148,7 +151,8 @@ expression: exports
         }
       },
       "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, u64>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
-    }
+    },
+    "AwaitNext"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-schedule": [
     [
@@ -199,7 +203,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Schedule"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow-nesting.fibo-start-fiboas-submit": [
     [
@@ -231,7 +236,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Submit"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-await-next": [
     [
@@ -273,7 +279,8 @@ expression: exports
         }
       },
       "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, u64>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
-    }
+    },
+    "AwaitNext"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-await-next": [
     [
@@ -315,7 +322,8 @@ expression: exports
         }
       },
       "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, u64>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
-    }
+    },
+    "AwaitNext"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-schedule": [
     [
@@ -361,7 +369,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Schedule"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-concurrent-submit": [
     [
@@ -388,7 +397,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Submit"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-schedule": [
     [
@@ -434,7 +444,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Schedule"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fiboa-submit": [
     [
@@ -461,7 +472,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Submit"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-await-next": [
     [
@@ -503,7 +515,8 @@ expression: exports
         }
       },
       "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, u64>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
-    }
+    },
+    "AwaitNext"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-schedule": [
     [
@@ -549,7 +562,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Schedule"
   ],
   "testing:fibo-workflow-obelisk-ext/workflow.fibow-submit": [
     [
@@ -576,7 +590,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Submit"
   ],
   "testing:fibo-workflow/workflow-nesting.fibo-nested-workflow": [
     [
@@ -589,7 +604,8 @@ expression: exports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ],
   "testing:fibo-workflow/workflow-nesting.fibo-start-fiboas": [
     [
@@ -612,7 +628,8 @@ expression: exports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ],
   "testing:fibo-workflow/workflow.fiboa": [
     [
@@ -630,7 +647,8 @@ expression: exports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ],
   "testing:fibo-workflow/workflow.fiboa-concurrent": [
     [
@@ -648,7 +666,8 @@ expression: exports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ],
   "testing:fibo-workflow/workflow.fibow": [
     [
@@ -666,6 +685,7 @@ expression: exports
     {
       "type_wrapper": "U64",
       "wit_type": "u64"
-    }
+    },
+    null
   ]
 }

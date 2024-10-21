@@ -8,7 +8,8 @@ expression: imports
     {
       "type_wrapper": "Own",
       "wit_type": "join-set-id"
-    }
+    },
+    null
   ],
   "testing:http-obelisk-ext/http-get.get-successful-await-next": [
     [
@@ -55,7 +56,8 @@ expression: imports
         }
       },
       "wit_type": "result<tuple<execution-id, result<string, string>>, tuple<execution-id, execution-error>>"
-    }
+    },
+    null
   ],
   "testing:http-obelisk-ext/http-get.get-successful-submit": [
     [
@@ -77,7 +79,8 @@ expression: imports
         }
       },
       "wit_type": "execution-id"
-    }
+    },
+    null
   ],
   "testing:http/http-get.get": [
     [
@@ -95,7 +98,8 @@ expression: imports
         }
       },
       "wit_type": "result<string, string>"
-    }
+    },
+    null
   ],
   "testing:http/http-get.get-successful": [
     [
@@ -113,6 +117,7 @@ expression: imports
         }
       },
       "wit_type": "result<string, string>"
-    }
+    },
+    null
   ]
 }

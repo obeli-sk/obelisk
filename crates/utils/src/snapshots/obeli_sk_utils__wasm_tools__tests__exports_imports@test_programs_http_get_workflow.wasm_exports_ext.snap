@@ -48,7 +48,8 @@ expression: exports
         }
       },
       "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<string, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
-    }
+    },
+    "AwaitNext"
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-schedule": [
     [
@@ -89,7 +90,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Schedule"
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-submit": [
     [
@@ -111,7 +113,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Submit"
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-await-next": [
     [
@@ -158,7 +161,8 @@ expression: exports
         }
       },
       "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<string, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
-    }
+    },
+    "AwaitNext"
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-await-next": [
     [
@@ -207,7 +211,8 @@ expression: exports
         }
       },
       "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<list<string>, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
-    }
+    },
+    "AwaitNext"
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-schedule": [
     [
@@ -250,7 +255,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Schedule"
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-await-next": [
     [
@@ -299,7 +305,8 @@ expression: exports
         }
       },
       "wit_type": "result<tuple</* use obelisk:types/execution.{execution-id} */ execution-id, result<list<string>, string>>, tuple</* use obelisk:types/execution.{execution-id} */ execution-id, /* use obelisk:types/execution.{execution-error} */ execution-error>>"
-    }
+    },
+    "AwaitNext"
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-schedule": [
     [
@@ -345,7 +352,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Schedule"
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-stress-submit": [
     [
@@ -372,7 +380,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Submit"
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-concurrently-submit": [
     [
@@ -396,7 +405,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Submit"
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-schedule": [
     [
@@ -437,7 +447,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Schedule"
   ],
   "testing:http-workflow-obelisk-ext/workflow.get-successful-submit": [
     [
@@ -459,7 +470,8 @@ expression: exports
         }
       },
       "wit_type": "/* use obelisk:types/execution.{execution-id} */ execution-id"
-    }
+    },
+    "Submit"
   ],
   "testing:http-workflow/workflow.get": [
     [
@@ -477,7 +489,8 @@ expression: exports
         }
       },
       "wit_type": "result<string, string>"
-    }
+    },
+    null
   ],
   "testing:http-workflow/workflow.get-successful": [
     [
@@ -495,7 +508,8 @@ expression: exports
         }
       },
       "wit_type": "result<string, string>"
-    }
+    },
+    null
   ],
   "testing:http-workflow/workflow.get-successful-concurrently": [
     [
@@ -517,7 +531,8 @@ expression: exports
         }
       },
       "wit_type": "result<list<string>, string>"
-    }
+    },
+    null
   ],
   "testing:http-workflow/workflow.get-successful-concurrently-stress": [
     [
@@ -542,6 +557,7 @@ expression: exports
         }
       },
       "wit_type": "result<list<string>, string>"
-    }
+    },
+    null
   ]
 }

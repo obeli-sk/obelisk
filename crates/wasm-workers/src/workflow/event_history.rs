@@ -707,10 +707,12 @@ impl<C: ClockFn> EventHistory<C> {
                         ffqn,
                         parameter_types: _,
                         return_type,
+                        extension,
                     },
                     config_id,
                     resolved_retry_config,
                 ) = self.get_called_function_metadata(fn_registry, &ffqn).await;
+                assert!(extension.is_none());
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: child_execution_id,
@@ -768,10 +770,12 @@ impl<C: ClockFn> EventHistory<C> {
                         ffqn,
                         parameter_types: _,
                         return_type,
+                        extension,
                     },
                     config_id,
                     resolved_retry_config,
                 ) = self.get_called_function_metadata(fn_registry, &ffqn).await;
+                assert!(extension.is_none());
                 let child_req = CreateRequest {
                     created_at: called_at,
                     execution_id: new_execution_id,
@@ -864,10 +868,12 @@ impl<C: ClockFn> EventHistory<C> {
                         ffqn,
                         parameter_types: _,
                         return_type,
+                        extension,
                     },
                     config_id,
                     resolved_retry_config,
                 ) = self.get_called_function_metadata(fn_registry, &ffqn).await;
+                assert!(extension.is_none());
                 let child = CreateRequest {
                     created_at: called_at,
                     execution_id: child_execution_id,
