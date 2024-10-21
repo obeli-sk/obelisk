@@ -143,8 +143,9 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         };
 
         // Check that ffqn exists
-        let Some((config_id, retry_config, fn_metadata)) =
-            self.component_registry_ro.find_by_exported_ffqn(&ffqn)
+        let Some((config_id, retry_config, fn_metadata)) = self
+            .component_registry_ro
+            .find_by_exported_ffqn_noext(&ffqn)
         else {
             return Err(tonic::Status::not_found("function not found"));
         };
@@ -1428,14 +1429,20 @@ struct ComponentConfigRegistryRO {
 }
 
 impl ComponentConfigRegistryRO {
-    fn find_by_exported_ffqn(
+    fn find_by_exported_ffqn_noext(
         &self,
         ffqn: &FunctionFqn,
     ) -> Option<(&ConfigId, ComponentRetryConfig, &FunctionMetadata)> {
-        self.inner
-            .exported_ffqns_ext
-            .get(ffqn)
-            .map(|(config_id, fn_metadata, retry_config)| (config_id, *retry_config, fn_metadata))
+        if ffqn.ifc_fqn.is_extension() {
+            None
+        } else {
+            self.inner
+                .exported_ffqns_ext
+                .get(ffqn)
+                .map(|(config_id, fn_metadata, retry_config)| {
+                    (config_id, *retry_config, fn_metadata)
+                })
+        }
     }
 
     fn list(&self, extensions: bool) -> Vec<ComponentConfig> {
