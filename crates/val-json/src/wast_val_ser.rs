@@ -63,8 +63,8 @@ impl Serialize for WastVal {
                 }
             }
             WastVal::Result(result) => match result {
-                Ok(ok) => serializer.serialize_newtype_variant("Result", 0, "Ok", ok),
-                Err(err) => serializer.serialize_newtype_variant("Result", 0, "Err", err),
+                Ok(ok) => serializer.serialize_newtype_variant("Result", 0, "ok", ok),
+                Err(err) => serializer.serialize_newtype_variant("Result", 0, "err", err),
             },
             WastVal::Flags(flags) => {
                 use serde::ser::SerializeSeq;
@@ -370,7 +370,7 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                         let ok_or_err = map
                             .next_key::<String>()?
                             .ok_or(Error::custom("invalid map key, expected String"))?;
-                        if ok_or_err == "Ok" {
+                        if ok_or_err == "ok" {
                             if let Some(ok) = ok {
                                 let ok = map.next_value_seed(WastValDeserialize(ok))?;
                                 Ok(WastVal::Result(Ok(Some(ok.into()))))
@@ -384,7 +384,7 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                                     Err(Error::custom("invalid result value, expected null"))
                                 }
                             }
-                        } else if ok_or_err == "Err" {
+                        } else if ok_or_err == "err" {
                             if let Some(err) = err {
                                 let err = map.next_value_seed(WastValDeserialize(err))?;
                                 Ok(WastVal::Result(Err(Some(err.into()))))
@@ -399,7 +399,7 @@ impl<'a, 'de> DeserializeSeed<'de> for WastValDeserialize<'a> {
                                 }
                             }
                         } else {
-                            Err(Error::custom("expected one of `Ok`, `Err`"))
+                            Err(Error::custom("expected one of `ok`, `err`"))
                         }
                     }
                     TypeWrapper::Record(record) => {
@@ -815,7 +815,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Result":{"ok":null, "err":null}},"value":{"Ok":null}}),
+            json!({"type":{"Result":{"ok":null, "err":null}},"value":{"ok":null}}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -825,11 +825,11 @@ mod tests {
     #[test]
     fn serde_result_none_invalid() {
         let json =
-            serde_json::json!({"type":{"Result":{"err":null,"ok":null}},"value":{"Ok":true}});
+            serde_json::json!({"type":{"Result":{"err":null,"ok":null}},"value":{"ok":true}});
         let actual = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!("invalid result value, expected null", actual.to_string());
         let json =
-            serde_json::json!({"type":{"Result":{"err":null,"ok":null}},"value":{"Err":true}});
+            serde_json::json!({"type":{"Result":{"err":null,"ok":null}},"value":{"err":true}});
         let actual = serde_json::from_value::<WastValWithType>(json).unwrap_err();
         assert_eq!("invalid result value, expected null", actual.to_string());
     }
@@ -845,7 +845,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Result":{"ok":"Bool", "err":null}},"value":{"Ok":true}}),
+            json!({"type":{"Result":{"ok":"Bool", "err":null}},"value":{"ok":true}}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -863,7 +863,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Result":{"ok":null, "err":null}},"value":{"Err":null}}),
+            json!({"type":{"Result":{"ok":null, "err":null}},"value":{"err":null}}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
@@ -881,7 +881,7 @@ mod tests {
         };
         let json = serde_json::to_value(&expected).unwrap();
         assert_eq!(
-            json!({"type":{"Result":{"ok":"Bool", "err":"String"}},"value":{"Err":"test"}}),
+            json!({"type":{"Result":{"ok":"Bool", "err":"String"}},"value":{"err":"test"}}),
             json
         );
         let actual = serde_json::from_value(json).unwrap();
