@@ -66,9 +66,9 @@ Download [latest release](https://github.com/obeli-sk/obelisk/releases/latest) f
 ### Using latest version from crates.io
 Download using [cargo-binstall](https://crates.io/crates/cargo-binstall)
 ```sh
-cargo binstall obelisk
+cargo binstall --locked obelisk
 ```
-or build
+or build using [cargo](https://rustup.rs/)
 ```sh
 cargo install --locked obelisk
 ```
