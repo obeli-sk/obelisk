@@ -27,7 +27,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # exec.batch_size = 5 # Number of executions to lock for every event loop tick.
 # exec.lock_expiry.secs = 1 # Each execution is locked for 1s by default.
 # exec.tick_sleep.millis = 200 # Sleep between event loop ticks.
-# exec.max_inflight_instances = "none" # If set to an integer, limits the number of inflight instances
+# exec.max_inflight_instances = "unlimited" # If set to an integer, limits the number of inflight instances.
 
 ### WASM Activity components configuration
 # [[activity_wasm]]
@@ -60,7 +60,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # name = "external"
 # listening_addr = "0.0.0.0:8080"
 # request_timeout.secs = 1
-# max_inflight_requests = "none" # If set to an integer, limits the number of inflight requests
+# max_inflight_requests = "unlimited" # If set to an integer, limits the number of inflight requests
 #
 # [[webhook_component]]
 ## Common settings for all components - see above.

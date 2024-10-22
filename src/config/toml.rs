@@ -751,28 +751,27 @@ pub(crate) mod webhook {
 #[serde(untagged)]
 
 pub(crate) enum InflightSemaphore {
-    None(NoneEnum),
+    Unlimited(Unlimited),
     Some(u32),
 }
 
 impl Default for InflightSemaphore {
     fn default() -> Self {
-        Self::None(NoneEnum::None)
+        Self::Unlimited(Unlimited::Unlimited)
     }
 }
 
 #[derive(Debug, Default, Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
-
-pub(crate) enum NoneEnum {
+pub(crate) enum Unlimited {
     #[default]
-    None,
+    Unlimited,
 }
 
 impl From<InflightSemaphore> for Option<Arc<tokio::sync::Semaphore>> {
     fn from(value: InflightSemaphore) -> Self {
         match value {
-            InflightSemaphore::None(_) => None,
+            InflightSemaphore::Unlimited(_) => None,
             InflightSemaphore::Some(permits) => Some(Arc::new(tokio::sync::Semaphore::new(
                 usize::try_from(permits).expect("usize >= u32"),
             ))),
