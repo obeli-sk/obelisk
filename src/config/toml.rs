@@ -1,4 +1,5 @@
 use super::{ComponentLocation, ConfigStoreCommon};
+use anyhow::bail;
 use concepts::{ComponentRetryConfig, ConfigId, ConfigIdType, ContentDigest, StrVariant};
 use db_sqlite::sqlite_dao::SqliteConfig;
 use directories::ProjectDirs;
@@ -309,6 +310,13 @@ impl WorkflowConfigToml {
         wasm_cache_dir: Arc<Path>,
         metadata_dir: Arc<Path>,
     ) -> Result<WorkflowConfigVerified, anyhow::Error> {
+        let retry_exp_backoff = Duration::from(self.retry_exp_backoff);
+        if retry_exp_backoff == Duration::ZERO {
+            bail!(
+                "invalid `retry_exp_backoff` setting for workflow `{}` - duration must not be zero",
+                self.common.name
+            );
+        }
         let mut hasher = std::hash::DefaultHasher::new();
         std::hash::Hash::hash(&self, &mut hasher);
         let (common, wasm_path) = self
@@ -335,7 +343,7 @@ impl WorkflowConfigToml {
             exec_config: self.exec.into_exec_exec_config(config_id),
             retry_config: ComponentRetryConfig {
                 max_retries: u32::MAX,
-                retry_exp_backoff: self.retry_exp_backoff.into(),
+                retry_exp_backoff,
             },
         })
     }
@@ -442,7 +450,7 @@ pub(crate) mod otlp {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Hash)]
+#[derive(Debug, Clone, Copy, Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DurationConfig {
     Secs(u64),
