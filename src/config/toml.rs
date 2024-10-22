@@ -213,9 +213,9 @@ pub(crate) struct ActivityWasmConfigToml {
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_max_retries")]
-    pub(crate) default_max_retries: u32,
+    pub(crate) max_retries: u32,
     #[serde(default = "default_retry_exp_backoff")]
-    pub(crate) default_retry_exp_backoff: DurationConfig,
+    pub(crate) retry_exp_backoff: DurationConfig,
     #[serde(default)]
     pub(crate) forward_stdout: StdOutput,
     #[serde(default)]
@@ -271,8 +271,8 @@ impl ActivityWasmConfigToml {
             activity_config,
             exec_config: self.exec.into_exec_exec_config(config_id),
             retry_config: ComponentRetryConfig {
-                max_retries: self.default_max_retries,
-                retry_exp_backoff: self.default_retry_exp_backoff.into(),
+                max_retries: self.max_retries,
+                retry_exp_backoff: self.retry_exp_backoff.into(),
             },
         })
     }
@@ -286,7 +286,7 @@ pub(crate) struct WorkflowConfigToml {
     #[serde(default)]
     pub(crate) exec: ExecConfigToml,
     #[serde(default = "default_retry_exp_backoff")]
-    pub(crate) default_retry_exp_backoff: DurationConfig,
+    pub(crate) retry_exp_backoff: DurationConfig,
     #[serde(default = "default_strategy")]
     pub(crate) join_next_blocking_strategy: JoinNextBlockingStrategy,
     #[serde(default = "default_non_blocking_event_batching")]
@@ -335,7 +335,7 @@ impl WorkflowConfigToml {
             exec_config: self.exec.into_exec_exec_config(config_id),
             retry_config: ComponentRetryConfig {
                 max_retries: u32::MAX,
-                retry_exp_backoff: self.default_retry_exp_backoff.into(),
+                retry_exp_backoff: self.retry_exp_backoff.into(),
             },
         })
     }

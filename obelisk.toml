@@ -35,8 +35,8 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## Common executor settings - see above.
 ## Specific settings for activity_wasm:
 ## Retry customization: All activities are retried on trap (panic) and timeouts.
-# default_max_retries = 5
-# default_retry_exp_backoff.millis = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
+# max_retries = 5
+# retry_exp_backoff.millis = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
 # retry_on_err = true # When a function with a return type `result` returns the `Err` variant, attept to retry the execution.
 ## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".
 # forward_stdout="stderr" # forwards stdout to host's stderr
@@ -49,7 +49,7 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## Common settings for all components - see above.
 ## Common executor settings - see above.
 ## Retry customization: All workflows are retried on trap (panic) and timeouts.
-# default_retry_exp_backoff.millis = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
+# retry_exp_backoff.millis = 100 # First retry is scheduled after 100ms after the failure, the next one after 200ms, then after 400ms...
 ## Joining strategy: When workflow requests a child execution result, it can either be interrupted, or kept in the memory.
 ## When "interrupt" is selected, after every child execution result the whole event history must be replayed.
 # join_next_blocking_strategy = "await" # Default strategy is "await"/
@@ -89,7 +89,7 @@ listening_addr = "0.0.0.0:9090"
 [[activity_wasm]]
 name = "fibo_activity"
 location.oci = "docker.io/getobelisk/example_activity_fibo:2024-10-15@sha256:22ecc9d23282305c0f1bdd10fb157733f7aaf06d321993554842060e573d1fa7"
-default_max_retries = 0
+max_retries = 0
 
 [[workflow]]
 name = "fibo_workflow"
