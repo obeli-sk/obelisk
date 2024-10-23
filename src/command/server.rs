@@ -66,6 +66,8 @@ use tokio::task::AbortHandle;
 use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
+use tonic_web::GrpcWebLayer;
+use tower_http::cors::CorsLayer;
 use tracing::error;
 use tracing::info_span;
 use tracing::instrument;
@@ -635,9 +637,12 @@ async fn run_internal(
     let grpc_server = Arc::new(GrpcServer::new(init.db_pool.clone(), component_registry_ro));
 
     tonic::transport::Server::builder()
+        .accept_http1(true)
         .layer(
             tower::ServiceBuilder::new()
                 .layer(tower_http::trace::TraceLayer::new_for_grpc().make_span_with(make_span))
+                .layer(CorsLayer::permissive()) // FIXME
+                .layer(GrpcWebLayer::new())
                 .map_request(accept_trace),
         )
         .add_service(

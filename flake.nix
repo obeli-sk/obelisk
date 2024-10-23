@@ -93,6 +93,7 @@
                 git-cliff
                 litecli
                 lldb
+                nixd
                 nixpkgs-fmt
                 pkg-config
                 protobuf
