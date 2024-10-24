@@ -92,7 +92,6 @@ default = ["otlp"]
 workspace = true
 
 [build-dependencies]
-prost-build.workspace = true
 tonic-build.workspace = true
 shadow-rs.workspace = true
 
@@ -200,7 +199,6 @@ oci-wasm = { version = "0.1.0", default-features = false, features = [
     "rustls-tls",
 ] }
 prost = "0.13.3"
-prost-build = "0.13"
 prost-wkt-types = "0.6"
 rand = "0.8.5"
 reqwest = { version = "0.12", default-features = false, features = [
