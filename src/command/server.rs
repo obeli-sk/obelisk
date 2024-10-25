@@ -916,8 +916,8 @@ async fn fetch_and_verify_all(
         if http_servers.len()
             > http_servers
                 .iter()
-                .map(|it| &it.name)
-                .collect::<hashbrown::HashSet<_>>()
+                .map(|it| concepts::check_name(&it.name))
+                .collect::<Result<hashbrown::HashSet<_>, _>>()?
                 .len()
         {
             bail!("Each `http_server` must have a unique name");

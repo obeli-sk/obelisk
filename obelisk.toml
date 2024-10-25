@@ -70,10 +70,10 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 ## Only the path portion of a URL is taken into cosideration, the query part
 ## ("?a=b") is ignored by the matcher.
 ## Syntax of a route:
-## "/path"                   - forwards requests with matching method and exactly matching path.
-## { methods = ["GET"], route = "/some/path" }  - All methods are matched.
-## "/status/:param1/:param2" - When URL matches, `param1` and `param2` values will be exposed as env vars.
-## ""                        - Fallback pattern.
+## "/path"                                      # All methods are matched, URL path must be exactly '/path'.
+## { methods = ["GET"], route = "/some/path" }  # Method must be GET and path '/some/path'.
+## "/status/:param1/:param2"                    # When URL matches, `param1` and `param2` values will be exposed as env vars.
+## ""                                           # Fallback pattern.
 ## For details about the matching engine please see https://docs.rs/route-recognizer/latest/route_recognizer/
 # routes = [{ methods = [ "GET" ], route = "/some"}, "/other"]
 ## Guest std stream forwarding to host: one of "stdout","stderr","none". Default is "none".
@@ -83,8 +83,8 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # env_vars = ["ENV1", "ENV2=somevalue"]
 
 [[http_server]]
-name = "external-webhook"
 listening_addr = "0.0.0.0:9090"
+name = "external_webhook"
 
 [[activity_wasm]]
 name = "fibo_activity"
@@ -99,7 +99,7 @@ exec.lock_expiry.secs = 2
 [[webhook_component]]
 name = "webhook_fibo"
 location.oci = "docker.io/getobelisk/example_webhook_fibo:2024-10-18-2@sha256:9933abb506fa6cc9e33b9e46eee3fc193933ce4910ee6b720593546007ecc981"
-http_server = "external-webhook"
+http_server = "external_webhook"
 routes = [{ methods = ["GET"], route = "/fibo/:N/:ITERATIONS" }]
 
 [[activity_wasm]]

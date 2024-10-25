@@ -116,6 +116,16 @@ impl Deref for StrVariant {
         }
     }
 }
+
+impl AsRef<str> for StrVariant {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Arc(v) => v,
+            Self::Static(v) => v,
+        }
+    }
+}
+
 mod serde_strvariant {
     use crate::StrVariant;
     use serde::{
@@ -899,16 +909,10 @@ impl ConfigId {
         config_id_type: ConfigIdType,
         name: StrVariant,
         hash: StrVariant,
-    ) -> Result<Self, ConfigIdErrror> {
-        if let Some(invalid) = name
-            .chars()
-            .find(|c| !c.is_ascii_alphanumeric() && *c != '_')
-        {
-            return Err(ConfigIdErrror::InvalidName { invalid, name });
-        }
+    ) -> Result<Self, ConfigIdError> {
         Ok(Self {
             config_id_type,
-            name,
+            name: check_name(name)?,
             hash,
         })
     }
@@ -923,10 +927,31 @@ impl ConfigId {
     }
 }
 
+pub fn check_name<T: AsRef<str>>(name: T) -> Result<T, InvalidNameError> {
+    if let Some(invalid) = name
+        .as_ref()
+        .chars()
+        .find(|c| !c.is_ascii_alphanumeric() && *c != '_')
+    {
+        Err(InvalidNameError::InvalidName {
+            invalid,
+            name: name.as_ref().to_string(),
+        })
+    } else {
+        Ok(name)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
-pub enum ConfigIdErrror {
+pub enum InvalidNameError {
     #[error("name must only contain alphanumeric characters and underscore, found invalid character `{invalid}` in: {name}")]
-    InvalidName { invalid: char, name: StrVariant },
+    InvalidName { invalid: char, name: String },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigIdError {
+    #[error(transparent)]
+    InvalidName(#[from] InvalidNameError),
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -57,7 +57,7 @@ pub(crate) struct ObeliskConfig {
     pub(crate) log: LoggingConfig,
     #[serde(default, rename = "http_server")]
     pub(crate) http_servers: Vec<HttpServer>,
-    #[serde(default, rename = "webhook_component")]
+    #[serde(default, rename = "webhook_component")] // FIXME: rename to webhook
     pub(crate) webhook_components: Vec<WebhookComponent>,
 }
 
