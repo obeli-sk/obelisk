@@ -73,7 +73,7 @@ fn function_list(FunctionListProps { functions }: &FunctionListProps) -> Html {
 // trunk serve --proxy-backend=http://127.0.0.1:5005 --proxy-rewrite=/api/
 #[function_component(App)]
 fn app() -> Html {
-    let components_state = use_state(|| vec![]);
+    let components_state = use_state(std::vec::Vec::new);
     {
         let components = components_state.clone();
         use_effect_with((), move |_| {
