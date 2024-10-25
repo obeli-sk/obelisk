@@ -1,0 +1,33 @@
+[package]
+name = "obelisk-webui-webhook"
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+wit-bindgen-rt = { workspace = true, features = ["bitflags"] }
+url = "2.3.1"
+futures = { workspace = true, default-features = false, features = ['alloc'] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component.target.dependencies]
+"wasi:cli".path = "wit/deps/cli"
+"wasi:clocks".path = "wit/deps/clocks"
+"wasi:filesystem".path = "wit/deps/filesystem"
+"wasi:http".path = "wit/deps/http/"
+"wasi:io".path = "wit/deps/io"
+"wasi:random".path = "wit/deps/random/"
+"wasi:sockets".path = "wit/deps/sockets"
+
+[lints]
+rust.unused_imports = "allow"
+clippy.wrong_self_convention = "allow"
+clippy.unnecessary_cast = "allow"

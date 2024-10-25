@@ -3019,7 +3019,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "obelisk-webbvui"
+name = "obelisk-webui"
 version = "0.6.1"
 dependencies = [
  "prost 0.13.3",
@@ -3029,6 +3029,16 @@ dependencies = [
  "tonic-web-wasm-client",
  "wasm-bindgen-futures",
  "yew",
+]
+
+[[package]]
+name = "obelisk-webui-webhook"
+version = "0.6.1"
+dependencies = [
+ "anyhow",
+ "futures",
+ "url",
+ "wit-bindgen-rt",
 ]
 
 [[package]]

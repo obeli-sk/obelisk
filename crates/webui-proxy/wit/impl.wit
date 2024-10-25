@@ -1,0 +1,6 @@
+package any:any;
+
+world any {
+    import wasi:http/outgoing-handler@0.2.0;
+    export wasi:http/incoming-handler@0.2.0;
+}

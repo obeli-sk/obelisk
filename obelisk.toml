@@ -5,7 +5,7 @@
 ## | ${CONFIG_DIR}|  ~/.config/obelisk      | https://docs.rs/directories/5.0.1/directories/struct.ProjectDirs.html#method.config_dir
 
 ## Server configuration
-api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server will listen.
+api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server will listen. Must match `obelisk_webui` TARGET_URL
 
 # sqlite.file = "${DATA_DIR}/obelisk.sqlite" # Path to sqlite database. Supports path prefixes.
 
@@ -83,8 +83,23 @@ api_listening_addr = "127.0.0.1:5005" # Address and port on which the API server
 # env_vars = ["ENV1", "ENV2=somevalue"]
 
 [[http_server]]
-listening_addr = "0.0.0.0:9090"
+name = "webui"
+listening_addr = "127.0.0.1:8080"
+
+[[webhook_component]]
+name = "obelisk_webui"
+http_server = "webui"
+location.oci = "docker.io/getobelisk/webui:2024-10-25@sha256:b13a940f36fba2dd10f43941a635c62da42c6f680f485aa75127a4ae2860a35b"
+routes = [{ route = "" }]
+forward_stdout = "stderr"
+forward_stderr = "stderr"
+env_vars = [
+    "TARGET_URL=http://127.0.0.1:5005",
+] # Must match `api_listening_addr`
+
+[[http_server]]
 name = "external_webhook"
+listening_addr = "127.0.0.1:9090"
 
 [[activity_wasm]]
 name = "fibo_activity"
