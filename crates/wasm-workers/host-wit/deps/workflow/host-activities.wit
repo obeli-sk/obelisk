@@ -1,5 +1,6 @@
 package obelisk:workflow;
 
+// FIXME: Rename to workflow-support
 interface host-activities {
     use obelisk:types/time.{duration};
     use obelisk:types/execution.{join-set-id};
@@ -12,4 +13,3 @@ interface host-activities {
 
     // TODO: `new-join-set-terminating` that cancels all remaining child executions on close
 }
-

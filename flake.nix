@@ -82,6 +82,7 @@
             nativeBuildInputs = with pkgs;
               [
                 (pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+                binaryen
                 cargo-binstall
                 cargo-component
                 cargo-dist
@@ -98,6 +99,8 @@
                 pkg-config
                 protobuf
                 tokio-console
+                trunk
+                wasm-bindgen-cli
                 wasm-tools
                 wasmtime
               ];

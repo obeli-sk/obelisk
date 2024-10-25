@@ -2,3 +2,4 @@ target/
 .direnv/
 .envrc
 test-codegen-cache
+crates/webui/dist

@@ -1,0 +1,29 @@
+[package]
+name = "obelisk-webbvui"
+description = "Web UI for obelisk"
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+prost-wkt-types.workspace = true
+prost.workspace = true
+tonic = { workspace = true, default-features = false, features = [
+    "codegen",
+    "prost",
+] }
+tonic-web-wasm-client.workspace = true
+wasm-bindgen-futures.workspace = true
+yew.workspace = true
+
+[build-dependencies]
+tonic-build = { workspace = true, default-features = false, features = [
+    "prost",
+] }
+
+# [profile.release]
+# strip = "symbols"
