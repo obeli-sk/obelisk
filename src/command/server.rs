@@ -67,7 +67,6 @@ use tokio_stream::{wrappers::ReceiverStream, Stream};
 use tonic::async_trait;
 use tonic::codec::CompressionEncoding;
 use tonic_web::GrpcWebLayer;
-use tower_http::cors::CorsLayer;
 use tracing::error;
 use tracing::info_span;
 use tracing::instrument;
@@ -641,7 +640,6 @@ async fn run_internal(
         .layer(
             tower::ServiceBuilder::new()
                 .layer(tower_http::trace::TraceLayer::new_for_grpc().make_span_with(make_span))
-                .layer(CorsLayer::permissive()) // FIXME
                 .layer(GrpcWebLayer::new())
                 .map_request(accept_trace),
         )
@@ -662,7 +660,7 @@ async fn run_internal(
             .accept_compressed(CompressionEncoding::Gzip),
         )
         .serve_with_shutdown(api_listening_addr, async move {
-            info!("Serving gRPC requests at {api_listening_addr}");
+            info!("Serving gRPC requests at http://{api_listening_addr}");
             tokio::signal::ctrl_c()
                 .await
                 .expect("failed to listen for SIGINT event");
