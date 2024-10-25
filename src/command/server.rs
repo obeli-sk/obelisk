@@ -632,7 +632,7 @@ async fn run_internal(
         config_holder,
     ))
     .await?;
-    let (init, component_registry_ro) = ServerInit::new(verified).await?;
+    let (init, component_registry_ro) = ServerInit::spawn_executors_and_webhooks(verified).await?;
     let grpc_server = Arc::new(GrpcServer::new(init.db_pool.clone(), component_registry_ro));
 
     tonic::transport::Server::builder()
@@ -660,7 +660,7 @@ async fn run_internal(
             .accept_compressed(CompressionEncoding::Gzip),
         )
         .serve_with_shutdown(api_listening_addr, async move {
-            info!("Serving gRPC requests at http://{api_listening_addr}");
+            info!("Serving gRPC requests at {api_listening_addr}");
             tokio::signal::ctrl_c()
                 .await
                 .expect("failed to listen for SIGINT event");
@@ -742,7 +742,7 @@ struct ServerInit {
 }
 
 impl ServerInit {
-    async fn new(
+    async fn spawn_executors_and_webhooks(
         mut verified: ServerVerified,
     ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
         // Start components requiring a database
@@ -860,7 +860,7 @@ async fn start_webhooks(
             })?;
         let server_addr = tcp_listener.local_addr()?;
         info!(
-            "HTTP server `{}` is listening on {server_addr}",
+            "HTTP server `{}` is listening on http://{server_addr}",
             http_server.name,
         );
         let server = AbortOnDropHandle(
