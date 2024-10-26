@@ -3019,29 +3019,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "obelisk-webui"
-version = "0.6.1"
-dependencies = [
- "prost 0.13.3",
- "prost-wkt-types",
- "tonic 0.12.3",
- "tonic-build",
- "tonic-web-wasm-client",
- "wasm-bindgen-futures",
- "yew",
-]
-
-[[package]]
-name = "obelisk-webui-webhook"
-version = "0.6.1"
-dependencies = [
- "anyhow",
- "futures",
- "url",
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "object"
 version = "0.36.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5815,6 +5792,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841c67bff177718f1d4dfefde8d8f0e78f9b6589319ba88312f567fc5841a958"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "webui"
+version = "0.6.1"
+dependencies = [
+ "prost 0.13.3",
+ "prost-wkt-types",
+ "tonic 0.12.3",
+ "tonic-build",
+ "tonic-web-wasm-client",
+ "wasm-bindgen-futures",
+ "yew",
+]
+
+[[package]]
+name = "webui-builder"
+version = "0.6.1"
+dependencies = [
+ "cargo_metadata",
+]
+
+[[package]]
+name = "webui-webhook"
+version = "0.6.1"
+dependencies = [
+ "anyhow",
+ "futures",
+ "url",
+ "webui-builder",
+ "wit-bindgen-rt",
 ]
 
 [[package]]

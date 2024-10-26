@@ -24,12 +24,12 @@ impl Guest for Component {
                 write_static_response(content, content_type, response_outparam);
             }
             Some("/obelisk-webui_bg.wasm") => {
-                let content = include_bytes!("../../webui/dist/obelisk-webui_bg.wasm");
+                let content = include_bytes!("../../webui/dist/webui_bg.wasm");
                 let content_type = "application/wasm";
                 write_static_response(content, content_type, response_outparam);
             }
             Some("/obelisk-webui.js") => {
-                let content = include_bytes!("../../webui/dist/obelisk-webui.js");
+                let content = include_bytes!("../../webui/dist/webui.js");
                 let content_type = "text/javascript";
                 write_static_response(content, content_type, response_outparam);
             }

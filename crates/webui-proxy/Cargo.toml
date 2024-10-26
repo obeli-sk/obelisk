@@ -1,5 +1,5 @@
 [package]
-name = "obelisk-webui-webhook"
+name = "webui-webhook"
 
 authors.workspace = true
 edition.workspace = true
@@ -10,9 +10,11 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+webui-builder.workspace = true # TODO: investigate moving to build-dependencies
+
 anyhow.workspace = true
 wit-bindgen-rt = { workspace = true, features = ["bitflags"] }
-url = "2.3.1"
+url.workspace = true
 futures = { workspace = true, default-features = false, features = ['alloc'] }
 
 [lib]
