@@ -9,9 +9,10 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
-[dependencies]
-webui-builder.workspace = true # TODO: investigate moving to build-dependencies
+[build-dependencies]
+webui-builder.workspace = true
 
+[dependencies]
 anyhow.workspace = true
 wit-bindgen-rt = { workspace = true, features = ["bitflags"] }
 url.workspace = true
