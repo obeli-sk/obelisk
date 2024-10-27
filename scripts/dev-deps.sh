@@ -24,6 +24,8 @@ protoc --version >> dev-deps.txt
 # rustToolchain
 rustc --version >> dev-deps.txt
 tokio-console --version >> dev-deps.txt
+trunk --version >> dev-deps.txt
+wasm-bindgen --version >> dev-deps.txt
 wasm-tools --version >> dev-deps.txt
 wasmtime --version >> dev-deps.txt
 
