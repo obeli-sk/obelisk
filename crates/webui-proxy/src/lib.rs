@@ -15,21 +15,51 @@ struct Component;
 
 bindings::export!(Component with_types_in bindings);
 
+#[cfg(not(debug_assertions))]
+fn get_index() -> &'static [u8] {
+    include_bytes!("../../webui/dist/index.html")
+}
+
+#[cfg(not(debug_assertions))]
+fn get_webui_bg_wasm() -> &'static [u8] {
+    include_bytes!("../../webui/dist/webui_bg.wasm")
+}
+
+#[cfg(not(debug_assertions))]
+fn get_webui_js() -> &'static [u8] {
+    include_bytes!("../../webui/dist/webui.js")
+}
+
+#[cfg(debug_assertions)]
+fn get_index() -> &'static [u8] {
+    unreachable!("embedding is skipped in debug mode")
+}
+
+#[cfg(debug_assertions)]
+fn get_webui_bg_wasm() -> &'static [u8] {
+    unreachable!("embedding is skipped in debug mode")
+}
+
+#[cfg(debug_assertions)]
+fn get_webui_js() -> &'static [u8] {
+    unreachable!("embedding is skipped in debug mode")
+}
+
 impl Guest for Component {
     fn handle(incoming_request: IncomingRequest, response_outparam: ResponseOutparam) {
         match incoming_request.path_with_query().as_deref() {
             Some("/") => {
-                let content = include_bytes!("../../webui/dist/index.html");
+                let content = get_index();
                 let content_type = "text/html";
                 write_static_response(content, content_type, response_outparam);
             }
             Some("/obelisk-webui_bg.wasm") => {
-                let content = include_bytes!("../../webui/dist/webui_bg.wasm");
+                let content = get_webui_bg_wasm();
                 let content_type = "application/wasm";
                 write_static_response(content, content_type, response_outparam);
             }
             Some("/obelisk-webui.js") => {
-                let content = include_bytes!("../../webui/dist/webui.js");
+                let content = get_webui_js();
                 let content_type = "text/javascript";
                 write_static_response(content, content_type, response_outparam);
             }
