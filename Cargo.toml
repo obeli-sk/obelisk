@@ -261,6 +261,7 @@ wasm-bindgen-futures = "=0.4.43" # Dependent on wasm-bindgen
 wasm-logger = "0.2.0"
 wiremock = "0.6"
 yew = { version = "0.21.0", features = ["csr"] }
+yew-router = "0.18.0"
 
 # wasmtime
 wasmtime = { version = "25.0", features = ["memory-protection-keys"] }
