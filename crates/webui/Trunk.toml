@@ -1,3 +1,7 @@
 [build]
 release = true
 filehash = false
+
+[tools]
+wasm_opt = "version_118"
+wasm_bindgen = "0.2.93"

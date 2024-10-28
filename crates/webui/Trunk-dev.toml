@@ -8,3 +8,7 @@ port = 8081
 [[proxy]]
 backend = "http://127.0.0.1:5005" # Address to proxy requests to
 rewrite = "/api"                  # Remove /api path prefix
+
+[tools]
+wasm_opt = "version_118"
+wasm_bindgen = "0.2.93"
