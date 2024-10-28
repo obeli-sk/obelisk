@@ -201,6 +201,7 @@ indexmap = { version = "2.6", features = ["serde"] }
 insta = { version = "1.40.0", features = ["json"] }
 itertools = "0.13"
 lazy_static = "1.5"
+log = "0.4.22" # Only for webui
 madsim = "0.2.31"
 oci-client = { version = "0.13.0", default-features = false, features = [ # Must match oci-wasm
     "rustls-tls",
@@ -257,6 +258,7 @@ url = "2.3.1"
 waki = "0.3.2"
 wasm-bindgen = "=0.2.93" # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml and wasm-bindgen-futures on version change.
 wasm-bindgen-futures = "=0.4.43" # Dependent on wasm-bindgen
+wasm-logger = "0.2.0"
 wiremock = "0.6"
 yew = { version = "0.21.0", features = ["csr"] }
 

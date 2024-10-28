@@ -11,6 +11,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+log.workspace = true
 prost-wkt-types.workspace = true
 prost.workspace = true
 tonic = { workspace = true, default-features = false, features = [
@@ -18,8 +19,9 @@ tonic = { workspace = true, default-features = false, features = [
     "prost",
 ] }
 tonic-web-wasm-client.workspace = true
-wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
+wasm-bindgen.workspace = true
+wasm-logger.workspace = true
 yew.workspace = true
 
 [build-dependencies]
