@@ -15,19 +15,19 @@ cargo-expand --version >> dev-deps.txt
 # cargo-insta --version >> dev-deps.txt  # Broken as of 1.39-unstable-2024-08-22
 cargo nextest --version | head -n 1 >> dev-deps.txt
 dive --version >> dev-deps.txt
-echo "litecli $(litecli --version)"s >> dev-deps.txt
+echo "litecli $(litecli --version)" >> dev-deps.txt
 lldb --version >> dev-deps.txt
 nixpkgs-fmt --version   >> dev-deps.txt || true
 pkg-config --version >> dev-deps.txt
 # protobuf
 protoc --version >> dev-deps.txt
-# rustToolchain
 rustc --version >> dev-deps.txt
 tokio-console --version >> dev-deps.txt
-trunk --version >> dev-deps.txt
-wasm-bindgen --version >> dev-deps.txt
 wasm-tools --version >> dev-deps.txt
 wasmtime --version >> dev-deps.txt
-
+# webui
+wasm-opt --version >> dev-deps.txt # binarien
+trunk --version >> dev-deps.txt
+wasm-bindgen --version >> dev-deps.txt
 # libc
 ldd --version | head -n 1 >> dev-deps.txt

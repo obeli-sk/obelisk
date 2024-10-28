@@ -5,14 +5,15 @@ cargo-edit-upgrade 0.13.0
 cargo-expand 1.0.90
 cargo-nextest 0.9.79
 dive 0.12.0
-litecli Version: 1.11.0s
+litecli Version: 1.11.0
 lldb version 18.1.8
 nixpkgs-fmt 1.3.00.29.2
 libprotoc 28.2
 rustc 1.82.0 (f6e511eec 2024-10-15)
 tokio-console 0.1.10
-trunk 0.20.3
-wasm-bindgen 0.2.93
 wasm-tools 1.219.1
 wasmtime 25.0.2
+wasm-opt version 118
+trunk 0.20.3
+wasm-bindgen 0.2.93
 ldd (GNU libc) 2.40
