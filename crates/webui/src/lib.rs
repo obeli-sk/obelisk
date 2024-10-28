@@ -1,4 +1,4 @@
 pub mod app;
-pub mod component_detail;
-pub mod component_list;
+pub mod components;
 pub mod grpc_client;
+pub mod pages;
