@@ -27,6 +27,7 @@ wasm-tools --version >> dev-deps.txt
 wasmtime --version >> dev-deps.txt
 # webui
 wasm-opt --version >> dev-deps.txt # binarien
+tailwindcss -h | head -n 2 | tail -n 1 >> dev-deps.txt
 trunk --version >> dev-deps.txt
 wasm-bindgen --version >> dev-deps.txt
 # libc

@@ -102,6 +102,7 @@
                 wasmtime
                 # webui
                 binaryen
+                tailwindcss
                 trunk
                 wasm-bindgen-cli
               ];
