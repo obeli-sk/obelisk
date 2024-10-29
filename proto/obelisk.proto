@@ -40,11 +40,12 @@ enum ComponentType {
     WEBHOOK_WASM = 2;
 }
 
-message FunctionDetails {
+message FunctionDetails { // FIXME: Rename to FunctionDetail
     FunctionName function = 1;
     repeated FunctionParameter params = 2;
     optional WitType return_type = 3;
     optional FunctionExtension extension = 4;
+    bool submittable = 5;
 }
 
 enum FunctionExtension {

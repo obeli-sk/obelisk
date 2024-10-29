@@ -51,12 +51,13 @@ fn print_status(
     use grpc::get_status_response::Message;
     match response.message {
         Some(Message::Summary(summary)) => {
-            if let Some(ffqn) = summary.function_name.map(FunctionFqn::from) {
-                println!("Function: {ffqn}");
-            }
-            if let Some(pending_status) = summary.current_status {
-                print_pending_status(pending_status, old_pending_status)?;
-            }
+            let ffqn = FunctionFqn::from(summary.function_name.expect("sent by server"));
+            println!("Function: {ffqn}");
+
+            print_pending_status(
+                summary.current_status.expect("sent by server"),
+                old_pending_status,
+            )?;
         }
         Some(Message::CurrentStatus(pending_status)) => {
             print_pending_status(pending_status, old_pending_status)?;
