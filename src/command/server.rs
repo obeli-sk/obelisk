@@ -329,7 +329,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         for component in components {
             let res_component = grpc::Component {
                 name: component.config_id.name.to_string(),
-                r#type: component.config_id.config_id_type.to_string(),
+                r#type: grpc::ComponentType::from(component.config_id.config_id_type).into(),
                 config_id: Some(component.config_id.into()),
                 digest: component.content_digest.to_string(),
                 exports: if let Some(exports) = component.importable {

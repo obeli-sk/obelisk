@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use concepts::{
     prefixed_ulid::{JoinSetId, RunId},
     storage::{DbError, SpecificError},
-    ConfigId, ExecutionId, FunctionFqn,
+    ConfigId, ConfigIdType, ExecutionId, FunctionFqn,
 };
 use std::{borrow::Borrow, sync::Arc};
 use tracing::error;
@@ -137,5 +137,11 @@ impl PendingStatusExt for grpc::ExecutionStatus {
                 status: Some(Status::Finished(..))
             }
         )
+    }
+}
+
+impl From<ConfigIdType> for grpc::ComponentType {
+    fn from(value: ConfigIdType) -> Self {
+        grpc::ComponentType::from_str_name(&value.to_string().to_uppercase()).unwrap()
     }
 }

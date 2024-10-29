@@ -28,10 +28,16 @@ message Component {
     ConfigId config_id = 1;
     string digest = 2;
     string name = 3;
-    string type = 4;
+    ComponentType type = 4;
     reserved 5;
     repeated FunctionDetails exports = 6;
     repeated FunctionDetails imports = 7;
+}
+
+enum ComponentType {
+    WORKFLOW = 0;
+    ACTIVITY_WASM = 1;
+    WEBHOOK_WASM = 2;
 }
 
 message FunctionDetails {

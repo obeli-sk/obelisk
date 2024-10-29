@@ -14,9 +14,17 @@ pub fn component_list(
         on_click,
     }: &ComponentListProps,
 ) -> Html {
-    let workflows = filter_by(components, "workflow", on_click);
-    let activities = filter_by(components, "activity_wasm", on_click);
-    let webhooks = filter_by(components, "webhook_wasm", on_click);
+    let workflows = filter_by(components, grpc_client::ComponentType::Workflow, on_click);
+    let activities = filter_by(
+        components,
+        grpc_client::ComponentType::ActivityWasm,
+        on_click,
+    );
+    let webhooks = filter_by(
+        components,
+        grpc_client::ComponentType::WebhookWasm,
+        on_click,
+    );
 
     html! {
         <div key={"workflows"}>
@@ -32,12 +40,12 @@ pub fn component_list(
 
 fn filter_by(
     components: &[grpc_client::Component],
-    r#type: &str,
+    r#type: grpc_client::ComponentType,
     on_click: &Callback<grpc_client::Component>,
 ) -> Vec<Html> {
     components
         .into_iter()
-        .filter(|component| component.r#type == r#type)
+        .filter(|component| component.r#type == r#type as i32)
         .map(|component| {
             let on_select = {
                 let on_click = on_click.clone();
