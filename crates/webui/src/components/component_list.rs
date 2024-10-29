@@ -14,13 +14,14 @@ pub fn component_list(
         on_click,
     }: &ComponentListProps,
 ) -> Html {
-    let workflows = filter_by(components, grpc_client::ComponentType::Workflow, on_click);
-    let activities = filter_by(
+    let workflows =
+        filter_component_list_by_type(components, grpc_client::ComponentType::Workflow, on_click);
+    let activities = filter_component_list_by_type(
         components,
         grpc_client::ComponentType::ActivityWasm,
         on_click,
     );
-    let webhooks = filter_by(
+    let webhooks = filter_component_list_by_type(
         components,
         grpc_client::ComponentType::WebhookWasm,
         on_click,
@@ -38,7 +39,7 @@ pub fn component_list(
     }
 }
 
-fn filter_by(
+fn filter_component_list_by_type(
     components: &[grpc_client::Component],
     r#type: grpc_client::ComponentType,
     on_click: &Callback<grpc_client::Component>,

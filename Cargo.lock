@@ -5818,6 +5818,7 @@ dependencies = [
 name = "webui"
 version = "0.6.1"
 dependencies = [
+ "indexmap 2.6.0",
  "log",
  "prost 0.13.3",
  "prost-wkt-types",
