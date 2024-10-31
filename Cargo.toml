@@ -266,9 +266,9 @@ yewprint-css = "0.4.0"
 yew-router = "0.18.0"
 
 # wasmtime
-wasmtime = { version = "25.0", features = ["memory-protection-keys"] }
-wasmtime-wasi = "25.0"
-wasmtime-wasi-http = "25.0"
+wasmtime = { version = "26.0", features = ["memory-protection-keys"] }
+wasmtime-wasi = "26.0"
+wasmtime-wasi-http = "26.0"
 wast = "219.0.1"
 wit-parser = "0.219.1"
 
