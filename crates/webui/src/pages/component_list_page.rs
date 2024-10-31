@@ -47,8 +47,6 @@ pub fn component_list_page() -> Html {
         })
     };
 
-    debug!("Rendering component_list");
-
     html! {<>
         <h1>{ "Obelisk WebUI" }</h1>
         <div>
