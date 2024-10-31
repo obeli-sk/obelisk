@@ -32,8 +32,13 @@ pub(crate) mod log_activities {
     // Generate `obelisk::log::log`
     wasmtime::component::bindgen!({
         path: "host-wit/",
+        // interfaces: "import obelisk:log/log;", // Broken in 26.0.0
+        inline: "package any:any;
+                    world bindings {
+                        import obelisk:log/log;
+                    }",
+        world: "any:any/bindings",
         async: false,
-        interfaces: "import obelisk:log/log;",
         trappable_imports: false,
     });
 }

@@ -2,7 +2,12 @@
 wasmtime::component::bindgen!({
     path: "host-wit/",
     async: true,
-    interfaces: "import obelisk:workflow/host-activities;",
+    // interfaces: "import obelisk:workflow/host-activities;", // Broken in 26.0.0
+    inline: "package any:any;
+                world bindings {
+                    import obelisk:workflow/host-activities;
+                }",
+    world: "any:any/bindings",
     trappable_imports: true,
     with: {
         "obelisk:types/execution/join-set-id": concepts::prefixed_ulid::JoinSetId,
