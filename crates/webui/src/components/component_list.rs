@@ -38,9 +38,9 @@ impl ComponentTree {
                         } else {
                             Icon::Import
                         },
+                        is_expanded: is_exports && !interface.contains("-obelisk-ext/"), // TODO: Use `concepts::SUFFIX_PKG_EXT`
                         label: interface.into(),
                         has_caret: true,
-                        is_expanded: is_exports,
                         data: 0,
                         ..Default::default()
                     }),
