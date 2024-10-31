@@ -15,6 +15,7 @@ struct Component;
 
 bindings::export!(Component with_types_in bindings);
 
+// release: Include real files
 #[cfg(not(debug_assertions))]
 fn get_index() -> &'static [u8] {
     include_bytes!("../../webui/dist/index.html")
@@ -30,6 +31,8 @@ fn get_webui_js() -> &'static [u8] {
     include_bytes!("../../webui/dist/webui.js")
 }
 
+
+// debug: Include dummy file content
 #[cfg(debug_assertions)]
 fn get_index() -> &'static [u8] {
     unreachable!("embedding is skipped in debug mode")
@@ -53,12 +56,12 @@ impl Guest for Component {
                 let content_type = "text/html";
                 write_static_response(content, content_type, response_outparam);
             }
-            Some("/obelisk-webui_bg.wasm") => {
+            Some("/webui_bg.wasm") => {
                 let content = get_webui_bg_wasm();
                 let content_type = "application/wasm";
                 write_static_response(content, content_type, response_outparam);
             }
-            Some("/obelisk-webui.js") => {
+            Some("/webui.js") => {
                 let content = get_webui_js();
                 let content_type = "text/javascript";
                 write_static_response(content, content_type, response_outparam);
