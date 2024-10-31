@@ -92,12 +92,13 @@ impl ComponentTree {
         tree: &mut yewprint::id_tree::Tree<NodeData<i32>>,
         root_id: &NodeId,
         label: Html,
+        icon: Icon,
         components: impl Iterator<Item = &'a grpc_client::Component>,
     ) {
-        let group_dir = tree
+        let group_dir_node_id = tree
             .insert(
                 Node::new(NodeData {
-                    icon: Icon::FolderClose,
+                    icon: icon.clone(),
                     label,
                     has_caret: true,
                     data: 0,
@@ -106,18 +107,17 @@ impl ComponentTree {
                 InsertBehavior::UnderNode(root_id),
             )
             .unwrap();
-
         for component in components {
             let component_node_id = tree
                 .insert(
                     Node::new(NodeData {
-                        icon: Icon::FolderClose,
+                        icon: icon.clone(),
                         label: component.name.clone().into(),
                         has_caret: true,
                         data: 0,
                         ..Default::default()
                     }),
-                    InsertBehavior::UnderNode(&group_dir),
+                    InsertBehavior::UnderNode(&group_dir_node_id),
                 )
                 .unwrap();
             if !component.exports.is_empty() {
@@ -177,9 +177,27 @@ impl ComponentTree {
             )
             .unwrap();
 
-        Self::attach_components_to_tree(&mut tree, &root_id, "Workflows".into(), workflows);
-        Self::attach_components_to_tree(&mut tree, &root_id, "Activities".into(), activities);
-        Self::attach_components_to_tree(&mut tree, &root_id, "Webhooks".into(), webhooks);
+        Self::attach_components_to_tree(
+            &mut tree,
+            &root_id,
+            "Workflows".into(),
+            Icon::GanttChart,
+            workflows,
+        );
+        Self::attach_components_to_tree(
+            &mut tree,
+            &root_id,
+            "Activities".into(),
+            Icon::CodeBlock,
+            activities,
+        );
+        Self::attach_components_to_tree(
+            &mut tree,
+            &root_id,
+            "Webhooks".into(),
+            Icon::GlobeNetwork,
+            webhooks,
+        );
         tree.into()
     }
 }
