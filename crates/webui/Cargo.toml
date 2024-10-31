@@ -25,11 +25,14 @@ wasm-bindgen.workspace = true
 wasm-logger.workspace = true
 yew-router.workspace = true
 yew.workspace = true
+yewprint.workspace = true
+yew_icons = { version = "0.8.0", features = ["LucideBox", "LucideFileDiff"] }
 
 [build-dependencies]
 tonic-build = { workspace = true, default-features = false, features = [
     "prost",
 ] }
+yewprint-css.workspace = true
 
 # TODO: Configure in Trunk.toml in trunk 21.0+ : cargo_profile = "trunk-release"
 # [profile.release]

@@ -31,6 +31,10 @@ fn get_webui_js() -> &'static [u8] {
     include_bytes!("../../webui/dist/webui.js")
 }
 
+#[cfg(not(debug_assertions))]
+fn get_blueprint_css() -> &'static [u8] {
+    include_bytes!("../../webui/dist/blueprint.css")
+}
 
 // debug: Include dummy file content
 #[cfg(debug_assertions)]
@@ -45,6 +49,11 @@ fn get_webui_bg_wasm() -> &'static [u8] {
 
 #[cfg(debug_assertions)]
 fn get_webui_js() -> &'static [u8] {
+    unreachable!("embedding is skipped in debug mode")
+}
+
+#[cfg(debug_assertions)]
+fn get_blueprint_css() -> &'static [u8] {
     unreachable!("embedding is skipped in debug mode")
 }
 
@@ -64,6 +73,11 @@ impl Guest for Component {
             Some("/webui.js") => {
                 let content = get_webui_js();
                 let content_type = "text/javascript";
+                write_static_response(content, content_type, response_outparam);
+            }
+            Some("/blueprint.css") => {
+                let content = get_blueprint_css();
+                let content_type = "text/css";
                 write_static_response(content, content_type, response_outparam);
             }
             Some(api_prefixed_path) if api_prefixed_path.starts_with("/api") => {

@@ -261,6 +261,8 @@ wasm-bindgen-futures = "=0.4.43" # Dependent on wasm-bindgen
 wasm-logger = "0.2.0"
 wiremock = "0.6"
 yew = { version = "0.21.0", features = ["csr"] }
+yewprint = "0.5.0"
+yewprint-css = "0.4.0"
 yew-router = "0.18.0"
 
 # wasmtime
