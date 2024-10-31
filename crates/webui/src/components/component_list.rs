@@ -22,6 +22,71 @@ pub enum Msg {
     SelectNode(NodeId),
 }
 
+fn fill_interfaces_and_fns(
+    tree: &mut yewprint::id_tree::Tree<NodeData<i32>>,
+    exports_or_imports: &[grpc_client::FunctionDetails],
+    parent_node_id: &NodeId,
+    is_exports: bool,
+) {
+    for (interface, function_detail_vec) in map_interfaces_to_fn_details(exports_or_imports) {
+        let ifc_node_id = tree
+            .insert(
+                Node::new(NodeData {
+                    icon: if is_exports {
+                        Icon::Export
+                    } else {
+                        Icon::Import
+                    },
+                    label: interface.into(),
+                    has_caret: true,
+                    is_expanded: is_exports,
+                    data: 0,
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(parent_node_id),
+            )
+            .unwrap();
+        for function_detail in function_detail_vec {
+            let function_name = function_detail
+                .function
+                .expect("`.function` is sent by the server");
+            let fn_node_id = tree
+                .insert(
+                    Node::new(NodeData {
+                        icon: Icon::Function,
+                        label: html! {<>
+                            {format!("{} ", function_name.function_name)}
+                            if function_detail.submittable {
+                                <button>
+                                    <yewprint::Icon icon = { Icon::Play }/>
+                                </button>
+                            }
+                        </>},
+                        has_caret: true,
+                        data: 0,
+                        ..Default::default()
+                    }),
+                    InsertBehavior::UnderNode(&ifc_node_id),
+                )
+                .unwrap();
+            // insert fn details
+            tree.insert(
+                Node::new(NodeData {
+                    icon: Icon::Document,
+                    label: html! {
+                        <FunctionSignature params = {function_detail.params} return_type = {function_detail.return_type} />
+                    },
+                    data: 0,
+                    disabled: true,
+                    ..Default::default()
+                }),
+                InsertBehavior::UnderNode(&fn_node_id),
+            )
+            .unwrap();
+        }
+    }
+}
+
 fn render_group<'a>(
     tree: &mut yewprint::id_tree::Tree<NodeData<i32>>,
     root_id: &NodeId,
@@ -41,74 +106,6 @@ fn render_group<'a>(
         )
         .unwrap();
 
-    let fill_interfaces_and_fns = |tree: &mut yewprint::id_tree::Tree<NodeData<i32>>,
-                                   exports_or_imports,
-                                   parent_node_id,
-                                   is_expanded| {
-        for (interface, function_detail_vec) in map_interfaces_to_fn_details(exports_or_imports) {
-            let ifc_node_id = tree
-                .insert(
-                    Node::new(NodeData {
-                        icon: Icon::FolderClose,
-                        label: interface.into(),
-                        has_caret: true,
-                        is_expanded,
-                        data: 0,
-                        ..Default::default()
-                    }),
-                    InsertBehavior::UnderNode(&parent_node_id),
-                )
-                .unwrap();
-            for function_detail in function_detail_vec {
-                let function_name = function_detail
-                    .function
-                    .expect("`.function` is sent by the server");
-                let fn_node_id = tree
-                    .insert(
-                        Node::new(NodeData {
-                            icon: Icon::Function,
-                            label: html! {<>
-                                {format!("{} ", function_name.function_name)}
-                                if function_detail.submittable {
-                                    <button>{"Submit"}</button>
-                                }
-                            </>},
-                            has_caret: true,
-                            data: 0,
-                            ..Default::default()
-                        }),
-                        InsertBehavior::UnderNode(&ifc_node_id),
-                    )
-                    .unwrap();
-                // insert fn details
-                tree.insert(
-                    Node::new(NodeData {
-                        icon: Icon::Document,
-                        label: html! {<>
-                            {"func ("}
-                                <FunctionParameterList params = {function_detail.params} />
-                            {")"}
-                            if let Some(return_type) = function_detail.return_type {
-
-                                {" -> "}
-                                if let Some(wit_type) = return_type.wit_type {
-                                    { wit_type }
-                                } else {
-                                    { "<unknown type>" }
-                                }
-                            }
-                        </>},
-                        data: 0,
-                        disabled: true,
-                        ..Default::default()
-                    }),
-                    InsertBehavior::UnderNode(&fn_node_id),
-                )
-                .unwrap();
-            }
-        }
-    };
-
     for component in components {
         let component_node_id = tree
             .insert(
@@ -123,26 +120,13 @@ fn render_group<'a>(
             )
             .unwrap();
         if !component.exports.is_empty() {
-            let exports_node_id = tree
-                .insert(
-                    Node::new(NodeData {
-                        icon: Icon::FolderClose,
-                        label: "Exports".into(),
-                        has_caret: true,
-                        is_expanded: true,
-                        data: 0,
-                        ..Default::default()
-                    }),
-                    InsertBehavior::UnderNode(&component_node_id),
-                )
-                .unwrap();
-            fill_interfaces_and_fns(tree, &component.exports, exports_node_id, true);
+            fill_interfaces_and_fns(tree, &component.exports, &component_node_id, true);
         }
         if !component.imports.is_empty() {
             let imports_node_id = tree
                 .insert(
                     Node::new(NodeData {
-                        icon: Icon::FolderClose,
+                        icon: Icon::Import,
                         label: "Imports".into(),
                         has_caret: true,
                         data: 0,
@@ -151,7 +135,7 @@ fn render_group<'a>(
                     InsertBehavior::UnderNode(&component_node_id),
                 )
                 .unwrap();
-            fill_interfaces_and_fns(tree, &component.imports, imports_node_id, false);
+            fill_interfaces_and_fns(tree, &component.imports, &imports_node_id, false);
         }
     }
 }
@@ -220,11 +204,6 @@ impl Component for ComponentTree {
                 let node = tree.get_mut(&node_id).unwrap();
                 let data = node.data_mut();
                 data.is_expanded ^= true;
-                data.icon = if data.is_expanded {
-                    Icon::FolderOpen
-                } else {
-                    Icon::FolderClose
-                };
             }
             Msg::SelectNode(_node_id) => {
                 // let mut tree = self.tree.borrow_mut();
@@ -246,6 +225,34 @@ impl Component for ComponentTree {
             />
         }
     }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct FunctionSignatureProps {
+    pub params: Vec<grpc_client::FunctionParameter>,
+    pub return_type: Option<grpc_client::WitType>,
+}
+#[function_component(FunctionSignature)]
+pub fn function_signature(
+    FunctionSignatureProps {
+        params,
+        return_type,
+    }: &FunctionSignatureProps,
+) -> Html {
+    html! {<>
+        {"func ("}
+            <FunctionParameterList params = {params.clone()} />
+        {")"}
+        if let Some(return_type) = return_type {
+
+            {" -> "}
+            if let Some(wit_type) = &return_type.wit_type {
+                { wit_type }
+            } else {
+                { "<unknown type>" }
+            }
+        }
+    </>}
 }
 
 #[derive(Properties, PartialEq)]
@@ -274,68 +281,6 @@ pub fn function_parameter_list(
             </>}
         })
         .collect()
-}
-
-#[derive(Properties, PartialEq)]
-pub struct ComponentListProps {
-    pub components: Vec<grpc_client::Component>,
-    pub on_click: Callback<grpc_client::Component>,
-}
-#[function_component(ComponentList)]
-pub fn component_list(
-    ComponentListProps {
-        components,
-        on_click,
-    }: &ComponentListProps,
-) -> Html {
-    let workflows = filter_component_list_by_type_html(
-        components,
-        grpc_client::ComponentType::Workflow,
-        on_click,
-    );
-    let activities = filter_component_list_by_type_html(
-        components,
-        grpc_client::ComponentType::ActivityWasm,
-        on_click,
-    );
-    let webhooks = filter_component_list_by_type_html(
-        components,
-        grpc_client::ComponentType::WebhookWasm,
-        on_click,
-    );
-
-    html! {
-        <div key={"workflows"}>
-        <h3>{"Workflows"}</h3>
-        {workflows}
-        <h3>{"Activities"}</h3>
-        {activities}
-        <h3>{"Webhooks"}</h3>
-        {webhooks}
-        </div>
-    }
-}
-
-fn filter_component_list_by_type_html(
-    components: &[grpc_client::Component],
-    r#type: grpc_client::ComponentType,
-    on_click: &Callback<grpc_client::Component>,
-) -> Vec<Html> {
-    components
-        .iter()
-        .filter(|component| component.r#type == r#type as i32)
-        .map(|component| {
-            let on_select = {
-                let on_click = on_click.clone();
-                let component = component.clone();
-                Callback::from(move |_| on_click.emit(component.clone()))
-            };
-            html! {
-                    <p key={component.config_id.as_ref().unwrap().id.as_str()}
-                        onclick={on_select}>{format!("{}", component.name)}</p>
-            }
-        })
-        .collect::<Vec<_>>()
 }
 
 fn filter_component_list_by_type(
