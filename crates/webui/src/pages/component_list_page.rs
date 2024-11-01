@@ -9,10 +9,9 @@ pub fn component_list_page() -> Html {
     let components_state = use_state(|| None);
 
     {
-        // Make gRPC request to `list_components`, dependent on `extensions_state`.
+        // Make gRPC request to `list_components`.
         let components_state = components_state.clone();
-        let extensions_state = extensions_state.clone();
-        use_effect_with(extensions_state.clone(), move |_| {
+        use_effect_with((), move |_| {
             let components_state = components_state.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let base_url = "/api";
@@ -20,19 +19,16 @@ pub fn component_list_page() -> Html {
                     grpc_client::function_repository_client::FunctionRepositoryClient::new(
                         tonic_web_wasm_client::Client::new(base_url.to_string()),
                     );
-                debug!(
-                    "Requesting ListComponents with extensions={}",
-                    *extensions_state
-                );
-                let response = fn_repo_client
+                let mut response = fn_repo_client
                     .list_components(grpc_client::ListComponentsRequest {
-                        extensions: *extensions_state,
+                        extensions: true,
                         ..Default::default()
                     })
                     .await
                     .unwrap()
                     .into_inner();
                 debug!("Got gRPC ListComponentsResponse");
+                response.components.sort_by(|a, b| a.name.cmp(&b.name));
                 components_state.set(Some(response.components));
             });
             || ()
@@ -56,7 +52,7 @@ pub fn component_list_page() -> Html {
                 <label onclick={&on_extensions_change}> { "Show function extensions" }</label>
             </p>
             if let Some(components) = components_state.deref() {
-                <ComponentTree components={components.clone()}/>
+                <ComponentTree components={components.clone()} show_extensions={ *extensions_state }/>
             }
         </div>
     </>}

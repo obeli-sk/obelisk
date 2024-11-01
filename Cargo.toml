@@ -197,6 +197,7 @@ http = "1.1.0"
 http-body-util = "0.1"
 hyper = "1.5.0"
 hyper-util = { version = "0.1", features = ["tokio"] }
+implicit-clone = "0.5.0"
 indexmap = { version = "2.6", features = ["serde"] }
 insta = { version = "1.41.1", features = ["json"] }
 itertools = "0.13"

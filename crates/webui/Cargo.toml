@@ -11,6 +11,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+implicit-clone.workspace = true
 indexmap.workspace = true
 log.workspace = true
 prost-wkt-types.workspace = true

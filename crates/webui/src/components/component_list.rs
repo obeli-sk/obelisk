@@ -8,6 +8,7 @@ use yewprint::{Icon, NodeData, TreeData};
 #[derive(Properties, PartialEq)]
 pub struct ComponentTreeProps {
     pub components: Vec<grpc_client::Component>,
+    pub show_extensions: bool,
 }
 
 pub struct ComponentTree {
@@ -21,15 +22,18 @@ pub enum Msg {
 }
 
 impl ComponentTree {
+    fn is_extension_interface(interface: &str) -> bool {
+        interface.contains("-obelisk-ext/") // TODO: Use `concepts::SUFFIX_PKG_EXT`
+    }
+
     fn fill_interfaces_and_fns(
         tree: &mut yewprint::id_tree::Tree<NodeData<i32>>,
-        exports_or_imports: &[grpc_client::FunctionDetails],
+        exports_or_imports: IndexMap<String, Vec<grpc_client::FunctionDetails>>,
         parent_node_id: &NodeId,
         is_exports: bool,
     ) {
-        for (interface, function_detail_vec) in
-            Self::map_interfaces_to_fn_details(exports_or_imports)
-        {
+        for (interface, function_detail_vec) in exports_or_imports {
+            let is_extension_ifc = Self::is_extension_interface(&interface);
             let ifc_node_id = tree
                 .insert(
                     Node::new(NodeData {
@@ -38,7 +42,7 @@ impl ComponentTree {
                         } else {
                             Icon::Import
                         },
-                        is_expanded: is_exports && !interface.contains("-obelisk-ext/"), // TODO: Use `concepts::SUFFIX_PKG_EXT`
+                        is_expanded: is_exports && !is_extension_ifc,
                         label: interface.into(),
                         has_caret: true,
                         data: 0,
@@ -51,6 +55,9 @@ impl ComponentTree {
                 let function_name = function_detail
                     .function
                     .expect("`.function` is sent by the server");
+                let onclick = Callback::from(|mouse_event: MouseEvent| {
+                    mouse_event.set_cancel_bubble(true);
+                });
                 let fn_node_id = tree
                     .insert(
                         Node::new(NodeData {
@@ -58,7 +65,7 @@ impl ComponentTree {
                             label: html! {<>
                                 {format!("{} ", function_name.function_name)}
                                 if function_detail.submittable {
-                                    <button>
+                                    <button { onclick }>
                                         <yewprint::Icon icon = { Icon::Play }/>
                                     </button>
                                 }
@@ -91,6 +98,7 @@ impl ComponentTree {
     fn attach_components_to_tree<'a>(
         tree: &mut yewprint::id_tree::Tree<NodeData<i32>>,
         root_id: &NodeId,
+        show_extensions: bool,
         label: Html,
         icon: Icon,
         components: impl Iterator<Item = &'a grpc_client::Component>,
@@ -120,9 +128,12 @@ impl ComponentTree {
                     InsertBehavior::UnderNode(&group_dir_node_id),
                 )
                 .unwrap();
-            if !component.exports.is_empty() {
-                Self::fill_interfaces_and_fns(tree, &component.exports, &component_node_id, true);
-            }
+            Self::fill_interfaces_and_fns(
+                tree,
+                Self::map_interfaces_to_fn_details(&component.exports, show_extensions),
+                &component_node_id,
+                true,
+            );
             if !component.imports.is_empty() {
                 let imports_node_id = tree
                     .insert(
@@ -136,30 +147,60 @@ impl ComponentTree {
                         InsertBehavior::UnderNode(&component_node_id),
                     )
                     .unwrap();
-                Self::fill_interfaces_and_fns(tree, &component.imports, &imports_node_id, false);
+                Self::fill_interfaces_and_fns(
+                    tree,
+                    Self::map_interfaces_to_fn_details(&component.imports, show_extensions),
+                    &imports_node_id,
+                    false,
+                );
             }
         }
     }
 
     fn map_interfaces_to_fn_details(
         functions: &[grpc_client::FunctionDetails],
+        show_extensions: bool,
     ) -> IndexMap<String, Vec<grpc_client::FunctionDetails>> {
         let mut interfaces_to_fn_details: IndexMap<String, Vec<grpc_client::FunctionDetails>> =
             IndexMap::new();
+        let mut extensions: IndexMap<String, Vec<grpc_client::FunctionDetails>> = IndexMap::new();
         for function_detail in functions {
             let function_name = function_detail
                 .function
                 .clone()
                 .expect("function and its name is sent by the server");
-            interfaces_to_fn_details
-                .entry(function_name.interface_name.clone())
-                .or_default()
-                .push(function_detail.clone());
+            let is_extension_ifc = Self::is_extension_interface(&function_name.interface_name);
+            if !is_extension_ifc {
+                interfaces_to_fn_details
+                    .entry(function_name.interface_name.clone())
+                    .or_default()
+                    .push(function_detail.clone());
+            } else if show_extensions {
+                extensions
+                    .entry(function_name.interface_name.clone())
+                    .or_default()
+                    .push(function_detail.clone());
+            }
+        }
+        interfaces_to_fn_details.sort_keys();
+        extensions.sort_keys();
+        interfaces_to_fn_details.append(&mut extensions);
+        // sort functions in each interface
+        for (_, fns) in interfaces_to_fn_details.iter_mut() {
+            fns.sort_by(|a, b| {
+                a.function
+                    .as_ref()
+                    .map(|f| &f.function_name)
+                    .cmp(&b.function.as_ref().map(|f| &f.function_name))
+            });
         }
         interfaces_to_fn_details
     }
 
-    fn construct_tree(components: &[grpc_client::Component]) -> TreeData<i32> {
+    fn construct_tree(
+        components: &[grpc_client::Component],
+        show_extensions: bool,
+    ) -> TreeData<i32> {
         let workflows =
             filter_component_list_by_type(components, grpc_client::ComponentType::Workflow);
         let activities =
@@ -180,6 +221,7 @@ impl ComponentTree {
         Self::attach_components_to_tree(
             &mut tree,
             &root_id,
+            show_extensions,
             "Workflows".into(),
             Icon::GanttChart,
             workflows,
@@ -187,6 +229,7 @@ impl ComponentTree {
         Self::attach_components_to_tree(
             &mut tree,
             &root_id,
+            show_extensions,
             "Activities".into(),
             Icon::CodeBlock,
             activities,
@@ -194,6 +237,7 @@ impl ComponentTree {
         Self::attach_components_to_tree(
             &mut tree,
             &root_id,
+            show_extensions,
             "Webhooks".into(),
             Icon::GlobeNetwork,
             webhooks,
@@ -208,8 +252,11 @@ impl Component for ComponentTree {
 
     fn create(ctx: &Context<Self>) -> Self {
         log::debug!("create");
-        let ComponentTreeProps { components } = ctx.props();
-        let tree = Self::construct_tree(components);
+        let ComponentTreeProps {
+            components,
+            show_extensions,
+        } = ctx.props();
+        let tree = Self::construct_tree(components, *show_extensions);
 
         Self {
             tree,
@@ -232,8 +279,11 @@ impl Component for ComponentTree {
 
     fn changed(&mut self, ctx: &Context<Self>, _old_props: &Self::Properties) -> bool {
         log::debug!("changed");
-        let ComponentTreeProps { components } = ctx.props();
-        let tree = Self::construct_tree(components);
+        let ComponentTreeProps {
+            components,
+            show_extensions: extensions,
+        } = ctx.props();
+        let tree = Self::construct_tree(components, *extensions);
         self.tree = tree;
         true
     }
@@ -245,7 +295,7 @@ impl Component for ComponentTree {
                 tree={self.tree.clone()}
                 on_collapse={ Some(self.callback_expand_node.clone()) }
                 on_expand={ Some(self.callback_expand_node.clone()) }
-                onclick={ None::<Callback<(NodeId, MouseEvent)>> }
+                onclick={ Some(self.callback_expand_node.clone()) }
             />
         }
     }
