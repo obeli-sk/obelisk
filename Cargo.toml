@@ -256,8 +256,8 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 ulid = { version = "1.1.3", features = ["serde"] }
 url = "2.3.1"
 waki = "0.3.2"
-wasm-bindgen = "=0.2.93" # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml and wasm-bindgen-futures on version change.
-wasm-bindgen-futures = "=0.4.43" # Dependent on wasm-bindgen
+wasm-bindgen = "=0.2.95" # Must be equal to wasm-bindgen-cli in nix. Update Trunk.toml and wasm-bindgen-futures on version change.
+wasm-bindgen-futures = "=0.4.45" # Dependent on wasm-bindgen
 wasm-logger = "0.2.0"
 wiremock = "0.6"
 yew = { version = "0.21.0", features = ["csr"] }
