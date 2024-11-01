@@ -1,7 +1,10 @@
+use crate::app::Route;
+use crate::ffqn::FunctionFqn;
 use crate::grpc_client;
 use indexmap::IndexMap;
 use std::fmt::Debug;
 use yew::prelude::*;
+use yew_router::prelude::Link;
 use yewprint::id_tree::{InsertBehavior, Node, NodeId, TreeBuilder};
 use yewprint::{Icon, NodeData, TreeData};
 
@@ -52,24 +55,20 @@ impl ComponentTree {
                 )
                 .unwrap();
             for function_detail in function_detail_vec {
-                let function_name = function_detail
-                    .function
-                    .expect("`.function` is sent by the server");
-                let onclick = Callback::from(|mouse_event: MouseEvent| {
-                    mouse_event.set_cancel_bubble(true);
-                });
+                let ffqn = FunctionFqn::from_fn_detail(&function_detail);
                 let fn_node_id = tree
                     .insert(
                         Node::new(NodeData {
                             icon: Icon::Function,
                             label: html! {<>
-                                {format!("{} ", function_name.function_name)}
                                 if function_detail.submittable {
-                                    <button { onclick }>
-                                        <yewprint::Icon icon = { Icon::Play }/>
-                                    </button>
+                                    <Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.to_string() } } >
+                                         <Icon icon = { Icon::Play }/>
+                                    </Link<Route>>
                                 }
+                                {format!("{} ", ffqn.function_name)}
                             </>},
+
                             has_caret: true,
                             data: 0,
                             ..Default::default()

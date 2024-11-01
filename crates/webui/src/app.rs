@@ -1,15 +1,19 @@
 use crate::{
+    ffqn::FunctionFqn,
     grpc_client,
-    pages::{component_list_page::ComponentListPage, not_found::NotFound},
+    pages::{
+        component_list_page::ComponentListPage, execution_submit_page::ExecutionSubmitPage,
+        not_found::NotFound,
+    },
 };
-use log::debug;
 use std::ops::Deref;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
-#[derive(Clone, PartialEq, Default)]
+#[derive(Clone, PartialEq)]
 pub struct AppState {
-    pub components: Option<Vec<grpc_client::Component>>,
+    pub components: Vec<grpc_client::Component>,
+    pub submittable_ffqns_to_details: hashbrown::HashMap<FunctionFqn, grpc_client::FunctionDetails>,
 }
 
 #[derive(Clone, Routable, PartialEq)]
@@ -21,17 +25,17 @@ pub enum Route {
     #[at("/component/list")]
     ComponentList,
     /// Show the parameters inputs with their WIT schemas. Allow submitting new execution.
-    #[at("/execution/submit")]
-    ExecutionSubmit,
+    #[at("/execution/submit/:ffqn")]
+    ExecutionSubmit { ffqn: String },
     /// Show details including pending state, event history
-    #[at("/execution/detail")]
-    ExecutionDetail,
+    // #[at("/execution/detail")]
+    // ExecutionDetail,
     /// Show paginated table of executions, fiterable by component, interface, ffqn, pending state etc.
-    #[at("/execution/list")]
-    ExecutionList,
+    // #[at("/execution/list")]
+    // ExecutionList,
     /// Show WIT schema explorer, allow showing/hiding obelisk extensions.
-    #[at("/wit")]
-    WitExplore,
+    // #[at("/wit")]
+    // WitExplore,
     #[not_found]
     #[at("/404")]
     NotFound,
@@ -40,47 +44,36 @@ pub enum Route {
 impl Route {
     pub fn render(route: Route) -> Html {
         match route {
-            Route::Home => {
-                html! { <ComponentListPage /> }
-            }
+            Route::Home => html! { <ComponentListPage /> },
+            Route::ComponentList => html! { <ComponentListPage /> },
+            Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
             Route::NotFound => html! { <NotFound /> },
-            _ => todo!(),
         }
     }
 }
 
-#[function_component(App)]
-pub fn app() -> Html {
-    let app_state = use_state(|| AppState::default());
-    {
-        // Make gRPC request to `list_components`.
-        let app_state = app_state.clone();
-        use_effect_with((), move |_| {
-            let app_state = app_state.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                let base_url = "/api";
-                let mut fn_repo_client =
-                    grpc_client::function_repository_client::FunctionRepositoryClient::new(
-                        tonic_web_wasm_client::Client::new(base_url.to_string()),
-                    );
-                let mut response = fn_repo_client
-                    .list_components(grpc_client::ListComponentsRequest {
-                        extensions: true,
-                        ..Default::default()
-                    })
-                    .await
-                    .unwrap()
-                    .into_inner();
-                debug!("Got gRPC ListComponentsResponse");
-                response.components.sort_by(|a, b| a.name.cmp(&b.name));
-                app_state.set(AppState {
-                    components: Some(response.components),
-                });
-            });
-            || ()
-        });
-    }
+#[derive(PartialEq, Properties)]
+pub struct AppProps {
+    pub components: Vec<grpc_client::Component>,
+}
 
+#[function_component(App)]
+pub fn app(AppProps { components }: &AppProps) -> Html {
+    let mut submittable_ffqns_to_details = hashbrown::HashMap::new();
+    for component in components {
+        for exported_fn_detail in component
+            .exports
+            .iter()
+            .filter(|fn_detail| fn_detail.submittable)
+        {
+            let ffqn = FunctionFqn::from_fn_detail(exported_fn_detail);
+            submittable_ffqns_to_details.insert(ffqn, exported_fn_detail.clone());
+        }
+    }
+    let app_state = use_state(|| AppState {
+        components: components.clone(),
+        submittable_ffqns_to_details,
+    });
     html! {
          <ContextProvider<AppState> context={app_state.deref().clone()}>
             <BrowserRouter>

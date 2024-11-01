@@ -5858,17 +5858,20 @@ dependencies = [
 name = "webui"
 version = "0.6.1"
 dependencies = [
+ "hashbrown 0.15.0",
  "implicit-clone 0.5.0",
  "indexmap 2.6.0",
  "log",
  "prost 0.13.3",
  "prost-wkt-types",
+ "serde_json",
  "tonic 0.12.3",
  "tonic-build",
  "tonic-web-wasm-client",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-logger",
+ "web-sys",
  "yew",
  "yew-router",
  "yew_icons",
