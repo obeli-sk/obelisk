@@ -1390,7 +1390,7 @@ pub(crate) mod tests {
         let val = assert_matches!(res.value(), Some(wast_val) => wast_val);
         let val = assert_matches!(val, WastVal::Result(Err(Some(val))) => val).deref();
         let val = assert_matches!(val, WastVal::String(val) => val);
-        assert_eq!("empty host", val);
+        assert_eq!("invalid format", val);
 
         let pending_state = db_connection.get_pending_state(execution_id).await.unwrap();
         assert_matches!(

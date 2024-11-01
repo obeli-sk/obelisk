@@ -3025,9 +3025,9 @@ dependencies = [
 
 [[package]]
 name = "oci-client"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53e050f8bab3f561aa5ab537e1a6ed24006d58b4ee93cd6bb2c0cb822726f306"
+checksum = "474675fdc023fbcc9dcf4782e938a3a1ae5fd469c728d8db40599bd25c77e1ba"
 dependencies = [
  "bytes",
  "chrono",
@@ -3067,9 +3067,9 @@ dependencies = [
 
 [[package]]
 name = "oci-wasm"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8403a1f0598a12452babb25a7bdf815269c4d83b064862a560879e66e3e85ee"
+checksum = "f147e207436277483c23cb8e55ccd039ee1657c6a8d19471a6de187da6973ef8"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3443,7 +3443,7 @@ checksum = "0c1318b19085f08681016926435853bbf7858f9c082d0999b80550ff5d9abe15"
 dependencies = [
  "bytes",
  "heck 0.5.0",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "log",
  "multimap",
  "once_cell",
@@ -3476,7 +3476,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9552f850d5f0964a4e4d0bf306459ac29323ddfbae05e35a7c0d35cb0803cc5"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.86",
@@ -5285,24 +5285,23 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "waki"
-version = "0.3.2"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "068839b80fb420247a7f1423fe30c4e768c0e8f9a16a62a85ecd68ef6a999f92"
+checksum = "b44c4142fc90684377341be0ae96b110ce204049febce3f4c9bfddb729014fe7"
 dependencies = [
  "anyhow",
+ "form_urlencoded",
  "http 1.1.0",
  "serde",
- "serde_urlencoded",
- "url",
  "waki-macros",
  "wit-bindgen",
 ]
 
 [[package]]
 name = "waki-macros"
-version = "0.3.2"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89c18865d2c6c414628037585c1f2dda43a578d2f9ba1500fbb2927a5a3087ba"
+checksum = "856e37ead59a9789ba92ef0ec0d042762c8da1f469abe832d2b2159a2b353967"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5819,9 +5818,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.70"
+version = "0.3.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26fdeaafd9bd129f65e7c031593c24d62186301e0c72c8978fa1678be7d532c0"
+checksum = "f6488b90108c040df0fe62fa815cbdee25124641df01814dd7282749234c6112"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -5949,7 +5948,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
