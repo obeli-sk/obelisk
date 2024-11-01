@@ -14,7 +14,6 @@ tokio-console 0.1.10
 wasm-tools 1.219.1
 wasmtime 26.0.0
 wasm-opt version 118
-tailwindcss v3.4.14
 trunk 0.20.3
 wasm-bindgen 0.2.95
 ldd (GNU libc) 2.40
