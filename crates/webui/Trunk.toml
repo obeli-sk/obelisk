@@ -4,5 +4,5 @@ filehash = false
 
 [tools]
 wasm_opt = "version_118"
-wasm_bindgen = "0.2.93"
+wasm_bindgen = "0.2.95"
 tailwindcss = "3.4.13"
