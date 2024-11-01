@@ -203,10 +203,10 @@ itertools = "0.13"
 lazy_static = "1.5"
 log = "0.4.22" # Only for webui
 madsim = "0.2.31"
-oci-client = { version = "0.13.0", default-features = false, features = [ # Must match oci-wasm
+oci-client = { version = "0.14.0", default-features = false, features = [
     "rustls-tls",
 ] }
-oci-wasm = { version = "0.1.0", default-features = false, features = [
+oci-wasm = { version = "0.2.0", default-features = false, features = [ # Dependent on matching oci-client
     "rustls-tls",
 ] }
 prost = "0.13.3"
