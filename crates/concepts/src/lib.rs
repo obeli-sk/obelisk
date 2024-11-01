@@ -322,6 +322,8 @@ impl FunctionFqn {
 pub enum FunctionFqnParseError {
     #[error("delimiter `.` not found")]
     DelimiterNotFound,
+    #[error("delimiter `.` found more than once")]
+    DelimiterFoundMoreThanOnce,
 }
 
 impl FromStr for FunctionFqn {
@@ -329,7 +331,11 @@ impl FromStr for FunctionFqn {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((ifc_fqn, function_name)) = s.split_once('.') {
-            Ok(Self::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)))
+            if function_name.contains('.') {
+                Err(FunctionFqnParseError::DelimiterFoundMoreThanOnce)
+            } else {
+                Ok(Self::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)))
+            }
         } else {
             Err(FunctionFqnParseError::DelimiterNotFound)
         }
