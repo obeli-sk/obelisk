@@ -1,5 +1,5 @@
 use crate::{ffqn::FunctionFqn, grpc_client};
-use log::debug;
+use log::{debug, error};
 use std::ops::Deref;
 use yew::prelude::*;
 
@@ -16,11 +16,13 @@ pub fn execution_submit_form(
     #[derive(Debug, Clone, PartialEq)]
     struct FormData {
         params: Vec<String>,
+        request_processing: bool,
     }
 
     // Initialize form state with default values
     let form_data_handle = use_state(|| FormData {
         params: vec![String::new(); function_detail.params.len()],
+        request_processing: false,
     });
 
     let on_param_change = {
@@ -40,16 +42,31 @@ pub fn execution_submit_form(
         let form_data_handle = form_data_handle.clone();
         let ffqn = ffqn.clone();
         Callback::from(move |e: SubmitEvent| {
-            e.prevent_default();
-            let params: Vec<_> = form_data_handle
+            e.prevent_default(); // prevent form submission
+            let params = match form_data_handle
                 .deref()
                 .params
                 .iter()
-                .map(|str_param| serde_json::from_str(str_param).unwrap())
-                .collect();
+                .map(|str_param| serde_json::from_str(str_param))
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(params) => params,
+                Err(serde_err) => {
+                    error!("Cannot serialize parameters - {serde_err:?}");
+                    panic!("cannot serialize parameters")
+                }
+            };
+            {
+                // disable the submit button
+                let mut form_data = form_data_handle.deref().clone();
+                form_data.request_processing = true;
+                form_data_handle.set(form_data);
+            }
+
             wasm_bindgen_futures::spawn_local({
                 let params = params.clone();
                 let ffqn = ffqn.clone();
+                let form_data_handle = form_data_handle.clone();
                 async move {
                     let base_url = "/api";
                     let mut scheduler_client = grpc_client::scheduler_client::SchedulerClient::new(
@@ -64,10 +81,25 @@ pub fn execution_submit_form(
                             function: Some(grpc_client::FunctionName::from(ffqn)),
                             execution_id: None,
                         })
-                        .await
-                        .unwrap()
-                        .into_inner();
+                        .await;
                     debug!("Got gRPC {response:?}");
+                    match response {
+                        Ok(response) => {
+                            let execution_id = response
+                                .into_inner()
+                                .execution_id
+                                .expect("SubmitResponse.execution_id is sent by the server")
+                                .id;
+                            debug!("Submitted as {execution_id}")
+                        }
+                        Err(err) => {
+                            error!("Got error {err:?}");
+                            // reenable the submit button
+                            let mut form_data = form_data_handle.deref().clone();
+                            form_data.request_processing = false;
+                            form_data_handle.set(form_data);
+                        }
+                    }
                 }
             });
         })
@@ -87,7 +119,7 @@ pub fn execution_submit_form(
             let id = format!("{idx}");
             html! {<p>
                 <label for={id.clone()}>{ format!("{}: {}", name, r#type) }</label>
-                <input id={id} type="text" value={form_data_handle.params[idx].clone() } oninput = {&on_param_change} />
+                <input id={id} type="text" value={form_data_handle.params[idx].clone()} oninput = {&on_param_change} />
             </p>}
         })
         .collect();
@@ -95,7 +127,9 @@ pub fn execution_submit_form(
     html! {<>
         <form onsubmit = {on_submit }>
             {for params_html}
-            <button type="submit">{"Submit"}</button>
+            <button type="submit" disabled={form_data_handle.request_processing.clone()}>
+                {"Submit"}
+            </button>
         </form>
     </>}
 }
