@@ -27,13 +27,17 @@ pub fn execution_submit_form(
 
     let on_param_change = {
         let form_data_handle = form_data_handle.clone();
+        let ffqn = ffqn.clone();
         Callback::from(move |e: InputEvent| {
             let input: web_sys::HtmlInputElement = e.target_unchecked_into();
             let mut form_data = form_data_handle.deref().clone();
-            form_data.params[input
+            let idx: usize = input
                 .id()
-                .parse::<usize>()
-                .expect("id of input fields is numeric")] = input.value();
+                .strip_prefix(&ffqn.to_string())
+                .expect("input id starts with ffqn")
+                .parse()
+                .expect("id of input fields is numeric");
+            form_data.params[idx] = input.value();
             form_data_handle.set(form_data);
         })
     };
@@ -116,7 +120,7 @@ pub fn execution_submit_form(
                 .as_ref()
                 .and_then(|wit_type| wit_type.wit_type.as_deref())
                 .unwrap_or("<unknown_type>");
-            let id = format!("{idx}");
+            let id = format!("{ffqn}{idx}");
             html! {<p>
                 <label for={id.clone()}>{ format!("{}: {}", name, r#type) }</label>
                 <input id={id} type="text" value={form_data_handle.params[idx].clone()} oninput = {&on_param_change} />
@@ -127,7 +131,7 @@ pub fn execution_submit_form(
     html! {<>
         <form onsubmit = {on_submit }>
             {for params_html}
-            <button type="submit" disabled={form_data_handle.request_processing.clone()}>
+            <button type="submit" disabled={form_data_handle.request_processing}>
                 {"Submit"}
             </button>
         </form>
