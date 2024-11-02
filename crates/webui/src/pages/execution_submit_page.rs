@@ -1,4 +1,8 @@
-use crate::{app::AppState, components::execution_submit::ExecutionSubmitForm, ffqn::FunctionFqn};
+use crate::{
+    app::AppState,
+    components::{execution_submit::ExecutionSubmitForm, function_signature::FunctionSignature},
+    ffqn::FunctionFqn,
+};
 use std::str::FromStr;
 use yew::prelude::*;
 
@@ -17,9 +21,14 @@ pub fn execution_submit_page(ExecutionSubmitPageProps { ffqn }: &ExecutionSubmit
             .get(&ffqn)
             .ok_or("function not found")
     }) {
-        Ok(function_detail) => html! {
-            <ExecutionSubmitForm {function_detail} />
-        },
+        Ok(function_detail) => {
+            let ffqn = FunctionFqn::from_fn_detail(function_detail);
+            html! {<>
+                <h3>{ ffqn.to_string() }</h3>
+                <h4><FunctionSignature params = {function_detail.params.clone()} return_type = {function_detail.return_type.clone()} /></h4>
+                <ExecutionSubmitForm {function_detail} />
+            </>}
+        }
         Err(err) => html! {
             <p>{ err }</p>
         },

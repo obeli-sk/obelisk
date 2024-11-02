@@ -93,7 +93,6 @@ pub fn execution_submit_form(
         .collect();
 
     html! {<>
-        <p>{ ffqn.to_string() }</p>
         <form onsubmit = {on_submit }>
             {for params_html}
             <button type="submit">{"Submit"}</button>
