@@ -1726,7 +1726,7 @@ impl DbConnection for SqlitePool {
                 let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
                 // Append lock
                 for (execution_id, version) in execution_ids_versions {
-                    let locked = Self::lock_inner(
+                    match Self::lock_inner(
                         tx,
                         created_at,
                         config_id.clone(),
@@ -1735,8 +1735,12 @@ impl DbConnection for SqlitePool {
                         version,
                         executor_id,
                         lock_expires_at,
-                    )?;
-                    locked_execs.push(locked);
+                    ) {
+                        Ok(locked) => locked_execs.push(locked),
+                        Err(err) => {
+                            warn!("Locking row {execution_id} failed - {err:?}")
+                        }
+                    }
                 }
                 Ok(locked_execs)
             })
