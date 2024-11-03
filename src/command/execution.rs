@@ -49,9 +49,10 @@ fn print_status(
     old_pending_status: &mut String,
 ) -> Result<(), anyhow::Error> {
     use grpc::get_status_response::Message;
-    match response.message {
-        Some(Message::Summary(summary)) => {
-            let ffqn = FunctionFqn::from(summary.function_name.expect("sent by server"));
+    match response.message.expect("message expected") {
+        Message::Summary(summary) => {
+            let ffqn = FunctionFqn::try_from(summary.function_name.expect("sent by server"))
+                .expect("ffqn sent by the server must be valid");
             println!("Function: {ffqn}");
 
             print_pending_status(
@@ -59,10 +60,12 @@ fn print_status(
                 old_pending_status,
             )?;
         }
-        Some(Message::CurrentStatus(pending_status)) => {
+        Message::CurrentStatus(pending_status) => {
             print_pending_status(pending_status, old_pending_status)?;
         }
-        None => {}
+        Message::FinishedStatus(finished_sattus) => {
+            print_finished_status(finished_sattus, old_pending_status)?;
+        }
     }
     Ok(())
 }
@@ -71,9 +74,7 @@ fn print_pending_status(
     pending_status: grpc::ExecutionStatus,
     old_pending_status: &mut String,
 ) -> Result<(), anyhow::Error> {
-    let Some(status) = pending_status.status else {
-        return Ok(());
-    };
+    let status = pending_status.status.expect("status is sent by the server");
     let new_pending_status = match status {
         Status::Locked(_) => "Locked".to_string(),
         Status::PendingAt(_) => "Pending".to_string(),
@@ -83,40 +84,62 @@ fn print_pending_status(
         Status::BlockedByJoinSet(BlockedByJoinSet { closing: true, .. }) => {
             "BlockedByJoinSetClosing".to_string()
         }
-        Status::Finished(Finished {
-            result,
-            created_at,
-            finished_at,
-            result_kind,
-        }) => {
-            let created_at = DateTime::from(created_at.context("`created_at` must exist")?);
-            let finished_at = DateTime::from(finished_at.context("`finished_at` must exist")?);
-            let result = String::from_utf8(result.context("`result` must exist")?.value)
-                .context("`result` must be UTF-8 encoded")?;
-            let result_kind = grpc::execution_status::ResultKind::try_from(result_kind)
-                .expect("must be convertible back to ResultKind");
-            let result: FinishedExecutionResult =
-                serde_json::from_str(&result).context("cannot deserialize `result`")?;
-            let mut new_pending_status = match &result {
-                Ok(ret_val) => {
-                    let mut new_pending_status =
-                        format!("Execution finished: {}", result_kind.as_str_name());
-                    let val = serde_json::to_string_pretty(&ret_val.value()).unwrap();
-                    new_pending_status.push_str(&format!("\n{val}"));
-                    new_pending_status
-                }
-                Err(err) => {
-                    format!("Execution error - {err}")
-                }
-            };
-            new_pending_status.push_str(&format!(
-                "\nExecution took {since_created:?}.",
-                since_created = (finished_at - created_at)
-                    .to_std()
-                    .expect("must be non-negative")
-            ));
-            new_pending_status
+        Status::Finished(Finished { .. }) => {
+            return Ok(()); // Skip, the final result will be sent in the next messag.
         }
+    };
+    if *old_pending_status != new_pending_status {
+        println!("{new_pending_status}");
+        let _ = std::mem::replace(old_pending_status, new_pending_status);
+    }
+    Ok(())
+}
+
+fn print_finished_status(
+    finished_status: grpc::FinishedStatus,
+    old_pending_status: &mut String,
+) -> Result<(), anyhow::Error> {
+    let new_pending_status = {
+        let created_at = DateTime::from(
+            finished_status
+                .created_at
+                .expect("`created_at` is sent by the server"),
+        );
+        let finished_at = DateTime::from(
+            finished_status
+                .finished_at
+                .expect("`finished_at` is sent by the server"),
+        );
+        let result = String::from_utf8(
+            finished_status
+                .result
+                .expect("`result` is sent by the server")
+                .value,
+        )
+        .expect("`result` must be UTF-8 encoded");
+        let result_kind = grpc::ResultKind::try_from(finished_status.result_kind)
+            .expect("must be convertible back to ResultKind");
+        let result: FinishedExecutionResult =
+            serde_json::from_str(&result).context("cannot deserialize `result`")?;
+        let mut new_pending_status = match &result {
+            Ok(ret_val) => {
+                let mut new_pending_status =
+                    format!("Execution finished: {}", result_kind.as_str_name());
+                let val = serde_json::to_string_pretty(&ret_val.value()).unwrap();
+                new_pending_status.push_str(&format!("\n{val}"));
+                new_pending_status
+            }
+            Err(err) => {
+                format!("Execution error - {err}")
+            }
+        };
+        new_pending_status.push_str(&format!(
+            "\nExecution took {since_created:?}.",
+            since_created = (finished_at - created_at)
+                .to_std()
+                .expect("must be non-negative")
+        ));
+        new_pending_status
     };
     if *old_pending_status != new_pending_status {
         println!("{new_pending_status}");

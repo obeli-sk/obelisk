@@ -1,11 +1,14 @@
-use crate::command::grpc;
+use crate::command::grpc::{self};
 use anyhow::anyhow;
 use concepts::{
     prefixed_ulid::{JoinSetId, RunId},
-    storage::{DbError, SpecificError},
+    storage::{
+        DbError, Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
+        PendingStateFinishedResultKind, SpecificError,
+    },
     ConfigId, ConfigIdType, ExecutionId, FunctionFqn,
 };
-use std::{borrow::Borrow, sync::Arc};
+use std::borrow::Borrow;
 use tracing::error;
 
 impl From<ExecutionId> for grpc::ExecutionId {
@@ -85,14 +88,16 @@ pub trait TonicServerResultExt<T> {
 
 impl<T> TonicServerResultExt<T> for Result<T, DbError> {
     fn to_status(self) -> Result<T, tonic::Status> {
-        self.map_err(|db_err| {
-            if matches!(db_err, DbError::Specific(SpecificError::NotFound)) {
-                tonic::Status::not_found("entity not found")
-            } else {
-                error!("Got db error {db_err:?}");
-                tonic::Status::internal(format!("database error: {db_err}"))
-            }
-        })
+        self.map_err(db_error_to_status)
+    }
+}
+
+pub fn db_error_to_status(db_err: DbError) -> tonic::Status {
+    if matches!(db_err, DbError::Specific(SpecificError::NotFound)) {
+        tonic::Status::not_found("entity not found")
+    } else {
+        error!("Got db error {db_err:?}");
+        tonic::Status::internal(format!("database error: {db_err}"))
     }
 }
 
@@ -105,11 +110,16 @@ impl<T> TonicServerResultExt<T> for Result<T, anyhow::Error> {
     }
 }
 
-impl From<grpc::FunctionName> for FunctionFqn {
-    fn from(value: grpc::FunctionName) -> Self {
-        FunctionFqn::new_arc(
-            Arc::from(value.interface_name),
-            Arc::from(value.function_name),
+impl TryFrom<grpc::FunctionName> for FunctionFqn {
+    type Error = tonic::Status;
+
+    fn try_from(value: grpc::FunctionName) -> Result<Self, Self::Error> {
+        FunctionFqn::try_from_tuple(&value.interface_name, &value.function_name).map_err(
+            |parse_err| {
+                tonic::Status::invalid_argument(format!(
+                    "FunctionName cannot be parsed - {parse_err}"
+                ))
+            },
         )
     }
 }
@@ -143,5 +153,124 @@ impl PendingStatusExt for grpc::ExecutionStatus {
 impl From<ConfigIdType> for grpc::ComponentType {
     fn from(value: ConfigIdType) -> Self {
         grpc::ComponentType::from_str_name(&value.to_string().to_uppercase()).unwrap()
+    }
+}
+
+impl From<PendingState> for grpc::ExecutionStatus {
+    fn from(pending_state: PendingState) -> grpc::ExecutionStatus {
+        use grpc::execution_status::{BlockedByJoinSet, Finished, Locked, PendingAt, Status};
+        grpc::ExecutionStatus {
+            status: Some(match pending_state {
+                PendingState::Locked {
+                    executor_id: _,
+                    run_id,
+                    lock_expires_at,
+                } => Status::Locked(Locked {
+                    run_id: Some(run_id.into()),
+                    lock_expires_at: Some(lock_expires_at.into()),
+                }),
+                PendingState::PendingAt { scheduled_at } => Status::PendingAt(PendingAt {
+                    scheduled_at: Some(scheduled_at.into()),
+                }),
+                PendingState::BlockedByJoinSet {
+                    join_set_id,
+                    lock_expires_at,
+                    closing,
+                } => Status::BlockedByJoinSet(BlockedByJoinSet {
+                    join_set_id: Some(join_set_id.into()),
+                    lock_expires_at: Some(lock_expires_at.into()),
+                    closing,
+                }),
+                PendingState::Finished {
+                    finished:
+                        PendingStateFinished {
+                            version: _,
+                            finished_at,
+                            result_kind,
+                        },
+                } => Status::Finished(Finished {
+                    finished_at: Some(finished_at.into()),
+                    result_kind: grpc::ResultKind::from(result_kind).into(),
+                }),
+            }),
+        }
+    }
+}
+
+impl From<PendingStateFinishedResultKind> for grpc::ResultKind {
+    fn from(result_kind: PendingStateFinishedResultKind) -> Self {
+        match result_kind {
+            PendingStateFinishedResultKind(Ok(())) => grpc::ResultKind::Ok,
+            PendingStateFinishedResultKind(Err(PendingStateFinishedError::Timeout)) => {
+                grpc::ResultKind::Timeout
+            }
+            PendingStateFinishedResultKind(Err(
+                PendingStateFinishedError::NondeterminismDetected,
+            )) => grpc::ResultKind::NondeterminismDetected,
+            PendingStateFinishedResultKind(Err(PendingStateFinishedError::ExecutionFailure)) => {
+                grpc::ResultKind::ExecutionFailure
+            }
+            PendingStateFinishedResultKind(Err(PendingStateFinishedError::FallibleError)) => {
+                grpc::ResultKind::FallibleError
+            }
+        }
+    }
+}
+
+impl TryFrom<grpc::list_executions_request::Pagination> for Pagination<ExecutionId> {
+    type Error = tonic::Status;
+    fn try_from(value: grpc::list_executions_request::Pagination) -> Result<Self, Self::Error> {
+        Ok(match value {
+            grpc::list_executions_request::Pagination::LastBefore(
+                grpc::list_executions_request::LastBefore {
+                    last,
+                    cursor: Some(cursor),
+                    including_cursor,
+                },
+            ) => Pagination::LastBefore {
+                last,
+                before: Some(ExecutionId::try_from(cursor)?),
+                including_cursor,
+            },
+            grpc::list_executions_request::Pagination::Last(
+                grpc::list_executions_request::Last { last },
+            )
+            | grpc::list_executions_request::Pagination::LastBefore(
+                grpc::list_executions_request::LastBefore {
+                    last,
+                    cursor: None,
+                    including_cursor: _,
+                },
+            ) => Pagination::LastBefore {
+                last,
+                before: None,
+                including_cursor: false,
+            },
+            grpc::list_executions_request::Pagination::FirstAfter(
+                grpc::list_executions_request::FirstAfter {
+                    first,
+                    cursor: Some(cursor),
+                    including_cursor,
+                },
+            ) => Pagination::FirstAfter {
+                first,
+                after: Some(ExecutionId::try_from(cursor)?),
+                including_cursor,
+            },
+            grpc::list_executions_request::Pagination::First(
+                grpc::list_executions_request::First { first },
+            )
+            | grpc::list_executions_request::Pagination::FirstAfter(
+                grpc::list_executions_request::FirstAfter {
+                    first,
+                    cursor: None,
+                    including_cursor: _,
+                },
+            ) => Pagination::FirstAfter {
+                first,
+                after: None,
+                including_cursor: false,
+            },
+        })
     }
 }

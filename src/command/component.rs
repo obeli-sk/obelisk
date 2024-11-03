@@ -72,7 +72,8 @@ pub(crate) async fn list_components(
 
 fn print_fn_details(vec: Vec<grpc::FunctionDetails>) -> Result<(), anyhow::Error> {
     for fn_detail in vec {
-        let func = FunctionFqn::from(fn_detail.function.context("function must exist")?);
+        let func = FunctionFqn::try_from(fn_detail.function.context("function must exist")?)
+            .expect("ffqn sent by the server must be valid");
         print!("\t{func} : func(");
         let mut params = fn_detail.params.into_iter().peekable();
         while let Some(param) = params.next() {

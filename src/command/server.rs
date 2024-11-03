@@ -11,6 +11,7 @@ use crate::config::toml::WorkflowConfigVerified;
 use crate::config::ComponentConfig;
 use crate::config::ComponentConfigImportable;
 use crate::grpc_util::extractor::accept_trace;
+use crate::grpc_util::grpc_mapping::db_error_to_status;
 use crate::grpc_util::grpc_mapping::PendingStatusExt as _;
 use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
 use crate::grpc_util::grpc_mapping::TonicServerResultExt;
@@ -19,15 +20,12 @@ use crate::grpc_util::TonicResult;
 use crate::init;
 use anyhow::bail;
 use anyhow::Context;
-use chrono::DateTime;
-use chrono::Utc;
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
+use concepts::storage::Pagination;
 use concepts::storage::PendingState;
-use concepts::storage::PendingStateFinishedError;
-use concepts::storage::PendingStateFinishedResultKind;
 use concepts::ComponentRetryConfig;
 use concepts::ConfigId;
 use concepts::ConfigIdType;
@@ -202,7 +200,9 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
         &self,
         request: tonic::Request<grpc::GetStatusRequest>,
     ) -> TonicRespResult<Self::GetStatusStream> {
-        use grpc::get_status_response::{ExecutionSummary, Message};
+        use grpc::get_status_response::Message;
+        use grpc::ExecutionSummary;
+
         let request = request.into_inner();
         let execution_id: ExecutionId = request
             .execution_id
@@ -213,19 +213,13 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             let conn = self.db_pool.connection();
             let create_request = conn.get_create_request(execution_id).await.to_status()?;
             let current_pending_state = conn.get_pending_state(execution_id).await.to_status()?;
-            let grpc_pending_status = convert_execution_status(
-                conn,
-                execution_id,
-                current_pending_state,
-                create_request.created_at,
-                &create_request.ffqn,
-            )
-            .await?;
+            let grpc_pending_status = grpc::ExecutionStatus::from(current_pending_state);
             (create_request, current_pending_state, grpc_pending_status)
         };
         let is_finished = grpc_pending_status.is_finished();
         let summary = grpc::GetStatusResponse {
             message: Some(Message::Summary(ExecutionSummary {
+                execution_id: Some(execution_id.into()),
                 function_name: Some(create_request.ffqn.clone().into()),
                 current_status: Some(grpc_pending_status),
             })),
@@ -266,27 +260,56 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                         match conn.get_pending_state(execution_id).await {
                             Ok(pending_state) => {
                                 if pending_state != current_pending_state {
-                                    let grpc_pending_status = match convert_execution_status(
-                                        conn,
-                                        execution_id,
-                                        pending_state,
-                                        create_request.created_at,
-                                        &create_request.ffqn,
-                                    )
-                                    .await
-                                    {
-                                        Ok(status) => status,
-                                        Err(tonic_status) => {
-                                            let _ = tx.send(TonicResult::Err(tonic_status)).await;
-                                            return;
-                                        }
-                                    };
-                                    let is_finished = grpc_pending_status.is_finished();
+                                    let grpc_pending_status =
+                                        grpc::ExecutionStatus::from(pending_state);
+
                                     let message = grpc::GetStatusResponse {
                                         message: Some(Message::CurrentStatus(grpc_pending_status)),
                                     };
                                     let send_res = tx.send(TonicResult::Ok(message)).await;
-                                    if send_res.is_err() || is_finished {
+                                    if let Err(err) = send_res {
+                                        error!("Cannot send the message - {err:?}");
+                                        return;
+                                    }
+                                    if let PendingState::Finished { finished } = pending_state {
+                                        // Send the last message and close the RPC.
+                                        let (result, _finished_at) = match conn
+                                            .get_finished_result(execution_id, finished)
+                                            .await
+                                        {
+                                            Ok(ok) => ok,
+                                            Err(db_err) => {
+                                                error!("Cannot obtain finished result: {db_err:?}");
+                                                let _ =
+                                                    tx.send(Err(db_error_to_status(db_err))).await;
+                                                return;
+                                            }
+                                        };
+                                        let message = grpc::GetStatusResponse {
+                                            message: Some(Message::FinishedStatus(
+                                                grpc::FinishedStatus {
+                                                    result: to_any(
+                                                        result,
+                                                        format!(
+                                                            "urn:obelisk:json:params:{}",
+                                                            create_request.ffqn
+                                                        ),
+                                                    ),
+                                                    created_at: Some(
+                                                        create_request.created_at.into(),
+                                                    ),
+                                                    finished_at: Some(finished.finished_at.into()),
+                                                    result_kind: grpc::ResultKind::from(
+                                                        finished.result_kind,
+                                                    )
+                                                    .into(),
+                                                },
+                                            )),
+                                        };
+                                        let send_res = tx.send(TonicResult::Ok(message)).await;
+                                        if let Err(err) = send_res {
+                                            error!("Cannot send the final message - {err:?}");
+                                        }
                                         return;
                                     }
                                     current_pending_state = pending_state;
@@ -294,11 +317,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                             }
                             Err(db_err) => {
                                 error!("Database error while streaming status - {db_err:?}");
-                                let _ = tx
-                                    .send(TonicResult::Err(tonic::Status::internal(
-                                        "database error",
-                                    )))
-                                    .await;
+                                let _ = tx.send(Err(db_error_to_status(db_err))).await;
                                 return;
                             }
                         }
@@ -311,6 +330,46 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                 Box::pin(output) as Self::GetStatusStream
             ))
         }
+    }
+}
+
+#[tonic::async_trait]
+impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
+    grpc::execution_repository_server::ExecutionRepository for GrpcServer<DB, P>
+{
+    async fn list_executions(
+        &self,
+        request: tonic::Request<grpc::ListExecutionsRequest>,
+    ) -> TonicRespResult<grpc::ListExecutionsResponse> {
+        let request = request.into_inner();
+        let ffqn = request
+            .function_name
+            .map(FunctionFqn::try_from)
+            .transpose()?;
+        let pagination =
+            request
+                .pagination
+                .unwrap_or(grpc::list_executions_request::Pagination::Last(
+                    grpc::list_executions_request::Last { last: 10 },
+                ));
+        let pagination = Pagination::try_from(pagination)?;
+        let conn = self.db_pool.connection();
+        let executions = conn
+            .list_executions(ffqn, pagination)
+            .await
+            .to_status()?
+            .into_iter()
+            .map(
+                |(execution_id, ffqn, pending_state)| grpc::ExecutionSummary {
+                    execution_id: Some(execution_id.into()),
+                    function_name: Some(ffqn.into()),
+                    current_status: Some(grpc::ExecutionStatus::from(pending_state)),
+                },
+            )
+            .collect();
+        Ok(tonic::Response::new(grpc::ListExecutionsResponse {
+            executions,
+        }))
     }
 }
 
@@ -409,69 +468,6 @@ fn to_any<T: serde::Serialize>(serializable: T, uri: String) -> Option<prost_wkt
             type_url: uri,
             value: res.into_bytes(),
         })
-}
-
-async fn convert_execution_status(
-    conn: impl DbConnection,
-    execution_id: ExecutionId,
-    pending_state: PendingState,
-    execution_created_at: DateTime<Utc>,
-    ffqn: &FunctionFqn,
-) -> Result<grpc::ExecutionStatus, tonic::Status> {
-    use grpc::execution_status::{BlockedByJoinSet, Finished, Locked, PendingAt, Status};
-    Ok(grpc::ExecutionStatus {
-        status: Some(match pending_state {
-            PendingState::Locked {
-                executor_id: _,
-                run_id,
-                lock_expires_at,
-            } => Status::Locked(Locked {
-                run_id: Some(run_id.into()),
-                lock_expires_at: Some(lock_expires_at.into()),
-            }),
-            PendingState::PendingAt { scheduled_at } => Status::PendingAt(PendingAt {
-                scheduled_at: Some(scheduled_at.into()),
-            }),
-            PendingState::BlockedByJoinSet {
-                join_set_id,
-                lock_expires_at,
-                closing,
-            } => Status::BlockedByJoinSet(BlockedByJoinSet {
-                join_set_id: Some(join_set_id.into()),
-                lock_expires_at: Some(lock_expires_at.into()),
-                closing,
-            }),
-            PendingState::Finished { finished } => {
-                let (result, finished_at) = conn
-                    .get_finished_result(execution_id, finished)
-                    .await
-                    .to_status()?;
-                Status::Finished(Finished {
-                    result: to_any(result, format!("urn:obelisk:json:params:{ffqn}")),
-                    created_at: Some(execution_created_at.into()),
-                    finished_at: Some(finished_at.into()),
-                    result_kind: match finished.result_kind {
-                        PendingStateFinishedResultKind(Ok(())) => {
-                            grpc::execution_status::ResultKind::Ok
-                        }
-                        PendingStateFinishedResultKind(Err(PendingStateFinishedError::Timeout)) => {
-                            grpc::execution_status::ResultKind::Timeout
-                        }
-                        PendingStateFinishedResultKind(Err(
-                            PendingStateFinishedError::NondeterminismDetected,
-                        )) => grpc::execution_status::ResultKind::NondeterminismDetected,
-                        PendingStateFinishedResultKind(Err(
-                            PendingStateFinishedError::ExecutionFailure,
-                        )) => grpc::execution_status::ResultKind::ExecutionFailure,
-                        PendingStateFinishedResultKind(Err(
-                            PendingStateFinishedError::FallibleError,
-                        )) => grpc::execution_status::ResultKind::FallibleError,
-                    }
-                    .into(),
-                })
-            }
-        }),
-    })
 }
 
 pub(crate) async fn run(
@@ -653,6 +649,15 @@ async fn run_internal(
         )
         .add_service(
             grpc::function_repository_server::FunctionRepositoryServer::from_arc(
+                grpc_server.clone(),
+            )
+            .send_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Zstd)
+            .send_compressed(CompressionEncoding::Gzip)
+            .accept_compressed(CompressionEncoding::Gzip),
+        )
+        .add_service(
+            grpc::execution_repository_server::ExecutionRepositoryServer::from_arc(
                 grpc_server.clone(),
             )
             .send_compressed(CompressionEncoding::Zstd)

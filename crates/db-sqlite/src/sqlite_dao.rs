@@ -7,7 +7,7 @@ use concepts::{
         AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
         DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
         ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
-        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution,
+        JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
         PendingState, PendingStateFinished, PendingStateFinishedResultKind, SpecificError, Version,
         DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
@@ -89,18 +89,17 @@ CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_created_at ON t_
 
 /// Stores executions in `PendingState`
 /// State to column mapping:
-/// `PendingAt`:            `ffqn`
+/// `PendingAt`:
 /// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
 /// `Locked`:               `executor_id`, `run_id`, `intermittent_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>, `return_type`
-/// `Finished` :            `finished_version` -> `next_version`, `result`
+/// `Finished` :            `result_kind`, `next_version` is not bumped, points to the finished version.
 //FIXME: Remove `return_type`
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
     next_version INTEGER NOT NULL,
     pending_expires_finished TEXT NOT NULL,
-
-    ffqn TEXT,
+    ffqn TEXT NOT NULL,
 
     join_set_id TEXT,
     join_set_closing INTEGER,
@@ -124,6 +123,12 @@ CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (ffqn, pending_ex
 ";
 const IDX_T_STATE_EXPIRED_TIMERS: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_expired_timers ON t_state (pending_expires_finished) WHERE executor_id IS NOT NULL;
+";
+const IDX_T_STATE_EXECUTION_ID: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_state_execution_id ON t_state (execution_id);
+";
+const IDX_T_STATE_FFQN: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_state_ffqn ON t_state (ffqn);
 ";
 
 /// Represents [`ExpiredTimer::AsyncDelay`] . Rows are deleted when the delay is processed.
@@ -217,7 +222,7 @@ impl<T: FromStr<Err = D>, D: Debug> FromSql for FromStrWrapper<T> {
 
 #[derive(Debug)]
 struct CombinedStateDTO {
-    ffqn: Option<String>,
+    ffqn: String,
     pending_expires_finished: DateTime<Utc>,
     executor_id: Option<ExecutorId>,
     run_id: Option<RunId>,
@@ -228,6 +233,7 @@ struct CombinedStateDTO {
 
 #[derive(Debug)]
 struct CombinedState {
+    ffqn: FunctionFqn,
     pending_state: PendingState,
     next_version: Version,
 }
@@ -247,7 +253,7 @@ impl CombinedState {
     fn new(dto: &CombinedStateDTO, next_version: Version) -> Result<Self, DbError> {
         let pending_state = match dto {
             CombinedStateDTO {
-                ffqn: Some(_),
+                ffqn: _,
                 pending_expires_finished: scheduled_at,
                 executor_id: None,
                 run_id: None,
@@ -258,7 +264,7 @@ impl CombinedState {
                 scheduled_at: *scheduled_at,
             }),
             CombinedStateDTO {
-                ffqn: None,
+                ffqn: _,
                 pending_expires_finished: lock_expires_at,
                 executor_id: Some(executor_id),
                 run_id: Some(run_id),
@@ -271,7 +277,7 @@ impl CombinedState {
                 lock_expires_at: *lock_expires_at,
             }),
             CombinedStateDTO {
-                ffqn: None,
+                ffqn: _,
                 pending_expires_finished: lock_expires_at,
                 executor_id: None,
                 run_id: None,
@@ -284,7 +290,7 @@ impl CombinedState {
                 lock_expires_at: *lock_expires_at,
             }),
             CombinedStateDTO {
-                ffqn: None,
+                ffqn: _,
                 pending_expires_finished: finished_at,
                 executor_id: None,
                 run_id: None,
@@ -298,7 +304,6 @@ impl CombinedState {
                     result_kind: *result_kind,
                 },
             }),
-
             _ => {
                 error!("Cannot deserialize pending state from  {dto:?}");
                 Err(DbError::Specific(SpecificError::ConsistencyError(
@@ -307,6 +312,12 @@ impl CombinedState {
             }
         }?;
         Ok(Self {
+            ffqn: FunctionFqn::from_str(&dto.ffqn).map_err(|parse_err| {
+                error!("Error parsing ffqn of {dto:?} - {parse_err:?}");
+                DbError::Specific(SpecificError::ConsistencyError(StrVariant::Static(
+                    "invalid ffqn value in `t_state`",
+                )))
+            })?,
             pending_state,
             next_version,
         })
@@ -419,10 +430,9 @@ impl SqlitePool {
                         init_tx
                             .send(Err(err))
                             .expect("sending init error must succeed");
-                        Err(())
-                    } else {
-                        Ok(init_tx)
+                        panic!("initialization error")
                     }
+                    init_tx
                 };
                 if let Err(err) = conn.pragma_update(None, "journal_mode", "wal") {
                     error!("Cannot set journal_mode - {err:?}");
@@ -431,15 +441,16 @@ impl SqlitePool {
                         .expect("sending init error must succeed");
                     return;
                 }
-                let init_tx = init(init_tx, PRAGMA).unwrap();
-                let init_tx = init(init_tx, CREATE_TABLE_T_EXECUTION_LOG).unwrap();
-                let init_tx = init(init_tx, CREATE_TABLE_T_JOIN_SET_RESPONSE).unwrap();
-                let init_tx =
-                    init(init_tx, CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID).unwrap();
-                let init_tx = init(init_tx, CREATE_TABLE_T_STATE).unwrap();
-                let init_tx = init(init_tx, IDX_T_STATE_LOCK_PENDING).unwrap();
-                let init_tx = init(init_tx, IDX_T_STATE_EXPIRED_TIMERS).unwrap();
-                let init_tx = init(init_tx, CREATE_TABLE_T_DELAY).unwrap();
+                let init_tx = init(init_tx, PRAGMA);
+                let init_tx = init(init_tx, CREATE_TABLE_T_EXECUTION_LOG);
+                let init_tx = init(init_tx, CREATE_TABLE_T_JOIN_SET_RESPONSE);
+                let init_tx = init(init_tx, CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID);
+                let init_tx = init(init_tx, CREATE_TABLE_T_STATE);
+                let init_tx = init(init_tx, IDX_T_STATE_LOCK_PENDING);
+                let init_tx = init(init_tx, IDX_T_STATE_EXPIRED_TIMERS);
+                let init_tx = init(init_tx, IDX_T_STATE_EXECUTION_ID);
+                let init_tx = init(init_tx, IDX_T_STATE_FFQN);
+                let init_tx = init(init_tx, CREATE_TABLE_T_DELAY);
                 init_tx.send(Ok(())).expect("sending init OK must succeed");
                 let mut vec: Vec<ThreadCommand> = Vec::with_capacity(config.queue_capacity);
                 loop {
@@ -787,14 +798,15 @@ impl SqlitePool {
             // Creating
             assert_matches!(pending_state, PendingState::PendingAt { .. });
         }
+        let ffqn = if let Some(ffqn) = ffqn {
+            ffqn
+        } else {
+            Self::fetch_created_event(tx, execution_id)?.ffqn
+        };
         match pending_state {
             PendingState::PendingAt { scheduled_at } => {
                 debug!("Setting state `Pending(`{scheduled_at:?}`)");
-                let ffqn = if let Some(ffqn) = ffqn {
-                    ffqn
-                } else {
-                    Self::fetch_created_event(tx, execution_id)?.ffqn
-                };
+
                 let mut stmt =  tx.prepare(
                         "INSERT INTO t_state (execution_id, next_version, pending_expires_finished, ffqn) \
                         VALUES (:execution_id, :next_version, :pending_expires_finished, :ffqn)",
@@ -803,7 +815,7 @@ impl SqlitePool {
                     ":execution_id": execution_id_str,
                     ":next_version": next_version.0,
                     ":pending_expires_finished": scheduled_at,
-                    ":ffqn": ffqn.to_string()
+                    ":ffqn": ffqn.to_string(),
                 })
                 .map_err(convert_err)?;
                 Ok(IndexUpdated {
@@ -824,9 +836,9 @@ impl SqlitePool {
                 let create_req = Self::fetch_created_event(tx, execution_id)?;
                 let mut stmt = tx.prepare_cached(
                     "INSERT INTO t_state \
-                    (execution_id, next_version, pending_expires_finished, executor_id, run_id, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id, return_type) \
+                    (execution_id, next_version, pending_expires_finished, ffqn, executor_id, run_id, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id, return_type) \
                     VALUES \
-                    (:execution_id, :next_version, :pending_expires_finished, :executor_id, :run_id, :intermittent_event_count, :max_retries, :retry_exp_backoff_millis, :parent_execution_id, :parent_join_set_id, :return_type)",
+                    (:execution_id, :next_version, :pending_expires_finished, :ffqn, :executor_id, :run_id, :intermittent_event_count, :max_retries, :retry_exp_backoff_millis, :parent_execution_id, :parent_join_set_id, :return_type)",
                 ).map_err(convert_err)?;
                 let return_type = create_req
                     .return_type
@@ -842,6 +854,7 @@ impl SqlitePool {
                     ":execution_id": execution_id_str,
                     ":next_version": next_version.0, // If the lock expires, this version will be used by `expired_timers_watcher`.
                     ":pending_expires_finished": lock_expires_at,
+                    ":ffqn": ffqn.to_string(),
                     ":executor_id": executor_id.to_string(),
                     ":run_id": run_id.to_string(),
                     ":intermittent_event_count": intermittent_event_count,
@@ -863,13 +876,14 @@ impl SqlitePool {
             } => {
                 debug!(%join_set_id, "Setting state `BlockedByJoinSet({next_version},{lock_expires_at})`");
                 let mut stmt = tx.prepare_cached(
-                    "INSERT INTO t_state (execution_id, next_version, pending_expires_finished, join_set_id, join_set_closing) \
-                                  VALUES (:execution_id, :next_version, :pending_expires_finished, :join_set_id, :join_set_closing)",
+                    "INSERT INTO t_state (execution_id, next_version, pending_expires_finished, ffqn, join_set_id, join_set_closing) \
+                                  VALUES (:execution_id, :next_version, :pending_expires_finished, :ffqn, :join_set_id, :join_set_closing)",
                 ).map_err(convert_err)?;
                 stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
                     ":next_version": next_version.0,
                     ":pending_expires_finished": lock_expires_at,
+                    ":ffqn": ffqn.to_string(),
                     ":join_set_id": join_set_id.to_string(),
                     ":join_set_closing": join_set_closing,
                 })
@@ -888,14 +902,15 @@ impl SqlitePool {
                 let mut stmt = tx
                     .prepare_cached(
                         // the old next_version == finished_version
-                        "INSERT INTO t_state (execution_id, next_version, pending_expires_finished, result_kind) \
-                                      VALUES (:execution_id, :next_version, :pending_expires_finished, :result_kind)",
+                        "INSERT INTO t_state (execution_id, next_version, pending_expires_finished, ffqn, result_kind) \
+                                      VALUES (:execution_id, :next_version, :pending_expires_finished, :ffqn, :result_kind)",
                     )
                     .map_err(convert_err)?;
                 stmt.execute(named_params! {
                     ":execution_id": execution_id_str,
                     ":next_version": finished_version,
                     ":pending_expires_finished": finished_at,
+                    ":ffqn": ffqn.to_string(),
                     ":result_kind": result_kind.to_string(),
                 })
                 .map_err(convert_err)?;
@@ -989,6 +1004,119 @@ impl SqlitePool {
         .map_err(convert_err)?
     }
 
+    fn list_executions(
+        read_tx: &Transaction,
+        ffqn: Option<FunctionFqn>,
+        pagination: Pagination<ExecutionId>,
+    ) -> Result<Vec<(ExecutionId, FunctionFqn, PendingState)>, DbError> {
+        let mut where_vec: Vec<String> = vec![];
+
+        let mut params: Vec<(&'static str, &dyn rusqlite::ToSql)> = vec![];
+        let limit;
+        let mut limit_desc = false;
+        let ffqn_string: String;
+        let execution_id_string: String;
+        if let Some(ffqn) = ffqn {
+            where_vec.push("ffqn = :ffqn".to_string());
+            ffqn_string = ffqn.to_string();
+            params.push((":ffqn", &ffqn_string));
+        }
+        match pagination {
+            Pagination::FirstAfter {
+                first,
+                after: None,
+                including_cursor: _,
+            } => limit = first,
+            Pagination::FirstAfter {
+                first,
+                after: Some(after),
+                including_cursor,
+            } => {
+                limit = first;
+                execution_id_string = after.to_string();
+                where_vec.push(format!(
+                    "execution_id {rel} :execution_id",
+                    rel = if including_cursor { ">=" } else { ">" }
+                ));
+                params.push((":execution_id", &execution_id_string));
+            }
+            Pagination::LastBefore {
+                last,
+                before: None,
+                including_cursor: _,
+            } => {
+                limit_desc = true;
+                limit = last;
+            }
+            Pagination::LastBefore {
+                last,
+                before: Some(before),
+                including_cursor,
+            } => {
+                limit_desc = true;
+                limit = last;
+                execution_id_string = before.to_string();
+                where_vec.push(format!(
+                    "execution_id {rel} :execution_id",
+                    rel = if including_cursor { "<=" } else { "<" }
+                ));
+                params.push((":execution_id", &execution_id_string));
+            }
+        }
+        let where_str = if where_vec.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_vec.join(" AND "))
+        };
+
+        read_tx.prepare(
+            &format!("SELECT execution_id, ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
+                FROM t_state {where_str} ORDER BY execution_id {desc} LIMIT {limit}",
+                desc = if limit_desc { "DESC" } else { "" } )
+        ).map_err(convert_err)?
+        .query_map::<_, &[(&'static str, &dyn rusqlite::ToSql)], _>(params.as_ref(), |row| {
+            let execution_id_res = row
+                .get::<_, String>("execution_id")?
+                .parse::<ExecutionId>()
+                .map_err(parsing_err);
+            let combined_state_res = CombinedState::new(
+                &CombinedStateDTO {
+                    ffqn: row.get("ffqn")?,
+                    pending_expires_finished: row
+                        .get::<_, DateTime<Utc>>("pending_expires_finished")?,
+                    executor_id: row
+                        .get::<_, Option<ExecutorIdW>>("executor_id")?
+                        .map(|w| w.0),
+                    run_id: row.get::<_, Option<RunIdW>>("run_id")?.map(|w| w.0),
+                    join_set_id: row
+                        .get::<_, Option<JoinSetIdW>>("join_set_id")?
+                        .map(|w| w.0),
+                    join_set_closing: row.get::<_, Option<bool>>("join_set_closing")?,
+                    result_kind: row
+                        .get::<_, Option<FromStrWrapper<PendingStateFinishedResultKind>>>(
+                            "result_kind",
+                        )?
+                        .map(|wrapper| wrapper.0),
+                },
+                Version::new(row.get("next_version")?),
+            );
+            Ok(combined_state_res.and_then(|combined_state| {
+                execution_id_res.map(|execution_id| {
+                    (
+                        execution_id,
+                        combined_state.ffqn,
+                        combined_state.pending_state,
+                    )
+                })
+            }))
+        })
+        .map_err(convert_err)?
+        .collect::<Result<Vec<Result<_, _>>, _>>()
+        .map_err(convert_err)?
+        .into_iter()
+        .collect()
+    }
+
     #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %run_id, %executor_id))]
     #[expect(clippy::too_many_arguments)]
     fn lock_inner(
@@ -1003,6 +1131,7 @@ impl SqlitePool {
     ) -> Result<LockedExecution, DbError> {
         debug!("lock_inner");
         let CombinedState {
+            ffqn,
             pending_state,
             next_version: expected_version,
         } = Self::get_combined_state(tx, execution_id)?;
@@ -1054,7 +1183,7 @@ impl SqlitePool {
             pending_state,
             Some(&Version(next_version.0 - 1)),
             &next_version,
-            None, // No need for ffqn as we are not constructing PendingState::Pending
+            Some(ffqn),
         )?
         .intermittent_event_count
         .expect("intermittent_event_count must be set");
@@ -1607,7 +1736,7 @@ impl SqlitePool {
             let mut stmt = conn
                 .prepare(
                     "SELECT execution_id, next_version FROM t_state WHERE \
-                            pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn \
+                            pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn AND result_kind IS NULL \
                             ORDER BY pending_expires_finished LIMIT :batch_size",
                 )
                 .map_err(convert_err)?;
@@ -1738,7 +1867,7 @@ impl DbConnection for SqlitePool {
                     ) {
                         Ok(locked) => locked_execs.push(locked),
                         Err(err) => {
-                            warn!("Locking row {execution_id} failed - {err:?}")
+                            warn!("Locking row {execution_id} failed - {err:?}");
                         }
                     }
                 }
@@ -2237,6 +2366,16 @@ impl DbConnection for SqlitePool {
             .transaction_read(move |tx| Self::get_combined_state(tx, execution_id))
             .await?
             .pending_state)
+    }
+
+    async fn list_executions(
+        &self,
+        ffqn: Option<FunctionFqn>,
+        pagination: Pagination<ExecutionId>,
+    ) -> Result<Vec<(ExecutionId, FunctionFqn, PendingState)>, DbError> {
+        Ok(self
+            .transaction_read(move |tx| Self::list_executions(tx, ffqn, pagination))
+            .await?)
     }
 }
 

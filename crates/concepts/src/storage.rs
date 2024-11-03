@@ -773,6 +773,26 @@ pub trait DbConnection: Send + Sync {
         ffqns: Arc<[FunctionFqn]>,
         max_wait: Duration,
     );
+
+    // Used by gRPC only.
+    async fn list_executions(
+        &self,
+        ffqn: Option<FunctionFqn>,
+        pagination: Pagination<ExecutionId>,
+    ) -> Result<Vec<(ExecutionId, FunctionFqn, PendingState)>, DbError>;
+}
+
+pub enum Pagination<T> {
+    FirstAfter {
+        first: u32,
+        after: Option<T>,
+        including_cursor: bool,
+    },
+    LastBefore {
+        last: u32,
+        before: Option<T>,
+        including_cursor: bool,
+    },
 }
 
 #[cfg(feature = "test")]

@@ -316,6 +316,18 @@ impl FunctionFqn {
     pub const fn new_static_tuple(tuple: (&'static str, &'static str)) -> Self {
         Self::new_static(tuple.0, tuple.1)
     }
+
+    #[must_use]
+    pub fn try_from_tuple(
+        ifc_fqn: &str,
+        function_name: &str,
+    ) -> Result<Self, FunctionFqnParseError> {
+        if ifc_fqn.contains('.') || function_name.contains('.') {
+            Err(FunctionFqnParseError::DelimiterFoundMoreThanOnce)
+        } else {
+            Ok(Self::new_arc(Arc::from(ifc_fqn), Arc::from(function_name)))
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

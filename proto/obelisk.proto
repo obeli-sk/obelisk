@@ -5,13 +5,54 @@ import "google/protobuf/any.proto";
 
 package obelisk;
 
-service Scheduler { // FIXME: rename to ExecutionRepository
+service Scheduler { // FIXME: move to ExecutionRepository
     rpc Submit(SubmitRequest) returns (SubmitResponse);
     rpc GetStatus(GetStatusRequest) returns (stream GetStatusResponse);
 }
 
+service ExecutionRepository {
+    rpc ListExecutions(ListExecutionsRequest) returns (ListExecutionsResponse);
+}
+
 service FunctionRepository {
     rpc ListComponents(ListComponentsRequest) returns (ListComponentsResponse);
+}
+
+message ListExecutionsRequest {
+    message First {
+        uint32 first = 1;
+    }
+    message FirstAfter {
+        uint32 first = 1;
+        ExecutionId cursor = 2;
+        bool including_cursor = 3;
+    }
+    message Last {
+        uint32 last = 1;
+    }
+    message LastBefore {
+        uint32 last = 1;
+        ExecutionId cursor = 2;
+        bool including_cursor = 3;
+    }
+
+    optional FunctionName function_name = 1;
+    oneof pagination {
+        First first  = 2;
+        FirstAfter first_after = 3;
+        Last last = 4;
+        LastBefore last_before = 5;
+    }
+}
+
+message ExecutionSummary {
+    ExecutionId execution_id = 1;
+    FunctionName function_name = 2;
+    ExecutionStatus current_status = 3;
+}
+
+message ListExecutionsResponse {
+    repeated ExecutionSummary executions = 1;
 }
 
 message ListComponentsRequest {
@@ -105,16 +146,15 @@ message GetStatusRequest {
     bool follow = 2;
 }
 
+enum ResultKind {
+    OK = 0;
+    TIMEOUT = 1;
+    NONDETERMINISM_DETECTED = 2;
+    EXECUTION_FAILURE = 3;
+    FALLIBLE_ERROR = 4;
+}
+
 message ExecutionStatus {
-
-    enum ResultKind {
-        OK = 0;
-        TIMEOUT = 1;
-        NONDETERMINISM_DETECTED = 2;
-        EXECUTION_FAILURE = 3;
-        FALLIBLE_ERROR = 4;
-    }
-
     message Locked {
         RunId run_id = 2;
         google.protobuf.Timestamp lock_expires_at = 3;
@@ -128,8 +168,8 @@ message ExecutionStatus {
         bool closing = 3;
     }
     message Finished {
-        google.protobuf.Any result = 1;
-        google.protobuf.Timestamp created_at = 2;
+        reserved 1;
+        reserved 2;
         reserved 3;
         google.protobuf.Timestamp finished_at = 4;
         ResultKind result_kind = 5;
@@ -142,16 +182,21 @@ message ExecutionStatus {
     }
 }
 
-message GetStatusResponse {
-    message ExecutionSummary {
-        FunctionName function_name = 1;
-        ExecutionStatus current_status = 2;
-    }
+message FinishedStatus {
+    google.protobuf.Any result = 1;
+    google.protobuf.Timestamp created_at = 2;
+    reserved 3;
+    google.protobuf.Timestamp finished_at = 4;
+    ResultKind result_kind = 5;
+}
 
+message GetStatusResponse {
     oneof message {
         // First message in the stream
         ExecutionSummary summary = 1;
         // Remaining messages
         ExecutionStatus current_status = 2;
+        // Finished status
+        FinishedStatus finished_status = 3;
     }
 }
