@@ -1,4 +1,5 @@
 use crate::{
+    app::Route,
     components::execution_status::ExecutionStatus,
     ffqn::FunctionFqn,
     grpc_client::{
@@ -9,6 +10,7 @@ use crate::{
 use log::debug;
 use std::ops::Deref;
 use yew::prelude::*;
+use yew_router::prelude::Link;
 
 #[derive(Properties, PartialEq)]
 pub struct ExecutionListPageProps {
@@ -25,8 +27,12 @@ pub fn execution_list_page(
     {
         let executions_state = executions_state.clone();
         let ffqn = ffqn.clone();
+        debug!("Filtering by ffqn: {ffqn:?}");
         let execution_id = execution_id.clone();
-        use_effect_with((), move |_x| {
+        debug!("Filtering by execution_id: {execution_id:?}");
+        use_effect_with((ffqn, execution_id), move |(ffqn, execution_id)| {
+            let ffqn = ffqn.clone();
+            let execution_id = execution_id.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let base_url = "/api";
                 let mut execution_client =
@@ -80,7 +86,7 @@ pub fn execution_list_page(
                 html! {
                     <tr>
                     <td>{&execution_id.id}</td>
-                    <td>{ffqn.to_string()}</td>
+                        <td><Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.to_string() }}>{ffqn.to_string()}</Link<Route>></td>
                     <td><ExecutionStatus {status} {execution_id} /></td>
                     </tr>
                 }
