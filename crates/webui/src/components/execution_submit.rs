@@ -1,7 +1,8 @@
-use crate::{ffqn::FunctionFqn, grpc_client};
+use crate::{app::Route, ffqn::FunctionFqn, grpc_client};
 use log::{debug, error};
 use std::ops::Deref;
 use yew::prelude::*;
+use yew_router::hooks::use_navigator;
 
 #[derive(Properties, PartialEq)]
 pub struct ExecutionSubmitFormProps {
@@ -33,7 +34,7 @@ pub fn execution_submit_form(
             let mut form_data = form_data_handle.deref().clone();
             let idx: usize = input
                 .id()
-                .strip_prefix(&ffqn.to_string())
+                .strip_prefix(&ffqn.to_string()) // TODO: Switch to refs to avoid parsing IDs: https://github.com/yewstack/yew/blob/master/examples/node_refs/src/main.rs
                 .expect("input id starts with ffqn")
                 .parse()
                 .expect("id of input fields is numeric");
@@ -45,6 +46,7 @@ pub fn execution_submit_form(
     let on_submit = {
         let form_data_handle = form_data_handle.clone();
         let ffqn = ffqn.clone();
+        let navigator = use_navigator().unwrap();
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default(); // prevent form submission
             let params = match form_data_handle
@@ -71,6 +73,7 @@ pub fn execution_submit_form(
                 let params = params.clone();
                 let ffqn = ffqn.clone();
                 let form_data_handle = form_data_handle.clone();
+                let navigator = navigator.clone();
                 async move {
                     let base_url = "/api";
                     let mut scheduler_client = grpc_client::scheduler_client::SchedulerClient::new(
@@ -94,7 +97,8 @@ pub fn execution_submit_form(
                                 .execution_id
                                 .expect("SubmitResponse.execution_id is sent by the server")
                                 .id;
-                            debug!("Submitted as {execution_id}")
+                            debug!("Submitted as {execution_id}");
+                            navigator.push(&Route::ExecutionList)
                         }
                         Err(err) => {
                             error!("Got error {err:?}");

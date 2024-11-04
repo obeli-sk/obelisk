@@ -2,8 +2,8 @@ use crate::{
     ffqn::FunctionFqn,
     grpc_client,
     pages::{
-        component_list_page::ComponentListPage, execution_submit_page::ExecutionSubmitPage,
-        not_found::NotFound,
+        component_list_page::ComponentListPage, execution_list_page::ExecutionListPage,
+        execution_submit_page::ExecutionSubmitPage, not_found::NotFound,
     },
 };
 use std::ops::Deref;
@@ -27,12 +27,12 @@ pub enum Route {
     /// Show the parameters inputs with their WIT schemas. Allow submitting new execution.
     #[at("/execution/submit/:ffqn")]
     ExecutionSubmit { ffqn: String },
-    /// Show details including pending state, event history
-    // #[at("/execution/detail")]
-    // ExecutionDetail,
     /// Show paginated table of executions, fiterable by component, interface, ffqn, pending state etc.
-    // #[at("/execution/list")]
-    // ExecutionList,
+    #[at("/execution/list")]
+    ExecutionList,
+    /// Show details including pending state, event history
+    // #[at("/execution/:id")]
+    // ExecutionDetail,
     /// Show WIT schema explorer, allow showing/hiding obelisk extensions.
     // #[at("/wit")]
     // WitExplore,
@@ -47,6 +47,7 @@ impl Route {
             Route::Home => html! { <ComponentListPage /> },
             Route::ComponentList => html! { <ComponentListPage /> },
             Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
+            Route::ExecutionList => html! { <ExecutionListPage /> },
             Route::NotFound => html! { <NotFound /> },
         }
     }
