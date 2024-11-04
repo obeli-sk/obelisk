@@ -272,6 +272,9 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                                         return;
                                     }
                                     if let PendingState::Finished { finished } = pending_state {
+                                        if !request.send_finished_status {
+                                            return;
+                                        }
                                         // Send the last message and close the RPC.
                                         let result = match conn
                                             .get_finished_result(execution_id, finished)

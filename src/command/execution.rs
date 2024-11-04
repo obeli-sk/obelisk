@@ -172,6 +172,7 @@ pub(crate) async fn get(
         .get_status(tonic::Request::new(grpc::GetStatusRequest {
             execution_id: Some(execution_id.into()),
             follow,
+            send_finished_status: true,
         }))
         .await
         .to_anyhow()?

@@ -144,6 +144,7 @@ message SubmitResponse {
 message GetStatusRequest {
     ExecutionId execution_id = 1;
     bool follow = 2;
+    bool send_finished_status = 3;
 }
 
 enum ResultKind {
