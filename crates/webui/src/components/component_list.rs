@@ -63,11 +63,15 @@ impl ComponentTree {
                             icon: Icon::Function,
                             label: html! {<>
                                 if function_detail.submittable {
-                                    <Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.to_string() } } >
-                                         <Icon icon = { Icon::Play }/>
+                                    <Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.to_string() } }>
+                                        <div style="display: inline-flex;">
+                                            <Icon icon = { Icon::Play } class = ""/>
+                                            {format!("{} ", ffqn.function_name)}
+                                        </div>
                                     </Link<Route>>
+                                } else {
+                                    {format!("{} ", ffqn.function_name)}
                                 }
-                                {format!("{} ", ffqn.function_name)}
                             </>},
 
                             has_caret: true,
@@ -80,7 +84,7 @@ impl ComponentTree {
                 // insert fn details
                 tree.insert(
                 Node::new(NodeData {
-                    icon: Icon::Document,
+                    icon: Icon::Blank,
                     label: html! {
                         <FunctionSignature params = {function_detail.params} return_type = {function_detail.return_type} />
                     },
