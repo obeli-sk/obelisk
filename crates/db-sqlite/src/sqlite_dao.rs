@@ -1004,6 +1004,7 @@ impl SqlitePool {
         .map_err(convert_err)?
     }
 
+    #[expect(clippy::too_many_lines)]
     fn list_executions(
         read_tx: &Transaction,
         ffqn: Option<FunctionFqn>,

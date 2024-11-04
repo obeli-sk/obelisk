@@ -58,10 +58,10 @@ fn print_status(
             print_pending_status(
                 summary.current_status.expect("sent by server"),
                 old_pending_status,
-            )?;
+            );
         }
         Message::CurrentStatus(pending_status) => {
-            print_pending_status(pending_status, old_pending_status)?;
+            print_pending_status(pending_status, old_pending_status);
         }
         Message::FinishedStatus(finished_sattus) => {
             print_finished_status(finished_sattus, old_pending_status)?;
@@ -70,10 +70,7 @@ fn print_status(
     Ok(())
 }
 
-fn print_pending_status(
-    pending_status: grpc::ExecutionStatus,
-    old_pending_status: &mut String,
-) -> Result<(), anyhow::Error> {
+fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_status: &mut String) {
     let status = pending_status.status.expect("status is sent by the server");
     let new_pending_status = match status {
         Status::Locked(_) => "Locked".to_string(),
@@ -85,14 +82,13 @@ fn print_pending_status(
             "BlockedByJoinSetClosing".to_string()
         }
         Status::Finished(Finished { .. }) => {
-            return Ok(()); // Skip, the final result will be sent in the next messag.
+            return; // Skip, the final result will be sent in the next messag.
         }
     };
     if *old_pending_status != new_pending_status {
         println!("{new_pending_status}");
         let _ = std::mem::replace(old_pending_status, new_pending_status);
     }
-    Ok(())
 }
 
 fn print_finished_status(

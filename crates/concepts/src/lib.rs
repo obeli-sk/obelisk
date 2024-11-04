@@ -317,7 +317,6 @@ impl FunctionFqn {
         Self::new_static(tuple.0, tuple.1)
     }
 
-    #[must_use]
     pub fn try_from_tuple(
         ifc_fqn: &str,
         function_name: &str,

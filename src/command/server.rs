@@ -281,7 +281,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                                             Err(db_err) => {
                                                 error!("Cannot obtain finished result: {db_err:?}");
                                                 let _ =
-                                                    tx.send(Err(db_error_to_status(db_err))).await;
+                                                    tx.send(Err(db_error_to_status(&db_err))).await;
                                                 return;
                                             }
                                         };
@@ -317,7 +317,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
                             }
                             Err(db_err) => {
                                 error!("Database error while streaming status - {db_err:?}");
-                                let _ = tx.send(Err(db_error_to_status(db_err))).await;
+                                let _ = tx.send(Err(db_error_to_status(&db_err))).await;
                                 return;
                             }
                         }

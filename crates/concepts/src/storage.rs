@@ -782,6 +782,7 @@ pub trait DbConnection: Send + Sync {
     ) -> Result<Vec<(ExecutionId, FunctionFqn, PendingState)>, DbError>;
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum Pagination<T> {
     FirstAfter {
         first: u32,

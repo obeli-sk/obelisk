@@ -1,3 +1,4 @@
+use super::function_signature::FunctionSignature;
 use crate::app::Route;
 use crate::ffqn::FunctionFqn;
 use crate::grpc_client;
@@ -7,8 +8,6 @@ use yew::prelude::*;
 use yew_router::prelude::Link;
 use yewprint::id_tree::{InsertBehavior, Node, NodeId, TreeBuilder};
 use yewprint::{Icon, NodeData, TreeData};
-
-use super::function_signature::FunctionSignature;
 
 #[derive(Properties, PartialEq)]
 pub struct ComponentTreeProps {

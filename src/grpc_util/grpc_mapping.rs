@@ -88,11 +88,11 @@ pub trait TonicServerResultExt<T> {
 
 impl<T> TonicServerResultExt<T> for Result<T, DbError> {
     fn to_status(self) -> Result<T, tonic::Status> {
-        self.map_err(db_error_to_status)
+        self.map_err(|err| db_error_to_status(&err))
     }
 }
 
-pub fn db_error_to_status(db_err: DbError) -> tonic::Status {
+pub fn db_error_to_status(db_err: &DbError) -> tonic::Status {
     if matches!(db_err, DbError::Specific(SpecificError::NotFound)) {
         tonic::Status::not_found("entity not found")
     } else {
