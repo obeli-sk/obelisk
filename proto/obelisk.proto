@@ -5,12 +5,9 @@ import "google/protobuf/any.proto";
 
 package obelisk;
 
-service Scheduler { // FIXME: move to ExecutionRepository
+service ExecutionRepository {
     rpc Submit(SubmitRequest) returns (SubmitResponse);
     rpc GetStatus(GetStatusRequest) returns (stream GetStatusResponse);
-}
-
-service ExecutionRepository {
     rpc ListExecutions(ListExecutionsRequest) returns (ListExecutionsResponse);
 }
 

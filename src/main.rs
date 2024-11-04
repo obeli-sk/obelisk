@@ -92,7 +92,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 }) => {
                     // TODO interactive search for ffqn showing param types and result, file name
                     // enter parameters one by one
-                    let client = get_scheduler_client(api_url).await?;
+                    let client = get_execution_repository_client(api_url).await?;
                     let params =
                         serde_json::from_str(&params).context("params should be a json array")?;
                     let serde_json::Value::Array(params) = params else {
@@ -105,7 +105,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     verbosity,
                     follow,
                 }) => {
-                    let client = get_scheduler_client(api_url).await?;
+                    let client = get_execution_repository_client(api_url).await?;
                     command::execution::get(client, execution_id, follow, verbosity.into()).await
                 }
             }
@@ -117,13 +117,16 @@ fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("com", "obelisk", "obelisk")
 }
 
-type SchedulerClient = command::grpc::scheduler_client::SchedulerClient<
-    tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
->;
+type ExecutionRepositoryClient =
+    command::grpc::execution_repository_client::ExecutionRepositoryClient<
+        tonic::service::interceptor::InterceptedService<Channel, TracingInjector>,
+    >;
 
-async fn get_scheduler_client(url: String) -> Result<SchedulerClient, anyhow::Error> {
+async fn get_execution_repository_client(
+    url: String,
+) -> Result<ExecutionRepositoryClient, anyhow::Error> {
     Ok(
-        command::grpc::scheduler_client::SchedulerClient::with_interceptor(
+        command::grpc::execution_repository_client::ExecutionRepositoryClient::with_interceptor(
             to_channel(url).await?,
             TracingInjector,
         )

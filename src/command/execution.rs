@@ -2,7 +2,7 @@ use super::grpc;
 use super::grpc::execution_status::BlockedByJoinSet;
 use crate::command::grpc::execution_status::Finished;
 use crate::grpc_util::grpc_mapping::TonicClientResultExt;
-use crate::SchedulerClient;
+use crate::ExecutionRepositoryClient;
 use anyhow::Context;
 use chrono::DateTime;
 use concepts::FinishedExecutionResult;
@@ -13,7 +13,7 @@ use tracing::instrument;
 
 #[instrument(skip_all)]
 pub(crate) async fn submit(
-    mut client: SchedulerClient,
+    mut client: ExecutionRepositoryClient,
     ffqn: FunctionFqn,
     params: Vec<serde_json::Value>,
     follow: bool,
@@ -163,7 +163,7 @@ impl From<u8> for ExecutionVerbosity {
 }
 
 pub(crate) async fn get(
-    mut client: SchedulerClient,
+    mut client: ExecutionRepositoryClient,
     execution_id: ExecutionId,
     follow: bool,
     _verbosity: ExecutionVerbosity, // TODO

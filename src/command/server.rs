@@ -104,8 +104,8 @@ impl<DB: DbConnection, P: DbPool<DB>> GrpcServer<DB, P> {
 }
 
 #[tonic::async_trait]
-impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server::Scheduler
-    for GrpcServer<DB, P>
+impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
+    grpc::execution_repository_server::ExecutionRepository for GrpcServer<DB, P>
 {
     #[instrument(skip_all, fields(execution_id, ffqn, params, config_id))]
     async fn submit(
@@ -334,12 +334,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static> grpc::scheduler_server
             ))
         }
     }
-}
 
-#[tonic::async_trait]
-impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
-    grpc::execution_repository_server::ExecutionRepository for GrpcServer<DB, P>
-{
+    #[instrument(skip_all, fields(execution_id))]
     async fn list_executions(
         &self,
         request: tonic::Request<grpc::ListExecutionsRequest>,
@@ -642,13 +638,6 @@ async fn run_internal(
                 .layer(tower_http::trace::TraceLayer::new_for_grpc().make_span_with(make_span))
                 .layer(GrpcWebLayer::new())
                 .map_request(accept_trace),
-        )
-        .add_service(
-            grpc::scheduler_server::SchedulerServer::from_arc(grpc_server.clone())
-                .send_compressed(CompressionEncoding::Zstd)
-                .accept_compressed(CompressionEncoding::Zstd)
-                .send_compressed(CompressionEncoding::Gzip)
-                .accept_compressed(CompressionEncoding::Gzip),
         )
         .add_service(
             grpc::function_repository_server::FunctionRepositoryServer::from_arc(
