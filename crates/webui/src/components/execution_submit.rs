@@ -98,7 +98,7 @@ pub fn execution_submit_form(
                                 .expect("SubmitResponse.execution_id is sent by the server")
                                 .id;
                             debug!("Submitted as {execution_id}");
-                            navigator.push(&Route::ExecutionList)
+                            navigator.push(&Route::ExecutionListByExecutionId { execution_id })
                         }
                         Err(err) => {
                             error!("Got error {err:?}");
