@@ -76,10 +76,11 @@ pub fn execution_submit_form(
                 let navigator = navigator.clone();
                 async move {
                     let base_url = "/api";
-                    let mut scheduler_client = grpc_client::scheduler_client::SchedulerClient::new(
-                        tonic_web_wasm_client::Client::new(base_url.to_string()),
-                    );
-                    let response = scheduler_client
+                    let mut client =
+                        grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
+                            tonic_web_wasm_client::Client::new(base_url.to_string()),
+                        );
+                    let response = client
                         .submit(grpc_client::SubmitRequest {
                             params: Some(prost_wkt_types::Any {
                                 type_url: format!("urn:obelisk:json:params:{ffqn}"),

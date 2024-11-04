@@ -22,7 +22,6 @@ pub fn execution_list_page(
     ExecutionListPageProps { ffqn, execution_id }: &ExecutionListPageProps,
 ) -> Html {
     let executions_state = use_state(|| None);
-
     {
         let executions_state = executions_state.clone();
         let ffqn = ffqn.clone();
@@ -58,18 +57,35 @@ pub fn execution_list_page(
         });
     }
     if let Some(executions) = executions_state.deref() {
-        let rows = executions.iter().map(|execution| {
-            let ffqn = FunctionFqn::from(execution.function_name.clone().expect("`function_name` is sent by the server"));
-            let status = execution.current_status.clone().expect("`current_status` is sent by the server");
+        let rows = executions
+            .iter()
+            .map(|execution| {
+                let ffqn = FunctionFqn::from(
+                    execution
+                        .function_name
+                        .clone()
+                        .expect("`function_name` is sent by the server"),
+                );
+                let status = execution
+                    .current_status
+                    .clone()
+                    .expect("`current_status` is sent by the server")
+                    .status
+                    .expect("`current_status.status` is sent by the server");
 
-            html! {
-                <tr>
-                <td>{execution.execution_id.clone().expect("`execution_id` is sent by the server").id}</td>
-                <td>{ffqn.to_string()}</td>
-                <td><ExecutionStatus {status} /></td>
-                </tr>
-            }
-        }).collect::<Vec<_>>();
+                let execution_id = execution
+                    .execution_id
+                    .clone()
+                    .expect("`execution_id` is sent by the server");
+                html! {
+                    <tr>
+                    <td>{&execution_id.id}</td>
+                    <td>{ffqn.to_string()}</td>
+                    <td><ExecutionStatus {status} {execution_id} /></td>
+                    </tr>
+                }
+            })
+            .collect::<Vec<_>>();
         let rows = html! { for rows };
         html! {
         <table>
