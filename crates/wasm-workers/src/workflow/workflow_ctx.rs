@@ -22,6 +22,7 @@ use tracing::{debug, error, instrument, trace, Span};
 use utils::time::ClockFn;
 use wasmtime::component::{Linker, Val};
 
+/// Result that is passed from guest to host as an error, must be downcast from anyhow.
 #[derive(thiserror::Error, Debug, Clone)]
 pub(crate) enum WorkflowFunctionError {
     // fatal errors:
@@ -30,7 +31,7 @@ pub(crate) enum WorkflowFunctionError {
     #[error("child finished with an execution error: {0}")]
     ChildExecutionError(FinishedExecutionError), // only on direct call
     #[error("uncategorized error - {0}")]
-    UncategorizedError(&'static str), // Added with `WorkflowFunctionError`, others are from `ApplyError`
+    UncategorizedError(&'static str), // Mostly used when an extension function cannot be called. Traps are handled in `RunError::Trap`.
     // retryable errors:
     #[error("interrupt requested")]
     InterruptRequested,
@@ -60,9 +61,10 @@ impl WorkflowFunctionError {
             Self::ChildExecutionError(err) => {
                 WorkerPartialResult::FatalError(FatalError::ChildExecutionError(err), version)
             }
-            Self::UncategorizedError(err) => {
-                WorkerPartialResult::FatalError(FatalError::UncategorizedError(err), version)
-            }
+            Self::UncategorizedError(err) => WorkerPartialResult::FatalError(
+                FatalError::UncategorizedError(err.to_string()),
+                version,
+            ),
         }
     }
 }

@@ -79,5 +79,5 @@ pub enum FatalError {
     #[error("child finished with an execution error: {0}")]
     ChildExecutionError(FinishedExecutionError),
     #[error("uncategorized error: {0}")]
-    UncategorizedError(&'static str),
+    UncategorizedError(String),
 }

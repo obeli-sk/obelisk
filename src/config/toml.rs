@@ -292,6 +292,8 @@ pub(crate) struct WorkflowConfigToml {
     pub(crate) join_next_blocking_strategy: JoinNextBlockingStrategy,
     #[serde(default = "default_non_blocking_event_batching")]
     pub(crate) non_blocking_event_batching: u32,
+    #[serde(default = "default_retry_on_trap")]
+    pub(crate) retry_on_trap: bool,
 }
 
 #[derive(Debug)]
@@ -335,6 +337,7 @@ impl WorkflowConfigToml {
             config_id: config_id.clone(),
             join_next_blocking_strategy: self.join_next_blocking_strategy,
             non_blocking_event_batching: self.non_blocking_event_batching,
+            retry_on_trap: self.retry_on_trap,
         };
         Ok(WorkflowConfigVerified {
             content_digest,
@@ -857,6 +860,10 @@ const fn default_tick_sleep() -> DurationConfig {
 
 const fn default_non_blocking_event_batching() -> u32 {
     100
+}
+
+const fn default_retry_on_trap() -> bool {
+    false
 }
 
 fn default_out_style() -> LoggingStyle {

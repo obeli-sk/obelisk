@@ -43,6 +43,7 @@ pub struct WorkflowConfig {
     pub config_id: ConfigId,
     pub join_next_blocking_strategy: JoinNextBlockingStrategy,
     pub non_blocking_event_batching: u32,
+    pub retry_on_trap: bool,
 }
 
 pub struct WorkflowWorkerCompiled<C: ClockFn> {
@@ -226,8 +227,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowWorkerLinked<C, DB, P>
 
 enum RunError<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> {
     ResultParsingError(ResultParsingError, WorkflowCtx<C, DB, P>),
-    FunctionCall(Box<dyn Error + Send + Sync>, WorkflowCtx<C, DB, P>),
+    /// Error from the wasmtime runtime that can be downcast to `WorkflowFunctionError`
     WorkerPartialResult(WorkerPartialResult, WorkflowCtx<C, DB, P>),
+    /// Error that happened while running the function, which cannot be downcast to `WorkflowFunctionError`
+    Trap(Box<dyn Error + Send + Sync>, WorkflowCtx<C, DB, P>),
 }
 
 enum WorkerResultRefactored<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
@@ -335,7 +338,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 }
             }
             Err(err) => {
-                // guest panic exits here.
                 // Try to unpack `WorkflowFunctionError`
                 if let Some(err) = err
                     .source()
@@ -349,7 +351,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                         workflow_ctx,
                     ))
                 } else {
-                    Err(RunError::FunctionCall(err.into(), workflow_ctx))
+                    Err(RunError::Trap(err.into(), workflow_ctx))
                 }
             }
         }
@@ -368,7 +370,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let deadline_duration = (execution_deadline - started_at).to_std().unwrap();
         let stopwatch = now_tokio_instant(); // Not using `clock_fn` here is ok, value is only used for log reporting.
         tokio::select! { // future's liveness: Dropping the loser immediately.
-            res = Self::race_func_internal(store, func, params, &worker_span, stopwatch, deadline_duration, execution_deadline) => {
+            res = Self::race_func_internal(store, func, params, &worker_span, stopwatch, deadline_duration, execution_deadline, self.config.retry_on_trap) => {
                 res
             },
             () = tokio::time::sleep(deadline_duration) => {
@@ -397,6 +399,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         stopwatch: tokio::time::Instant,
         deadline_duration: Duration,
         execution_deadline: DateTime<Utc>,
+        retry_on_trap: bool,
     ) -> WorkerResult {
         let res = Self::call_func(store, func, params).await;
         let worker_result_refactored = Self::convert_result(
@@ -405,6 +408,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             stopwatch,
             deadline_duration,
             execution_deadline,
+            retry_on_trap,
         )
         .await;
         match worker_result_refactored {
@@ -430,6 +434,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         stopwatch: tokio::time::Instant,
         deadline_duration: Duration,
         execution_deadline: DateTime<Utc>,
+        retry_on_trap: bool,
     ) -> WorkerResultRefactored<C, DB, P> {
         match res {
             Ok((supported_result, mut workflow_ctx)) => {
@@ -444,26 +449,35 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 }
                 WorkerResultRefactored::Ok(supported_result, workflow_ctx)
             }
-            Err(RunError::FunctionCall(err, mut workflow_ctx)) => {
+            Err(RunError::Trap(err, mut workflow_ctx)) => {
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(||
-                        error!("Database flush error: {db_err:?} while handling FunctionCall error: {err:?}")
+                        error!("Database flush error: {db_err:?} while handling: {err:?}, execution will be retried")
                     );
                     return WorkerResultRefactored::Retryable(WorkerResult::Err(
                         WorkerError::DbError(db_err),
                     ));
                 }
                 let version = workflow_ctx.version;
-                let err = WorkerError::IntermittentError {
-                    reason: StrVariant::Arc(Arc::from(format!(
-                        "uncategorized function call error - {err:?}"
-                    ))),
-                    err: Some(err),
-                    version,
+                let err = if retry_on_trap {
+                    worker_span.in_scope(||
+                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as an intermittent error - {err:?}")
+                    );
+                    WorkerError::IntermittentError {
+                        reason: StrVariant::Arc(Arc::from(format!("trap - {err}"))),
+                        err: Some(err),
+                        version,
+                    }
+                } else {
+                    worker_span.in_scope(||
+                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Trap handled as a fatal error - {err:?}")
+                    );
+                    WorkerError::FatalError(
+                        FatalError::UncategorizedError(format!("trap - {err}")),
+                        version,
+                    )
                 };
-                worker_span.in_scope(||
-                    info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with an intermittent error - {err:?}")
-                );
+
                 WorkerResultRefactored::Retryable(WorkerResult::Err(err))
             }
             Err(RunError::WorkerPartialResult(worker_partial_result, mut workflow_ctx)) => {
@@ -477,7 +491,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 }
                 match worker_partial_result {
                     WorkerPartialResult::FatalError(err, _version) => {
-                        worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a worker error: {err:?}"));
+                        worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Finished with a fatal error: {err:?}"));
                         WorkerResultRefactored::FatalError(err, workflow_ctx)
                     }
                     WorkerPartialResult::InterruptRequested => {
@@ -650,6 +664,7 @@ pub(crate) mod tests {
                     config_id: config_id.clone(),
                     join_next_blocking_strategy,
                     non_blocking_event_batching,
+                    retry_on_trap: false,
                 },
                 workflow_engine,
                 clock_fn.clone(),
@@ -849,6 +864,7 @@ pub(crate) mod tests {
                     config_id: ConfigId::dummy_activity(),
                     join_next_blocking_strategy,
                     non_blocking_event_batching,
+                    retry_on_trap: false,
                 },
                 Engines::get_workflow_engine(EngineConfig::on_demand_testing().await).unwrap(),
                 clock_fn,

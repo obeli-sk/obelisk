@@ -32,13 +32,12 @@ Please exercise caution if attempting to use it for production.
     * Performance option to keep the parent workflow execution hot or unload and replay the event history.
 
 * *Deterministic workflows*
-    * Are replayable
-    * Running in a WASM sandbox
-    * Isolated from the environment
-    * Automatically retried on intermittent failures like database errors or timeouts
-    * Able to spawn child workflows or activities, either blocking or awaiting the result eventually
-    * Execution is persisted at every state change, so that it can be replayed after an interrupt or an error.
-    * Workflows can be replayed with added log messages and other changes that do not alter the determinism of the execution (planned)
+    * Are replayable: Execution is persisted at every state change, so that it can be replayed after an interrupt or an error.
+    * Running in a WASM sandbox, isolated from the environment
+    * Automatically retried on failures like database errors, timeouts or even traps(panics).
+    * Able to spawn child workflows or activities, either blocking until result arrives or awaiting the result asynchronously.
+    * Workflows can be replayed with added log messages and other changes that do not alter the determinism of the execution (planned).
+    * Join sets allow for structured concurrency, either blocking until child executions are done, or cancelling those that were not awaited (planned).
 
 * *WASI webhooks*
     * Mounted as a URL path, serving HTTP traffic.
