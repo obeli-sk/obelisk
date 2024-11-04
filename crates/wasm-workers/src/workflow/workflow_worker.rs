@@ -391,6 +391,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         }
     }
 
+    #[expect(clippy::too_many_arguments)]
     async fn race_func_internal(
         store: Store<WorkflowCtx<C, DB, P>>,
         func: wasmtime::component::Func,

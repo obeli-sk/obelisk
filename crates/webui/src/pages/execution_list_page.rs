@@ -39,20 +39,17 @@ pub fn execution_list_page(
                     grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
                         tonic_web_wasm_client::Client::new(base_url.to_string()),
                     );
-                let pagination = if let Some(execution_id) = execution_id {
-                    Some(Pagination::FirstAfter(FirstAfter {
+                let pagination = execution_id.map(|execution_id| {
+                    Pagination::FirstAfter(FirstAfter {
                         first: 1,
                         including_cursor: true,
                         cursor: Some(execution_id),
-                    }))
-                } else {
-                    None
-                };
+                    })
+                });
                 let response = execution_client
                     .list_executions(grpc_client::ListExecutionsRequest {
                         function_name: ffqn.map(grpc_client::FunctionName::from),
                         pagination,
-                        ..Default::default()
                     })
                     .await
                     .unwrap()
