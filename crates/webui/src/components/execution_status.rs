@@ -1,4 +1,4 @@
-use crate::grpc_client::{self, get_status_response, ExecutionSummary, GetStatusResponse};
+use crate::grpc_client::{self, get_status_response, ExecutionSummary};
 use log::debug;
 use std::ops::Deref;
 use yew::prelude::*;

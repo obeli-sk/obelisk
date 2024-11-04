@@ -1,5 +1,5 @@
 use crate::{
-    components::execution_list::ExecutionStatus,
+    components::execution_status::ExecutionStatus,
     ffqn::FunctionFqn,
     grpc_client::{
         self,
