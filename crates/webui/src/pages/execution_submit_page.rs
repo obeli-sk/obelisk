@@ -1,7 +1,7 @@
 use crate::{
     app::{AppState, Route},
     components::{execution_submit::ExecutionSubmitForm, function_signature::FunctionSignature},
-    ffqn::FunctionFqn,
+    grpc::ffqn::FunctionFqn,
 };
 use std::str::FromStr;
 use yew::prelude::*;

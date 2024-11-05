@@ -1,7 +1,7 @@
 use super::function_signature::FunctionSignature;
 use crate::app::Route;
-use crate::ffqn::FunctionFqn;
-use crate::grpc_client;
+use crate::grpc::ffqn::FunctionFqn;
+use crate::grpc::grpc_client;
 use indexmap::IndexMap;
 use std::fmt::Debug;
 use yew::prelude::*;

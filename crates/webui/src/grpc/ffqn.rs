@@ -1,4 +1,4 @@
-use crate::grpc_client;
+use crate::grpc::grpc_client;
 use std::{fmt::Display, str::FromStr};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]

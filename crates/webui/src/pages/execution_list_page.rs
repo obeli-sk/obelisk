@@ -1,8 +1,8 @@
 use crate::{
     app::Route,
     components::execution_status::ExecutionStatus,
-    ffqn::FunctionFqn,
-    grpc_client::{
+    grpc::ffqn::FunctionFqn,
+    grpc::grpc_client::{
         self,
         list_executions_request::{FirstAfter, Pagination},
     },

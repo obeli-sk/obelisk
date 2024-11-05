@@ -1,4 +1,4 @@
-use crate::{app::Route, ffqn::FunctionFqn, grpc_client};
+use crate::{app::Route, grpc::ffqn::FunctionFqn, grpc::grpc_client};
 use log::{debug, error};
 use std::ops::Deref;
 use web_sys::HtmlInputElement;

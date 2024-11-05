@@ -1,6 +1,6 @@
 use crate::{
-    ffqn::FunctionFqn,
-    grpc_client,
+    grpc::ffqn::FunctionFqn,
+    grpc::grpc_client,
     pages::{
         component_list_page::ComponentListPage, execution_list_page::ExecutionListPage,
         execution_submit_page::ExecutionSubmitPage, not_found::NotFound,

@@ -1,4 +1,4 @@
-use crate::grpc_client::{
+use crate::grpc::grpc_client::{
     self,
     execution_status::{Finished, Locked, PendingAt},
     get_status_response, ExecutionSummary, ResultKind,

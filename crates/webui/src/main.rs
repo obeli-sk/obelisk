@@ -1,7 +1,7 @@
 use log::debug;
 use webui::{
     app::{App, AppProps},
-    grpc_client,
+    grpc::grpc_client,
 };
 
 fn main() {

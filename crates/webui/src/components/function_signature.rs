@@ -1,6 +1,5 @@
+use crate::grpc::grpc_client;
 use yew::prelude::*;
-
-use crate::grpc_client;
 
 #[derive(Properties, PartialEq)]
 pub struct FunctionSignatureProps {
