@@ -378,7 +378,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 // Not closing the join sets, workflow MUST be retried.
                 if interrupt_on_timeout_container.lock().unwrap().take().is_some() {
                     worker_span.in_scope(||
-                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %self.clock_fn.now(), "Interrupt requested")
+                        info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, now = %self.clock_fn.now(), "Interrupt requested at timeout")
                     );
                     WorkerResult::DbUpdatedByWorker
                 } else {
