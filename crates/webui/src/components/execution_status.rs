@@ -28,7 +28,7 @@ pub fn execution_status(
         let execution_id = execution_id.clone();
         use_effect_with((), move |_x| {
             if !is_finished {
-                debug!("Subscribing to status of {}", execution_id.id);
+                debug!("Subscribing to status of {execution_id}");
                 wasm_bindgen_futures::spawn_local(async move {
                     let base_url = "/api";
                     let mut execution_client =

@@ -83,7 +83,7 @@ pub fn execution_list_page(
                     .expect("`execution_id` is sent by the server");
                 html! {
                     <tr>
-                    <td>{&execution_id.id}</td>
+                    <td>{&execution_id}</td>
                         <td><Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.to_string() }}>{ffqn.to_string()}</Link<Route>></td>
                     <td><ExecutionStatus {status} {execution_id} /></td>
                     </tr>
@@ -98,7 +98,7 @@ pub fn execution_list_page(
                 <p><Link<Route> to={Route::ExecutionList}>{format!("Remove filter")}</Link<Route>></p>
             }
             if let Some(execution_id) = execution_id {
-                <h3>{format!("Filtering by execution ID: {}", execution_id.id)}</h3>
+                <h3>{format!("Filtering by execution ID: {execution_id}")}</h3>
                 <p><Link<Route> to={Route::ExecutionList}>{format!("Remove filter")}</Link<Route>></p>
             }
             <table>
