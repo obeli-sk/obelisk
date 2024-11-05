@@ -111,7 +111,7 @@ pub fn execution_list_page(
                 <h3>{format!("Filtering by execution ID: {execution_id}")}</h3>
                 <p><Link<Route> to={Route::ExecutionList}>{format!("Remove filter")}</Link<Route>></p>
             }
-            <ComponentTree components={app_state.components} show_extensions={ false } {submittable_link_fn} />
+            <ComponentTree components={app_state.components} show_extensions={ false } {submittable_link_fn} show_submittable_only={true}/>
             <table>
             <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
             { rows }

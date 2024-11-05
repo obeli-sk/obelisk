@@ -12,6 +12,7 @@ pub struct ComponentTreeProps {
     pub components: Vec<grpc_client::Component>,
     pub show_extensions: bool,
     pub submittable_link_fn: SubmittableLinkFn,
+    pub show_submittable_only: bool,
 }
 
 pub type SubmittableLinkFn = Callback<FunctionFqn, Html>;
@@ -97,6 +98,7 @@ impl ComponentTree {
         }
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn attach_components_to_tree<'a>(
         tree: &mut yewprint::id_tree::Tree<NodeData<i32>>,
         root_id: &NodeId,
@@ -105,6 +107,7 @@ impl ComponentTree {
         icon: Icon,
         components: impl Iterator<Item = &'a grpc_client::Component>,
         submittable_link_fn: &SubmittableLinkFn,
+        show_submittable_only: bool,
     ) {
         let group_dir_node_id = tree
             .insert(
@@ -137,7 +140,7 @@ impl ComponentTree {
                 &component_node_id,
                 Some(submittable_link_fn),
             );
-            if !component.imports.is_empty() {
+            if !component.imports.is_empty() && !show_submittable_only {
                 let imports_node_id = tree
                     .insert(
                         Node::new(NodeData {
@@ -204,6 +207,7 @@ impl ComponentTree {
         components: &[grpc_client::Component],
         show_extensions: bool,
         submittable_link_fn: &SubmittableLinkFn,
+        show_submittable_only: bool,
     ) -> TreeData<i32> {
         let workflows =
             filter_component_list_by_type(components, grpc_client::ComponentType::Workflow);
@@ -230,6 +234,7 @@ impl ComponentTree {
             Icon::GanttChart,
             workflows,
             submittable_link_fn,
+            show_submittable_only,
         );
         Self::attach_components_to_tree(
             &mut tree,
@@ -239,16 +244,20 @@ impl ComponentTree {
             Icon::CodeBlock,
             activities,
             submittable_link_fn,
+            show_submittable_only,
         );
-        Self::attach_components_to_tree(
-            &mut tree,
-            &root_id,
-            show_extensions,
-            "Webhooks".into(),
-            Icon::GlobeNetwork,
-            webhooks,
-            submittable_link_fn,
-        );
+        if !show_submittable_only {
+            Self::attach_components_to_tree(
+                &mut tree,
+                &root_id,
+                show_extensions,
+                "Webhooks".into(),
+                Icon::GlobeNetwork,
+                webhooks,
+                submittable_link_fn,
+                show_submittable_only,
+            );
+        }
         tree.into()
     }
 }
@@ -263,8 +272,14 @@ impl Component for ComponentTree {
             components,
             show_extensions,
             submittable_link_fn,
+            show_submittable_only,
         } = ctx.props();
-        let tree = Self::construct_tree(components, *show_extensions, submittable_link_fn);
+        let tree = Self::construct_tree(
+            components,
+            *show_extensions,
+            submittable_link_fn,
+            *show_submittable_only,
+        );
 
         Self {
             tree,
@@ -291,8 +306,14 @@ impl Component for ComponentTree {
             components,
             show_extensions: extensions,
             submittable_link_fn,
+            show_submittable_only,
         } = ctx.props();
-        let tree = Self::construct_tree(components, *extensions, submittable_link_fn);
+        let tree = Self::construct_tree(
+            components,
+            *extensions,
+            submittable_link_fn,
+            *show_submittable_only,
+        );
         self.tree = tree;
         true
     }
