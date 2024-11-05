@@ -1,6 +1,7 @@
 [build]
 release = false
 filehash = true
+dist = "dist-dev"
 
 [serve]
 port = 8081

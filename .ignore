@@ -1,5 +1,2 @@
 target/
 .direnv/
-.cargo/bin/
-.cargo/.crates.toml
-.cargo/.crates2.json
