@@ -1,10 +1,15 @@
 use crate::{
-    app::Route,
-    components::execution_status::ExecutionStatus,
-    grpc::ffqn::FunctionFqn,
-    grpc::grpc_client::{
-        self,
-        list_executions_request::{FirstAfter, Pagination},
+    app::{AppState, Route},
+    components::{
+        component_list::ComponentTree, execution_list_by_ffqn_link::ExecutionListByFfqnLink,
+        execution_status::ExecutionStatus,
+    },
+    grpc::{
+        ffqn::FunctionFqn,
+        grpc_client::{
+            self,
+            list_executions_request::{FirstAfter, Pagination},
+        },
     },
 };
 use log::debug;
@@ -23,6 +28,8 @@ pub struct ExecutionListPageProps {
 pub fn execution_list_page(
     ExecutionListPageProps { ffqn, execution_id }: &ExecutionListPageProps,
 ) -> Html {
+    let app_state =
+        use_context::<AppState>().expect("AppState context is set when starting the App");
     let executions_state = use_state(|| None);
     {
         let executions_state = executions_state.clone();
@@ -91,6 +98,9 @@ pub fn execution_list_page(
             })
             .collect::<Vec<_>>();
         let rows = html! { for rows };
+        let submittable_link_fn =
+            Callback::from(|ffqn: FunctionFqn| html! { <ExecutionListByFfqnLink {ffqn} /> });
+
         html! {<>
             if let Some(ffqn) = ffqn {
                 <h3>{format!("Filtering by function: {ffqn}")}</h3>
@@ -101,6 +111,7 @@ pub fn execution_list_page(
                 <h3>{format!("Filtering by execution ID: {execution_id}")}</h3>
                 <p><Link<Route> to={Route::ExecutionList}>{format!("Remove filter")}</Link<Route>></p>
             }
+            <ComponentTree components={app_state.components} show_extensions={ false } {submittable_link_fn} />
             <table>
             <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
             { rows }
