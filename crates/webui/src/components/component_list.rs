@@ -1,11 +1,9 @@
 use super::function_signature::FunctionSignature;
-use crate::app::Route;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::grpc_client;
 use indexmap::IndexMap;
 use std::fmt::Debug;
 use yew::prelude::*;
-use yew_router::prelude::Link;
 use yewprint::id_tree::{InsertBehavior, Node, NodeId, TreeBuilder};
 use yewprint::{Icon, NodeData, TreeData};
 
@@ -13,7 +11,10 @@ use yewprint::{Icon, NodeData, TreeData};
 pub struct ComponentTreeProps {
     pub components: Vec<grpc_client::Component>,
     pub show_extensions: bool,
+    pub submittable_link_fn: SubmittableLinkFn,
 }
+
+pub type SubmittableLinkFn = Callback<FunctionFqn, Html>;
 
 pub struct ComponentTree {
     tree: TreeData<i32>,
@@ -34,8 +35,9 @@ impl ComponentTree {
         tree: &mut yewprint::id_tree::Tree<NodeData<i32>>,
         exports_or_imports: IndexMap<String, Vec<grpc_client::FunctionDetails>>,
         parent_node_id: &NodeId,
-        is_exports: bool,
+        submittable_link_on_exports: Option<&SubmittableLinkFn>,
     ) {
+        let is_exports = submittable_link_on_exports.is_some();
         for (interface, function_detail_vec) in exports_or_imports {
             let is_extension_ifc = Self::is_extension_interface(&interface);
             let ifc_node_id = tree
@@ -61,19 +63,15 @@ impl ComponentTree {
                     .insert(
                         Node::new(NodeData {
                             icon: Icon::Function,
-                            label: html! {<>
-                                if function_detail.submittable {
-                                    <Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.to_string() } }>
-                                        <div style="display: inline-flex;">
-                                            <Icon icon = { Icon::Play } class = ""/>
-                                            {format!("{} ", ffqn.function_name)}
-                                        </div>
-                                    </Link<Route>>
-                                } else {
+                            label: if let (true, Some(submittable_link)) =
+                                (function_detail.submittable, submittable_link_on_exports)
+                            {
+                                submittable_link.emit(ffqn)
+                            } else {
+                                html! {
                                     {format!("{} ", ffqn.function_name)}
                                 }
-                            </>},
-
+                            },
                             has_caret: true,
                             data: 0,
                             ..Default::default()
@@ -106,6 +104,7 @@ impl ComponentTree {
         label: Html,
         icon: Icon,
         components: impl Iterator<Item = &'a grpc_client::Component>,
+        submittable_link_fn: &SubmittableLinkFn,
     ) {
         let group_dir_node_id = tree
             .insert(
@@ -136,7 +135,7 @@ impl ComponentTree {
                 tree,
                 Self::map_interfaces_to_fn_details(&component.exports, show_extensions),
                 &component_node_id,
-                true,
+                Some(submittable_link_fn),
             );
             if !component.imports.is_empty() {
                 let imports_node_id = tree
@@ -155,7 +154,7 @@ impl ComponentTree {
                     tree,
                     Self::map_interfaces_to_fn_details(&component.imports, show_extensions),
                     &imports_node_id,
-                    false,
+                    None,
                 );
             }
         }
@@ -204,6 +203,7 @@ impl ComponentTree {
     fn construct_tree(
         components: &[grpc_client::Component],
         show_extensions: bool,
+        submittable_link_fn: &SubmittableLinkFn,
     ) -> TreeData<i32> {
         let workflows =
             filter_component_list_by_type(components, grpc_client::ComponentType::Workflow);
@@ -229,6 +229,7 @@ impl ComponentTree {
             "Workflows".into(),
             Icon::GanttChart,
             workflows,
+            submittable_link_fn,
         );
         Self::attach_components_to_tree(
             &mut tree,
@@ -237,6 +238,7 @@ impl ComponentTree {
             "Activities".into(),
             Icon::CodeBlock,
             activities,
+            submittable_link_fn,
         );
         Self::attach_components_to_tree(
             &mut tree,
@@ -245,6 +247,7 @@ impl ComponentTree {
             "Webhooks".into(),
             Icon::GlobeNetwork,
             webhooks,
+            submittable_link_fn,
         );
         tree.into()
     }
@@ -259,8 +262,9 @@ impl Component for ComponentTree {
         let ComponentTreeProps {
             components,
             show_extensions,
+            submittable_link_fn,
         } = ctx.props();
-        let tree = Self::construct_tree(components, *show_extensions);
+        let tree = Self::construct_tree(components, *show_extensions, submittable_link_fn);
 
         Self {
             tree,
@@ -286,8 +290,9 @@ impl Component for ComponentTree {
         let ComponentTreeProps {
             components,
             show_extensions: extensions,
+            submittable_link_fn,
         } = ctx.props();
-        let tree = Self::construct_tree(components, *extensions);
+        let tree = Self::construct_tree(components, *extensions, submittable_link_fn);
         self.tree = tree;
         true
     }

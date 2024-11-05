@@ -1,4 +1,8 @@
-use crate::{app::AppState, components::component_list::ComponentTree};
+use crate::{
+    app::AppState,
+    components::{component_list::ComponentTree, execution_submit_link::ExecutionSubmitLink},
+    grpc::ffqn::FunctionFqn,
+};
 use yew::prelude::*;
 
 #[function_component(ComponentListPage)]
@@ -15,6 +19,8 @@ pub fn component_list_page() -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
 
+    let submittable_link_fn =
+        Callback::from(|ffqn: FunctionFqn| html! { <ExecutionSubmitLink {ffqn} /> });
     html! {<>
         <h1>{ "Obelisk WebUI" }</h1>
         <div>
@@ -23,7 +29,7 @@ pub fn component_list_page() -> Html {
                 <input type="checkbox" checked={*extensions_state} onclick={&on_extensions_change} />
                 <label onclick={&on_extensions_change}> { "Show function extensions" }</label>
             </p>
-            <ComponentTree components={app_state.components} show_extensions={ *extensions_state }/>
+            <ComponentTree components={app_state.components} show_extensions={ *extensions_state } {submittable_link_fn} />
         </div>
     </>}
 }
