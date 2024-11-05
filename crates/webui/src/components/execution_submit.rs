@@ -1,6 +1,7 @@
 use crate::{app::Route, ffqn::FunctionFqn, grpc_client};
 use log::{debug, error};
 use std::ops::Deref;
+use web_sys::HtmlInputElement;
 use yew::prelude::*;
 use yew_router::hooks::use_navigator;
 
@@ -16,32 +17,15 @@ pub fn execution_submit_form(
 
     #[derive(Debug, Clone, PartialEq)]
     struct FormData {
-        params: Vec<String>,
+        param_refs: Vec<NodeRef>,
         request_processing: bool,
     }
 
     // Initialize form state with default values
     let form_data_handle = use_state(|| FormData {
-        params: vec![String::new(); function_detail.params.len()],
+        param_refs: vec![NodeRef::default(); function_detail.params.len()],
         request_processing: false,
     });
-
-    let on_param_change = {
-        let form_data_handle = form_data_handle.clone();
-        let ffqn = ffqn.clone();
-        Callback::from(move |e: InputEvent| {
-            let input: web_sys::HtmlInputElement = e.target_unchecked_into();
-            let mut form_data = form_data_handle.deref().clone();
-            let idx: usize = input
-                .id()
-                .strip_prefix(&ffqn.to_string()) // TODO: Switch to refs to avoid parsing IDs: https://github.com/yewstack/yew/blob/master/examples/node_refs/src/main.rs
-                .expect("input id starts with ffqn")
-                .parse()
-                .expect("id of input fields is numeric");
-            form_data.params[idx] = input.value();
-            form_data_handle.set(form_data);
-        })
-    };
 
     let on_submit = {
         let form_data_handle = form_data_handle.clone();
@@ -51,17 +35,21 @@ pub fn execution_submit_form(
             e.prevent_default(); // prevent form submission
             let params = match form_data_handle
                 .deref()
-                .params
+                .param_refs
                 .iter()
-                .map(|str_param| serde_json::from_str(str_param))
+                .map(|param_ref| {
+                    let param_value = param_ref.cast::<HtmlInputElement>().unwrap().value();
+                    serde_json::from_str(&param_value)
+                })
                 .collect::<Result<Vec<_>, _>>()
             {
                 Ok(params) => params,
                 Err(serde_err) => {
                     error!("Cannot serialize parameters - {serde_err:?}");
-                    panic!("cannot serialize parameters")
+                    panic!("TODO: error handling - cannot serialize parameters")
                 }
             };
+            debug!("Params: {params:?}");
             {
                 // disable the submit button
                 let mut form_data = form_data_handle.deref().clone();
@@ -125,10 +113,22 @@ pub fn execution_submit_form(
                 .as_ref()
                 .and_then(|wit_type| wit_type.wit_type.as_deref())
                 .unwrap_or("<unknown_type>");
-            let id = format!("{ffqn}{idx}");
+            let id = format!("param_{ffqn}_{idx}");
+
+            let on_param_change = {
+                    let form_data_handle = form_data_handle.clone();
+                    Callback::from(move |_| {
+                        let form_data = form_data_handle.deref().clone();
+                        let param_ref = &form_data.param_refs[idx];
+                        let param_value = param_ref.cast::<HtmlInputElement>().unwrap().value();
+                        debug!("value: {param_value}");
+                        // TODO: param validation, including serialization to JSON
+                    })
+                };
+
             html! {<p>
                 <label for={id.clone()}>{ format!("{}: {}", name, r#type) }</label>
-                <input id={id} type="text" value={form_data_handle.params[idx].clone()} oninput = {&on_param_change} />
+                <input id={id} type="text" ref={&form_data_handle.param_refs[idx]} oninput = {on_param_change} />
             </p>}
         })
         .collect();
