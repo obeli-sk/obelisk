@@ -1,6 +1,6 @@
 use crate::{
     app::AppState,
-    components::{component_list::ComponentTree, execution_submit_link::ExecutionSubmitLink},
+    components::{component_tree::ComponentTree, execution_submit_link::ExecutionSubmitLink},
     grpc::ffqn::FunctionFqn,
 };
 use yew::prelude::*;

@@ -1,7 +1,7 @@
 use crate::{
     app::{AppState, Route},
     components::{
-        component_list::ComponentTree, execution_list_by_ffqn_link::ExecutionListByFfqnLink,
+        component_tree::ComponentTree, execution_list_by_ffqn_link::ExecutionListByFfqnLink,
         execution_status::ExecutionStatus,
     },
     grpc::{
