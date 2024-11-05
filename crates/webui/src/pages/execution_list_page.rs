@@ -59,6 +59,7 @@ pub fn execution_list_page(
             })
         });
     }
+
     if let Some(executions) = executions_state.deref() {
         let rows = executions
             .iter()
@@ -90,12 +91,21 @@ pub fn execution_list_page(
             })
             .collect::<Vec<_>>();
         let rows = html! { for rows };
-        html! {
-        <table>
-        <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
-        { rows }
-        </table>
-        }
+        html! {<>
+            if let Some(ffqn) = ffqn {
+                <h3>{format!("Filtering by function: {ffqn}")}</h3>
+                <p><Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.to_string() }}>{format!("Submit new execution")}</Link<Route>></p>
+                <p><Link<Route> to={Route::ExecutionList}>{format!("Remove filter")}</Link<Route>></p>
+            }
+            if let Some(execution_id) = execution_id {
+                <h3>{format!("Filtering by execution ID: {}", execution_id.id)}</h3>
+                <p><Link<Route> to={Route::ExecutionList}>{format!("Remove filter")}</Link<Route>></p>
+            }
+            <table>
+            <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
+            { rows }
+            </table>
+        </>}
     } else {
         html! {
             <p>{"Loading"}</p>

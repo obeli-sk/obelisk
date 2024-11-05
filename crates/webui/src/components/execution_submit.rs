@@ -120,8 +120,7 @@ pub fn execution_submit_form(
                     Callback::from(move |_| {
                         let form_data = form_data_handle.deref().clone();
                         let param_ref = &form_data.param_refs[idx];
-                        let param_value = param_ref.cast::<HtmlInputElement>().unwrap().value();
-                        debug!("value: {param_value}");
+                        let _param_value = param_ref.cast::<HtmlInputElement>().unwrap().value();
                         // TODO: param validation, including serialization to JSON
                     })
                 };
