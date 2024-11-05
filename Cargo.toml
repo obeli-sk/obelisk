@@ -74,7 +74,6 @@ console-subscriber = { workspace = true, optional = true }
 # tracing-chrome
 tracing-chrome = { workspace = true, optional = true }
 
-
 [dev-dependencies]
 tempfile.workspace = true
 

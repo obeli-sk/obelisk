@@ -5858,6 +5858,7 @@ dependencies = [
 name = "webui"
 version = "0.6.1"
 dependencies = [
+ "chrono",
  "hashbrown 0.15.0",
  "implicit-clone 0.5.0",
  "indexmap 2.6.0",

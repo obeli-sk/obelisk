@@ -1,4 +1,9 @@
-use crate::grpc_client::{self, get_status_response, ExecutionSummary};
+use crate::grpc_client::{
+    self,
+    execution_status::{Finished, Locked, PendingAt},
+    get_status_response, ExecutionSummary, ResultKind,
+};
+use chrono::DateTime;
 use log::debug;
 use std::ops::Deref;
 use yew::prelude::*;
@@ -72,7 +77,46 @@ pub fn execution_status(
         });
     }
 
-    html! {
-        {format!("{:?}", status_state.deref())}
+    status_to_string(status_state.deref())
+}
+
+fn status_to_string(status: &grpc_client::execution_status::Status) -> Html {
+    match status {
+        grpc_client::execution_status::Status::Locked(Locked {
+            lock_expires_at, ..
+        }) => html! {
+            format!("Locked{}", convert_date(" until ", lock_expires_at.as_ref()))
+        },
+        grpc_client::execution_status::Status::PendingAt(PendingAt { scheduled_at }) => html! {
+            format!("Pending{}", convert_date(" at ", scheduled_at.as_ref()))
+        },
+        grpc_client::execution_status::Status::BlockedByJoinSet(_) => {
+            html! { "Blocked by join set"}
+        }
+        grpc_client::execution_status::Status::Finished(Finished { result_kind, .. }) => {
+            match ResultKind::try_from(*result_kind).expect("TODO") {
+                ResultKind::Ok => html! {"Finished OK"},
+                ResultKind::Timeout => {
+                    html! {"Finished with Timeout"}
+                }
+                ResultKind::NondeterminismDetected => {
+                    html! {"Nondeterminism detected"}
+                }
+                ResultKind::ExecutionFailure => {
+                    html! {"Execution failure"}
+                }
+                ResultKind::FallibleError => {
+                    html! {"Finished with Err variant"}
+                }
+            }
+        }
     }
+}
+
+fn convert_date(prefix: &str, date: Option<&::prost_wkt_types::Timestamp>) -> String {
+    date.map(|date| {
+        let date = DateTime::from(*date);
+        format!("{prefix}{date:?}")
+    })
+    .unwrap_or_default()
 }

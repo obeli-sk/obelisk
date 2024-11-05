@@ -11,6 +11,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+chrono.workspace = true
 hashbrown.workspace = true
 implicit-clone.workspace = true
 indexmap.workspace = true
