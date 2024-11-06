@@ -8,7 +8,7 @@ use crate::{
         ffqn::FunctionFqn,
         grpc_client::{
             self,
-            list_executions_request::{FirstAfter, Pagination},
+            list_executions_request::{FirstAfter, LastBefore, Pagination},
         },
     },
 };
@@ -46,6 +46,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
         use_context::<AppState>().expect("AppState context is set when starting the App");
     let executions_state = use_state(|| None);
     {
+        let page_size = 20;
         let executions_state = executions_state.clone();
         use_effect_with(filter.clone(), move |filter| {
             let filter = filter.clone();
@@ -56,7 +57,13 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                         tonic_web_wasm_client::Client::new(base_url.to_string()),
                     );
                 let (ffqn, pagination) = match filter {
-                    ExecutionFilter::All => (None, None),
+                    ExecutionFilter::All => (
+                        None,
+                        Some(Pagination::LastBefore(LastBefore {
+                            last: page_size,
+                            ..Default::default()
+                        })),
+                    ),
                     ExecutionFilter::ExecutionId { execution_id } => (
                         None,
                         Some(Pagination::FirstAfter(FirstAfter {
@@ -66,7 +73,22 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                         })),
                     ),
                     ExecutionFilter::Ffqn { ffqn } => (Some(ffqn), None),
-                    _ => todo!(),
+                    ExecutionFilter::Before { execution_id } => (
+                        None,
+                        Some(Pagination::LastBefore(LastBefore {
+                            last: page_size,
+                            cursor: Some(execution_id.clone()),
+                            including_cursor: false,
+                        })),
+                    ),
+                    ExecutionFilter::After { execution_id } => (
+                        None,
+                        Some(Pagination::FirstAfter(FirstAfter {
+                            first: page_size,
+                            cursor: Some(execution_id.clone()),
+                            including_cursor: false,
+                        })),
+                    ),
                 };
                 let response = execution_client
                     .list_executions(grpc_client::ListExecutionsRequest {
@@ -83,6 +105,14 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
     }
 
     if let Some(executions) = executions_state.deref() {
+        let (topmost_exe, bottommost_exe) = (
+            executions
+                .first()
+                .and_then(|summary| summary.execution_id.clone()),
+            executions
+                .last()
+                .and_then(|summary| summary.execution_id.clone()),
+        );
         let rows = executions
             .iter()
             .map(|execution| {
@@ -112,7 +142,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                 }
             })
             .collect::<Vec<_>>();
-        let rows = html! { for rows };
+
         let submittable_link_fn =
             Callback::from(|ffqn: FunctionFqn| html! { <ComponentTreeFfqnLink {ffqn} /> });
 
@@ -128,9 +158,13 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
             }
             <ComponentTree components={app_state.components} show_extensions={ false } {submittable_link_fn} show_submittable_only={true}/>
             <table>
-            <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
-            { rows }
+                <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
+                { rows }
             </table>
+            if let (Some(topmost_exe), Some(bottommost_exe)) = (topmost_exe, bottommost_exe) {
+                <p><Link<Route> to={Route::ExecutionListAfter { execution_id: topmost_exe.id }}>{format!("Newer")}</Link<Route>></p>
+                <p><Link<Route> to={Route::ExecutionListBefore { execution_id: bottommost_exe.id }}>{format!("Older")}</Link<Route>></p>
+            }
         </>}
     } else {
         html! {

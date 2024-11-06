@@ -32,6 +32,10 @@ pub enum Route {
     /// Show paginated table of executions, fiterable by component, interface, ffqn, pending state etc.
     #[at("/execution/list")]
     ExecutionList,
+    #[at("/execution/list/before/:execution_id")]
+    ExecutionListBefore { execution_id: String },
+    #[at("/execution/list/after/:execution_id")]
+    ExecutionListAfter { execution_id: String },
     #[at("/execution/list/ffqn/:ffqn")]
     ExecutionListByFfqn { ffqn: String },
     #[at("/execution/list/execution_id/:execution_id")]
@@ -55,6 +59,14 @@ impl Route {
             Route::ComponentList => html! { <ComponentListPage /> },
             Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
             Route::ExecutionList => html! { <ExecutionListPage /> },
+            Route::ExecutionListBefore { execution_id } => {
+                let execution_id = grpc_client::ExecutionId { id: execution_id };
+                html! { <ExecutionListPage filter={ExecutionFilter::Before { execution_id }} /> }
+            }
+            Route::ExecutionListAfter { execution_id } => {
+                let execution_id = grpc_client::ExecutionId { id: execution_id };
+                html! { <ExecutionListPage filter={ExecutionFilter::After { execution_id }} /> }
+            }
             Route::ExecutionListByFfqn { ffqn } => {
                 debug!("Parsing ffqn {ffqn}");
                 let Ok(ffqn) = FunctionFqn::from_str(&ffqn) else {
