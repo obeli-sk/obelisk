@@ -1,9 +1,10 @@
 use crate::{
-    grpc::ffqn::FunctionFqn,
-    grpc::grpc_client,
+    grpc::{ffqn::FunctionFqn, grpc_client},
     pages::{
-        component_list_page::ComponentListPage, execution_list_page::ExecutionListPage,
-        execution_submit_page::ExecutionSubmitPage, not_found::NotFound,
+        component_list_page::ComponentListPage,
+        execution_list_page::{ExecutionFilter, ExecutionListPage},
+        execution_submit_page::ExecutionSubmitPage,
+        not_found::NotFound,
     },
 };
 use log::debug;
@@ -59,11 +60,11 @@ impl Route {
                 let Ok(ffqn) = FunctionFqn::from_str(&ffqn) else {
                     return html! { <NotFound /> }; // TODO: Error page
                 };
-                html! { <ExecutionListPage {ffqn} /> }
+                html! { <ExecutionListPage filter={ExecutionFilter::Ffqn { ffqn } } /> }
             }
             Route::ExecutionListByExecutionId { execution_id } => {
                 let execution_id = grpc_client::ExecutionId { id: execution_id };
-                html! { <ExecutionListPage {execution_id} /> }
+                html! { <ExecutionListPage filter={ExecutionFilter::ExecutionId { execution_id} } /> }
             }
             Route::NotFound => html! { <NotFound /> },
         }
