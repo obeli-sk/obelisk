@@ -1071,54 +1071,61 @@ impl SqlitePool {
         } else {
             format!("WHERE {}", where_vec.join(" AND "))
         };
+        let sql = format!("SELECT state, execution_id, ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
+            FROM t_state {where_str} ORDER BY execution_id {desc} LIMIT {limit}",
+            desc = if limit_desc { "DESC" } else { "" } );
 
-        read_tx.prepare(
-            &format!("SELECT state, execution_id, ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
-                FROM t_state {where_str} ORDER BY execution_id {desc} LIMIT {limit}",
-                desc = if limit_desc { "DESC" } else { "" } )
-        ).map_err(convert_err)?
-        .query_map::<_, &[(&'static str, &dyn rusqlite::ToSql)], _>(params.as_ref(), |row| {
-            let execution_id_res = row
-                .get::<_, String>("execution_id")?
-                .parse::<ExecutionId>()
-                .map_err(parsing_err);
-            let combined_state_res = CombinedState::new(
-                &CombinedStateDTO {
-                    state: row.get("state")?,
-                    ffqn: row.get("ffqn")?,
-                    pending_expires_finished: row
-                        .get::<_, DateTime<Utc>>("pending_expires_finished")?,
-                    executor_id: row
-                        .get::<_, Option<ExecutorIdW>>("executor_id")?
-                        .map(|w| w.0),
-                    run_id: row.get::<_, Option<RunIdW>>("run_id")?.map(|w| w.0),
-                    join_set_id: row
-                        .get::<_, Option<JoinSetIdW>>("join_set_id")?
-                        .map(|w| w.0),
-                    join_set_closing: row.get::<_, Option<bool>>("join_set_closing")?,
-                    result_kind: row
-                        .get::<_, Option<FromStrWrapper<PendingStateFinishedResultKind>>>(
-                            "result_kind",
-                        )?
-                        .map(|wrapper| wrapper.0),
-                },
-                Version::new(row.get("next_version")?),
-            );
-            Ok(combined_state_res.and_then(|combined_state| {
-                execution_id_res.map(|execution_id| {
-                    (
-                        execution_id,
-                        combined_state.ffqn,
-                        combined_state.pending_state,
-                    )
-                })
-            }))
-        })
-        .map_err(convert_err)?
-        .collect::<Result<Vec<Result<_, _>>, _>>()
-        .map_err(convert_err)?
-        .into_iter()
-        .collect()
+        let mut vec: Vec<_> = read_tx
+            .prepare(&sql)
+            .map_err(convert_err)?
+            .query_map::<_, &[(&'static str, &dyn rusqlite::ToSql)], _>(params.as_ref(), |row| {
+                let execution_id_res = row
+                    .get::<_, String>("execution_id")?
+                    .parse::<ExecutionId>()
+                    .map_err(parsing_err);
+                let combined_state_res = CombinedState::new(
+                    &CombinedStateDTO {
+                        state: row.get("state")?,
+                        ffqn: row.get("ffqn")?,
+                        pending_expires_finished: row
+                            .get::<_, DateTime<Utc>>("pending_expires_finished")?,
+                        executor_id: row
+                            .get::<_, Option<ExecutorIdW>>("executor_id")?
+                            .map(|w| w.0),
+                        run_id: row.get::<_, Option<RunIdW>>("run_id")?.map(|w| w.0),
+                        join_set_id: row
+                            .get::<_, Option<JoinSetIdW>>("join_set_id")?
+                            .map(|w| w.0),
+                        join_set_closing: row.get::<_, Option<bool>>("join_set_closing")?,
+                        result_kind: row
+                            .get::<_, Option<FromStrWrapper<PendingStateFinishedResultKind>>>(
+                                "result_kind",
+                            )?
+                            .map(|wrapper| wrapper.0),
+                    },
+                    Version::new(row.get("next_version")?),
+                );
+                Ok(combined_state_res.and_then(|combined_state| {
+                    execution_id_res.map(|execution_id| {
+                        (
+                            execution_id,
+                            combined_state.ffqn,
+                            combined_state.pending_state,
+                        )
+                    })
+                }))
+            })
+            .map_err(convert_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(convert_err)?
+            .into_iter()
+            .collect::<Result<_, _>>()?;
+
+        if !limit_desc {
+            // the list should be sorted from newest to oldest
+            vec.reverse();
+        }
+        Ok(vec)
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(%execution_id, %run_id, %executor_id))]
