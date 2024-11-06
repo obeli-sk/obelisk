@@ -12,11 +12,14 @@ pub fn execution_list_by_ffqn_link(
     ExecutionListByFfqnLinkProps { ffqn }: &ExecutionListByFfqnLinkProps,
 ) -> Html {
     html! {
-        <Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.to_string() } }>
-            <div style="display: inline-flex;">
-                <Icon icon = { Icon::Filter } class = ""/>
-                {format!("{} ", ffqn.function_name)}
-            </div>
-        </Link<Route>>
+        <div style="display: inline-flex;">
+            <Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.to_string() } }>
+                <Icon icon = { Icon::Search }/>
+            </Link<Route>>
+            <Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.to_string() } }>
+                <Icon icon = { Icon::Play }/>
+            </Link<Route>>
+            {format!("{} ", ffqn.function_name)}
+        </div>
     }
 }
