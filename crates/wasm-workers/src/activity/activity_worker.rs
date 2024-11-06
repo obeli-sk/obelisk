@@ -357,7 +357,6 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                return_type: None,
                 topmost_parent: execution_id,
             })
             .await
@@ -531,7 +530,6 @@ pub(crate) mod tests {
                     retry_exp_backoff: Duration::ZERO,
                     max_retries: 0,
                     config_id: ConfigId::dummy_activity(),
-                    return_type: None,
                     topmost_parent: execution_id,
                 })
                 .await
@@ -678,7 +676,6 @@ pub(crate) mod tests {
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
                     config_id: ConfigId::dummy_activity(),
-                    return_type: None,
                     topmost_parent: execution_id,
                 })
                 .await
@@ -787,7 +784,6 @@ pub(crate) mod tests {
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
                     config_id: ConfigId::dummy_activity(),
-                    return_type: None,
                     topmost_parent: execution_id,
                 })
                 .await

@@ -91,9 +91,8 @@ CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_created_at ON t_
 /// `state` to column mapping:
 /// `PendingAt`:
 /// `BlockedByJoinSet`:     `join_set_id`, `join_set_closing`
-/// `Locked`:               `executor_id`, `run_id`, `intermittent_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>, `return_type`
+/// `Locked`:               `executor_id`, `run_id`, `intermittent_event_count`, `max_retries`, `retry_exp_backoff_millis`, Option<`parent_execution_id`>, Option<`parent_join_set_id`>
 /// `Finished` :            `result_kind`, `next_version` is not bumped, points to the finished version.
-//FIXME: Remove `return_type`
 const CREATE_TABLE_T_STATE: &str = r"
 CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
@@ -113,7 +112,6 @@ CREATE TABLE IF NOT EXISTS t_state (
     retry_exp_backoff_millis INTEGER,
     parent_execution_id TEXT,
     parent_join_set_id TEXT,
-    return_type TEXT,
 
     result_kind TEXT,
 
@@ -653,7 +651,6 @@ impl SqlitePool {
             retry_exp_backoff,
             max_retries,
             config_id,
-            return_type,
             metadata,
             topmost_parent,
         } = event
@@ -668,7 +665,6 @@ impl SqlitePool {
                 retry_exp_backoff,
                 max_retries,
                 config_id,
-                return_type,
                 metadata,
                 topmost_parent,
             })
@@ -849,20 +845,10 @@ impl SqlitePool {
                 let create_req = Self::fetch_created_event(tx, execution_id)?;
                 let mut stmt = tx.prepare_cached(
                     "INSERT INTO t_state \
-                    (state, execution_id, next_version, pending_expires_finished, ffqn, executor_id, run_id, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id, return_type) \
+                    (state, execution_id, next_version, pending_expires_finished, ffqn, executor_id, run_id, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id) \
                     VALUES \
-                    (:state, :execution_id, :next_version, :pending_expires_finished, :ffqn, :executor_id, :run_id, :intermittent_event_count, :max_retries, :retry_exp_backoff_millis, :parent_execution_id, :parent_join_set_id, :return_type)",
+                    (:state, :execution_id, :next_version, :pending_expires_finished, :ffqn, :executor_id, :run_id, :intermittent_event_count, :max_retries, :retry_exp_backoff_millis, :parent_execution_id, :parent_join_set_id)",
                 ).map_err(convert_err)?;
-                let return_type = create_req
-                    .return_type
-                    .map(|return_type| {
-                        serde_json::to_string(&return_type).map_err(|err| {
-                            error!("Cannot serialize {return_type:?} - {err:?}");
-                            rusqlite::Error::ToSqlConversionFailure(err.into())
-                        })
-                    })
-                    .transpose()
-                    .map_err(convert_err)?;
                 stmt.execute(named_params! {
                     ":state": STATE_LOCKED,
                     ":execution_id": execution_id_str,
@@ -876,7 +862,6 @@ impl SqlitePool {
                     ":retry_exp_backoff_millis": u64::try_from(create_req.retry_exp_backoff.as_millis()).unwrap(),
                     ":parent_execution_id": create_req.parent.map(|(pid, _) | pid.to_string()),
                     ":parent_join_set_id": create_req.parent.map(|(_, join_set_id)| join_set_id.to_string()),
-                    ":return_type": return_type,
                 }).map_err(convert_err)?;
                 Ok(IndexUpdated {
                     intermittent_event_count: Some(intermittent_event_count),

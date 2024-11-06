@@ -25,7 +25,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use strum::IntoStaticStr;
 use tracing::error;
-use val_json::type_wrapper::TypeWrapper;
 
 /// Remote client representation of the execution journal.
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -213,7 +212,6 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     retry_exp_backoff: Duration::ZERO,
     max_retries: 0,
     config_id: ConfigId::dummy_activity(),
-    return_type: None,
     metadata: ExecutionMetadata::empty(),
     topmost_parent: ExecutionId::from_parts(0, 0),
 };
@@ -259,8 +257,6 @@ pub enum ExecutionEventInner {
         max_retries: u32,
         #[arbitrary(value = ConfigId::dummy_activity())]
         config_id: ConfigId,
-        #[arbitrary(default)]
-        return_type: Option<TypeWrapper>,
         #[arbitrary(default)]
         metadata: ExecutionMetadata,
         topmost_parent: ExecutionId,
@@ -559,9 +555,6 @@ pub struct CreateRequest {
     pub retry_exp_backoff: Duration,
     pub max_retries: u32,
     pub config_id: ConfigId,
-    // Previously used for `FinishedExecutionError` conversion into `SupportedFunctionReturnValue`.
-    // Not used currently.
-    pub return_type: Option<TypeWrapper>,
     pub metadata: ExecutionMetadata,
     pub topmost_parent: ExecutionId,
 }
@@ -576,7 +569,6 @@ impl From<CreateRequest> for ExecutionEventInner {
             retry_exp_backoff: value.retry_exp_backoff,
             max_retries: value.max_retries,
             config_id: value.config_id,
-            return_type: value.return_type,
             metadata: value.metadata,
             topmost_parent: value.topmost_parent,
         }
@@ -694,7 +686,6 @@ pub trait DbConnection: Send + Sync {
             retry_exp_backoff,
             max_retries,
             config_id,
-            return_type,
             metadata,
             topmost_parent,
         } = execution_event.event
@@ -709,7 +700,6 @@ pub trait DbConnection: Send + Sync {
                 retry_exp_backoff,
                 max_retries,
                 config_id,
-                return_type,
                 metadata,
                 topmost_parent,
             })

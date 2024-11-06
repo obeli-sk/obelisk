@@ -706,7 +706,7 @@ impl<C: ClockFn> EventHistory<C> {
                     FunctionMetadata {
                         ffqn,
                         parameter_types: _,
-                        return_type,
+                        return_type: _,
                         extension,
                     },
                     config_id,
@@ -724,7 +724,6 @@ impl<C: ClockFn> EventHistory<C> {
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
                     config_id,
-                    return_type: return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.topmost_parent,
                 };
                 *version =
@@ -769,7 +768,7 @@ impl<C: ClockFn> EventHistory<C> {
                     FunctionMetadata {
                         ffqn,
                         parameter_types: _,
-                        return_type,
+                        return_type: _,
                         extension,
                     },
                     config_id,
@@ -787,7 +786,6 @@ impl<C: ClockFn> EventHistory<C> {
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
                     config_id,
-                    return_type: return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.topmost_parent,
                 };
                 *version =
@@ -867,7 +865,7 @@ impl<C: ClockFn> EventHistory<C> {
                     FunctionMetadata {
                         ffqn,
                         parameter_types: _,
-                        return_type,
+                        return_type: _,
                         extension,
                     },
                     config_id,
@@ -885,7 +883,6 @@ impl<C: ClockFn> EventHistory<C> {
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
                     config_id,
-                    return_type: return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.topmost_parent,
                 };
                 *version = db_connection
@@ -1215,7 +1212,6 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                return_type: None,
                 topmost_parent: execution_id,
             })
             .await
@@ -1384,7 +1380,6 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                return_type: None,
                 topmost_parent: execution_id,
             })
             .await
@@ -1574,7 +1569,6 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                return_type: None,
                 topmost_parent: execution_id,
             })
             .await

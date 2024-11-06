@@ -18,7 +18,6 @@ use test_utils::sim_clock::SimClock;
 use tracing::{debug, info};
 use utils::time::ClockFn;
 use utils::time::Now;
-use val_json::type_wrapper::TypeWrapper;
 
 #[tokio::test]
 async fn test_lifecycle_mem() {
@@ -217,7 +216,6 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: config_id.clone(),
-            return_type: None,
             topmost_parent: execution_id,
         })
         .await
@@ -236,7 +234,6 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            return_type: None,
             topmost_parent: execution_id,
         })
         .await
@@ -504,7 +501,6 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
                 retry_exp_backoff: RETRY_EXP_BACKOFF,
                 max_retries: MAX_RETRIES,
                 config_id: ConfigId::dummy_activity(),
-                return_type: None,
                 topmost_parent: execution_id,
             })
             .await
@@ -577,7 +573,6 @@ pub async fn append_batch_respond_to_parent(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            return_type: None,
             topmost_parent: parent_id,
         })
         .await
@@ -620,7 +615,6 @@ pub async fn append_batch_respond_to_parent(
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                return_type: None,
                 topmost_parent: parent_id,
             })
             .await
@@ -692,7 +686,6 @@ pub async fn append_batch_respond_to_parent(
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                return_type: None,
                 topmost_parent: parent_id,
             })
             .await
@@ -791,7 +784,6 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            return_type: None,
             topmost_parent: older_id,
         })
         .await
@@ -811,7 +803,6 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            return_type: None,
             topmost_parent: newer_id,
         })
         .await
@@ -831,7 +822,6 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            return_type: None,
             topmost_parent: newest_id,
         })
         .await
@@ -872,7 +862,6 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            return_type: None,
             topmost_parent: execution_id,
         })
         .await
@@ -928,7 +917,6 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            return_type: Some(TypeWrapper::U8),
             topmost_parent: execution_id,
         })
         .await
@@ -988,7 +976,6 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            return_type: None,
             topmost_parent: execution_id,
         })
         .await

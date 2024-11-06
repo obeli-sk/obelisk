@@ -759,7 +759,6 @@ mod tests {
                 retry_exp_backoff: config.retry_exp_backoff,
                 max_retries: config.max_retries,
                 config_id: ConfigId::dummy_activity(),
-                return_type: None,
                 topmost_parent: config.execution_id,
             })
             .await
@@ -986,7 +985,6 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                return_type: None,
                 topmost_parent: parent_execution_id,
             })
             .await
@@ -1021,7 +1019,6 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                return_type: None,
                 topmost_parent: parent_execution_id,
             };
             let join_set = ExecutionEventInner::HistoryEvent {
@@ -1190,7 +1187,6 @@ mod tests {
                 retry_exp_backoff: timeout_duration,
                 max_retries: 1,
                 config_id: ConfigId::dummy_activity(),
-                return_type: None,
                 topmost_parent: execution_id,
             })
             .await

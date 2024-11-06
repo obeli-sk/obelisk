@@ -176,10 +176,6 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 retry_exp_backoff: retry_config.retry_exp_backoff,
                 max_retries: retry_config.max_retries,
                 config_id: config_id.clone(),
-                return_type: fn_metadata
-                    .return_type
-                    .as_ref()
-                    .map(|rt| rt.type_wrapper.clone()),
                 topmost_parent: execution_id,
             })
             .await

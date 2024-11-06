@@ -377,7 +377,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
             config_id: self.config_id.clone(),
-            return_type: None,
             topmost_parent: self.execution_id,
         };
         let conn = self.db_pool.connection();
@@ -444,7 +443,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
                 let new_execution_id = ExecutionId::generate();
-                let Some((function_metadata, config_id, import_retry_config)) =
+                let Some((_function_metadata, config_id, import_retry_config)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
                 else {
                     return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
@@ -469,7 +468,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     max_retries: import_retry_config.max_retries,
                     retry_exp_backoff: import_retry_config.retry_exp_backoff,
                     config_id,
-                    return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
                     topmost_parent: self.execution_id,
                 };
                 let db_connection = self.db_pool.connection();
@@ -498,7 +496,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             span.record("version", tracing::field::display(&version));
             let child_execution_id = ExecutionId::generate();
             let created_at = self.clock_fn.now();
-            let Some((function_metadata, config_id, import_retry_config)) =
+            let Some((_function_metadata, config_id, import_retry_config)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
             else {
                 return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
@@ -521,7 +519,6 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 max_retries: import_retry_config.max_retries,
                 retry_exp_backoff: import_retry_config.retry_exp_backoff,
                 config_id,
-                return_type: function_metadata.return_type.map(|rt| rt.type_wrapper),
                 topmost_parent: self.execution_id,
             };
             let db_connection = self.db_pool.connection();
