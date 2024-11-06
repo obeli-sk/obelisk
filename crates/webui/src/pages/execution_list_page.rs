@@ -24,11 +24,11 @@ pub enum ExecutionFilter {
     ExecutionId {
         execution_id: grpc_client::ExecutionId,
     },
-    Before {
+    Older {
         execution_id: grpc_client::ExecutionId,
         including_cursor: bool,
     },
-    After {
+    Newer {
         execution_id: grpc_client::ExecutionId,
         including_cursor: bool,
     },
@@ -75,7 +75,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                         })),
                     ),
                     ExecutionFilter::Ffqn { ffqn } => (Some(ffqn), None),
-                    ExecutionFilter::Before {
+                    ExecutionFilter::Older {
                         execution_id,
                         including_cursor,
                     } => (
@@ -86,7 +86,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                             including_cursor,
                         })),
                     ),
-                    ExecutionFilter::After {
+                    ExecutionFilter::Newer {
                         execution_id,
                         including_cursor,
                     } => (
@@ -171,24 +171,24 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
             </table>
             if let (Some(topmost_exe), Some(bottommost_exe)) = (topmost_exe, bottommost_exe) {
                 <p>
-                    <Link<Route> to={Route::ExecutionListAfter { execution_id: topmost_exe }}>
+                    <Link<Route> to={Route::ExecutionListNewer { execution_id: topmost_exe }}>
                         {format!("Newer")}
                     </Link<Route>>
                 </p>
                 <p>
-                    <Link<Route> to={Route::ExecutionListBefore { execution_id: bottommost_exe }}>
+                    <Link<Route> to={Route::ExecutionListOlder { execution_id: bottommost_exe }}>
                         {format!("Older")}
                     </Link<Route>>
                 </p>
-            } else if let ExecutionFilter::After { execution_id, including_cursor: false } = filter {
+            } else if let ExecutionFilter::Newer { execution_id, including_cursor: false } = filter {
                 <p>
-                    <Link<Route> to={Route::ExecutionListBeforeIncluding { execution_id: execution_id.clone() }}>
+                    <Link<Route> to={Route::ExecutionListOlderIncluding { execution_id: execution_id.clone() }}>
                         {format!("Older")}
                     </Link<Route>>
                 </p>
-            } else if let ExecutionFilter::Before { execution_id, including_cursor: false } = filter {
+            } else if let ExecutionFilter::Older { execution_id, including_cursor: false } = filter {
                 <p>
-                    <Link<Route> to={Route::ExecutionListAfterIncluding { execution_id: execution_id.clone() }}>
+                    <Link<Route> to={Route::ExecutionListNewerIncluding { execution_id: execution_id.clone() }}>
                         {format!("Newer")}
                     </Link<Route>>
                 </p>

@@ -33,21 +33,21 @@ pub enum Route {
     #[at("/execution/list")]
     ExecutionList,
 
-    #[at("/execution/list/before/:execution_id")]
-    ExecutionListBefore {
+    #[at("/execution/list/older/:execution_id")]
+    ExecutionListOlder {
         execution_id: grpc_client::ExecutionId,
     },
-    #[at("/execution/list/before_inc/:execution_id")]
-    ExecutionListBeforeIncluding {
+    #[at("/execution/list/older_inc/:execution_id")]
+    ExecutionListOlderIncluding {
         execution_id: grpc_client::ExecutionId,
     },
 
-    #[at("/execution/list/after/:execution_id")]
-    ExecutionListAfter {
+    #[at("/execution/list/newer/:execution_id")]
+    ExecutionListNewer {
         execution_id: grpc_client::ExecutionId,
     },
-    #[at("/execution/list/after_inc/:execution_id")]
-    ExecutionListAfterIncluding {
+    #[at("/execution/list/newer_inc/:execution_id")]
+    ExecutionListNewerIncluding {
         execution_id: grpc_client::ExecutionId,
     },
 
@@ -76,17 +76,17 @@ impl Route {
             Route::ComponentList => html! { <ComponentListPage /> },
             Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
             Route::ExecutionList => html! { <ExecutionListPage /> },
-            Route::ExecutionListBefore { execution_id } => {
-                html! { <ExecutionListPage filter={ExecutionFilter::Before { execution_id, including_cursor: false }} /> }
+            Route::ExecutionListOlder { execution_id } => {
+                html! { <ExecutionListPage filter={ExecutionFilter::Older { execution_id, including_cursor: false }} /> }
             }
-            Route::ExecutionListBeforeIncluding { execution_id } => {
-                html! { <ExecutionListPage filter={ExecutionFilter::Before { execution_id, including_cursor: true }} /> }
+            Route::ExecutionListOlderIncluding { execution_id } => {
+                html! { <ExecutionListPage filter={ExecutionFilter::Older { execution_id, including_cursor: true }} /> }
             }
-            Route::ExecutionListAfter { execution_id } => {
-                html! { <ExecutionListPage filter={ExecutionFilter::After { execution_id, including_cursor: false }} /> }
+            Route::ExecutionListNewer { execution_id } => {
+                html! { <ExecutionListPage filter={ExecutionFilter::Newer { execution_id, including_cursor: false }} /> }
             }
-            Route::ExecutionListAfterIncluding { execution_id } => {
-                html! { <ExecutionListPage filter={ExecutionFilter::After { execution_id, including_cursor: true }} /> }
+            Route::ExecutionListNewerIncluding { execution_id } => {
+                html! { <ExecutionListPage filter={ExecutionFilter::Newer { execution_id, including_cursor: true }} /> }
             }
 
             Route::ExecutionListByFfqn { ffqn } => {
