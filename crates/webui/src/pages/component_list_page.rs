@@ -1,8 +1,6 @@
 use crate::{
     app::AppState,
-    components::{
-        component_tree::ComponentTree, execution_list_by_ffqn_link::ExecutionListByFfqnLink,
-    },
+    components::{component_tree::ComponentTree, component_tree_ffqn_link::ComponentTreeFfqnLink},
     grpc::ffqn::FunctionFqn,
 };
 use yew::prelude::*;
@@ -22,7 +20,7 @@ pub fn component_list_page() -> Html {
         use_context::<AppState>().expect("AppState context is set when starting the App");
 
     let submittable_link_fn =
-        Callback::from(|ffqn: FunctionFqn| html! { <ExecutionListByFfqnLink {ffqn} /> });
+        Callback::from(|ffqn: FunctionFqn| html! { <ComponentTreeFfqnLink {ffqn} /> });
     html! {<>
         <h1>{ "Obelisk WebUI" }</h1>
         <div>

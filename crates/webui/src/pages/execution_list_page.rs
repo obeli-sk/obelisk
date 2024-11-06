@@ -1,7 +1,7 @@
 use crate::{
     app::{AppState, Route},
     components::{
-        component_tree::ComponentTree, execution_list_by_ffqn_link::ExecutionListByFfqnLink,
+        component_tree::ComponentTree, component_tree_ffqn_link::ComponentTreeFfqnLink,
         execution_status::ExecutionStatus,
     },
     grpc::{
@@ -99,7 +99,7 @@ pub fn execution_list_page(
             .collect::<Vec<_>>();
         let rows = html! { for rows };
         let submittable_link_fn =
-            Callback::from(|ffqn: FunctionFqn| html! { <ExecutionListByFfqnLink {ffqn} /> });
+            Callback::from(|ffqn: FunctionFqn| html! { <ComponentTreeFfqnLink {ffqn} /> });
 
         html! {<>
             if let Some(ffqn) = ffqn {

@@ -7,8 +7,8 @@ use yewprint::Icon;
 pub struct ExecutionListByFfqnLinkProps {
     pub ffqn: FunctionFqn,
 }
-#[function_component(ExecutionListByFfqnLink)]
-pub fn execution_list_by_ffqn_link(
+#[function_component(ComponentTreeFfqnLink)]
+pub fn component_tree_ffqn_link(
     ExecutionListByFfqnLinkProps { ffqn }: &ExecutionListByFfqnLinkProps,
 ) -> Html {
     html! {
