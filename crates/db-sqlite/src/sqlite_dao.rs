@@ -2285,22 +2285,32 @@ impl DbConnection for SqlitePool {
                 ffqn_to_pending_subscription.insert(ffqn.clone(), sender.clone());
             }
         }
-        let Ok(execution_ids_versions) = self
+        let execution_ids_versions = match self
             .conn_low_prio({
                 let ffqns = ffqns.clone();
                 move |conn| Self::get_pending(conn, 1, pending_at_or_sooner, ffqns.as_ref())
             })
             .await
-        else {
-            tokio::time::sleep_until(sleep_until).await;
-            return;
+        {
+            Ok(ok) => ok,
+            Err(err) => {
+                trace!("Ignoring error and waiting in for timeout - {err:?}");
+                tokio::time::sleep_until(sleep_until).await;
+                return;
+            }
         };
         if !execution_ids_versions.is_empty() {
+            info!("Empty execution_ids_versions");
+            tokio::time::sleep_until(sleep_until).await;
             return;
         }
         tokio::select! { // future's liveness: Dropping the loser immediately.
-            _ = receiver.recv() => {} // Got results eventually
-            () = tokio::time::sleep_until(sleep_until) => {} // Timeout
+            _ = receiver.recv() => {
+                trace!("Received a notification");
+            }
+            () = tokio::time::sleep_until(sleep_until) => {
+                trace!("Did not receive a notification");
+            }
         }
     }
 
