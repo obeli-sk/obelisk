@@ -1,5 +1,5 @@
 use super::grpc_client;
-use std::fmt::Display;
+use std::{fmt::Display, str::FromStr};
 use yew::{html, ToHtml};
 
 impl Display for grpc_client::ExecutionId {
@@ -11,5 +11,13 @@ impl Display for grpc_client::ExecutionId {
 impl ToHtml for grpc_client::ExecutionId {
     fn to_html(&self) -> yew::Html {
         html! { &self.id }
+    }
+}
+
+impl FromStr for grpc_client::ExecutionId {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(grpc_client::ExecutionId { id: s.to_string() })
     }
 }

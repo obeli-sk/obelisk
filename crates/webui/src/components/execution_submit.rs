@@ -86,8 +86,7 @@ pub fn execution_submit_form(
                             let execution_id = response
                                 .into_inner()
                                 .execution_id
-                                .expect("SubmitResponse.execution_id is sent by the server")
-                                .id;
+                                .expect("SubmitResponse.execution_id is sent by the server");
                             debug!("Submitted as {execution_id}");
                             navigator.push(&Route::ExecutionListByExecutionId { execution_id })
                         }

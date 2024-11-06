@@ -32,14 +32,31 @@ pub enum Route {
     /// Show paginated table of executions, fiterable by component, interface, ffqn, pending state etc.
     #[at("/execution/list")]
     ExecutionList,
+
     #[at("/execution/list/before/:execution_id")]
-    ExecutionListBefore { execution_id: String },
+    ExecutionListBefore {
+        execution_id: grpc_client::ExecutionId,
+    },
+    #[at("/execution/list/before_inc/:execution_id")]
+    ExecutionListBeforeIncluding {
+        execution_id: grpc_client::ExecutionId,
+    },
+
     #[at("/execution/list/after/:execution_id")]
-    ExecutionListAfter { execution_id: String },
+    ExecutionListAfter {
+        execution_id: grpc_client::ExecutionId,
+    },
+    #[at("/execution/list/after_inc/:execution_id")]
+    ExecutionListAfterIncluding {
+        execution_id: grpc_client::ExecutionId,
+    },
+
     #[at("/execution/list/ffqn/:ffqn")]
     ExecutionListByFfqn { ffqn: String },
     #[at("/execution/list/execution_id/:execution_id")]
-    ExecutionListByExecutionId { execution_id: String },
+    ExecutionListByExecutionId {
+        execution_id: grpc_client::ExecutionId,
+    },
 
     /// Show details including pending state, event history
     // #[at("/execution/:id")]
@@ -60,13 +77,18 @@ impl Route {
             Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
             Route::ExecutionList => html! { <ExecutionListPage /> },
             Route::ExecutionListBefore { execution_id } => {
-                let execution_id = grpc_client::ExecutionId { id: execution_id };
-                html! { <ExecutionListPage filter={ExecutionFilter::Before { execution_id }} /> }
+                html! { <ExecutionListPage filter={ExecutionFilter::Before { execution_id, including_cursor: false }} /> }
+            }
+            Route::ExecutionListBeforeIncluding { execution_id } => {
+                html! { <ExecutionListPage filter={ExecutionFilter::Before { execution_id, including_cursor: true }} /> }
             }
             Route::ExecutionListAfter { execution_id } => {
-                let execution_id = grpc_client::ExecutionId { id: execution_id };
-                html! { <ExecutionListPage filter={ExecutionFilter::After { execution_id }} /> }
+                html! { <ExecutionListPage filter={ExecutionFilter::After { execution_id, including_cursor: false }} /> }
             }
+            Route::ExecutionListAfterIncluding { execution_id } => {
+                html! { <ExecutionListPage filter={ExecutionFilter::After { execution_id, including_cursor: true }} /> }
+            }
+
             Route::ExecutionListByFfqn { ffqn } => {
                 debug!("Parsing ffqn {ffqn}");
                 let Ok(ffqn) = FunctionFqn::from_str(&ffqn) else {
@@ -75,7 +97,6 @@ impl Route {
                 html! { <ExecutionListPage filter={ExecutionFilter::Ffqn { ffqn } } /> }
             }
             Route::ExecutionListByExecutionId { execution_id } => {
-                let execution_id = grpc_client::ExecutionId { id: execution_id };
                 html! { <ExecutionListPage filter={ExecutionFilter::ExecutionId { execution_id} } /> }
             }
             Route::NotFound => html! { <NotFound /> },
