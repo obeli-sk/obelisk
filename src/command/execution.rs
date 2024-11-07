@@ -26,7 +26,6 @@ pub(crate) async fn submit(
                 value: serde_json::Value::Array(params).to_string().into_bytes(),
             }),
             function: Some(ffqn.into()),
-            execution_id: None,
         }))
         .await
         .to_anyhow()?

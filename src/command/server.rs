@@ -117,7 +117,6 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             interface_name,
             function_name,
         } = request.function.argument_must_exist("function")?;
-        // FIXME: remove from grpc
         let execution_id = ExecutionId::generate();
         let span = Span::current();
         span.record("execution_id", tracing::field::display(&execution_id));

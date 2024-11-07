@@ -77,7 +77,6 @@ pub fn execution_submit_form(
                                 value: serde_json::Value::Array(params).to_string().into_bytes(),
                             }),
                             function: Some(grpc_client::FunctionName::from(ffqn)),
-                            execution_id: None,
                         })
                         .await;
                     debug!("Got gRPC {response:?}");

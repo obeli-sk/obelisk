@@ -130,7 +130,7 @@ message FunctionName {
 message SubmitRequest {
     FunctionName function = 1;
     google.protobuf.Any params = 2;
-    optional ExecutionId execution_id = 3;      // Generated if not set
+    reserved 3;
     reserved 4;
 }
 
