@@ -449,7 +449,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let version = self.get_version().await?;
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
-                let new_execution_id = ExecutionId::generate(); //FIXME: self.get_and_increment_child_id();
+                let new_execution_id = ExecutionId::generate();
                 let Some((_function_metadata, config_id, import_retry_config)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
                 else {
@@ -501,7 +501,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             let version = self.get_version().await?;
             let span = Span::current();
             span.record("version", tracing::field::display(&version));
-            let child_execution_id = ExecutionId::generate(); //FIXME: self.get_and_increment_child_id();
+            let child_execution_id = self.get_and_increment_child_id();
             let created_at = self.clock_fn.now();
             let Some((_function_metadata, config_id, import_retry_config)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
