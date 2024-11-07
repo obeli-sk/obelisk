@@ -236,7 +236,7 @@ enum RunError<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 
 enum WorkerResultRefactored<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     Ok(SupportedFunctionReturnValue, WorkflowCtx<C, DB, P>),
     FatalError(FatalError, WorkflowCtx<C, DB, P>),
-    Retryable(WorkerResult),
+    Retriable(WorkerResult),
 }
 
 type CallFuncResult<C, DB, P> =
@@ -425,7 +425,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     Ok(()) => WorkerResult::Err(WorkerError::FatalError(err, workflow_ctx.version)),
                 }
             }
-            WorkerResultRefactored::Retryable(retryable) => retryable,
+            WorkerResultRefactored::Retriable(retriable) => retriable,
         }
     }
 
@@ -444,7 +444,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 );
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(|| error!("Database error: {db_err}"));
-                    return WorkerResultRefactored::Retryable(WorkerResult::Err(
+                    return WorkerResultRefactored::Retriable(WorkerResult::Err(
                         WorkerError::DbError(db_err),
                     ));
                 }
@@ -455,7 +455,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     worker_span.in_scope(||
                         error!("Database flush error: {db_err:?} while handling: {err:?}, execution will be retried")
                     );
-                    return WorkerResultRefactored::Retryable(WorkerResult::Err(
+                    return WorkerResultRefactored::Retriable(WorkerResult::Err(
                         WorkerError::DbError(db_err),
                     ));
                 }
@@ -479,14 +479,14 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     )
                 };
 
-                WorkerResultRefactored::Retryable(WorkerResult::Err(err))
+                WorkerResultRefactored::Retriable(WorkerResult::Err(err))
             }
             Err(RunError::WorkerPartialResult(worker_partial_result, mut workflow_ctx)) => {
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(||
                         error!("Database flush error: {db_err:?} while handling WorkerPartialResult: {worker_partial_result:?}")
                     );
-                    return WorkerResultRefactored::Retryable(WorkerResult::Err(
+                    return WorkerResultRefactored::Retriable(WorkerResult::Err(
                         WorkerError::DbError(db_err),
                     ));
                 }
@@ -497,9 +497,9 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     }
                     WorkerPartialResult::InterruptRequested => {
                         worker_span.in_scope(|| info!(duration = ?stopwatch.elapsed(), ?deadline_duration, %execution_deadline, "Interrupt requested"));
-                        WorkerResultRefactored::Retryable(WorkerResult::DbUpdatedByWorker)
+                        WorkerResultRefactored::Retriable(WorkerResult::DbUpdatedByWorker)
                     }
-                    WorkerPartialResult::DbError(db_err) => WorkerResultRefactored::Retryable(
+                    WorkerPartialResult::DbError(db_err) => WorkerResultRefactored::Retriable(
                         WorkerResult::Err(WorkerError::DbError(db_err)),
                     ),
                 }
@@ -507,7 +507,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             Err(RunError::ResultParsingError(err, mut workflow_ctx)) => {
                 if let Err(db_err) = workflow_ctx.flush().await {
                     worker_span.in_scope(|| error!("Database error: {db_err}"));
-                    return WorkerResultRefactored::Retryable(WorkerResult::Err(
+                    return WorkerResultRefactored::Retriable(WorkerResult::Err(
                         WorkerError::DbError(db_err),
                     ));
                 }

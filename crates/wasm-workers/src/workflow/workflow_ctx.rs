@@ -32,7 +32,7 @@ pub(crate) enum WorkflowFunctionError {
     ChildExecutionError(FinishedExecutionError), // only on direct call
     #[error("uncategorized error - {0}")]
     UncategorizedError(&'static str), // Mostly used when an extension function cannot be called. Traps are handled in `RunError::Trap`.
-    // retryable errors:
+    // retriable errors:
     #[error("interrupt requested")]
     InterruptRequested,
     #[error(transparent)]
@@ -44,7 +44,7 @@ pub(crate) struct InterruptRequested;
 #[derive(Debug)]
 pub(crate) enum WorkerPartialResult {
     FatalError(FatalError, Version),
-    // retryable:
+    // retriable:
     InterruptRequested,
     DbError(DbError),
 }

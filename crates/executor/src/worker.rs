@@ -50,7 +50,7 @@ pub struct WorkerContext {
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
-    // retryable errors
+    // retriable errors
     #[error("intermittent error: {reason}")]
     IntermittentError {
         reason: StrVariant,
@@ -63,7 +63,7 @@ pub enum WorkerError {
     IntermittentTimeout,
     #[error(transparent)]
     DbError(DbError),
-    // non-retryable errors
+    // non-retriable errors
     #[error("fatal error: {0}")]
     FatalError(FatalError, Version),
 }

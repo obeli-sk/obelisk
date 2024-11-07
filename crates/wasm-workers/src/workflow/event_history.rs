@@ -73,7 +73,7 @@ pub(crate) enum ApplyError {
     // fatal errors:
     NondeterminismDetected(StrVariant),
     ChildExecutionError(FinishedExecutionError), // only on direct call
-    // retryable errors:
+    // retriable errors:
     InterruptRequested,
     DbError(DbError),
 }

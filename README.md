@@ -21,7 +21,7 @@ Please exercise caution if attempting to use it for production.
     * Replay and fork existing workflows(planned). Fix problems and continue.
 
 ## Concepts and features
-* *Activities* that must be idempotent (retryable), so that they can be stopped and retried at any moment. This contract must be fulfilled by the activity itself.
+* *Activities* that must be idempotent (retriable), so that they can be stopped and retried at any moment. This contract must be fulfilled by the activity itself.
     * WASI activities are executed in a WASM sandbox
         * Able to contact HTTP servers using the WASI 0.2 HTTP client.
         * Able to read/write to the filesystem (planned).
