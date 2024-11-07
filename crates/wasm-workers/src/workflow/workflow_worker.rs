@@ -783,7 +783,7 @@ pub(crate) mod tests {
         db_connection
             .create(CreateRequest {
                 created_at,
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: FIBO_WORKFLOW_FFQN,
                 params,
                 parent: None,
@@ -792,14 +792,14 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
         info!("Should end as BlockedByJoinSet");
         wait_for_pending_state_fn(
             &db_connection,
-            execution_id,
+            &execution_id,
             |exe_history| {
                 matches!(
                     exe_history.pending_state,
@@ -816,7 +816,7 @@ pub(crate) mod tests {
         let activity_exec_task = spawn_activity_fibo(db_pool.clone(), sim_clock.clone()).await;
 
         let res = db_connection
-            .wait_for_finished_result(execution_id, None)
+            .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap()
             .unwrap();
@@ -952,7 +952,7 @@ pub(crate) mod tests {
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: SLEEP_HOST_ACTIVITY_FFQN,
                 params,
                 parent: None,
@@ -961,14 +961,14 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
 
         wait_for_pending_state_fn(
             &db_connection,
-            execution_id,
+            &execution_id,
             |exe_history| {
                 matches!(
                     exe_history.pending_state,
@@ -995,7 +995,7 @@ pub(crate) mod tests {
         )
         .await;
         let res = db_connection
-            .wait_for_finished_result(execution_id, None)
+            .wait_for_finished_result(&execution_id, None)
             .await
             .unwrap()
             .unwrap();
@@ -1070,7 +1070,7 @@ pub(crate) mod tests {
         db_connection
             .create(CreateRequest {
                 created_at,
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: HTTP_GET_SUCCESSFUL_WORKFLOW_FFQN,
                 params,
                 parent: None,
@@ -1079,14 +1079,14 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
         // Check the result.
         let res = assert_matches!(
             db_connection
-                .wait_for_finished_result(execution_id, None)
+                .wait_for_finished_result(&execution_id, None)
                 .await
                 .unwrap(),
             Ok(res) => res
@@ -1175,7 +1175,7 @@ pub(crate) mod tests {
         db_connection
             .create(CreateRequest {
                 created_at,
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: GET_SUCCESSFUL_CONCURRENTLY_STRESS,
                 params,
                 parent: None,
@@ -1184,14 +1184,14 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::from_millis(0),
                 max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
         // Check the result.
         let res = assert_matches!(
             db_connection
-                .wait_for_finished_result(execution_id, None)
+                .wait_for_finished_result(&execution_id, None)
                 .await
                 .unwrap(),
             Ok(res) => res
@@ -1253,7 +1253,7 @@ pub(crate) mod tests {
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: RESCHEDULE_FFQN,
                 params,
                 parent: None,
@@ -1262,7 +1262,7 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
@@ -1290,7 +1290,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
         );
-        let res = db_pool.connection().get(execution_id).await.unwrap();
+        let res = db_pool.connection().get(&execution_id).await.unwrap();
         assert_matches!(
             res.into_finished_result().unwrap(),
             Ok(SupportedFunctionReturnValue::None)
@@ -1377,7 +1377,7 @@ pub(crate) mod tests {
         db_connection
             .create(CreateRequest {
                 created_at,
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: HTTP_GET_SUCCESSFUL_WORKFLOW_FFQN,
                 params,
                 parent: None,
@@ -1386,14 +1386,14 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
         // Check the result.
         let res: SupportedFunctionReturnValue = assert_matches!(
             db_connection
-                .wait_for_finished_result(execution_id, None)
+                .wait_for_finished_result(&execution_id, None)
                 .await
                 .unwrap(),
             Ok(res) => res
@@ -1403,7 +1403,10 @@ pub(crate) mod tests {
         let val = assert_matches!(val, WastVal::String(val) => val);
         assert_eq!("invalid format", val);
 
-        let pending_state = db_connection.get_pending_state(execution_id).await.unwrap();
+        let pending_state = db_connection
+            .get_pending_state(&execution_id)
+            .await
+            .unwrap();
         assert_matches!(
             pending_state,
             PendingState::Finished {

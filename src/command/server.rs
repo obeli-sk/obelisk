@@ -117,11 +117,10 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             interface_name,
             function_name,
         } = request.function.argument_must_exist("function")?;
-        let execution_id = request
-            .execution_id
-            .map_or_else(|| Ok(ExecutionId::generate()), ExecutionId::try_from)?;
+        // FIXME: remove from grpc
+        let execution_id = ExecutionId::generate();
         let span = Span::current();
-        span.record("execution_id", tracing::field::display(execution_id));
+        span.record("execution_id", tracing::field::display(&execution_id));
         let ffqn =
             concepts::FunctionFqn::new_arc(Arc::from(interface_name), Arc::from(function_name));
         span.record("ffqn", tracing::field::display(&ffqn));
@@ -167,7 +166,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         db_connection
             .create(CreateRequest {
                 created_at,
-                execution_id,
+                execution_id: execution_id.clone(),
                 metadata,
                 ffqn,
                 params,
@@ -176,7 +175,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 retry_exp_backoff: retry_config.retry_exp_backoff,
                 max_retries: retry_config.max_retries,
                 config_id: config_id.clone(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .to_status()?;
@@ -204,18 +203,18 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .execution_id
             .argument_must_exist("execution_id")?
             .try_into()?;
-        tracing::Span::current().record("execution_id", tracing::field::display(execution_id));
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
         let (create_request, mut current_pending_state, grpc_pending_status) = {
             let conn = self.db_pool.connection();
-            let create_request = conn.get_create_request(execution_id).await.to_status()?;
-            let current_pending_state = conn.get_pending_state(execution_id).await.to_status()?;
+            let create_request = conn.get_create_request(&execution_id).await.to_status()?;
+            let current_pending_state = conn.get_pending_state(&execution_id).await.to_status()?;
             let grpc_pending_status = grpc::ExecutionStatus::from(current_pending_state);
             (create_request, current_pending_state, grpc_pending_status)
         };
         let is_finished = grpc_pending_status.is_finished();
         let summary = grpc::GetStatusResponse {
             message: Some(Message::Summary(ExecutionSummary {
-                execution_id: Some(execution_id.into()),
+                execution_id: Some(grpc::ExecutionId::from(&execution_id)),
                 function_name: Some(create_request.ffqn.clone().into()),
                 current_status: Some(grpc_pending_status),
             })),
@@ -253,7 +252,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                             }
                         }
                         let conn = db_pool.connection();
-                        match conn.get_pending_state(execution_id).await {
+                        match conn.get_pending_state(&execution_id).await {
                             Ok(pending_state) => {
                                 if pending_state != current_pending_state {
                                     let grpc_pending_status =
@@ -273,7 +272,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                                         }
                                         // Send the last message and close the RPC.
                                         let result = match conn
-                                            .get_finished_result(execution_id, finished)
+                                            .get_finished_result(&execution_id, finished)
                                             .await
                                         {
                                             Ok(ok) => ok,
@@ -356,7 +355,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .into_iter()
             .map(
                 |(execution_id, ffqn, pending_state)| grpc::ExecutionSummary {
-                    execution_id: Some(execution_id.into()),
+                    execution_id: Some(grpc::ExecutionId::from(execution_id)),
                     function_name: Some(ffqn.into()),
                     current_status: Some(grpc::ExecutionStatus::from(pending_state)),
                 },

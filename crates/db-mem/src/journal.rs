@@ -27,7 +27,7 @@ impl ExecutionJournal {
         let pending_state = PendingState::PendingAt {
             scheduled_at: req.scheduled_at,
         };
-        let execution_id = req.execution_id;
+        let execution_id = req.execution_id.clone();
         let created_at = req.created_at;
         let event = ExecutionEvent {
             event: ExecutionEventInner::from(req),
@@ -70,8 +70,8 @@ impl ExecutionJournal {
     }
 
     #[must_use]
-    pub fn execution_id(&self) -> ExecutionId {
-        self.execution_id
+    pub fn execution_id(&self) -> &ExecutionId {
+        &self.execution_id
     }
 
     #[must_use]
@@ -91,7 +91,7 @@ impl ExecutionJournal {
             ExecutionEvent {
                 event: ExecutionEventInner::Created { topmost_parent, .. },
                 ..
-            } => *topmost_parent,
+            } => topmost_parent.clone(),
             _ => panic!("first event must be `Created`"),
         }
     }
@@ -290,13 +290,13 @@ impl ExecutionJournal {
         assert_matches!(self.execution_events.front(), Some(ExecutionEvent {
                 event: ExecutionEventInner::Created { parent, .. },
                 ..
-            }) => *parent)
+            }) => parent.clone())
     }
 
     #[must_use]
     pub fn as_execution_log(&self) -> ExecutionLog {
         ExecutionLog {
-            execution_id: self.execution_id,
+            execution_id: self.execution_id.clone(),
             events: self.execution_events.iter().cloned().collect(),
             next_version: self.version(),
             pending_state: self.pending_state,

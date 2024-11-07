@@ -337,6 +337,7 @@ struct WebhookCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
     execution_id: ExecutionId,
+    next_child_execution_id: ExecutionId,
     version: Option<Version>,
     component_logger: ComponentLogger,
     phantom_data: PhantomData<DB>,
@@ -358,6 +359,12 @@ const HTTP_HANDLER_FFQN: FunctionFqn =
     FunctionFqn::new_static("wasi:http/incoming-handler", "handle");
 
 impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
+    fn get_and_increment_child_id(&mut self) -> ExecutionId {
+        let mut incremented = self.next_child_execution_id.increment();
+        std::mem::swap(&mut self.next_child_execution_id, &mut incremented);
+        incremented
+    }
+
     // Create new execution if this is the first call of the request/response cycle
     async fn get_version(&mut self) -> Result<Version, DbError> {
         if let Some(found) = &self.version {
@@ -368,7 +375,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
         let metadata = concepts::ExecutionMetadata::from_parent_span(&self.component_logger.span);
         let create_request = CreateRequest {
             created_at,
-            execution_id: self.execution_id,
+            execution_id: self.execution_id.clone(),
             ffqn: HTTP_HANDLER_FFQN,
             params: Params::empty(),
             parent: None,
@@ -377,7 +384,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
             config_id: self.config_id.clone(),
-            topmost_parent: self.execution_id,
+            topmost_parent: self.execution_id.clone(),
         };
         let conn = self.db_pool.connection();
         let version = conn.create(create_request).await?;
@@ -442,7 +449,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let version = self.get_version().await?;
                 let span = Span::current();
                 span.record("version", tracing::field::display(&version));
-                let new_execution_id = ExecutionId::generate();
+                let new_execution_id = ExecutionId::generate(); //FIXME: self.get_and_increment_child_id();
                 let Some((_function_metadata, config_id, import_retry_config)) =
                     self.fn_registry.get_by_exported_function(&ffqn).await
                 else {
@@ -451,7 +458,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 let created_at = self.clock_fn.now();
 
                 let event = HistoryEvent::Schedule {
-                    execution_id: new_execution_id,
+                    execution_id: new_execution_id.clone(),
                     scheduled_at,
                 };
                 let scheduled_at = scheduled_at.as_date_time(created_at);
@@ -459,7 +466,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
 
                 let create_child_req = CreateRequest {
                     created_at,
-                    execution_id: new_execution_id,
+                    execution_id: new_execution_id.clone(),
                     ffqn,
                     params: Params::from_wasmtime(Arc::from(params)),
                     parent: None, // Schedule breaks from the parent-child relationship to avoid a linked list
@@ -468,20 +475,20 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     max_retries: import_retry_config.max_retries,
                     retry_exp_backoff: import_retry_config.retry_exp_backoff,
                     config_id,
-                    topmost_parent: self.execution_id,
+                    topmost_parent: self.execution_id.clone(),
                 };
                 let db_connection = self.db_pool.connection();
                 let version = db_connection
                     .append_batch_create_new_execution(
                         created_at,
                         vec![child_exec_req],
-                        self.execution_id,
+                        self.execution_id.clone(),
                         version.clone(),
                         vec![create_child_req],
                     )
                     .await?;
                 self.version = Some(version);
-                results[0] = execution_id_into_val(new_execution_id);
+                results[0] = execution_id_into_val(&new_execution_id);
                 Ok(())
             } else {
                 error!("unrecognized extension function {ffqn}");
@@ -494,7 +501,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             let version = self.get_version().await?;
             let span = Span::current();
             span.record("version", tracing::field::display(&version));
-            let child_execution_id = ExecutionId::generate();
+            let child_execution_id = ExecutionId::generate(); //FIXME: self.get_and_increment_child_id();
             let created_at = self.clock_fn.now();
             let Some((_function_metadata, config_id, import_retry_config)) =
                 self.fn_registry.get_by_exported_function(&ffqn).await
@@ -505,28 +512,30 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             let child_exec_req = ExecutionEventInner::HistoryEvent {
                 event: HistoryEvent::JoinSetRequest {
                     join_set_id,
-                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                    request: JoinSetRequest::ChildExecutionRequest {
+                        child_execution_id: child_execution_id.clone(),
+                    },
                 },
             };
             let create_child_req = CreateRequest {
                 created_at,
-                execution_id: child_execution_id,
+                execution_id: child_execution_id.clone(),
                 ffqn,
                 params: Params::from_wasmtime(Arc::from(params)),
-                parent: Some((self.execution_id, join_set_id)),
+                parent: Some((self.execution_id.clone(), join_set_id)),
                 metadata: ExecutionMetadata::from_parent_span(&self.component_logger.span),
                 scheduled_at: created_at,
                 max_retries: import_retry_config.max_retries,
                 retry_exp_backoff: import_retry_config.retry_exp_backoff,
                 config_id,
-                topmost_parent: self.execution_id,
+                topmost_parent: self.execution_id.clone(),
             };
             let db_connection = self.db_pool.connection();
             let version = db_connection
                 .append_batch_create_new_execution(
                     created_at,
                     vec![child_exec_req],
-                    self.execution_id,
+                    self.execution_id.clone(),
                     version.clone(),
                     vec![create_child_req],
                 )
@@ -534,7 +543,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             self.version = Some(version);
 
             let res = match db_connection
-                .wait_for_finished_result(child_execution_id, None /* TODO timeouts */)
+                .wait_for_finished_result(&child_execution_id, None /* TODO timeouts */)
                 .await
             {
                 Ok(res) => res?,
@@ -606,6 +615,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             http_ctx: WasiHttpCtx::new(),
             version: None,
             config_id,
+            next_child_execution_id: execution_id.next_level(),
             execution_id,
             component_logger: ComponentLogger { span: request_span },
             phantom_data: PhantomData,
@@ -1001,7 +1011,7 @@ pub(crate) mod tests {
             let execution_id = ExecutionId::from_str(execution_id).unwrap();
             let conn = fibo_webhook_harness.db_pool.connection();
             let res = conn
-                .wait_for_finished_result(execution_id, None)
+                .wait_for_finished_result(&execution_id, None)
                 .await
                 .unwrap()
                 .unwrap();

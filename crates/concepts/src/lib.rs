@@ -732,7 +732,13 @@ pub mod prefixed_ulid {
     use arbitrary::Arbitrary;
     use derivative::Derivative;
     use serde_with::{DeserializeFromStr, SerializeDisplay};
-    use std::marker::PhantomData;
+    use smallvec::SmallVec;
+    use std::{
+        fmt::{Debug, Display},
+        marker::PhantomData,
+        num::ParseIntError,
+        str::FromStr,
+    };
     use ulid::Ulid;
 
     #[derive(derive_more::Display, SerializeDisplay, DeserializeFromStr, Derivative)]
@@ -780,41 +786,40 @@ pub mod prefixed_ulid {
         }
     }
 
+    #[derive(Debug, thiserror::Error)]
+    pub enum PrefixedUlidParseError {
+        #[error("wrong prefix in `{input}`, expected prefix `{expected}`")]
+        WrongPrefix { input: String, expected: String },
+        #[error("cannot parse ULID suffix from `{input}`")]
+        CannotParseUlid { input: String },
+    }
+
     mod impls {
-
-        #[derive(Debug, thiserror::Error)]
-        pub enum ParseError {
-            #[error("wrong prefix in `{input}`, expected prefix `{expected}`")]
-            WrongPrefix { input: String, expected: String },
-            #[error("cannot parse ULID suffix from `{input}`")]
-            CannotParseUlid { input: String },
-        }
-
-        use super::{PrefixedUlid, Ulid};
+        use super::{PrefixedUlid, PrefixedUlidParseError, Ulid};
         use std::{fmt::Debug, fmt::Display, hash::Hash, marker::PhantomData, str::FromStr};
 
         impl<T> FromStr for PrefixedUlid<T> {
-            type Err = ParseError;
+            type Err = PrefixedUlidParseError;
 
             fn from_str(input: &str) -> Result<Self, Self::Err> {
                 let prefix = Self::prefix();
                 let mut input_chars = input.chars();
                 for exp in prefix.chars() {
                     if input_chars.next() != Some(exp) {
-                        return Err(ParseError::WrongPrefix {
+                        return Err(PrefixedUlidParseError::WrongPrefix {
                             input: input.to_string(),
                             expected: format!("{prefix}_"),
                         });
                     }
                 }
                 if input_chars.next() != Some('_') {
-                    return Err(ParseError::WrongPrefix {
+                    return Err(PrefixedUlidParseError::WrongPrefix {
                         input: input.to_string(),
                         expected: format!("{prefix}_"),
                     });
                 }
                 let Ok(ulid) = Ulid::from_string(input_chars.as_str()) else {
-                    return Err(ParseError::CannotParseUlid {
+                    return Err(PrefixedUlidParseError::CannotParseUlid {
                         input: input.to_string(),
                     });
                 };
@@ -870,7 +875,7 @@ pub mod prefixed_ulid {
 
     pub type ExecutorId = PrefixedUlid<prefix::Exr>;
     pub type JoinSetId = PrefixedUlid<prefix::JoinSet>;
-    pub type ExecutionId = PrefixedUlid<prefix::E>;
+    pub type TopLevelExecutionId = PrefixedUlid<prefix::E>;
     pub type RunId = PrefixedUlid<prefix::Run>;
     pub type DelayId = PrefixedUlid<prefix::Delay>;
 
@@ -879,6 +884,141 @@ pub mod prefixed_ulid {
             Ok(Self::new(ulid::Ulid::from_parts(
                 u.arbitrary()?,
                 u.arbitrary()?,
+            )))
+        }
+    }
+
+    type SuffixVec = SmallVec<[u64; 5]>;
+
+    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, SerializeDisplay, DeserializeFromStr, Clone)]
+    pub struct ExecutionId(ExecutionIdInner);
+
+    #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
+    enum ExecutionIdInner {
+        TopLevel(TopLevelExecutionId),
+        Derived(TopLevelExecutionId, SuffixVec),
+    }
+
+    impl ExecutionId {
+        pub const DUMMY: ExecutionId =
+            ExecutionId(ExecutionIdInner::TopLevel(PrefixedUlid::from_parts(0, 0)));
+
+        pub fn generate() -> Self {
+            ExecutionId(ExecutionIdInner::TopLevel(PrefixedUlid::generate()))
+        }
+
+        fn get_top_level(&self) -> TopLevelExecutionId {
+            match &self.0 {
+                ExecutionIdInner::TopLevel(prefixed_ulid) => *prefixed_ulid,
+                ExecutionIdInner::Derived(prefixed_uild, _) => *prefixed_uild,
+            }
+        }
+
+        pub fn timestamp_part(&self) -> u64 {
+            self.get_top_level().timestamp_part()
+        }
+
+        pub fn random_part(&self) -> u64 {
+            self.get_top_level().random_part()
+        }
+
+        pub fn from_parts(timestamp_ms: u64, random_part: u128) -> Self {
+            ExecutionId(ExecutionIdInner::TopLevel(TopLevelExecutionId::from_parts(
+                timestamp_ms,
+                random_part,
+            )))
+        }
+
+        pub fn increment(&self) -> Self {
+            match &self.0 {
+                ExecutionIdInner::TopLevel(_) => self.next_level(),
+                ExecutionIdInner::Derived(top_level, suffix_vec) => {
+                    let mut suffix_vec = suffix_vec.clone();
+                    *suffix_vec
+                        .last_mut()
+                        .expect("empty smallvec is never constructed") += 1;
+                    ExecutionId(ExecutionIdInner::Derived(*top_level, suffix_vec))
+                }
+            }
+        }
+        pub fn next_level(&self) -> Self {
+            match &self.0 {
+                ExecutionIdInner::TopLevel(top_level) => {
+                    let mut suffix: SuffixVec = SmallVec::new();
+                    suffix.push(0);
+                    ExecutionId(ExecutionIdInner::Derived(*top_level, suffix))
+                }
+                ExecutionIdInner::Derived(top_level, suffix) => {
+                    let mut suffix = suffix.clone();
+                    suffix.push(0);
+                    ExecutionId(ExecutionIdInner::Derived(*top_level, suffix))
+                }
+            }
+        }
+
+        fn display_or_debug(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match &self.0 {
+                ExecutionIdInner::TopLevel(top_level) => Display::fmt(top_level, f),
+                ExecutionIdInner::Derived(top_level, suffix) => {
+                    write!(f, "{top_level}{TOP_LEVEL_INFIX}")?;
+                    for (idx, part) in suffix.iter().enumerate() {
+                        if idx > 0 {
+                            write!(f, "{DERIVED_INFIX}")?;
+                        }
+                        write!(f, "{part}")?;
+                    }
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    const TOP_LEVEL_INFIX: char = ':';
+    const DERIVED_INFIX: char = '.';
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum ExecutionIdParseError {
+        #[error(transparent)]
+        PrefixedUlidParseError(#[from] PrefixedUlidParseError),
+        #[error(transparent)]
+        ParseIntError(#[from] ParseIntError),
+    }
+
+    impl FromStr for ExecutionId {
+        type Err = ExecutionIdParseError;
+
+        fn from_str(input: &str) -> Result<Self, Self::Err> {
+            if let Some((prefix, suffix)) = input.split_once(TOP_LEVEL_INFIX) {
+                let top_level = PrefixedUlid::from_str(prefix)?;
+                let suffix = suffix
+                    .split(DERIVED_INFIX)
+                    .map(u64::from_str)
+                    .collect::<Result<SuffixVec, _>>()?;
+                Ok(ExecutionId(ExecutionIdInner::Derived(top_level, suffix)))
+            } else {
+                Ok(ExecutionId(ExecutionIdInner::TopLevel(
+                    PrefixedUlid::from_str(input)?,
+                )))
+            }
+        }
+    }
+
+    impl Debug for ExecutionId {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.display_or_debug(f)
+        }
+    }
+
+    impl Display for ExecutionId {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.display_or_debug(f)
+        }
+    }
+
+    impl<'a> Arbitrary<'a> for ExecutionId {
+        fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+            Ok(ExecutionId(ExecutionIdInner::TopLevel(
+                PrefixedUlid::arbitrary(u)?,
             )))
         }
     }
@@ -1328,12 +1468,11 @@ impl<'a> opentelemetry::propagation::Extractor for ExecutionMetadataExtractorVie
 
 #[cfg(test)]
 mod tests {
+    use crate::{prefixed_ulid::ExecutorId, ExecutionId, StrVariant};
     use std::{
         hash::{DefaultHasher, Hash, Hasher},
         sync::Arc,
     };
-
-    use crate::{ExecutionId, StrVariant};
 
     #[cfg(madsim)]
     #[test]
@@ -1353,7 +1492,46 @@ mod tests {
 
     #[test]
     fn ulid_parsing() {
+        let generated = ExecutorId::generate();
+        let str = generated.to_string();
+        let parsed = str.parse().unwrap();
+        assert_eq!(generated, parsed);
+    }
+
+    #[test]
+    fn execution_id_parsing_top_level() {
         let generated = ExecutionId::generate();
+        let str = generated.to_string();
+        let parsed = str.parse().unwrap();
+        assert_eq!(generated, parsed);
+    }
+
+    #[test]
+    fn execution_id_increment_on_top_level_should_be_equal_to_next_level() {
+        let top_level = ExecutionId::generate();
+        let first_child = top_level.increment();
+        assert_eq!(format!("{top_level}:0"), first_child.to_string());
+        let first_child2 = top_level.next_level();
+        assert_eq!(first_child, first_child2);
+    }
+
+    #[test]
+    fn execution_id_increment_twice() {
+        let top_level = ExecutionId::generate();
+        let second_child = top_level.increment().increment();
+        assert_eq!(format!("{top_level}:1"), second_child.to_string());
+    }
+
+    #[test]
+    fn execution_id_next_level_twice() {
+        let top_level = ExecutionId::generate();
+        let second_child = top_level.next_level().next_level().increment();
+        assert_eq!(format!("{top_level}:0.1"), second_child.to_string());
+    }
+
+    #[test]
+    fn execution_id_parsing_derived() {
+        let generated = ExecutionId::generate().next_level().increment();
         let str = generated.to_string();
         let parsed = str.parse().unwrap();
         assert_eq!(generated, parsed);

@@ -82,7 +82,7 @@ impl ExecutionLog {
         assert_matches!(self.events.first(), Some(ExecutionEvent {
             event: ExecutionEventInner::Created { parent, .. },
             ..
-        }) => *parent)
+        }) => parent.clone())
     }
 
     #[must_use]
@@ -197,7 +197,7 @@ impl JoinSetResponse {
             child_execution_id, ..
         } = self
         {
-            Some(*child_execution_id)
+            Some(child_execution_id.clone())
         } else {
             None
         }
@@ -213,7 +213,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     max_retries: 0,
     config_id: ConfigId::dummy_activity(),
     metadata: ExecutionMetadata::empty(),
-    topmost_parent: ExecutionId::from_parts(0, 0),
+    topmost_parent: ExecutionId::DUMMY,
 };
 pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
     event: HistoryEvent::JoinSet {
@@ -610,7 +610,7 @@ pub trait DbConnection: Send + Sync {
         &self,
         created_at: DateTime<Utc>,
         config_id: ConfigId,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
         executor_id: ExecutorId,
@@ -663,17 +663,17 @@ pub trait DbConnection: Send + Sync {
 
     #[cfg(feature = "test")]
     /// Get execution log.
-    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError>; // FIXME: make optional
+    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbError>;
 
     async fn get_execution_event(
         &self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         version: &Version,
     ) -> Result<ExecutionEvent, DbError>;
 
     async fn get_create_request(
         &self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
     ) -> Result<CreateRequest, DbError> {
         let execution_event = self
             .get_execution_event(execution_id, &Version::new(0))
@@ -692,7 +692,7 @@ pub trait DbConnection: Send + Sync {
         {
             Ok(CreateRequest {
                 created_at: execution_event.created_at,
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn,
                 params,
                 parent,
@@ -713,7 +713,7 @@ pub trait DbConnection: Send + Sync {
 
     async fn get_finished_result(
         &self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         finished: PendingStateFinished,
     ) -> Result<FinishedExecutionResult, DbError> {
         let last_event = self
@@ -729,7 +729,7 @@ pub trait DbConnection: Send + Sync {
         }
     }
 
-    async fn get_pending_state(&self, execution_id: ExecutionId) -> Result<PendingState, DbError>;
+    async fn get_pending_state(&self, execution_id: &ExecutionId) -> Result<PendingState, DbError>;
 
     /// Get currently expired locks and async timers (delay requests)
     async fn get_expired_timers(&self, at: DateTime<Utc>) -> Result<Vec<ExpiredTimer>, DbError>;
@@ -741,13 +741,13 @@ pub trait DbConnection: Send + Sync {
     /// Parameter `start_idx` must be at most be equal to current size of responses in the execution log.
     async fn subscribe_to_next_responses(
         &self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         start_idx: usize,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError>;
 
     async fn wait_for_finished_result(
         &self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         timeout: Option<Duration>,
     ) -> Result<FinishedExecutionResult, ClientError>;
 
@@ -790,7 +790,7 @@ pub enum Pagination<T> {
 #[cfg(feature = "test")]
 pub async fn wait_for_pending_state_fn<T: Debug>(
     db_connection: &dyn DbConnection,
-    execution_id: ExecutionId,
+    execution_id: &ExecutionId,
     predicate: impl Fn(ExecutionLog) -> Option<T> + Send,
     timeout: Option<Duration>,
 ) -> Result<T, ClientError> {

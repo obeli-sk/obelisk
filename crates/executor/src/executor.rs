@@ -219,7 +219,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 
         let mut executions = Vec::with_capacity(locked_executions.len());
         for (locked_execution, permit) in locked_executions {
-            let execution_id = locked_execution.execution_id;
+            let execution_id = locked_execution.execution_id.clone();
             let join_handle = {
                 let worker = self.worker.clone();
                 let db_pool = self.db_pool.clone();
@@ -274,7 +274,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             locked_execution.retry_exp_backoff,
         );
         let ctx = WorkerContext {
-            execution_id: locked_execution.execution_id,
+            execution_id: locked_execution.execution_id.clone(),
             metadata: locked_execution.metadata,
             ffqn: locked_execution.ffqn,
             params: locked_execution.params,
@@ -442,7 +442,7 @@ impl Append {
         if let Some((parent_id, join_set_id, result)) = self.parent {
             db_connection
                 .append_batch_respond_to_parent(
-                    self.execution_id,
+                    self.execution_id.clone(),
                     self.created_at,
                     vec![self.primary_event],
                     self.version,
@@ -750,7 +750,7 @@ mod tests {
         db_connection
             .create(CreateRequest {
                 created_at: config.created_at,
-                execution_id: config.execution_id,
+                execution_id: config.execution_id.clone(),
                 ffqn: FFQN_SOME,
                 params: Params::empty(),
                 parent: None,
@@ -759,13 +759,13 @@ mod tests {
                 retry_exp_backoff: config.retry_exp_backoff,
                 max_retries: config.max_retries,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: config.execution_id,
+                topmost_parent: config.execution_id.clone(),
             })
             .await
             .unwrap();
         // execute!
         tick(exec_config, clock_fn, db_pool, worker, config.executed_at).await;
-        let execution_log = db_connection.get(config.execution_id).await.unwrap();
+        let execution_log = db_connection.get(&config.execution_id).await.unwrap();
         debug!("Execution history after tick: {execution_log:?}");
         // check that DB contains Created and Locked events.
         assert_matches!(
@@ -877,7 +877,10 @@ mod tests {
         .await;
         let execution_log = {
             let db_connection = db_pool.connection();
-            db_connection.get(execution_log.execution_id).await.unwrap()
+            db_connection
+                .get(&execution_log.execution_id)
+                .await
+                .unwrap()
         };
         debug!(now = %sim_clock.now(), "Execution history after second tick: {execution_log:?}");
         assert_matches!(
@@ -976,7 +979,7 @@ mod tests {
             .connection()
             .create(CreateRequest {
                 created_at: sim_clock.now(),
-                execution_id: parent_execution_id,
+                execution_id: parent_execution_id.clone(),
                 ffqn: FFQN_SOME,
                 params: Params::empty(),
                 parent: None,
@@ -985,7 +988,7 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: parent_execution_id,
+                topmost_parent: parent_execution_id.clone(),
             })
             .await
             .unwrap();
@@ -1010,16 +1013,16 @@ mod tests {
         {
             let child = CreateRequest {
                 created_at: sim_clock.now(),
-                execution_id: child_execution_id,
+                execution_id: child_execution_id.clone(),
                 ffqn: FFQN_CHILD,
                 params: Params::empty(),
-                parent: Some((parent_execution_id, join_set_id)),
+                parent: Some((parent_execution_id.clone(), join_set_id)),
                 metadata: concepts::ExecutionMetadata::empty(),
                 scheduled_at: sim_clock.now(),
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: parent_execution_id,
+                topmost_parent: parent_execution_id.clone(),
             };
             let join_set = ExecutionEventInner::HistoryEvent {
                 event: HistoryEvent::JoinSet { join_set_id },
@@ -1027,7 +1030,9 @@ mod tests {
             let child_exec_req = ExecutionEventInner::HistoryEvent {
                 event: HistoryEvent::JoinSetRequest {
                     join_set_id,
-                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                    request: JoinSetRequest::ChildExecutionRequest {
+                        child_execution_id: child_execution_id.clone(),
+                    },
                 },
             };
             let join_next = ExecutionEventInner::HistoryEvent {
@@ -1042,7 +1047,7 @@ mod tests {
                 .append_batch_create_new_execution(
                     sim_clock.now(),
                     vec![join_set, child_exec_req, join_next],
-                    parent_execution_id,
+                    parent_execution_id.clone(),
                     Version::new(2),
                     vec![child],
                 )
@@ -1085,7 +1090,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let child_log = db_pool.connection().get(child_execution_id).await.unwrap();
+        let child_log = db_pool.connection().get(&child_execution_id).await.unwrap();
         assert!(child_log.pending_state.is_finished());
         assert_eq!(
             ExecutionEventInner::Finished {
@@ -1093,7 +1098,11 @@ mod tests {
             },
             child_log.last_event().event
         );
-        let parent_log = db_pool.connection().get(parent_execution_id).await.unwrap();
+        let parent_log = db_pool
+            .connection()
+            .get(&parent_execution_id)
+            .await
+            .unwrap();
         assert_matches!(
             parent_log.pending_state,
             PendingState::PendingAt {
@@ -1114,10 +1123,10 @@ mod tests {
                 }
             })
              if *at == sim_clock.now()
-            => (*found_join_set_id, *found_child_execution_id, found_result)
+            => (*found_join_set_id, found_child_execution_id, found_result)
         );
         assert_eq!(join_set_id, found_join_set_id);
-        assert_eq!(child_execution_id, found_child_execution_id);
+        assert_eq!(child_execution_id, *found_child_execution_id);
         assert!(found_result.is_err());
 
         db_pool.close().await.unwrap();
@@ -1178,7 +1187,7 @@ mod tests {
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: FFQN_SOME,
                 params: Params::empty(),
                 parent: None,
@@ -1187,7 +1196,7 @@ mod tests {
                 retry_exp_backoff: timeout_duration,
                 max_retries: 1,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
@@ -1226,7 +1235,7 @@ mod tests {
             .1
             .is_finished());
 
-        let execution_log = db_connection.get(execution_id).await.unwrap();
+        let execution_log = db_connection.get(&execution_id).await.unwrap();
         let expected_first_timeout_expiry = now_after_first_lock_expiry + timeout_duration;
         assert_matches!(
             &execution_log.events.get(2).unwrap(),

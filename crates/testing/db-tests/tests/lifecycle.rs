@@ -207,7 +207,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
     db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
-            execution_id,
+            execution_id: execution_id.clone(),
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
@@ -216,7 +216,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: config_id.clone(),
-            topmost_parent: execution_id,
+            topmost_parent: execution_id.clone(),
         })
         .await
         .unwrap();
@@ -225,7 +225,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
     db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
-            execution_id,
+            execution_id: execution_id.clone(),
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
@@ -234,7 +234,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: execution_id,
+            topmost_parent: execution_id.clone(),
         })
         .await
         .unwrap_err();
@@ -278,7 +278,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         };
 
         version = db_connection
-            .append(execution_id, version, req)
+            .append(execution_id.clone(), version, req)
             .await
             .unwrap();
     }
@@ -292,7 +292,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             .lock(
                 created_at,
                 config_id.clone(),
-                execution_id,
+                &execution_id,
                 RunId::generate(),
                 version.clone(),
                 exec2,
@@ -319,7 +319,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             .lock(
                 created_at,
                 config_id.clone(),
-                execution_id,
+                &execution_id,
                 run_id,
                 version,
                 exec1,
@@ -340,7 +340,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             .lock(
                 created_at,
                 config_id.clone(),
-                execution_id,
+                &execution_id,
                 RunId::generate(),
                 version.clone(),
                 exec2,
@@ -358,7 +358,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             .lock(
                 created_at,
                 config_id.clone(),
-                execution_id,
+                &execution_id,
                 run_id,
                 version,
                 exec1,
@@ -379,7 +379,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             .lock(
                 created_at,
                 config_id.clone(),
-                execution_id,
+                &execution_id,
                 RunId::generate(),
                 version.clone(),
                 exec1,
@@ -400,7 +400,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             created_at,
         };
         version = db_connection
-            .append(execution_id, version, req)
+            .append(execution_id.clone(), version, req)
             .await
             .unwrap();
         let req = AppendRequest {
@@ -408,7 +408,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             created_at,
         };
         version = db_connection
-            .append(execution_id, version, req)
+            .append(execution_id.clone(), version, req)
             .await
             .unwrap();
     }
@@ -422,7 +422,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             .lock(
                 created_at,
                 config_id.clone(),
-                execution_id,
+                &execution_id,
                 RunId::generate(),
                 version,
                 exec1,
@@ -449,7 +449,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             created_at,
         };
         version = db_connection
-            .append(execution_id, version, req)
+            .append(execution_id.clone(), version, req)
             .await
             .unwrap();
     }
@@ -492,7 +492,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
         db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: SOME_FFQN,
                 params: Params::default(),
                 parent: None,
@@ -501,7 +501,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
                 retry_exp_backoff: RETRY_EXP_BACKOFF,
                 max_retries: MAX_RETRIES,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
@@ -564,7 +564,7 @@ pub async fn append_batch_respond_to_parent(
     let version = db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
-            execution_id: parent_id,
+            execution_id: parent_id.clone(),
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
@@ -573,7 +573,7 @@ pub async fn append_batch_respond_to_parent(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: parent_id,
+            topmost_parent: parent_id.clone(),
         })
         .await
         .unwrap();
@@ -581,7 +581,7 @@ pub async fn append_batch_respond_to_parent(
     let join_set_id = JoinSetId::generate();
     let mut version = db_connection
         .append(
-            parent_id,
+            parent_id.clone(),
             version,
             AppendRequest {
                 created_at: sim_clock.now(),
@@ -594,7 +594,7 @@ pub async fn append_batch_respond_to_parent(
         .unwrap();
 
     let child_a = {
-        let parent_exe = db_connection.get(parent_id).await.unwrap();
+        let parent_exe = db_connection.get(&parent_id).await.unwrap();
         assert_matches!(
             parent_exe.pending_state,
             PendingState::PendingAt {
@@ -606,7 +606,7 @@ pub async fn append_batch_respond_to_parent(
         let child_version = db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
-                execution_id: child_id,
+                execution_id: child_id.clone(),
                 ffqn: SOME_FFQN,
                 params: Params::default(),
                 parent: None,
@@ -615,14 +615,14 @@ pub async fn append_batch_respond_to_parent(
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: parent_id,
+                topmost_parent: parent_id.clone(),
             })
             .await
             .unwrap();
         // Append JoinNext before receiving the response should make the parent BlockedByJoinSet
         db_connection
             .append(
-                parent_id,
+                parent_id.clone(),
                 version,
                 AppendRequest {
                     created_at: sim_clock.now(),
@@ -637,7 +637,7 @@ pub async fn append_batch_respond_to_parent(
             )
             .await
             .unwrap();
-        let parent_exe = db_connection.get(parent_id).await.unwrap();
+        let parent_exe = db_connection.get(&parent_id).await.unwrap();
         assert_matches!(
             parent_exe.pending_state,
             PendingState::BlockedByJoinSet { join_set_id: found_join_set_id, lock_expires_at, closing: false }
@@ -647,17 +647,17 @@ pub async fn append_batch_respond_to_parent(
         // Append child response to unblock the parent
         db_connection
             .append_batch_respond_to_parent(
-                child_id,
+                child_id.clone(),
                 sim_clock.now(),
                 vec![ExecutionEventInner::Finished {
                     result: Ok(concepts::SupportedFunctionReturnValue::None),
                 }],
                 child_version,
-                parent_id,
+                parent_id.clone(),
                 JoinSetResponseEvent {
                     join_set_id,
                     event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id: child_id,
+                        child_execution_id: child_id.clone(),
                         result: Ok(concepts::SupportedFunctionReturnValue::None),
                     },
                 },
@@ -665,7 +665,7 @@ pub async fn append_batch_respond_to_parent(
             .await
             .unwrap();
 
-        let parent_exe = db_connection.get(parent_id).await.unwrap();
+        let parent_exe = db_connection.get(&parent_id).await.unwrap();
         assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
         version = parent_exe.next_version;
 
@@ -677,7 +677,7 @@ pub async fn append_batch_respond_to_parent(
         let child_version = db_connection
             .create(CreateRequest {
                 created_at: sim_clock.now(),
-                execution_id: child_id,
+                execution_id: child_id.clone(),
                 ffqn: SOME_FFQN,
                 params: Params::default(),
                 parent: None,
@@ -686,7 +686,7 @@ pub async fn append_batch_respond_to_parent(
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: parent_id,
+                topmost_parent: parent_id.clone(),
             })
             .await
             .unwrap();
@@ -696,15 +696,15 @@ pub async fn append_batch_respond_to_parent(
 
         db_connection
             .append_batch_respond_to_parent(
-                child_id,
+                child_id.clone(),
                 sim_clock.now(),
                 child_resp,
                 child_version,
-                parent_id,
+                parent_id.clone(),
                 JoinSetResponseEvent {
                     join_set_id,
                     event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id: child_id,
+                        child_execution_id: child_id.clone(),
                         result: Ok(concepts::SupportedFunctionReturnValue::None),
                     },
                 },
@@ -715,7 +715,7 @@ pub async fn append_batch_respond_to_parent(
         // Append JoinNext after receiving the response should make the parent PendingAt
         db_connection
             .append(
-                parent_id,
+                parent_id.clone(),
                 version,
                 AppendRequest {
                     created_at: sim_clock.now(),
@@ -730,12 +730,12 @@ pub async fn append_batch_respond_to_parent(
             )
             .await
             .unwrap();
-        let parent_exe = db_connection.get(parent_id).await.unwrap();
+        let parent_exe = db_connection.get(&parent_id).await.unwrap();
         assert_matches!(parent_exe.pending_state, PendingState::PendingAt { .. });
 
         child_id
     };
-    let parent_exe = db_connection.get(parent_id).await.unwrap();
+    let parent_exe = db_connection.get(&parent_id).await.unwrap();
     assert_eq!(2, parent_exe.responses.len());
     assert_eq!(
         *parent_exe.responses.first().unwrap(),
@@ -775,7 +775,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
     db_connection
         .create(CreateRequest {
             created_at,
-            execution_id: older_id,
+            execution_id: older_id.clone(),
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
@@ -784,7 +784,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: older_id,
+            topmost_parent: older_id.clone(),
         })
         .await
         .unwrap();
@@ -794,7 +794,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
     db_connection
         .create(CreateRequest {
             created_at,
-            execution_id: newer_id,
+            execution_id: newer_id.clone(),
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
@@ -803,7 +803,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: newer_id,
+            topmost_parent: newer_id.clone(),
         })
         .await
         .unwrap();
@@ -813,7 +813,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
     db_connection
         .create(CreateRequest {
             created_at,
-            execution_id: newest_id,
+            execution_id: newest_id.clone(),
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
@@ -822,7 +822,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: newest_id,
+            topmost_parent: newest_id.clone(),
         })
         .await
         .unwrap();
@@ -853,7 +853,7 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
     let version = db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
-            execution_id,
+            execution_id: execution_id.clone(),
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
@@ -862,14 +862,14 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: execution_id,
+            topmost_parent: execution_id.clone(),
         })
         .await
         .unwrap();
     // Append an event that does not change Pending state but must update the version.
     let version = db_connection
         .append(
-            execution_id,
+            execution_id.clone(),
             version,
             AppendRequest {
                 created_at: sim_clock.now(),
@@ -891,7 +891,7 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
         .lock(
             locked_at,
             ConfigId::dummy_activity(),
-            execution_id,
+            &execution_id,
             RunId::generate(),
             version,
             executor_id,
@@ -908,7 +908,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
     let version = db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
-            execution_id,
+            execution_id: execution_id.clone(),
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
@@ -917,7 +917,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: execution_id,
+            topmost_parent: execution_id.clone(),
         })
         .await
         .unwrap();
@@ -926,7 +926,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
         .lock(
             sim_clock.now(),
             ConfigId::dummy_activity(),
-            execution_id,
+            &execution_id,
             RunId::generate(),
             version,
             executor_id,
@@ -967,7 +967,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
     let version = db_connection
         .create(CreateRequest {
             created_at: sim_clock.now(),
-            execution_id,
+            execution_id: execution_id.clone(),
             ffqn: SOME_FFQN,
             params: Params::default(),
             parent: None,
@@ -976,7 +976,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: execution_id,
+            topmost_parent: execution_id.clone(),
         })
         .await
         .unwrap();
@@ -985,7 +985,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
         .lock(
             sim_clock.now(),
             ConfigId::dummy_activity(),
-            execution_id,
+            &execution_id,
             RunId::generate(),
             version,
             executor_id,
@@ -998,7 +998,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
     let delay_id = DelayId::generate();
     db_connection
         .append(
-            execution_id,
+            execution_id.clone(),
             version,
             AppendRequest {
                 created_at: Now.now(),
@@ -1031,7 +1031,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
     assert_eq!(1, actual.len());
     let actual = actual.pop().unwrap();
     let expected = ExpiredTimer::AsyncDelay {
-        execution_id,
+        execution_id: execution_id.clone(),
         join_set_id,
         delay_id,
     };

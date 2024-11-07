@@ -348,7 +348,7 @@ pub(crate) mod tests {
         db_connection
             .create(CreateRequest {
                 created_at,
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: FIBO_ACTIVITY_FFQN,
                 params,
                 parent: None,
@@ -357,12 +357,12 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
         // Check the result.
-        let fibo = assert_matches!(db_connection.wait_for_finished_result(execution_id, None).await.unwrap(),
+        let fibo = assert_matches!(db_connection.wait_for_finished_result(&execution_id, None).await.unwrap(),
             Ok(SupportedFunctionReturnValue::Infallible(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 })) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
@@ -410,7 +410,7 @@ pub(crate) mod tests {
                 let fibo_worker = fibo_worker.clone();
                 let execution_id = ExecutionId::generate();
                 let ctx = WorkerContext {
-                    execution_id,
+                    execution_id: execution_id.clone(),
                     metadata: concepts::ExecutionMetadata::empty(),
                     ffqn: FIBO_ACTIVITY_FFQN,
                     params: Params::from_json_value(json!([fibo_input])).unwrap(),
@@ -421,7 +421,7 @@ pub(crate) mod tests {
                     can_be_retried: false,
                     run_id: RunId::generate(),
                     worker_span: info_span!("worker-test"),
-                    topmost_parent: execution_id,
+                    topmost_parent: execution_id.clone(),
                 };
                 tokio::spawn(async move { fibo_worker.run(ctx).await })
             })
@@ -517,7 +517,7 @@ pub(crate) mod tests {
             db_connection
                 .create(CreateRequest {
                     created_at,
-                    execution_id,
+                    execution_id: execution_id.clone(),
                     ffqn: SLEEP_LOOP_ACTIVITY_FFQN,
                     params: Params::from_json_value(json!([
                         {"milliseconds": sleep_millis},
@@ -530,7 +530,7 @@ pub(crate) mod tests {
                     retry_exp_backoff: Duration::ZERO,
                     max_retries: 0,
                     config_id: ConfigId::dummy_activity(),
-                    topmost_parent: execution_id,
+                    topmost_parent: execution_id.clone(),
                 })
                 .await
                 .unwrap();
@@ -539,7 +539,7 @@ pub(crate) mod tests {
                 expected,
                 assert_matches!(
                     db_connection
-                        .wait_for_finished_result(execution_id, Some(Duration::from_secs(1)))
+                        .wait_for_finished_result(&execution_id, Some(Duration::from_secs(1)))
                         .await
                         .unwrap(),
                     actual => actual
@@ -667,7 +667,7 @@ pub(crate) mod tests {
             db_connection
                 .create(CreateRequest {
                     created_at,
-                    execution_id,
+                    execution_id: execution_id.clone(),
                     ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
                     params,
                     parent: None,
@@ -676,7 +676,7 @@ pub(crate) mod tests {
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
                     config_id: ConfigId::dummy_activity(),
-                    topmost_parent: execution_id,
+                    topmost_parent: execution_id.clone(),
                 })
                 .await
                 .unwrap();
@@ -699,7 +699,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap()
             );
-            let exec_log = db_connection.get(execution_id).await.unwrap();
+            let exec_log = db_connection.get(&execution_id).await.unwrap();
             let stopwatch = stopwatch.elapsed();
             info!("Finished in {stopwatch:?}");
             let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionEventInner::Finished { result } => result);
@@ -775,7 +775,7 @@ pub(crate) mod tests {
             db_connection
                 .create(CreateRequest {
                     created_at,
-                    execution_id,
+                    execution_id: execution_id.clone(),
                     ffqn: HTTP_GET_SUCCESSFUL_ACTIVITY,
                     params,
                     parent: None,
@@ -784,7 +784,7 @@ pub(crate) mod tests {
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
                     config_id: ConfigId::dummy_activity(),
-                    topmost_parent: execution_id,
+                    topmost_parent: execution_id.clone(),
                 })
                 .await
                 .unwrap();
@@ -810,7 +810,7 @@ pub(crate) mod tests {
                         .await
                         .unwrap()
                 );
-                let exec_log = db_connection.get(execution_id).await.unwrap();
+                let exec_log = db_connection.get(&execution_id).await.unwrap();
 
                 let (reason, found_expires_at) = assert_matches!(
                     &exec_log.last_event().event,
@@ -861,7 +861,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap()
             );
-            let exec_log = db_connection.get(execution_id).await.unwrap();
+            let exec_log = db_connection.get(&execution_id).await.unwrap();
             let res = assert_matches!(exec_log.last_event().event.clone(), ExecutionEventInner::Finished { result } => result);
             let res = res.unwrap();
             if succeed_eventually {

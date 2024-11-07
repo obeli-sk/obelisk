@@ -83,7 +83,7 @@ impl DbConnection for DbConnectionProxy {
         &self,
         created_at: DateTime<Utc>,
         config_id: ConfigId,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
         executor_id: ExecutorId,
@@ -168,13 +168,13 @@ impl DbConnection for DbConnectionProxy {
             .await
     }
 
-    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
+    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbError> {
         self.0.get(execution_id).await
     }
 
     async fn subscribe_to_next_responses(
         &self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         start_idx: usize,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
         self.0
@@ -194,19 +194,19 @@ impl DbConnection for DbConnectionProxy {
     }
     async fn wait_for_finished_result(
         &self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         timeout: Option<Duration>,
     ) -> Result<FinishedExecutionResult, ClientError> {
         self.0.wait_for_finished_result(execution_id, timeout).await
     }
 
-    async fn get_pending_state(&self, execution_id: ExecutionId) -> Result<PendingState, DbError> {
+    async fn get_pending_state(&self, execution_id: &ExecutionId) -> Result<PendingState, DbError> {
         self.0.get_pending_state(execution_id).await
     }
 
     async fn get_execution_event(
         &self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         version: &Version,
     ) -> Result<ExecutionEvent, DbError> {
         self.0.get_execution_event(execution_id, version).await

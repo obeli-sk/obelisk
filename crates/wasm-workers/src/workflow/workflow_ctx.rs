@@ -114,7 +114,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         topmost_parent: ExecutionId,
     ) -> Self {
         Self {
-            execution_id,
+            execution_id: execution_id.clone(),
             event_history: EventHistory::new(
                 execution_id,
                 event_history,
@@ -530,7 +530,7 @@ pub(crate) mod tests {
             info!("Starting");
             let seed = ctx.execution_id.random_part();
             let mut workflow_ctx = WorkflowCtx::new(
-                ctx.execution_id,
+                ctx.execution_id.clone(),
                 ctx.event_history,
                 ctx.responses,
                 seed,
@@ -543,7 +543,7 @@ pub(crate) mod tests {
                 Arc::new(std::sync::Mutex::new(None)),
                 self.fn_registry.clone(),
                 tracing::info_span!("workflow-test"),
-                ctx.execution_id,
+                ctx.execution_id.clone(),
             );
             for step in &self.steps {
                 let res = match step {
@@ -673,7 +673,7 @@ pub(crate) mod tests {
         db_connection
             .create(CreateRequest {
                 created_at,
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: FFQN_MOCK,
                 params: Params::default(),
                 parent: None,
@@ -682,7 +682,7 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
@@ -690,7 +690,7 @@ pub(crate) mod tests {
         let mut processed = Vec::new();
         while let Some((join_set_id, req)) = wait_for_pending_state_fn(
             &db_connection,
-            execution_id,
+            &execution_id,
             |execution_log| match &execution_log.pending_state {
                 PendingState::BlockedByJoinSet { join_set_id, .. } => Some(Some((
                     *join_set_id,
@@ -724,8 +724,11 @@ pub(crate) mod tests {
                 JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
                     info!("Executing child {child_execution_id}");
                     assert!(child_execution_count > 0);
-                    let child_log = db_connection.get(*child_execution_id).await.unwrap();
-                    assert_eq!(Some((execution_id, join_set_id)), child_log.parent());
+                    let child_log = db_connection.get(child_execution_id).await.unwrap();
+                    assert_eq!(
+                        Some((execution_id.clone(), join_set_id)),
+                        child_log.parent()
+                    );
                     // execute
                     let child_exec_tick = {
                         let worker = Arc::new(WorkflowWorkerMock::new(
@@ -753,7 +756,7 @@ pub(crate) mod tests {
                     };
                     assert_eq!(child_exec_tick.wait_for_tasks().await.unwrap(), 1);
                     child_execution_count -= 1;
-                    let child_log = db_connection.get(*child_execution_id).await.unwrap();
+                    let child_log = db_connection.get(child_execution_id).await.unwrap();
                     let child_res = child_log.into_finished_result().unwrap();
                     assert_matches!(child_res, Ok(SupportedFunctionReturnValue::None));
                 }
@@ -763,7 +766,7 @@ pub(crate) mod tests {
         // must be finished at this point
         assert_eq!(0, child_execution_count);
         assert_eq!(0, delay_request_count);
-        let execution_log = db_connection.get(execution_id).await.unwrap();
+        let execution_log = db_connection.get(&execution_id).await.unwrap();
         assert!(execution_log.pending_state.is_finished());
         drop(db_connection);
         workflow_exec_task.close().await;

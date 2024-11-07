@@ -170,7 +170,7 @@ pub(crate) async fn get(
 ) -> anyhow::Result<()> {
     let mut stream = client
         .get_status(tonic::Request::new(grpc::GetStatusRequest {
-            execution_id: Some(execution_id.into()),
+            execution_id: Some(grpc::ExecutionId::from(execution_id)),
             follow,
             send_finished_status: true,
         }))

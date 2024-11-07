@@ -11,10 +11,10 @@ use concepts::{
 use std::borrow::Borrow;
 use tracing::error;
 
-impl From<ExecutionId> for grpc::ExecutionId {
-    fn from(value: ExecutionId) -> Self {
+impl<T: Borrow<ExecutionId>> From<T> for grpc::ExecutionId {
+    fn from(value: T) -> Self {
         Self {
-            id: value.to_string(),
+            id: value.borrow().to_string(),
         }
     }
 }

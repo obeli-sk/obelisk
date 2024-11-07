@@ -67,7 +67,7 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         created_at: DateTime<Utc>,
         config_id: ConfigId,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
         executor_id: ExecutorId,
@@ -159,7 +159,7 @@ impl DbConnection for InMemoryDbConnection {
 
     #[cfg(feature = "test")]
     #[instrument(skip_all, %execution_id)]
-    async fn get(&self, execution_id: ExecutionId) -> Result<ExecutionLog, DbError> {
+    async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbError> {
         self.0
             .lock()
             .await
@@ -169,7 +169,7 @@ impl DbConnection for InMemoryDbConnection {
 
     async fn get_execution_event(
         &self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         version: &Version,
     ) -> Result<ExecutionEvent, DbError> {
         let execution_log = self.0.lock().await.get(execution_id)?;
@@ -182,7 +182,7 @@ impl DbConnection for InMemoryDbConnection {
 
     async fn subscribe_to_next_responses(
         &self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         start_idx: usize,
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
         let either = self
@@ -239,7 +239,7 @@ impl DbConnection for InMemoryDbConnection {
 
     async fn wait_for_finished_result(
         &self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         timeout: Option<Duration>,
     ) -> Result<FinishedExecutionResult, ClientError> {
         let execution_log = {
@@ -272,7 +272,7 @@ impl DbConnection for InMemoryDbConnection {
             .expect("pending state was checked"))
     }
 
-    async fn get_pending_state(&self, execution_id: ExecutionId) -> Result<PendingState, DbError> {
+    async fn get_pending_state(&self, execution_id: &ExecutionId) -> Result<PendingState, DbError> {
         Ok(self
             .0
             .lock()
@@ -337,25 +337,25 @@ mod index {
             self.timers
                 .range(..=at)
                 .flat_map(|(_scheduled_at, id_map)| id_map.iter())
-                .map(|(id, is_async_delay)| (*id, *is_async_delay))
+                .map(|(id, is_async_delay)| (id.clone(), *is_async_delay))
         }
 
-        fn purge(&mut self, execution_id: ExecutionId) {
+        fn purge(&mut self, execution_id: &ExecutionId) {
             // Remove the ID from the index (if exists)
-            if let Some(schedule) = self.pending_scheduled_rev.remove(&execution_id) {
+            if let Some(schedule) = self.pending_scheduled_rev.remove(execution_id) {
                 let ids = self.pending_scheduled.get_mut(&schedule).unwrap();
-                ids.remove(&execution_id);
+                ids.remove(execution_id);
             }
-            if let Some(schedules) = self.timers_rev.remove(&execution_id) {
+            if let Some(schedules) = self.timers_rev.remove(execution_id) {
                 for schedule in schedules {
                     let ids = self.timers.get_mut(&schedule).unwrap();
-                    ids.remove(&execution_id);
+                    ids.remove(execution_id);
                 }
             }
         }
 
         pub(super) fn update(&mut self, journal: &mut ExecutionJournal) {
-            let execution_id = journal.execution_id;
+            let execution_id = &journal.execution_id;
             self.purge(execution_id);
             // Add it again if needed
             match journal.pending_state {
@@ -363,9 +363,9 @@ mod index {
                     self.pending_scheduled
                         .entry(scheduled_at)
                         .or_default()
-                        .insert(execution_id);
+                        .insert(execution_id.clone());
                     self.pending_scheduled_rev
-                        .insert(execution_id, scheduled_at);
+                        .insert(execution_id.clone(), scheduled_at);
                 }
                 PendingState::Locked {
                     lock_expires_at, ..
@@ -373,9 +373,9 @@ mod index {
                     self.timers
                         .entry(lock_expires_at)
                         .or_default()
-                        .insert(execution_id, None);
+                        .insert(execution_id.clone(), None);
                     self.timers_rev
-                        .entry(execution_id)
+                        .entry(execution_id.clone())
                         .or_default()
                         .push(lock_expires_at);
                 }
@@ -411,9 +411,9 @@ mod index {
                 self.timers
                     .entry(expires_at)
                     .or_default()
-                    .insert(execution_id, Some((join_set_id, delay_id)));
+                    .insert(execution_id.clone(), Some((join_set_id, delay_id)));
                 self.timers_rev
-                    .entry(execution_id)
+                    .entry(execution_id.clone())
                     .or_default()
                     .push(expires_at);
             }
@@ -493,7 +493,7 @@ impl DbHolder {
         let mut payload = Vec::with_capacity(pending.len());
         for (journal, scheduled_at) in pending {
             let item = LockedExecution {
-                execution_id: journal.execution_id(),
+                execution_id: journal.execution_id().clone(),
                 metadata: journal.metadata().clone(),
                 version: journal.version(), // updated later
                 ffqn: journal.ffqn().clone(),
@@ -516,7 +516,7 @@ impl DbHolder {
                 .lock(
                     created_at,
                     config_id.clone(),
-                    row.execution_id,
+                    &row.execution_id,
                     row.run_id,
                     row.version.clone(),
                     executor_id,
@@ -541,7 +541,7 @@ impl DbHolder {
         let mut journal = ExecutionJournal::new(req);
         let version = journal.version();
         self.index.update(&mut journal);
-        let old_val = self.journals.insert(journal.execution_id, journal);
+        let old_val = self.journals.insert(journal.execution_id.clone(), journal);
         assert!(
             old_val.is_none(),
             "journals cannot contain the new execution"
@@ -559,7 +559,7 @@ impl DbHolder {
         &mut self,
         created_at: DateTime<Utc>,
         config_id: ConfigId,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         run_id: RunId,
         version: Version,
         executor_id: ExecutorId,
@@ -571,9 +571,9 @@ impl DbHolder {
             lock_expires_at,
             run_id,
         };
-        self.append(created_at, execution_id, version, event)
+        self.append(created_at, execution_id.clone(), version, event)
             .map(|_| {
-                let journal = self.journals.get(&execution_id).unwrap();
+                let journal = self.journals.get(execution_id).unwrap();
                 (journal.event_history().collect(), journal.version())
             })
     }
@@ -613,8 +613,8 @@ impl DbHolder {
         Ok(new_version)
     }
 
-    fn get(&mut self, execution_id: ExecutionId) -> Result<ExecutionLog, SpecificError> {
-        let Some(journal) = self.journals.get_mut(&execution_id) else {
+    fn get(&mut self, execution_id: &ExecutionId) -> Result<ExecutionLog, SpecificError> {
+        let Some(journal) = self.journals.get_mut(execution_id) else {
             return Err(SpecificError::NotFound);
         };
         Ok(journal.as_execution_log())
@@ -632,7 +632,7 @@ impl DbHolder {
                     delay_id,
                 },
                 None => ExpiredTimer::Lock {
-                    execution_id: journal.execution_id(),
+                    execution_id: journal.execution_id().clone(),
                     version: journal.version(),
                     max_retries: journal.max_retries(),
                     intermittent_event_count: journal.intermittent_event_count(),
@@ -754,7 +754,7 @@ impl DbHolder {
     #[instrument(skip(self))]
     fn subscribe_to_next_responses(
         &mut self,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         start_idx: usize,
     ) -> Result<
         Either<Vec<JoinSetResponseEventOuter>, oneshot::Receiver<JoinSetResponseEventOuter>>,

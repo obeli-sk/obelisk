@@ -22,7 +22,7 @@ async fn diff_proptest() {
     let execution_id = ExecutionId::generate();
     let create_req = CreateRequest {
         created_at: Now.now(),
-        execution_id,
+        execution_id: execution_id.clone(),
         ffqn: SOME_FFQN,
         params: Params::default(),
         parent: None,
@@ -31,7 +31,7 @@ async fn diff_proptest() {
         retry_exp_backoff: Duration::ZERO,
         max_retries: 0,
         config_id: ConfigId::dummy_activity(),
-        topmost_parent: execution_id,
+        topmost_parent: execution_id.clone(),
     };
     let mut append_requests = vec![];
     while append_requests.is_empty() {
@@ -62,7 +62,7 @@ async fn diff_proptest() {
     let mem_conn = db_mem_pool.connection();
     let mem_log = create_and_append(
         &mem_conn,
-        execution_id,
+        execution_id.clone(),
         create_req.clone(),
         &append_requests,
     )
@@ -101,12 +101,12 @@ async fn create_and_append(
     version = db_connection.create(create_req).await.unwrap();
     for event in append_requests {
         match db_connection
-            .append(execution_id, version.clone(), event.clone())
+            .append(execution_id.clone(), version.clone(), event.clone())
             .await
         {
             Ok(new_version) => version = new_version,
             Err(err) => println!("Ignoring {err:?}"),
         }
     }
-    db_connection.get(execution_id).await.unwrap()
+    db_connection.get(&execution_id).await.unwrap()
 }

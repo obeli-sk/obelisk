@@ -71,10 +71,10 @@ pub(crate) fn val_to_join_set_id<C: ClockFn, DB: DbConnection, P: DbPool<DB>>(
     }
 }
 
-pub(crate) fn execution_id_into_wast_val(execution_id: ExecutionId) -> WastVal {
+pub(crate) fn execution_id_into_wast_val(execution_id: &ExecutionId) -> WastVal {
     WastVal::Record(indexmap! {"id".to_string() => WastVal::String(execution_id.to_string())})
 }
-pub(crate) fn execution_id_into_val(execution_id: ExecutionId) -> Val {
+pub(crate) fn execution_id_into_val(execution_id: &ExecutionId) -> Val {
     Val::Record(vec![(
         "id".to_string(),
         Val::String(execution_id.to_string()),

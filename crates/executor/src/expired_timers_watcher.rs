@@ -128,7 +128,7 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                     Append {
                         created_at: executed_at,
                         primary_event: ExecutionEventInner::IntermittentTimeout { expires_at }, // not converting for clarity
-                        execution_id,
+                        execution_id: execution_id.clone(),
                         version,
                         parent: None,
                     }
@@ -142,7 +142,7 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                         primary_event: ExecutionEventInner::Finished {
                             result: finished_exec_result,
                         },
-                        execution_id,
+                        execution_id: execution_id.clone(),
                         version,
                         parent,
                     }
@@ -164,7 +164,7 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                 let res = db_connection
                     .append_response(
                         executed_at,
-                        execution_id,
+                        execution_id.clone(),
                         JoinSetResponseEvent { join_set_id, event },
                     )
                     .await;

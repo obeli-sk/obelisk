@@ -204,7 +204,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .extend(history_events.into_iter().map(|event| (event, Unprocessed)));
                 let keys_len = keys.len();
                 for (idx, key) in keys.into_iter().enumerate() {
-                    let res = self.process_event_by_key(key)?;
+                    let res = self.process_event_by_key(&key)?;
                     if idx == keys_len - 1 {
                         if let Some(res) = res {
                             // Last key was replayed.
@@ -226,7 +226,7 @@ impl<C: ClockFn> EventHistory<C> {
             // Subscribe to the next response.
             loop {
                 let next_responses = db_connection
-                    .subscribe_to_next_responses(self.execution_id, self.responses.len())
+                    .subscribe_to_next_responses(&self.execution_id, self.responses.len())
                     .await
                     .map_err(ApplyError::DbError)?;
                 debug!("Got next responses {next_responses:?}");
@@ -236,7 +236,7 @@ impl<C: ClockFn> EventHistory<C> {
                         .map(|outer| (outer.event, Unprocessed)),
                 );
                 trace!("All responses: {:?}", self.responses);
-                if let Some(accept_resp) = self.process_event_by_key(key)? {
+                if let Some(accept_resp) = self.process_event_by_key(&key)? {
                     debug!(join_set_id = %poll_variant.join_set_id(), "Got result");
                     return Ok(accept_resp);
                 }
@@ -324,7 +324,7 @@ impl<C: ClockFn> EventHistory<C> {
         assert!(!keys.is_empty());
         let mut last = None;
         for (idx, key) in keys.into_iter().enumerate() {
-            last = self.process_event_by_key(key)?;
+            last = self.process_event_by_key(&key)?;
             if last.is_none() {
                 assert_eq!(
                     idx, 0,
@@ -375,7 +375,7 @@ impl<C: ClockFn> EventHistory<C> {
     #[expect(clippy::too_many_lines)]
     fn process_event_by_key(
         &mut self,
-        key: EventHistoryKey,
+        key: &EventHistoryKey,
     ) -> Result<Option<ChildReturnValue>, ApplyError> {
         let Some((found_idx, (found_request_event, _))) = self.next_unprocessed_request() else {
             return Ok(None);
@@ -387,12 +387,12 @@ impl<C: ClockFn> EventHistory<C> {
                 HistoryEvent::JoinSet {
                     join_set_id: found_join_set_id,
                 },
-            ) if join_set_id == *found_join_set_id => {
+            ) if *join_set_id == *found_join_set_id => {
                 trace!(%join_set_id, "Matched JoinSet");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::CreateJoinSet`] , return join set id
                 Ok(Some(ChildReturnValue::HostActionResp(
-                    HostActionResp::CreateJoinSetResp(join_set_id),
+                    HostActionResp::CreateJoinSetResp(*join_set_id),
                 )))
             }
 
@@ -406,7 +406,7 @@ impl<C: ClockFn> EventHistory<C> {
                     join_set_id: found_join_set_id,
                     request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
                 },
-            ) if join_set_id == *found_join_set_id && execution_id == *child_execution_id => {
+            ) if *join_set_id == *found_join_set_id && *execution_id == *child_execution_id => {
                 trace!(%child_execution_id, %join_set_id, "Matched JoinSetRequest::ChildExecutionRequest");
                 self.event_history[found_idx].1 = Processed;
                 // if this is a [`EventCall::StartAsync`] , return execution id
@@ -428,12 +428,12 @@ impl<C: ClockFn> EventHistory<C> {
                             expires_at: _,
                         },
                 },
-            ) if join_set_id == *found_join_set_id && delay_id == *found_delay_id => {
+            ) if *join_set_id == *found_join_set_id && *delay_id == *found_delay_id => {
                 trace!(%delay_id, %join_set_id, "Matched JoinSetRequest::DelayRequest");
                 self.event_history[found_idx].1 = Processed;
                 // return delay id
                 Ok(Some(ChildReturnValue::WastVal(delay_id_into_wast_val(
-                    delay_id,
+                    *delay_id,
                 ))))
             }
 
@@ -443,11 +443,11 @@ impl<C: ClockFn> EventHistory<C> {
                     join_set_id: found_join_set_id,
                     ..
                 },
-            ) if join_set_id == *found_join_set_id => {
+            ) if *join_set_id == *found_join_set_id => {
                 trace!(%join_set_id, "Peeked at JoinNext - Child");
                 // TODO: If the child execution succeeded, perform type check between `SupportedFunctionReturnValue`
                 // and what is expected by the `FunctionRegistry`
-                match self.mark_next_unprocessed_response(found_idx, join_set_id) {
+                match self.mark_next_unprocessed_response(found_idx, *join_set_id) {
                     Some(JoinSetResponseEvent {
                         event:
                             JoinSetResponse::ChildExecutionFinished {
@@ -475,7 +475,7 @@ impl<C: ClockFn> EventHistory<C> {
                                         // result<execution-id, tuple<execution-id, execution-error>>
                                         Ok(Some(ChildReturnValue::WastVal(WastVal::Result(Ok(
                                             Some(Box::new(execution_id_into_wast_val(
-                                                *child_execution_id,
+                                                child_execution_id,
                                             ))),
                                         )))))
                                     }
@@ -486,7 +486,7 @@ impl<C: ClockFn> EventHistory<C> {
                                         // result<(execution-id, inner>, tuple<execution-id, execution-error>>
                                         Ok(Some(ChildReturnValue::WastVal(WastVal::Result(Ok(
                                             Some(Box::new(WastVal::Tuple(vec![
-                                                execution_id_into_wast_val(*child_execution_id),
+                                                execution_id_into_wast_val(child_execution_id),
                                                 v.value.clone(),
                                             ]))),
                                         )))))
@@ -516,7 +516,7 @@ impl<C: ClockFn> EventHistory<C> {
                                                     WastVal::Result(Err(Some(Box::new(
                                                         WastVal::Tuple(vec![
                                                             execution_id_into_wast_val(
-                                                                *child_execution_id,
+                                                                child_execution_id,
                                                             ),
                                                             variant,
                                                         ]),
@@ -545,10 +545,10 @@ impl<C: ClockFn> EventHistory<C> {
                     join_set_id: found_join_set_id,
                     ..
                 },
-            ) if join_set_id == *found_join_set_id => {
+            ) if *join_set_id == *found_join_set_id => {
                 trace!(
                     %join_set_id, "Peeked at JoinNext - Delay");
-                match self.mark_next_unprocessed_response(found_idx, join_set_id) {
+                match self.mark_next_unprocessed_response(found_idx, *join_set_id) {
                     Some(JoinSetResponseEvent {
                         event:
                             JoinSetResponse::DelayFinished {
@@ -569,11 +569,11 @@ impl<C: ClockFn> EventHistory<C> {
                     execution_id: found_execution_id,
                     ..
                 },
-            ) if execution_id == *found_execution_id => {
+            ) if *execution_id == *found_execution_id => {
                 trace!(%execution_id, "Matched Schedule");
                 // return execution id
                 Ok(Some(ChildReturnValue::WastVal(execution_id_into_wast_val(
-                    execution_id,
+                    &execution_id,
                 ))))
             }
 
@@ -637,7 +637,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .append_batch_create_new_execution(
                         created_at,
                         batches,
-                        self.execution_id,
+                        self.execution_id.clone(),
                         first_version.unwrap(),
                         childs,
                     )
@@ -684,7 +684,7 @@ impl<C: ClockFn> EventHistory<C> {
                 };
                 debug!(%join_set_id, "CreateJoinSet: Creating new JoinSet");
                 *version = db_connection
-                    .append(self.execution_id, version.clone(), join_set)
+                    .append(self.execution_id.clone(), version.clone(), join_set)
                     .await?;
                 Ok(history_events)
             }
@@ -697,7 +697,9 @@ impl<C: ClockFn> EventHistory<C> {
             } => {
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id,
-                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                    request: JoinSetRequest::ChildExecutionRequest {
+                        child_execution_id: child_execution_id.clone(),
+                    },
                 };
                 let history_events = vec![event.clone()];
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
@@ -718,13 +720,13 @@ impl<C: ClockFn> EventHistory<C> {
                     execution_id: child_execution_id,
                     ffqn,
                     params,
-                    parent: Some((self.execution_id, join_set_id)),
+                    parent: Some((self.execution_id.clone(), join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
                     config_id,
-                    topmost_parent: self.topmost_parent,
+                    topmost_parent: self.topmost_parent.clone(),
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
@@ -741,7 +743,7 @@ impl<C: ClockFn> EventHistory<C> {
                             .append_batch_create_new_execution(
                                 called_at,
                                 vec![child_exec_req],
-                                self.execution_id,
+                                self.execution_id.clone(),
                                 version.clone(),
                                 vec![child_req],
                             )
@@ -757,7 +759,7 @@ impl<C: ClockFn> EventHistory<C> {
                 params,
             } => {
                 let event = HistoryEvent::Schedule {
-                    execution_id: new_execution_id,
+                    execution_id: new_execution_id.clone(),
                     scheduled_at,
                 };
                 let scheduled_at = scheduled_at.as_date_time(called_at);
@@ -786,7 +788,7 @@ impl<C: ClockFn> EventHistory<C> {
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
                     config_id,
-                    topmost_parent: self.topmost_parent,
+                    topmost_parent: self.topmost_parent.clone(),
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
@@ -803,7 +805,7 @@ impl<C: ClockFn> EventHistory<C> {
                             .append_batch_create_new_execution(
                                 called_at,
                                 vec![child_exec_req],
-                                self.execution_id,
+                                self.execution_id.clone(),
                                 version.clone(),
                                 vec![child_req],
                             )
@@ -830,7 +832,7 @@ impl<C: ClockFn> EventHistory<C> {
                 };
                 debug!(%join_set_id, "BlockingChildJoinNext: appending JoinNext");
                 *version = db_connection
-                    .append(self.execution_id, version.clone(), join_next)
+                    .append(self.execution_id.clone(), version.clone(), join_next)
                     .await?;
                 Ok(history_events)
             }
@@ -849,7 +851,9 @@ impl<C: ClockFn> EventHistory<C> {
                 let join_set = ExecutionEventInner::HistoryEvent { event };
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id,
-                    request: JoinSetRequest::ChildExecutionRequest { child_execution_id },
+                    request: JoinSetRequest::ChildExecutionRequest {
+                        child_execution_id: child_execution_id.clone(),
+                    },
                 };
                 history_events.push(event.clone());
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
@@ -877,19 +881,19 @@ impl<C: ClockFn> EventHistory<C> {
                     execution_id: child_execution_id,
                     ffqn,
                     params,
-                    parent: Some((self.execution_id, join_set_id)),
+                    parent: Some((self.execution_id.clone(), join_set_id)),
                     metadata: ExecutionMetadata::from_parent_span(&self.worker_span),
                     scheduled_at: called_at,
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
                     config_id,
-                    topmost_parent: self.topmost_parent,
+                    topmost_parent: self.topmost_parent.clone(),
                 };
                 *version = db_connection
                     .append_batch_create_new_execution(
                         called_at,
                         vec![join_set, child_exec_req, join_next],
-                        self.execution_id,
+                        self.execution_id.clone(),
                         version.clone(),
                         vec![child],
                     )
@@ -929,7 +933,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .append_batch(
                         called_at,
                         vec![join_set, delay_req, join_next],
-                        self.execution_id,
+                        self.execution_id.clone(),
                         version.clone(),
                     )
                     .await?;
@@ -1030,7 +1034,7 @@ impl EventCall {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum EventHistoryKey {
     CreateJoinSet {
         join_set_id: JoinSetId,
@@ -1076,7 +1080,7 @@ impl EventCall {
                 ..
             } => vec![EventHistoryKey::ChildExecutionRequest {
                 join_set_id: *join_set_id,
-                child_execution_id: *child_execution_id,
+                child_execution_id: child_execution_id.clone(),
             }],
             EventCall::BlockingChildAwaitNext {
                 join_set_id,
@@ -1097,7 +1101,7 @@ impl EventCall {
                 },
                 EventHistoryKey::ChildExecutionRequest {
                     join_set_id: *join_set_id,
-                    child_execution_id: *child_execution_id,
+                    child_execution_id: child_execution_id.clone(),
                 },
                 EventHistoryKey::JoinNextChild {
                     join_set_id: *join_set_id,
@@ -1122,7 +1126,7 @@ impl EventCall {
             ],
             EventCall::ScheduleRequest { execution_id, .. } => {
                 vec![EventHistoryKey::Schedule {
-                    execution_id: *execution_id,
+                    execution_id: execution_id.clone(),
                 }]
             }
         }
@@ -1164,9 +1168,9 @@ mod tests {
         join_next_blocking_strategy: JoinNextBlockingStrategy,
         non_blocking_event_batching: u32,
     ) -> (EventHistory<C>, Version) {
-        let exec_log = db_connection.get(execution_id).await.unwrap();
+        let exec_log = db_connection.get(&execution_id).await.unwrap();
         let event_history = EventHistory::new(
-            execution_id,
+            execution_id.clone(),
             exec_log.event_history().collect(),
             exec_log
                 .responses
@@ -1203,7 +1207,7 @@ mod tests {
         db_connection
             .create(CreateRequest {
                 created_at,
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: MOCK_FFQN,
                 params: Params::empty(),
                 parent: None,
@@ -1212,14 +1216,14 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
 
         let (event_history, version) = load_event_history(
             &db_connection,
-            execution_id,
+            execution_id.clone(),
             sim_clock.now(),
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt, // first run needs to interrupt
@@ -1235,6 +1239,7 @@ mod tests {
              mut version: Version,
              fn_registry: Arc<dyn FunctionRegistry>| {
                 let db_pool = db_pool.clone();
+                let child_execution_id = child_execution_id.clone();
                 async move {
                     event_history
                         .apply(
@@ -1251,7 +1256,7 @@ mod tests {
                             EventCall::StartAsync {
                                 ffqn: MOCK_FFQN,
                                 join_set_id,
-                                child_execution_id,
+                                child_execution_id: child_execution_id.clone(),
                                 params: Params::empty(),
                             },
                             &db_pool.connection(),
@@ -1284,11 +1289,11 @@ mod tests {
         db_connection
             .append_response(
                 sim_clock.now(),
-                execution_id,
+                execution_id.clone(),
                 JoinSetResponseEvent {
                     join_set_id,
                     event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id,
+                        child_execution_id: child_execution_id.clone(),
                         result: Ok(SupportedFunctionReturnValue::None),
                     },
                 },
@@ -1371,7 +1376,7 @@ mod tests {
         db_connection
             .create(CreateRequest {
                 created_at,
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: MOCK_FFQN,
                 params: Params::empty(),
                 parent: None,
@@ -1380,14 +1385,14 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
 
         let (mut event_history, mut version) = load_event_history(
             &db_connection,
-            execution_id,
+            execution_id.clone(),
             sim_clock.now(),
             sim_clock.clone(),
             join_next_blocking_strategy,
@@ -1403,7 +1408,7 @@ mod tests {
             &mut version,
             &db_pool,
             join_set_id,
-            child_execution_id,
+            child_execution_id.clone(),
             fn_registry.as_ref(),
         )
         .await;
@@ -1412,11 +1417,11 @@ mod tests {
         db_connection
             .append_response(
                 sim_clock.now(),
-                execution_id,
+                execution_id.clone(),
                 JoinSetResponseEvent {
                     join_set_id,
                     event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id,
+                        child_execution_id: child_execution_id.clone(),
                         result: Ok(CHILD_RESP),
                     },
                 },
@@ -1441,7 +1446,7 @@ mod tests {
             &mut version,
             &db_pool,
             join_set_id,
-            child_execution_id,
+            child_execution_id.clone(),
             fn_registry.as_ref(),
         )
         .await;
@@ -1460,7 +1465,7 @@ mod tests {
             .unwrap();
 
         let child_resp_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-            execution_id_into_wast_val(child_execution_id),
+            execution_id_into_wast_val(&child_execution_id),
             WastVal::U8(1),
         ]))))));
 
@@ -1560,7 +1565,7 @@ mod tests {
         db_connection
             .create(CreateRequest {
                 created_at,
-                execution_id,
+                execution_id: execution_id.clone(),
                 ffqn: MOCK_FFQN,
                 params: Params::empty(),
                 parent: None,
@@ -1569,14 +1574,14 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id,
+                topmost_parent: execution_id.clone(),
             })
             .await
             .unwrap();
 
         let (mut event_history, mut version) = load_event_history(
             &db_connection,
-            execution_id,
+            execution_id.clone(),
             sim_clock.now(),
             sim_clock.clone(),
             JoinNextBlockingStrategy::Interrupt,
@@ -1595,8 +1600,8 @@ mod tests {
                 &db_pool,
                 fn_registry.as_ref(),
                 join_set_id,
-                child_execution_id_a,
-                child_execution_id_b
+                child_execution_id_a.clone(),
+                child_execution_id_b.clone()
             )
             .await
             .unwrap_err(),
@@ -1606,11 +1611,11 @@ mod tests {
         db_connection
             .append_response(
                 sim_clock.now(),
-                execution_id,
+                execution_id.clone(),
                 JoinSetResponseEvent {
                     join_set_id,
                     event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id: child_execution_id_a,
+                        child_execution_id: child_execution_id_a.clone(),
                         result: Ok(KID_A),
                     },
                 },
@@ -1620,11 +1625,11 @@ mod tests {
         db_connection
             .append_response(
                 sim_clock.now(),
-                execution_id,
+                execution_id.clone(),
                 JoinSetResponseEvent {
                     join_set_id,
                     event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id: child_execution_id_b,
+                        child_execution_id: child_execution_id_b.clone(),
                         result: Ok(KID_B),
                     },
                 },
@@ -1650,13 +1655,13 @@ mod tests {
             &db_pool,
             fn_registry.as_ref(),
             join_set_id,
-            child_execution_id_a,
-            child_execution_id_b,
+            child_execution_id_a.clone(),
+            child_execution_id_b.clone(),
         )
         .await
         .unwrap();
         let kid_a_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-            execution_id_into_wast_val(child_execution_id_a),
+            execution_id_into_wast_val(&child_execution_id_a),
             WastVal::U8(1),
         ]))))));
         assert_eq!(kid_a_wrapped, res);
@@ -1675,7 +1680,7 @@ mod tests {
             .await
             .unwrap();
         let kid_b_wrapped = Some(WastVal::Result(Ok(Some(Box::new(WastVal::Tuple(vec![
-            execution_id_into_wast_val(child_execution_id_b),
+            execution_id_into_wast_val(&child_execution_id_b),
             WastVal::U8(2),
         ]))))));
         assert_eq!(kid_b_wrapped, res.into_wast_val());
