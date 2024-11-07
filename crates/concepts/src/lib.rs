@@ -931,7 +931,9 @@ pub mod prefixed_ulid {
 
         pub fn increment(&self) -> Self {
             match &self.0 {
-                ExecutionIdInner::TopLevel(_) => self.next_level(),
+                ExecutionIdInner::TopLevel(_) => {
+                    panic!("called `increment` on the top level ExecutionId")
+                }
                 ExecutionIdInner::Derived(top_level, suffix_vec) => {
                     let mut suffix_vec = suffix_vec.clone();
                     *suffix_vec
@@ -1507,18 +1509,23 @@ mod tests {
     }
 
     #[test]
-    fn execution_id_increment_on_top_level_should_be_equal_to_next_level() {
+    #[should_panic(expected = "called `increment` on the top level ExecutionId")]
+    fn execution_id_increment_on_top_level_should_panic() {
         let top_level = ExecutionId::generate();
-        let first_child = top_level.increment();
+        top_level.increment();
+    }
+
+    #[test]
+    fn execution_id_next_level_should_work() {
+        let top_level = ExecutionId::generate();
+        let first_child = top_level.next_level();
         assert_eq!(format!("{top_level}:0"), first_child.to_string());
-        let first_child2 = top_level.next_level();
-        assert_eq!(first_child, first_child2);
     }
 
     #[test]
     fn execution_id_increment_twice() {
         let top_level = ExecutionId::generate();
-        let second_child = top_level.increment().increment();
+        let second_child = top_level.next_level().increment();
         assert_eq!(format!("{top_level}:1"), second_child.to_string());
     }
 
