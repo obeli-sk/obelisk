@@ -246,33 +246,6 @@ pub mod obelisk {
                     }
                 }
             }
-            impl JoinSetId {
-                #[allow(unused_unsafe, clippy::all)]
-                pub fn id(&self) -> _rt::String {
-                    unsafe {
-                        #[repr(align(4))]
-                        struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
-                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
-                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
-                        #[cfg(target_arch = "wasm32")]
-                        #[link(wasm_import_module = "obelisk:types/execution")]
-                        extern "C" {
-                            #[link_name = "[method]join-set-id.id"]
-                            fn wit_import(_: i32, _: *mut u8);
-                        }
-                        #[cfg(not(target_arch = "wasm32"))]
-                        fn wit_import(_: i32, _: *mut u8) {
-                            unreachable!()
-                        }
-                        wit_import((self).handle() as i32, ptr0);
-                        let l1 = *ptr0.add(0).cast::<*mut u8>();
-                        let l2 = *ptr0.add(4).cast::<usize>();
-                        let len3 = l2;
-                        let bytes3 = _rt::Vec::from_raw_parts(l1.cast(), len3, len3);
-                        _rt::string_lift(bytes3)
-                    }
-                }
-            }
         }
     }
     #[allow(dead_code)]
@@ -1081,14 +1054,6 @@ mod _rt {
         }
     }
     pub use alloc_crate::string::String;
-    pub use alloc_crate::vec::Vec;
-    pub unsafe fn string_lift(bytes: Vec<u8>) -> String {
-        if cfg!(debug_assertions) {
-            String::from_utf8(bytes).unwrap()
-        } else {
-            String::from_utf8_unchecked(bytes)
-        }
-    }
     pub fn as_i64<T: AsI64>(t: T) -> i64 {
         t.as_i64()
     }
@@ -1171,6 +1136,14 @@ mod _rt {
             self as i32
         }
     }
+    pub use alloc_crate::vec::Vec;
+    pub unsafe fn string_lift(bytes: Vec<u8>) -> String {
+        if cfg!(debug_assertions) {
+            String::from_utf8(bytes).unwrap()
+        } else {
+            String::from_utf8_unchecked(bytes)
+        }
+    }
     pub unsafe fn invalid_enum_discriminant<T>() -> T {
         if cfg!(debug_assertions) {
             panic!("invalid enum discriminant")
@@ -1221,50 +1194,49 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1916] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x82\x0e\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1875] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd9\x0d\x01A\x02\x01\
 A\x1b\x01B\x06\x01@\x01\x07messages\x01\0\x04\0\x05trace\x01\0\x04\0\x05debug\x01\
 \0\x04\0\x04info\x01\0\x04\0\x04warn\x01\0\x04\0\x05error\x01\0\x03\x01\x0fobeli\
 sk:log/log\x05\0\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07m\
 inutes\x01y\0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07\
 secondsw\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\
 \x03\0\x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/t\
-ime\x05\x01\x01B\x0a\x04\0\x0bjoin-set-id\x03\x01\x01r\x01\x02ids\x04\0\x0cexecu\
+ime\x05\x01\x01B\x07\x04\0\x0bjoin-set-id\x03\x01\x01r\x01\x02ids\x04\0\x0cexecu\
 tion-id\x03\0\x01\x01r\x01\x02ids\x04\0\x08delay-id\x03\0\x03\x01q\x03\x11perman\
 ent-failure\x01s\0\x11permanent-timeout\0\0\x0enondeterminism\0\0\x04\0\x0fexecu\
-tion-error\x03\0\x05\x01h\0\x01@\x01\x04self\x07\0s\x04\0\x16[method]join-set-id\
-.id\x01\x08\x03\x01\x17obelisk:types/execution\x05\x02\x02\x03\0\x01\x08duration\
-\x02\x03\0\x02\x0bjoin-set-id\x01B\x09\x02\x03\x02\x01\x03\x04\0\x08duration\x03\
-\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x08duration\x01\
-\x01\0\x04\0\x05sleep\x01\x04\x01i\x03\x01@\0\0\x05\x04\0\x0cnew-join-set\x01\x06\
-\x03\x01\x20obelisk:workflow/host-activities\x05\x05\x02\x03\0\x02\x0cexecution-\
-id\x02\x03\0\x02\x0fexecution-error\x01B\x0e\x02\x03\x02\x01\x06\x04\0\x0cexecut\
-ion-id\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin-set-id\x03\0\x02\x02\x03\x02\x01\
-\x07\x04\0\x0fexecution-error\x03\0\x04\x01h\x03\x01@\x02\x0bjoin-set-id\x06\x01\
-n}\0\x01\x04\0\x0bfibo-submit\x01\x07\x01o\x02\x01w\x01o\x02\x01\x05\x01j\x01\x08\
-\x01\x09\x01@\x01\x0bjoin-set-id\x06\0\x0a\x04\0\x0ffibo-await-next\x01\x0b\x03\x01\
-\x1dtesting:fibo-obelisk-ext/fibo\x05\x08\x02\x03\0\x01\x0bschedule-at\x01B\x14\x02\
-\x03\x02\x01\x06\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin\
--set-id\x03\0\x02\x02\x03\x02\x01\x07\x04\0\x0fexecution-error\x03\0\x04\x02\x03\
-\x02\x01\x09\x04\0\x0bschedule-at\x03\0\x06\x01h\x03\x01@\x03\x0bjoin-set-id\x08\
-\x01n}\x0aiterationsy\0\x01\x04\0\x0cfiboa-submit\x01\x09\x01o\x02\x01w\x01o\x02\
-\x01\x05\x01j\x01\x0a\x01\x0b\x01@\x01\x0bjoin-set-id\x08\0\x0c\x04\0\x10fiboa-a\
-wait-next\x01\x0d\x01@\x03\x0bschedule-at\x07\x01n}\x0aiterationsy\0\x01\x04\0\x0e\
-fiboa-schedule\x01\x0e\x04\0\x17fiboa-concurrent-submit\x01\x09\x04\0\x1bfiboa-c\
-oncurrent-await-next\x01\x0d\x03\x01*testing:fibo-workflow-obelisk-ext/workflow\x05\
-\x0a\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01\
-n}\x06fiboasy\x14iterations-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x03\
-\x01&testing:fibo-workflow/workflow-nesting\x05\x0b\x01B\x04\x01@\x02\x01n}\x0ai\
-terationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurren\
-t\x01\0\x03\x01\x1etesting:fibo-workflow/workflow\x05\x0c\x01B\x02\x01@\x01\x01n\
-}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:fibo/fibo\x05\x0d\x01B\x04\x01@\x01\x01\
-n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14iteration\
-s-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x04\x01&testing:fibo-workflow\
-/workflow-nesting\x05\x0e\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\x05fib\
-ow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1etesting\
-:fibo-workflow/workflow\x05\x0f\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\x03an\
-y\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.216.0\x10\
-wit-bindgen-rust\x060.31.0";
+tion-error\x03\0\x05\x03\x01\x17obelisk:types/execution\x05\x02\x02\x03\0\x01\x08\
+duration\x02\x03\0\x02\x0bjoin-set-id\x01B\x09\x02\x03\x02\x01\x03\x04\0\x08dura\
+tion\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x08dura\
+tion\x01\x01\0\x04\0\x05sleep\x01\x04\x01i\x03\x01@\0\0\x05\x04\0\x0cnew-join-se\
+t\x01\x06\x03\x01\x20obelisk:workflow/host-activities\x05\x05\x02\x03\0\x02\x0ce\
+xecution-id\x02\x03\0\x02\x0fexecution-error\x01B\x0e\x02\x03\x02\x01\x06\x04\0\x0c\
+execution-id\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0bjoin-set-id\x03\0\x02\x02\x03\x02\
+\x01\x07\x04\0\x0fexecution-error\x03\0\x04\x01h\x03\x01@\x02\x0bjoin-set-id\x06\
+\x01n}\0\x01\x04\0\x0bfibo-submit\x01\x07\x01o\x02\x01w\x01o\x02\x01\x05\x01j\x01\
+\x08\x01\x09\x01@\x01\x0bjoin-set-id\x06\0\x0a\x04\0\x0ffibo-await-next\x01\x0b\x03\
+\x01\x1dtesting:fibo-obelisk-ext/fibo\x05\x08\x02\x03\0\x01\x0bschedule-at\x01B\x14\
+\x02\x03\x02\x01\x06\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x04\x04\0\x0b\
+join-set-id\x03\0\x02\x02\x03\x02\x01\x07\x04\0\x0fexecution-error\x03\0\x04\x02\
+\x03\x02\x01\x09\x04\0\x0bschedule-at\x03\0\x06\x01h\x03\x01@\x03\x0bjoin-set-id\
+\x08\x01n}\x0aiterationsy\0\x01\x04\0\x0cfiboa-submit\x01\x09\x01o\x02\x01w\x01o\
+\x02\x01\x05\x01j\x01\x0a\x01\x0b\x01@\x01\x0bjoin-set-id\x08\0\x0c\x04\0\x10fib\
+oa-await-next\x01\x0d\x01@\x03\x0bschedule-at\x07\x01n}\x0aiterationsy\0\x01\x04\
+\0\x0efiboa-schedule\x01\x0e\x04\0\x17fiboa-concurrent-submit\x01\x09\x04\0\x1bf\
+iboa-concurrent-await-next\x01\x0d\x03\x01*testing:fibo-workflow-obelisk-ext/wor\
+kflow\x05\x0a\x01B\x04\x01@\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01\
+@\x03\x01n}\x06fiboasy\x14iterations-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\
+\x01\x03\x01&testing:fibo-workflow/workflow-nesting\x05\x0b\x01B\x04\x01@\x02\x01\
+n}\x0aiterationsy\0w\x04\0\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-co\
+ncurrent\x01\0\x03\x01\x1etesting:fibo-workflow/workflow\x05\x0c\x01B\x02\x01@\x01\
+\x01n}\0w\x04\0\x04fibo\x01\0\x03\x01\x11testing:fibo/fibo\x05\x0d\x01B\x04\x01@\
+\x01\x01n}\0w\x04\0\x14fibo-nested-workflow\x01\0\x01@\x03\x01n}\x06fiboasy\x14i\
+terations-per-fiboay\0w\x04\0\x11fibo-start-fiboas\x01\x01\x04\x01&testing:fibo-\
+workflow/workflow-nesting\x05\x0e\x01B\x04\x01@\x02\x01n}\x0aiterationsy\0w\x04\0\
+\x05fibow\x01\0\x04\0\x05fiboa\x01\0\x04\0\x10fiboa-concurrent\x01\0\x04\x01\x1e\
+testing:fibo-workflow/workflow\x05\x0f\x04\x01\x0bany:any/any\x04\0\x0b\x09\x01\0\
+\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.21\
+6.0\x10wit-bindgen-rust\x060.31.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

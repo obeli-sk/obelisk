@@ -14,6 +14,7 @@ wasmtime::component::bindgen!({
     }
 });
 
+use crate::workflow::workflow_ctx::WorkflowCtx;
 use concepts::{
     prefixed_ulid::{DelayId, JoinSetId},
     storage::{DbConnection, DbPool},
@@ -26,8 +27,6 @@ use tracing::error;
 use utils::time::ClockFn;
 use val_json::wast_val::WastVal;
 use wasmtime::component::{Resource, Val};
-
-use crate::workflow::workflow_ctx::WorkflowCtx;
 
 pub(crate) const SUFFIX_FN_SUBMIT: &str = "-submit";
 pub(crate) const SUFFIX_FN_AWAIT_NEXT: &str = "-await-next";

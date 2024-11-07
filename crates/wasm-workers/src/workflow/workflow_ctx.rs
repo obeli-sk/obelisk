@@ -315,7 +315,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                             ));
                     }
                 };
-                // FIXME: handle execution id conflict: This does not have to be deterministicly generated. Remove execution_id from EventCall::ScheduleRequest
+                // TODO(edge case): handle ExecutionId conflict: This does not have to be deterministicly generated. Remove execution_id from EventCall::ScheduleRequest
                 // and add retries.
                 let execution_id =
                     ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
@@ -361,11 +361,6 @@ mod host_activities {
     impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>>
         host_exports::obelisk::types::execution::HostJoinSetId for WorkflowCtx<C, DB, P>
     {
-        async fn id(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<String> {
-            let join_set_id = self.resource_table.get(&resource)?;
-            Ok(join_set_id.to_string())
-        }
-
         async fn drop(&mut self, resource: Resource<JoinSetId>) -> wasmtime::Result<()> {
             self.resource_table.delete(resource)?;
             Ok(())
@@ -390,6 +385,9 @@ mod host_activities {
         }
 
         async fn new_join_set(&mut self) -> wasmtime::Result<Resource<JoinSetId>> {
+            // TODO(edge case): handle JoinSetId conflict: This does not have to be deterministicly generated.
+            // Figure out caching, add retries.
+            // Another strategy to consider is to add hierarchy similar to ExecutionId.
             let join_set_id =
                 JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
             let res = self

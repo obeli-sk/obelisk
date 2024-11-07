@@ -78,33 +78,6 @@ pub mod obelisk {
                     }
                 }
             }
-            impl JoinSetId {
-                #[allow(unused_unsafe, clippy::all)]
-                pub fn id(&self) -> _rt::String {
-                    unsafe {
-                        #[repr(align(4))]
-                        struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
-                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
-                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
-                        #[cfg(target_arch = "wasm32")]
-                        #[link(wasm_import_module = "obelisk:types/execution")]
-                        extern "C" {
-                            #[link_name = "[method]join-set-id.id"]
-                            fn wit_import(_: i32, _: *mut u8);
-                        }
-                        #[cfg(not(target_arch = "wasm32"))]
-                        fn wit_import(_: i32, _: *mut u8) {
-                            unreachable!()
-                        }
-                        wit_import((self).handle() as i32, ptr0);
-                        let l1 = *ptr0.add(0).cast::<*mut u8>();
-                        let l2 = *ptr0.add(4).cast::<usize>();
-                        let len3 = l2;
-                        let bytes3 = _rt::Vec::from_raw_parts(l1.cast(), len3, len3);
-                        _rt::string_lift(bytes3)
-                    }
-                }
-            }
         }
         #[allow(dead_code, clippy::all)]
         pub mod time {
@@ -1037,35 +1010,34 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:testing:http-workflow:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1247] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xe5\x08\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1206] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xbc\x08\x01A\x02\x01\
 A\x10\x01B\x04\x01j\x01s\x01s\x01@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0e\
-get-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x0a\x04\0\x0b\
+get-successful\x01\x01\x03\x01\x15testing:http/http-get\x05\0\x01B\x07\x04\0\x0b\
 join-set-id\x03\x01\x01r\x01\x02ids\x04\0\x0cexecution-id\x03\0\x01\x01r\x01\x02\
 ids\x04\0\x08delay-id\x03\0\x03\x01q\x03\x11permanent-failure\x01s\0\x11permanen\
-t-timeout\0\0\x0enondeterminism\0\0\x04\0\x0fexecution-error\x03\0\x05\x01h\0\x01\
-@\x01\x04self\x07\0s\x04\0\x16[method]join-set-id.id\x01\x08\x03\x01\x17obelisk:\
-types/execution\x05\x01\x02\x03\0\x01\x0cexecution-id\x02\x03\0\x01\x0bjoin-set-\
-id\x02\x03\0\x01\x0fexecution-error\x01B\x0f\x02\x03\x02\x01\x02\x04\0\x0cexecut\
-ion-id\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x02\x03\x02\x01\
-\x04\x04\0\x0fexecution-error\x03\0\x04\x01h\x03\x01@\x02\x0bjoin-set-id\x06\x03\
-urls\0\x01\x04\0\x15get-successful-submit\x01\x07\x01j\x01s\x01s\x01o\x02\x01\x08\
-\x01o\x02\x01\x05\x01j\x01\x09\x01\x0a\x01@\x01\x0bjoin-set-id\x06\0\x0b\x04\0\x19\
-get-successful-await-next\x01\x0c\x03\x01!testing:http-obelisk-ext/http-get\x05\x05\
-\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07minutes\x01y\0\x05\
-hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\x0bna\
-nosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\x02in\
-\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\x06\x02\
-\x03\0\x03\x08duration\x01B\x09\x02\x03\x02\x01\x07\x04\0\x08duration\x03\0\0\x02\
-\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x08duration\x01\x01\0\x04\
-\0\x05sleep\x01\x04\x01i\x03\x01@\0\0\x05\x04\0\x0cnew-join-set\x01\x06\x03\x01\x20\
-obelisk:workflow/host-activities\x05\x08\x01B\x0a\x01j\x01s\x01s\x01@\x01\x03url\
-s\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-successful\x01\x01\x01ps\x01j\x01\x02\x01\
-s\x01@\x01\x04urls\x02\0\x03\x04\0\x1bget-successful-concurrently\x01\x04\x01@\x02\
-\x03urls\x0bconcurrencyy\0\x03\x04\0\"get-successful-concurrently-stress\x01\x05\
-\x04\x01\x1etesting:http-workflow/workflow\x05\x09\x04\x01\x19testing:http-workf\
-low/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\
-\x0dwit-component\x070.216.0\x10wit-bindgen-rust\x060.31.0";
+t-timeout\0\0\x0enondeterminism\0\0\x04\0\x0fexecution-error\x03\0\x05\x03\x01\x17\
+obelisk:types/execution\x05\x01\x02\x03\0\x01\x0cexecution-id\x02\x03\0\x01\x0bj\
+oin-set-id\x02\x03\0\x01\x0fexecution-error\x01B\x0f\x02\x03\x02\x01\x02\x04\0\x0c\
+execution-id\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x02\x03\x02\
+\x01\x04\x04\0\x0fexecution-error\x03\0\x04\x01h\x03\x01@\x02\x0bjoin-set-id\x06\
+\x03urls\0\x01\x04\0\x15get-successful-submit\x01\x07\x01j\x01s\x01s\x01o\x02\x01\
+\x08\x01o\x02\x01\x05\x01j\x01\x09\x01\x0a\x01@\x01\x0bjoin-set-id\x06\0\x0b\x04\
+\0\x19get-successful-await-next\x01\x0c\x03\x01!testing:http-obelisk-ext/http-ge\
+t\x05\x05\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07minutes\x01\
+y\0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07seconds\
+w\x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\
+\x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\
+\x06\x02\x03\0\x03\x08duration\x01B\x09\x02\x03\x02\x01\x07\x04\0\x08duration\x03\
+\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x08duration\x01\
+\x01\0\x04\0\x05sleep\x01\x04\x01i\x03\x01@\0\0\x05\x04\0\x0cnew-join-set\x01\x06\
+\x03\x01\x20obelisk:workflow/host-activities\x05\x08\x01B\x0a\x01j\x01s\x01s\x01\
+@\x01\x03urls\0\0\x04\0\x03get\x01\x01\x04\0\x0eget-successful\x01\x01\x01ps\x01\
+j\x01\x02\x01s\x01@\x01\x04urls\x02\0\x03\x04\0\x1bget-successful-concurrently\x01\
+\x04\x01@\x02\x03urls\x0bconcurrencyy\0\x03\x04\0\"get-successful-concurrently-s\
+tress\x01\x05\x04\x01\x1etesting:http-workflow/workflow\x05\x09\x04\x01\x19testi\
+ng:http-workflow/any\x04\0\x0b\x09\x01\0\x03any\x03\0\0\0G\x09producers\x01\x0cp\
+rocessed-by\x02\x0dwit-component\x070.216.0\x10wit-bindgen-rust\x060.31.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

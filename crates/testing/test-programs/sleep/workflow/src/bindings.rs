@@ -118,33 +118,6 @@ pub mod obelisk {
                     f.debug_struct("ExecutionId").field("id", &self.id).finish()
                 }
             }
-            impl JoinSetId {
-                #[allow(unused_unsafe, clippy::all)]
-                pub fn id(&self) -> _rt::String {
-                    unsafe {
-                        #[repr(align(4))]
-                        struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
-                        let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
-                        let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
-                        #[cfg(target_arch = "wasm32")]
-                        #[link(wasm_import_module = "obelisk:types/execution")]
-                        extern "C" {
-                            #[link_name = "[method]join-set-id.id"]
-                            fn wit_import(_: i32, _: *mut u8);
-                        }
-                        #[cfg(not(target_arch = "wasm32"))]
-                        fn wit_import(_: i32, _: *mut u8) {
-                            unreachable!()
-                        }
-                        wit_import((self).handle() as i32, ptr0);
-                        let l1 = *ptr0.add(0).cast::<*mut u8>();
-                        let l2 = *ptr0.add(4).cast::<usize>();
-                        let len3 = l2;
-                        let bytes3 = _rt::Vec::from_raw_parts(l1.cast(), len3, len3);
-                        _rt::string_lift(bytes3)
-                    }
-                }
-            }
         }
     }
     #[allow(dead_code)]
@@ -686,14 +659,6 @@ mod _rt {
         }
     }
     pub use alloc_crate::string::String;
-    pub use alloc_crate::vec::Vec;
-    pub unsafe fn string_lift(bytes: Vec<u8>) -> String {
-        if cfg!(debug_assertions) {
-            String::from_utf8(bytes).unwrap()
-        } else {
-            String::from_utf8_unchecked(bytes)
-        }
-    }
     pub fn as_i64<T: AsI64>(t: T) -> i64 {
         t.as_i64()
     }
@@ -776,6 +741,14 @@ mod _rt {
             self as i32
         }
     }
+    pub use alloc_crate::vec::Vec;
+    pub unsafe fn string_lift(bytes: Vec<u8>) -> String {
+        if cfg!(debug_assertions) {
+            String::from_utf8(bytes).unwrap()
+        } else {
+            String::from_utf8_unchecked(bytes)
+        }
+    }
     #[cfg(target_arch = "wasm32")]
     pub fn run_ctors_once() {
         wit_bindgen_rt::run_ctors_once();
@@ -824,25 +797,24 @@ pub(crate) use __export_any_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.31.0:any:any:any:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1390] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf4\x09\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1349] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xcb\x09\x01A\x02\x01\
 A\x12\x01B\x06\x01q\x05\x0cmilliseconds\x01w\0\x07seconds\x01w\0\x07minutes\x01y\
 \0\x05hours\x01y\0\x04days\x01y\0\x04\0\x08duration\x03\0\0\x01r\x02\x07secondsw\
 \x0bnanosecondsy\x04\0\x08datetime\x03\0\x02\x01q\x03\x03now\0\0\x02at\x01\x03\0\
 \x02in\x01\x01\0\x04\0\x0bschedule-at\x03\0\x04\x03\x01\x12obelisk:types/time\x05\
-\0\x01B\x0a\x04\0\x0bjoin-set-id\x03\x01\x01r\x01\x02ids\x04\0\x0cexecution-id\x03\
+\0\x01B\x07\x04\0\x0bjoin-set-id\x03\x01\x01r\x01\x02ids\x04\0\x0cexecution-id\x03\
 \0\x01\x01r\x01\x02ids\x04\0\x08delay-id\x03\0\x03\x01q\x03\x11permanent-failure\
 \x01s\0\x11permanent-timeout\0\0\x0enondeterminism\0\0\x04\0\x0fexecution-error\x03\
-\0\x05\x01h\0\x01@\x01\x04self\x07\0s\x04\0\x16[method]join-set-id.id\x01\x08\x03\
-\x01\x17obelisk:types/execution\x05\x01\x02\x03\0\0\x08duration\x02\x03\0\x01\x0b\
-join-set-id\x01B\x09\x02\x03\x02\x01\x02\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\
-\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x08duration\x01\x01\0\x04\0\x05slee\
-p\x01\x04\x01i\x03\x01@\0\0\x05\x04\0\x0cnew-join-set\x01\x06\x03\x01\x20obelisk\
-:workflow/host-activities\x05\x04\x02\x03\0\x01\x0cexecution-id\x01B\x09\x02\x03\
-\x02\x01\x02\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\
-\0\x02\x02\x03\x02\x01\x05\x04\0\x0cexecution-id\x03\0\x04\x01h\x03\x01@\x02\x0b\
-join-set-id\x06\x08duration\x01\0\x05\x04\0\x0csleep-submit\x01\x07\x03\x01\x1ft\
-esting:sleep-obelisk-ext/sleep\x05\x06\x02\x03\0\0\x0bschedule-at\x01B\x08\x02\x03\
+\0\x05\x03\x01\x17obelisk:types/execution\x05\x01\x02\x03\0\0\x08duration\x02\x03\
+\0\x01\x0bjoin-set-id\x01B\x09\x02\x03\x02\x01\x02\x04\0\x08duration\x03\0\0\x02\
+\x03\x02\x01\x03\x04\0\x0bjoin-set-id\x03\0\x02\x01@\x01\x08duration\x01\x01\0\x04\
+\0\x05sleep\x01\x04\x01i\x03\x01@\0\0\x05\x04\0\x0cnew-join-set\x01\x06\x03\x01\x20\
+obelisk:workflow/host-activities\x05\x04\x02\x03\0\x01\x0cexecution-id\x01B\x09\x02\
+\x03\x02\x01\x02\x04\0\x08duration\x03\0\0\x02\x03\x02\x01\x03\x04\0\x0bjoin-set\
+-id\x03\0\x02\x02\x03\x02\x01\x05\x04\0\x0cexecution-id\x03\0\x04\x01h\x03\x01@\x02\
+\x0bjoin-set-id\x06\x08duration\x01\0\x05\x04\0\x0csleep-submit\x01\x07\x03\x01\x1f\
+testing:sleep-obelisk-ext/sleep\x05\x06\x02\x03\0\0\x0bschedule-at\x01B\x08\x02\x03\
 \x02\x01\x05\x04\0\x0cexecution-id\x03\0\0\x02\x03\x02\x01\x02\x04\0\x08duration\
 \x03\0\x02\x02\x03\x02\x01\x07\x04\0\x0bschedule-at\x03\0\x04\x01@\x03\x08schedu\
 le\x05\x08duration\x03\x0aiterations}\0\x01\x04\0\x13reschedule-schedule\x01\x06\
