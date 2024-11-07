@@ -23,7 +23,7 @@ pub fn execution_submit_form(
 
     // Initialize form state with default values
     let form_data_handle = use_state(|| FormData {
-        param_refs: std::iter::repeat_with(|| NodeRef::default())
+        param_refs: std::iter::repeat_with(NodeRef::default)
             .take(function_detail.params.len())
             .collect(),
         request_processing: false,
