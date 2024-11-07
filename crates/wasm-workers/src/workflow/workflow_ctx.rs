@@ -84,6 +84,7 @@ impl From<ApplyError> for WorkflowFunctionError {
 
 pub(crate) struct WorkflowCtx<C: ClockFn, DB: DbConnection, P: DbPool<DB>> {
     execution_id: ExecutionId,
+    next_child_execution_id: ExecutionId,
     event_history: EventHistory<C>,
     rng: StdRng,
     pub(crate) clock_fn: C,
@@ -115,6 +116,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
     ) -> Self {
         Self {
             execution_id: execution_id.clone(),
+            next_child_execution_id: execution_id.next_level(),
             event_history: EventHistory::new(
                 execution_id,
                 event_history,
@@ -136,6 +138,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
             resource_table: wasmtime::component::ResourceTable::default(),
             phantom_data: PhantomData,
         }
+    }
+
+    fn get_and_increment_child_id(&mut self) -> ExecutionId {
+        let mut incremented = self.next_child_execution_id.increment();
+        std::mem::swap(&mut self.next_child_execution_id, &mut incremented);
+        incremented
     }
 
     pub(crate) async fn flush(&mut self) -> Result<(), DbError> {
@@ -263,13 +271,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                 let join_set_id = join_set_id.ok_or(WorkflowFunctionError::UncategorizedError(
                     "error running `-submit` extension function: cannot get join-set-id",
                 ))?;
-                let execution_id =
-                    ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+                let child_execution_id = self.get_and_increment_child_id();
                 Ok(EventCall::StartAsync {
                     ffqn,
                     join_set_id,
                     params: Params::from_wasmtime(Arc::from(params)),
-                    child_execution_id: execution_id,
+                    child_execution_id,
                 })
             } else if let Some(function_name) =
                 ffqn.function_name.strip_suffix(SUFFIX_FN_AWAIT_NEXT)
@@ -308,6 +315,8 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
                             ));
                     }
                 };
+                // FIXME: handle execution id conflict: This does not have to be deterministicly generated. Remove execution_id from EventCall::ScheduleRequest
+                // and add retries.
                 let execution_id =
                     ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
                 Ok(EventCall::ScheduleRequest {
@@ -325,13 +334,12 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WorkflowCtx<C, DB, P> {
         } else {
             let join_set_id =
                 JoinSetId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
-            let execution_id =
-                ExecutionId::from_parts(self.execution_id.timestamp_part(), self.next_u128());
+            let child_execution_id = self.get_and_increment_child_id();
             Ok(EventCall::BlockingChildDirectCall {
                 ffqn,
                 join_set_id,
                 params: Params::from_wasmtime(Arc::from(params)),
-                child_execution_id: execution_id,
+                child_execution_id,
             })
         }
     }

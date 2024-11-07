@@ -775,7 +775,7 @@ pub(crate) mod tests {
         )
         .await;
         // Create an execution.
-        let execution_id = ExecutionId::from_parts(0, 0);
+        let execution_id = ExecutionId::generate();
         let created_at = sim_clock.now();
         let db_connection = db_pool.connection();
 
