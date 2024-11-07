@@ -900,9 +900,6 @@ pub mod prefixed_ulid {
     }
 
     impl ExecutionId {
-        pub const DUMMY: ExecutionId =
-            ExecutionId(ExecutionIdInner::TopLevel(PrefixedUlid::from_parts(0, 0)));
-
         pub fn generate() -> Self {
             ExecutionId(ExecutionIdInner::TopLevel(PrefixedUlid::generate()))
         }

@@ -277,7 +277,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             interrupt_on_timeout_container,
             self.fn_registry.clone(),
             ctx.worker_span,
-            ctx.topmost_parent,
         );
         let mut store = Store::new(&self.engine, workflow_ctx);
         let instance = match self.instance_pre.instantiate_async(&mut store).await {
@@ -792,7 +791,7 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -961,7 +960,7 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -1079,7 +1078,7 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -1184,7 +1183,7 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::from_millis(0),
                 max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -1262,7 +1261,7 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -1386,7 +1385,7 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: u32::MAX,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();

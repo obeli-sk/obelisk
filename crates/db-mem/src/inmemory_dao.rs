@@ -506,7 +506,6 @@ impl DbHolder {
                 run_id: RunId::generate(),
                 parent: journal.parent(),
                 intermittent_event_count: journal.intermittent_event_count(),
-                topmost_parent: journal.topmost_parent(),
             };
             payload.push(item);
         }

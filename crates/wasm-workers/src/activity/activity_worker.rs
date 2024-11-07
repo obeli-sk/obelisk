@@ -357,7 +357,7 @@ pub(crate) mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -421,7 +421,6 @@ pub(crate) mod tests {
                     can_be_retried: false,
                     run_id: RunId::generate(),
                     worker_span: info_span!("worker-test"),
-                    topmost_parent: execution_id.clone(),
                 };
                 tokio::spawn(async move { fibo_worker.run(ctx).await })
             })
@@ -530,7 +529,7 @@ pub(crate) mod tests {
                     retry_exp_backoff: Duration::ZERO,
                     max_retries: 0,
                     config_id: ConfigId::dummy_activity(),
-                    topmost_parent: execution_id.clone(),
+                    scheduled_by: None,
                 })
                 .await
                 .unwrap();
@@ -601,7 +600,6 @@ pub(crate) mod tests {
                 can_be_retried: false,
                 run_id: RunId::generate(),
                 worker_span: info_span!("worker-test"),
-                topmost_parent: execution_id,
             };
             let WorkerResult::Err(err) = worker.run(ctx).await else {
                 panic!()
@@ -676,7 +674,7 @@ pub(crate) mod tests {
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
                     config_id: ConfigId::dummy_activity(),
-                    topmost_parent: execution_id.clone(),
+                    scheduled_by: None,
                 })
                 .await
                 .unwrap();
@@ -784,7 +782,7 @@ pub(crate) mod tests {
                     retry_exp_backoff: RETRY_EXP_BACKOFF,
                     max_retries: 1,
                     config_id: ConfigId::dummy_activity(),
-                    topmost_parent: execution_id.clone(),
+                    scheduled_by: None,
                 })
                 .await
                 .unwrap();

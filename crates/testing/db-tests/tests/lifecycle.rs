@@ -216,7 +216,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: config_id.clone(),
-            topmost_parent: execution_id.clone(),
+            scheduled_by: None,
         })
         .await
         .unwrap();
@@ -234,7 +234,7 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: execution_id.clone(),
+            scheduled_by: None,
         })
         .await
         .unwrap_err();
@@ -501,7 +501,7 @@ pub async fn expired_lock_should_be_found(db_connection: &impl DbConnection, sim
                 retry_exp_backoff: RETRY_EXP_BACKOFF,
                 max_retries: MAX_RETRIES,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -573,7 +573,7 @@ pub async fn append_batch_respond_to_parent(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: parent_id.clone(),
+            scheduled_by: None,
         })
         .await
         .unwrap();
@@ -615,7 +615,7 @@ pub async fn append_batch_respond_to_parent(
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: parent_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -686,7 +686,7 @@ pub async fn append_batch_respond_to_parent(
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: parent_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -784,7 +784,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: older_id.clone(),
+            scheduled_by: None,
         })
         .await
         .unwrap();
@@ -803,7 +803,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: newer_id.clone(),
+            scheduled_by: None,
         })
         .await
         .unwrap();
@@ -822,7 +822,7 @@ pub async fn lock_pending_should_sort_by_scheduled_at(
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: newest_id.clone(),
+            scheduled_by: None,
         })
         .await
         .unwrap();
@@ -862,7 +862,7 @@ pub async fn lock(db_connection: &impl DbConnection, sim_clock: SimClock) {
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: execution_id.clone(),
+            scheduled_by: None,
         })
         .await
         .unwrap();
@@ -917,7 +917,7 @@ pub async fn get_expired_lock(db_connection: &impl DbConnection, sim_clock: SimC
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: execution_id.clone(),
+            scheduled_by: None,
         })
         .await
         .unwrap();
@@ -976,7 +976,7 @@ pub async fn get_expired_delay(db_connection: &impl DbConnection, sim_clock: Sim
             retry_exp_backoff: Duration::ZERO,
             max_retries: 0,
             config_id: ConfigId::dummy_activity(),
-            topmost_parent: execution_id.clone(),
+            scheduled_by: None,
         })
         .await
         .unwrap();

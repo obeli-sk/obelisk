@@ -384,7 +384,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
             max_retries: 0,
             retry_exp_backoff: Duration::ZERO,
             config_id: self.config_id.clone(),
-            topmost_parent: self.execution_id.clone(),
+            scheduled_by: None,
         };
         let conn = self.db_pool.connection();
         let version = conn.create(create_request).await?;
@@ -475,7 +475,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     max_retries: import_retry_config.max_retries,
                     retry_exp_backoff: import_retry_config.retry_exp_backoff,
                     config_id,
-                    topmost_parent: self.execution_id.clone(),
+                    scheduled_by: Some(self.execution_id.clone()),
                 };
                 let db_connection = self.db_pool.connection();
                 let version = db_connection
@@ -528,7 +528,7 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 max_retries: import_retry_config.max_retries,
                 retry_exp_backoff: import_retry_config.retry_exp_backoff,
                 config_id,
-                topmost_parent: self.execution_id.clone(),
+                scheduled_by: None,
             };
             let db_connection = self.db_pool.connection();
             let version = db_connection

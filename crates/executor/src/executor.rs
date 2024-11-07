@@ -289,7 +289,6 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
             can_be_retried: can_be_retried.is_some(),
             run_id: locked_execution.run_id,
             worker_span,
-            topmost_parent: locked_execution.topmost_parent,
         };
         let worker_result = worker.run(ctx).await;
         trace!(?worker_result, "Worker::run finished");
@@ -759,7 +758,7 @@ mod tests {
                 retry_exp_backoff: config.retry_exp_backoff,
                 max_retries: config.max_retries,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: config.execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -988,7 +987,7 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: parent_execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -1022,7 +1021,7 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: parent_execution_id.clone(),
+                scheduled_by: None,
             };
             let join_set = ExecutionEventInner::HistoryEvent {
                 event: HistoryEvent::JoinSet { join_set_id },
@@ -1196,7 +1195,7 @@ mod tests {
                 retry_exp_backoff: timeout_duration,
                 max_retries: 1,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();

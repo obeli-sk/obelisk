@@ -31,7 +31,7 @@ async fn diff_proptest() {
         retry_exp_backoff: Duration::ZERO,
         max_retries: 0,
         config_id: ConfigId::dummy_activity(),
-        topmost_parent: execution_id.clone(),
+        scheduled_by: None,
     };
     let mut append_requests = vec![];
     while append_requests.is_empty() {

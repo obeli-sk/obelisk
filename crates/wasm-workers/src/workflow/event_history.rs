@@ -90,7 +90,6 @@ pub(crate) struct EventHistory<C: ClockFn> {
     non_blocking_event_batch: Option<Vec<NonBlockingCache>>,
     clock_fn: C,
     interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
-    topmost_parent: ExecutionId,
     worker_span: Span,
     // TODO: optimize using start_from_idx: usize,
 }
@@ -116,7 +115,6 @@ impl<C: ClockFn> EventHistory<C> {
         clock_fn: C,
         interrupt_on_timeout_container: Arc<std::sync::Mutex<Option<InterruptRequested>>>,
         worker_span: Span,
-        topmost_parent: ExecutionId,
     ) -> Self {
         let non_blocking_event_batch_size = non_blocking_event_batching as usize;
         EventHistory {
@@ -140,7 +138,6 @@ impl<C: ClockFn> EventHistory<C> {
             clock_fn,
             interrupt_on_timeout_container,
             worker_span,
-            topmost_parent,
         }
     }
 
@@ -726,7 +723,7 @@ impl<C: ClockFn> EventHistory<C> {
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
                     config_id,
-                    topmost_parent: self.topmost_parent.clone(),
+                    scheduled_by: None,
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
@@ -788,7 +785,7 @@ impl<C: ClockFn> EventHistory<C> {
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
                     config_id,
-                    topmost_parent: self.topmost_parent.clone(),
+                    scheduled_by: Some(self.execution_id.clone()),
                 };
                 *version =
                     if let Some(non_blocking_event_batch) = &mut self.non_blocking_event_batch {
@@ -887,7 +884,7 @@ impl<C: ClockFn> EventHistory<C> {
                     retry_exp_backoff: resolved_retry_config.retry_exp_backoff,
                     max_retries: resolved_retry_config.max_retries,
                     config_id,
-                    topmost_parent: self.topmost_parent.clone(),
+                    scheduled_by: None,
                 };
                 *version = db_connection
                     .append_batch_create_new_execution(
@@ -1183,7 +1180,6 @@ mod tests {
             clock_fn,
             Arc::new(std::sync::Mutex::new(None)),
             info_span!("worker-test"),
-            execution_id,
         );
         (event_history, exec_log.next_version)
     }
@@ -1216,7 +1212,7 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -1385,7 +1381,7 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();
@@ -1574,7 +1570,7 @@ mod tests {
                 retry_exp_backoff: Duration::ZERO,
                 max_retries: 0,
                 config_id: ConfigId::dummy_activity(),
-                topmost_parent: execution_id.clone(),
+                scheduled_by: None,
             })
             .await
             .unwrap();

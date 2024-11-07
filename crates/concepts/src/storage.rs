@@ -213,7 +213,7 @@ pub const DUMMY_CREATED: ExecutionEventInner = ExecutionEventInner::Created {
     max_retries: 0,
     config_id: ConfigId::dummy_activity(),
     metadata: ExecutionMetadata::empty(),
-    topmost_parent: ExecutionId::DUMMY,
+    scheduled_by: None,
 };
 pub const DUMMY_HISTORY_EVENT: ExecutionEventInner = ExecutionEventInner::HistoryEvent {
     event: HistoryEvent::JoinSet {
@@ -259,7 +259,7 @@ pub enum ExecutionEventInner {
         config_id: ConfigId,
         #[arbitrary(default)]
         metadata: ExecutionMetadata,
-        topmost_parent: ExecutionId,
+        scheduled_by: Option<ExecutionId>,
     },
     // Created by an executor.
     // Either immediately followed by an execution request by an executor or
@@ -531,7 +531,6 @@ pub struct LockedExecution {
     pub max_retries: u32,
     pub parent: Option<(ExecutionId, JoinSetId)>,
     pub intermittent_event_count: u32,
-    pub topmost_parent: ExecutionId,
 }
 
 pub type LockPendingResponse = Vec<LockedExecution>;
@@ -556,7 +555,7 @@ pub struct CreateRequest {
     pub max_retries: u32,
     pub config_id: ConfigId,
     pub metadata: ExecutionMetadata,
-    pub topmost_parent: ExecutionId,
+    pub scheduled_by: Option<ExecutionId>,
 }
 
 impl From<CreateRequest> for ExecutionEventInner {
@@ -570,7 +569,7 @@ impl From<CreateRequest> for ExecutionEventInner {
             max_retries: value.max_retries,
             config_id: value.config_id,
             metadata: value.metadata,
-            topmost_parent: value.topmost_parent,
+            scheduled_by: value.scheduled_by,
         }
     }
 }
@@ -687,7 +686,7 @@ pub trait DbConnection: Send + Sync {
             max_retries,
             config_id,
             metadata,
-            topmost_parent,
+            scheduled_by,
         } = execution_event.event
         {
             Ok(CreateRequest {
@@ -701,7 +700,7 @@ pub trait DbConnection: Send + Sync {
                 max_retries,
                 config_id,
                 metadata,
-                topmost_parent,
+                scheduled_by,
             })
         } else {
             error!(%execution_id, "Execution log must start with creation");
