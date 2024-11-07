@@ -1947,10 +1947,7 @@ impl DbConnection for SqlitePool {
         // Disallow `Created` event
         let created_at = req.created_at;
         if let ExecutionEventInner::Created { .. } = req.event {
-            error!("Cannot append `Created` event - use `create` instead");
-            return Err(DbError::Specific(SpecificError::ValidationFailed(
-                StrVariant::Static("Cannot append `Created` event - use `create` instead"),
-            )));
+            panic!("Cannot append `Created` event - use `create` instead");
         }
         let (version, pending_at) = self
             .transaction_write(move |tx| Self::append(tx, &execution_id, &req, version))
@@ -1973,19 +1970,13 @@ impl DbConnection for SqlitePool {
         debug!("append_batch");
         trace!(?batch, "append_batch");
         if batch.is_empty() {
-            error!("Empty batch request");
-            return Err(DbError::Specific(SpecificError::ValidationFailed(
-                StrVariant::Static("empty batch request"),
-            )));
+            panic!("Empty batch request");
         }
         if batch
             .iter()
             .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
         {
-            error!("Cannot append `Created` event - use `create` instead");
-            return Err(DbError::Specific(SpecificError::ValidationFailed(
-                StrVariant::Static("Cannot append `Created` event - use `create` instead"),
-            )));
+            panic!("Cannot append `Created` event - use `create` instead");
         }
         let (version, pending_at) = self
             .transaction_write(move |tx| {
@@ -2021,19 +2012,13 @@ impl DbConnection for SqlitePool {
         debug!("append_batch_create_new_execution");
         trace!(?batch, ?child_req, "append_batch_create_new_execution");
         if batch.is_empty() {
-            error!("Empty batch request");
-            return Err(DbError::Specific(SpecificError::ValidationFailed(
-                StrVariant::Static("empty batch request"),
-            )));
+            panic!("Empty batch request");
         }
         if batch
             .iter()
             .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
         {
-            error!("Cannot append `Created` event - use `create` instead");
-            return Err(DbError::Specific(SpecificError::ValidationFailed(
-                StrVariant::Static("Cannot append `Created` event - use `create` instead"),
-            )));
+            panic!("Cannot append `Created` event - use `create` instead");
         }
 
         #[instrument(level = Level::TRACE, skip_all)]
@@ -2096,7 +2081,8 @@ impl DbConnection for SqlitePool {
     ) -> Result<AppendBatchResponse, DbError> {
         debug!("append_batch_respond_to_parent");
         if execution_id == parent_execution_id {
-            // Pending state would be wrong
+            // Pending state would be wrong.
+            // This is not a panic because it depends on DB state.
             return Err(DbError::Specific(SpecificError::ValidationFailed(
                 StrVariant::Static(
                     "Parameters `execution_id` and `parent_execution_id` cannot be the same",
@@ -2109,19 +2095,13 @@ impl DbConnection for SqlitePool {
             "append_batch_respond_to_parent"
         );
         if batch.is_empty() {
-            error!("Empty batch request");
-            return Err(DbError::Specific(SpecificError::ValidationFailed(
-                StrVariant::Static("empty batch request"),
-            )));
+            panic!("Empty batch request");
         }
         if batch
             .iter()
             .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
         {
-            error!("Cannot append `Created` event - use `create` instead");
-            return Err(DbError::Specific(SpecificError::ValidationFailed(
-                StrVariant::Static("Cannot append `Created` event - use `create` instead"),
-            )));
+            panic!("Cannot append `Created` event - use `create` instead");
         }
         let response_subscribers = self.response_subscribers.clone();
         let event = JoinSetResponseEventOuter {
