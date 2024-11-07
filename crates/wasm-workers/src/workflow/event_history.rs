@@ -638,7 +638,7 @@ impl<C: ClockFn> EventHistory<C> {
                         created_at,
                         batches,
                         self.execution_id.clone(),
-                        first_version.unwrap(),
+                        first_version.expect("checked that !non_blocking_event_batch.is_empty()"),
                         childs,
                     )
                     .await?;
