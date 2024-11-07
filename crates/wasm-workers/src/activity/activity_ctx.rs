@@ -37,7 +37,7 @@ impl WasiHttpView for ActivityCtx {
 #[must_use]
 pub fn store(
     engine: &Engine,
-    execution_id: ExecutionId,
+    execution_id: &ExecutionId,
     config: &ActivityConfig,
     worker_span: Span,
 ) -> Store<ActivityCtx> {

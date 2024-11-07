@@ -900,6 +900,7 @@ pub mod prefixed_ulid {
     }
 
     impl ExecutionId {
+        #[must_use]
         pub fn generate() -> Self {
             ExecutionId(ExecutionIdInner::TopLevel(PrefixedUlid::generate()))
         }
@@ -911,14 +912,17 @@ pub mod prefixed_ulid {
             }
         }
 
+        #[must_use]
         pub fn timestamp_part(&self) -> u64 {
             self.get_top_level().timestamp_part()
         }
 
+        #[must_use]
         pub fn random_part(&self) -> u64 {
             self.get_top_level().random_part()
         }
 
+        #[must_use]
         pub fn from_parts(timestamp_ms: u64, random_part: u128) -> Self {
             ExecutionId(ExecutionIdInner::TopLevel(TopLevelExecutionId::from_parts(
                 timestamp_ms,
@@ -926,6 +930,7 @@ pub mod prefixed_ulid {
             )))
         }
 
+        #[must_use]
         pub fn increment(&self) -> Self {
             match &self.0 {
                 ExecutionIdInner::TopLevel(_) => {
@@ -940,6 +945,7 @@ pub mod prefixed_ulid {
                 }
             }
         }
+        #[must_use]
         pub fn next_level(&self) -> Self {
             match &self.0 {
                 ExecutionIdInner::TopLevel(top_level) => {
@@ -1509,7 +1515,7 @@ mod tests {
     #[should_panic(expected = "called `increment` on the top level ExecutionId")]
     fn execution_id_increment_on_top_level_should_panic() {
         let top_level = ExecutionId::generate();
-        top_level.increment();
+        let _ = top_level.increment();
     }
 
     #[test]

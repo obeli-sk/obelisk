@@ -823,7 +823,7 @@ impl SqlitePool {
         let ffqn = if let Some(ffqn) = ffqn {
             ffqn
         } else {
-            Self::fetch_created_event(tx, &execution_id)?.ffqn
+            Self::fetch_created_event(tx, execution_id)?.ffqn
         };
         match pending_state {
             PendingState::PendingAt { scheduled_at } => {
@@ -855,8 +855,8 @@ impl SqlitePool {
                     %executor_id,
                     %run_id, "Setting state `Locked({next_version}, {lock_expires_at})`"
                 );
-                let intermittent_event_count = Self::count_intermittent_events(tx, &execution_id)?;
-                let create_req = Self::fetch_created_event(tx, &execution_id)?;
+                let intermittent_event_count = Self::count_intermittent_events(tx, execution_id)?;
+                let create_req = Self::fetch_created_event(tx, execution_id)?;
                 let mut stmt = tx.prepare_cached(
                     "INSERT INTO t_state \
                     (state, execution_id, next_version, pending_expires_finished, ffqn, executor_id, run_id, intermittent_event_count, max_retries, retry_exp_backoff_millis, parent_execution_id, parent_join_set_id) \
@@ -1330,7 +1330,7 @@ impl SqlitePool {
                 tx,
                 req.created_at,
                 config_id.clone(),
-                &execution_id,
+                execution_id,
                 *run_id,
                 appending_version,
                 *executor_id,
@@ -1339,7 +1339,7 @@ impl SqlitePool {
             return Ok((locked.version, None));
         }
 
-        let combined_state = Self::get_combined_state(tx, &execution_id)?;
+        let combined_state = Self::get_combined_state(tx, execution_id)?;
         if combined_state.pending_state.is_finished() {
             debug!("Execution is already finished");
             return Err(DbError::Specific(SpecificError::ValidationFailed(
@@ -1437,9 +1437,9 @@ impl SqlitePool {
                     },
             } => {
                 // Did the response arrive already?
-                let join_next_count = Self::count_join_next(tx, &execution_id, *join_set_id)?;
+                let join_next_count = Self::count_join_next(tx, execution_id, *join_set_id)?;
                 let nth_response =
-                    Self::nth_response(tx, &execution_id, *join_set_id, join_next_count - 1)?; // Skip n-1 rows
+                    Self::nth_response(tx, execution_id, *join_set_id, join_next_count - 1)?; // Skip n-1 rows
                 trace!("join_next_count: {join_next_count}, nth_response: {nth_response:?}");
                 assert!(join_next_count > 0);
                 if let Some(JoinSetResponseEventOuter {
@@ -1480,7 +1480,7 @@ impl SqlitePool {
 
                 Self::update_state(
                     tx,
-                    &execution_id,
+                    execution_id,
                     pending_state,
                     Some(&expected_current_version),
                     &next_version,
@@ -1498,7 +1498,7 @@ impl SqlitePool {
 
     fn append_response(
         tx: &Transaction,
-        execution_id: ExecutionId,
+        execution_id: &ExecutionId,
         req: &JoinSetResponseEventOuter,
         response_subscribers: &ResponseSubscribers,
     ) -> Result<
@@ -1530,7 +1530,7 @@ impl SqlitePool {
         .map_err(convert_err)?;
 
         // if the execution is going to be unblocked by this response...
-        let previous_pending_state = Self::get_combined_state(tx, &execution_id)?.pending_state;
+        let previous_pending_state = Self::get_combined_state(tx, execution_id)?.pending_state;
         let pendnig_at = match previous_pending_state {
             PendingState::BlockedByJoinSet {
                 join_set_id: found_join_set_id,
@@ -1541,10 +1541,10 @@ impl SqlitePool {
                 let pending_state = PendingState::PendingAt {
                     scheduled_at: lock_expires_at, // TODO: test this
                 };
-                let next_version = Self::get_next_version(tx, &execution_id)?;
+                let next_version = Self::get_next_version(tx, execution_id)?;
                 Self::update_state(
                     tx,
-                    &execution_id,
+                    execution_id,
                     pending_state,
                     Some(&next_version), // not changing the version
                     &next_version,
@@ -1570,7 +1570,7 @@ impl SqlitePool {
             .map_err(convert_err)?;
         }
         Ok((
-            response_subscribers.lock().unwrap().remove(&execution_id),
+            response_subscribers.lock().unwrap().remove(execution_id),
             pendnig_at,
         ))
     }
@@ -1967,9 +1967,7 @@ impl DbConnection for SqlitePool {
     ) -> Result<AppendBatchResponse, DbError> {
         debug!("append_batch");
         trace!(?batch, "append_batch");
-        if batch.is_empty() {
-            panic!("Empty batch request");
-        }
+        assert!(!batch.is_empty(), "Empty batch request");
         if batch
             .iter()
             .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
@@ -2009,9 +2007,7 @@ impl DbConnection for SqlitePool {
     ) -> Result<AppendBatchResponse, DbError> {
         debug!("append_batch_create_new_execution");
         trace!(?batch, ?child_req, "append_batch_create_new_execution");
-        if batch.is_empty() {
-            panic!("Empty batch request");
-        }
+        assert!(!batch.is_empty(), "Empty batch request");
         if batch
             .iter()
             .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
@@ -2032,7 +2028,7 @@ impl DbConnection for SqlitePool {
             for event in batch {
                 (version, pending_at) = SqlitePool::append(
                     tx,
-                    &execution_id,
+                    execution_id,
                     &AppendRequest { created_at, event },
                     version,
                 )?;
@@ -2092,9 +2088,7 @@ impl DbConnection for SqlitePool {
             ?parent_response_event,
             "append_batch_respond_to_parent"
         );
-        if batch.is_empty() {
-            panic!("Empty batch request");
-        }
+        assert!(!batch.is_empty(), "Empty batch request");
         if batch
             .iter()
             .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
@@ -2121,7 +2115,7 @@ impl DbConnection for SqlitePool {
                 }
 
                 let (response_subscriber, pending_at_parent) =
-                    Self::append_response(tx, parent_execution_id, &event, &response_subscribers)?;
+                    Self::append_response(tx, &parent_execution_id, &event, &response_subscribers)?;
                 Ok((
                     version,
                     response_subscriber,
@@ -2203,7 +2197,7 @@ impl DbConnection for SqlitePool {
         let (response_subscriber, pending_at) = {
             let event = event.clone();
             self.transaction_write(move |tx| {
-                Self::append_response(tx, execution_id, &event, &response_subscribers)
+                Self::append_response(tx, &execution_id, &event, &response_subscribers)
             })
             .await
             .map_err(DbError::from)?

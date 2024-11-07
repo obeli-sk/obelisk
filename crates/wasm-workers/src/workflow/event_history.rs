@@ -570,7 +570,7 @@ impl<C: ClockFn> EventHistory<C> {
                 trace!(%execution_id, "Matched Schedule");
                 // return execution id
                 Ok(Some(ChildReturnValue::WastVal(execution_id_into_wast_val(
-                    &execution_id,
+                    execution_id,
                 ))))
             }
 

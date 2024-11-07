@@ -241,7 +241,7 @@ pub const DUMMY_INTERMITTENT_FAILURE: ExecutionEventInner =
     Deserialize,
     IntoStaticStr,
 )]
-// TODO: Rename to ExecutionEvent
+#[allow(clippy::large_enum_variant)]
 pub enum ExecutionEventInner {
     /// Created by an external system or a scheduler when requesting a child execution or
     /// an executor when continuing as new `FinishedExecutionError`::`ContinueAsNew`,`CancelledWithNew` .

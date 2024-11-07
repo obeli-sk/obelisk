@@ -106,7 +106,7 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
         assert!(ctx.event_history.is_empty());
         let mut store = activity_ctx::store(
             &self.engine,
-            ctx.execution_id,
+            &ctx.execution_id,
             &self.config,
             ctx.worker_span.clone(),
         );
@@ -583,7 +583,6 @@ pub(crate) mod tests {
             );
 
             let executed_at = Now.now();
-            let execution_id = ExecutionId::generate();
             let ctx = WorkerContext {
                 execution_id: ExecutionId::generate(),
                 metadata: concepts::ExecutionMetadata::empty(),
