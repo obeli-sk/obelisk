@@ -344,8 +344,8 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let pagination =
             request
                 .pagination
-                .unwrap_or(grpc::list_executions_request::Pagination::Last(
-                    grpc::list_executions_request::Last { last: 20 },
+                .unwrap_or(grpc::list_executions_request::Pagination::Latest(
+                    grpc::list_executions_request::Latest { latest: 20 },
                 ));
         let pagination = Pagination::try_from(pagination)?;
         let conn = self.db_pool.connection();

@@ -775,14 +775,14 @@ pub trait DbConnection: Send + Sync {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Pagination<T> {
-    FirstAfter {
-        first: u32,
-        after: Option<T>,
+    NewerThan {
+        next: u32,
+        cursor: Option<T>,
         including_cursor: bool,
     },
-    LastBefore {
-        last: u32,
-        before: Option<T>,
+    OlderThan {
+        previous: u32,
+        cursor: Option<T>,
         including_cursor: bool,
     },
 }

@@ -221,54 +221,54 @@ impl TryFrom<grpc::list_executions_request::Pagination> for Pagination<Execution
     type Error = tonic::Status;
     fn try_from(value: grpc::list_executions_request::Pagination) -> Result<Self, Self::Error> {
         Ok(match value {
-            grpc::list_executions_request::Pagination::LastBefore(
-                grpc::list_executions_request::LastBefore {
-                    last,
+            grpc::list_executions_request::Pagination::OlderThan(
+                grpc::list_executions_request::OlderThan {
+                    previous,
                     cursor: Some(cursor),
                     including_cursor,
                 },
-            ) => Pagination::LastBefore {
-                last,
-                before: Some(ExecutionId::try_from(cursor)?),
+            ) => Pagination::OlderThan {
+                previous,
+                cursor: Some(ExecutionId::try_from(cursor)?),
                 including_cursor,
             },
-            grpc::list_executions_request::Pagination::Last(
-                grpc::list_executions_request::Last { last },
+            grpc::list_executions_request::Pagination::Latest(
+                grpc::list_executions_request::Latest { latest: previous },
             )
-            | grpc::list_executions_request::Pagination::LastBefore(
-                grpc::list_executions_request::LastBefore {
-                    last,
+            | grpc::list_executions_request::Pagination::OlderThan(
+                grpc::list_executions_request::OlderThan {
+                    previous,
                     cursor: None,
                     including_cursor: _,
                 },
-            ) => Pagination::LastBefore {
-                last,
-                before: None,
+            ) => Pagination::OlderThan {
+                previous,
+                cursor: None,
                 including_cursor: false,
             },
-            grpc::list_executions_request::Pagination::FirstAfter(
-                grpc::list_executions_request::FirstAfter {
-                    first,
+            grpc::list_executions_request::Pagination::NewerThan(
+                grpc::list_executions_request::NewerThan {
+                    next,
                     cursor: Some(cursor),
                     including_cursor,
                 },
-            ) => Pagination::FirstAfter {
-                first,
-                after: Some(ExecutionId::try_from(cursor)?),
+            ) => Pagination::NewerThan {
+                next,
+                cursor: Some(ExecutionId::try_from(cursor)?),
                 including_cursor,
             },
-            grpc::list_executions_request::Pagination::First(
-                grpc::list_executions_request::First { first },
+            grpc::list_executions_request::Pagination::Oldest(
+                grpc::list_executions_request::Oldest { oldest: next },
             )
-            | grpc::list_executions_request::Pagination::FirstAfter(
-                grpc::list_executions_request::FirstAfter {
-                    first,
+            | grpc::list_executions_request::Pagination::NewerThan(
+                grpc::list_executions_request::NewerThan {
+                    next,
                     cursor: None,
                     including_cursor: _,
                 },
-            ) => Pagination::FirstAfter {
-                first,
-                after: None,
+            ) => Pagination::NewerThan {
+                next,
+                cursor: None,
                 including_cursor: false,
             },
         })

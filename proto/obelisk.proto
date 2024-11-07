@@ -16,29 +16,29 @@ service FunctionRepository {
 }
 
 message ListExecutionsRequest {
-    message First {
-        uint32 first = 1;
+    message Oldest {
+        uint32 oldest = 1;
     }
-    message FirstAfter {
-        uint32 first = 1;
+    message NewerThan {
+        uint32 next = 1;
         ExecutionId cursor = 2;
         bool including_cursor = 3;
     }
-    message Last {
-        uint32 last = 1;
+    message Latest {
+        uint32 latest = 1;
     }
-    message LastBefore {
-        uint32 last = 1;
+    message OlderThan {
+        uint32 previous = 1;
         ExecutionId cursor = 2;
         bool including_cursor = 3;
     }
 
     optional FunctionName function_name = 1;
     oneof pagination {
-        First first  = 2;
-        FirstAfter first_after = 3;
-        Last last = 4;
-        LastBefore last_before = 5;
+        Oldest oldest  = 2;
+        NewerThan newer_than = 3;
+        Latest latest = 4;
+        OlderThan older_than = 5;
     }
 }
 

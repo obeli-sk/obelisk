@@ -8,7 +8,7 @@ use crate::{
         ffqn::FunctionFqn,
         grpc_client::{
             self,
-            list_executions_request::{FirstAfter, LastBefore, Pagination},
+            list_executions_request::{Latest, NewerThan, OlderThan, Pagination},
         },
     },
 };
@@ -59,19 +59,15 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                         tonic_web_wasm_client::Client::new(base_url.to_string()),
                     );
                 let (ffqn, pagination) = match filter {
-                    ExecutionFilter::All => (
-                        None,
-                        Some(Pagination::LastBefore(LastBefore {
-                            last: page_size,
-                            ..Default::default()
-                        })),
-                    ),
+                    ExecutionFilter::All => {
+                        (None, Some(Pagination::Latest(Latest { latest: page_size })))
+                    }
                     ExecutionFilter::ExecutionId { execution_id } => (
                         None,
-                        Some(Pagination::FirstAfter(FirstAfter {
-                            first: 1,
-                            including_cursor: true,
+                        Some(Pagination::NewerThan(NewerThan {
                             cursor: Some(execution_id.clone()),
+                            next: 1,
+                            including_cursor: true,
                         })),
                     ),
                     ExecutionFilter::Ffqn { ffqn } => (Some(ffqn), None),
@@ -80,9 +76,9 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                         including_cursor,
                     } => (
                         None,
-                        Some(Pagination::LastBefore(LastBefore {
-                            last: page_size,
+                        Some(Pagination::OlderThan(OlderThan {
                             cursor: Some(execution_id.clone()),
+                            previous: page_size,
                             including_cursor,
                         })),
                     ),
@@ -91,9 +87,9 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                         including_cursor,
                     } => (
                         None,
-                        Some(Pagination::FirstAfter(FirstAfter {
-                            first: page_size,
+                        Some(Pagination::NewerThan(NewerThan {
                             cursor: Some(execution_id.clone()),
+                            next: page_size,
                             including_cursor,
                         })),
                     ),

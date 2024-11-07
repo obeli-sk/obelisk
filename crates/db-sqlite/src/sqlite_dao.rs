@@ -1025,14 +1025,14 @@ impl SqlitePool {
             params.push((":ffqn", &ffqn_string));
         }
         match pagination {
-            Pagination::FirstAfter {
-                first,
-                after: None,
+            Pagination::NewerThan {
+                next: first,
+                cursor: None,
                 including_cursor: _,
             } => limit = first,
-            Pagination::FirstAfter {
-                first,
-                after: Some(after),
+            Pagination::NewerThan {
+                next: first,
+                cursor: Some(after),
                 including_cursor,
             } => {
                 limit = first;
@@ -1043,17 +1043,17 @@ impl SqlitePool {
                 ));
                 params.push((":execution_id", &execution_id_string));
             }
-            Pagination::LastBefore {
-                last,
-                before: None,
+            Pagination::OlderThan {
+                previous: last,
+                cursor: None,
                 including_cursor: _,
             } => {
                 limit_desc = true;
                 limit = last;
             }
-            Pagination::LastBefore {
-                last,
-                before: Some(before),
+            Pagination::OlderThan {
+                previous: last,
+                cursor: Some(before),
                 including_cursor,
             } => {
                 limit_desc = true;
