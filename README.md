@@ -43,9 +43,10 @@ Please exercise caution if attempting to use it for production.
     * Mounted as a URL path, serving HTTP traffic.
     * Able to spawn child workflows or activities.
 
-* Work stealing executor
+* *Work stealing executor*
     * Periodically locking a batch of currently pending executions, starts/continues their execution
     * Cleaning up old hanging executions with expired locks. Executions that have the budget will be retried (planned).
+    * Concurrency control - limit on the number of workers that can run simultaneously.
 
 ## Installation
 
