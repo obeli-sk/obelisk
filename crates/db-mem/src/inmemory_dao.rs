@@ -23,8 +23,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
+use tracing::debug;
 use tracing::instrument;
-use tracing::{debug, error};
 
 pub struct InMemoryDbConnection(Arc<tokio::sync::Mutex<DbHolder>>);
 
@@ -531,7 +531,7 @@ impl DbHolder {
     fn create(&mut self, req: CreateRequest) -> Result<AppendResponse, SpecificError> {
         if self.journals.contains_key(&req.execution_id) {
             return Err(SpecificError::ValidationFailed(StrVariant::Static(
-                "execution is already initialized",
+                "execution already exists with the same id",
             )));
         }
         let subscription = self.ffqn_to_pending_subscription.get(&req.ffqn);
@@ -586,10 +586,7 @@ impl DbHolder {
     ) -> Result<AppendResponse, SpecificError> {
         // Disallow `Created` event
         if let ExecutionEventInner::Created { .. } = event {
-            error!("Cannot append `Created` event - use `create` instead");
-            return Err(SpecificError::ValidationFailed(StrVariant::Static(
-                "Cannot append `Created` event - use `create` instead",
-            )));
+            panic!("Cannot append `Created` event - use `create` instead");
         }
         // Check version
         let Some(journal) = self.journals.get_mut(execution_id) else {
@@ -651,19 +648,13 @@ impl DbHolder {
         mut appending_version: Version,
     ) -> Result<AppendBatchResponse, SpecificError> {
         if batch.is_empty() {
-            error!("Empty batch request");
-            return Err(SpecificError::ValidationFailed(StrVariant::Static(
-                "empty batch request",
-            )));
+            panic!("Empty batch request");
         }
         if batch
             .iter()
             .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
         {
-            error!("Cannot append `Created` event - use `create` instead");
-            return Err(SpecificError::ValidationFailed(StrVariant::Static(
-                "Cannot append `Created` event - use `create` instead",
-            )));
+            panic!("Cannot append `Created` event - use `create` instead");
         }
         let Some(journal) = self.journals.get_mut(execution_id) else {
             return Err(SpecificError::NotFound);
