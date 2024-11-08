@@ -101,7 +101,7 @@ fn log_err_if_new(res: Result<TickProgress, DbError>, old_err: &mut Option<DbErr
     }
 }
 
-#[instrument(level = Level::DEBUG, skip_all)]
+#[instrument(level = Level::TRACE, skip_all)]
 pub(crate) async fn tick<DB: DbConnection + 'static>(
     db_connection: DB,
     executed_at: DateTime<Utc>,

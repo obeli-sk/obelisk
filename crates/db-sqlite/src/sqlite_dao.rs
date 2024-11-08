@@ -36,7 +36,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
 };
-use tracing::{debug, debug_span, error, info, instrument, trace, warn, Level, Span};
+use tracing::{debug, error, info, instrument, trace, trace_span, warn, Level, Span};
 
 #[derive(Debug, Clone, Copy)]
 struct DelayReq {
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS t_join_set_response (
     PRIMARY KEY (execution_id, join_set_id, delay_id, child_execution_id)
 );
 ";
-const CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID: &str = r"
+const CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_CREATED_AT: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_created_at ON t_join_set_response (execution_id, created_at);
 ";
 
@@ -111,7 +111,6 @@ CREATE TABLE IF NOT EXISTS t_state (
     next_version INTEGER NOT NULL,
     pending_expires_finished TEXT NOT NULL,
     ffqn TEXT NOT NULL,
-
     state TEXT NOT NULL,
 
     join_set_id TEXT,
@@ -480,15 +479,23 @@ impl SqlitePool {
                     return;
                 }
                 let init_tx = init(init_tx, PRAGMA);
+                // t_execution_log
                 let init_tx = init(init_tx, CREATE_TABLE_T_EXECUTION_LOG);
+                // t_join_set_response
                 let init_tx = init(init_tx, CREATE_TABLE_T_JOIN_SET_RESPONSE);
-                let init_tx = init(init_tx, CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID);
+                let init_tx = init(
+                    init_tx,
+                    CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_CREATED_AT,
+                );
+                // t_state
                 let init_tx = init(init_tx, CREATE_TABLE_T_STATE);
                 let init_tx = init(init_tx, IDX_T_STATE_LOCK_PENDING);
                 let init_tx = init(init_tx, IDX_T_STATE_EXPIRED_TIMERS);
                 let init_tx = init(init_tx, IDX_T_STATE_EXECUTION_ID);
                 let init_tx = init(init_tx, IDX_T_STATE_FFQN);
+                // t_delay
                 let init_tx = init(init_tx, CREATE_TABLE_T_DELAY);
+
                 init_tx.send(Ok(())).expect("sending init OK must succeed");
                 let mut vec: Vec<ThreadCommand> = Vec::with_capacity(config.queue_capacity);
                 loop {
@@ -594,7 +601,7 @@ impl SqlitePool {
                     CommandPriority::Medium
                 },
                 func: Box::new(move |conn| {
-                    let res = debug_span!(parent: &parent_span, "tx_begin").in_scope(|| {
+                    let res = trace_span!(parent: &parent_span, "tx_begin").in_scope(|| {
                         conn.transaction_with_behavior(if write {
                             rusqlite::TransactionBehavior::Immediate
                         } else {
@@ -606,7 +613,7 @@ impl SqlitePool {
                         parent_span.in_scope(|| func(&mut transaction).map(|ok| (ok, transaction)))
                     });
                     let res = res.and_then(|(ok, transaction)| {
-                        debug_span!(parent: &parent_span, "tx_commit")
+                        trace_span!(parent: &parent_span, "tx_commit")
                             .in_scope(|| transaction.commit().map(|()| ok).map_err(convert_err))
                     });
                     _ = tx.send(res);
@@ -625,7 +632,7 @@ impl SqlitePool {
         T: Send + 'static + Default,
     {
         let (tx, rx) = oneshot::channel();
-        let span = tracing::debug_span!("tx_function");
+        let span = tracing::trace_span!("tx_function");
         self.command_tx
             .send(ThreadCommand::Func {
                 priority: CommandPriority::Low,
@@ -648,14 +655,13 @@ impl SqlitePool {
         let mut stmt = conn
             .prepare(
                 "SELECT created_at, json_value FROM t_execution_log WHERE \
-            execution_id = :execution_id AND (variant = :variant)",
+            execution_id = :execution_id AND version = 0",
             )
             .map_err(convert_err)?;
         let (created_at, event) = stmt
             .query_row(
                 named_params! {
                     ":execution_id": execution_id.to_string(),
-                    ":variant": DUMMY_CREATED.variant(),
                 },
                 |row| {
                     let created_at = row.get("created_at")?;

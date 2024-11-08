@@ -185,7 +185,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
         self.tick(executed_at).await
     }
 
-    #[instrument(level = Level::DEBUG, name = "executor.tick" skip_all, fields(executor_id = %self.executor_id, config_id = %self.config.config_id))]
+    #[instrument(level = Level::TRACE, name = "executor.tick" skip_all, fields(executor_id = %self.executor_id, config_id = %self.config.config_id))]
     async fn tick(&self, executed_at: DateTime<Utc>) -> Result<ExecutionProgress, ()> {
         let locked_executions = {
             let mut permits = self.acquire_task_permits();
