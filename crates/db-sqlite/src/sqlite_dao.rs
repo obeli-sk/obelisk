@@ -44,16 +44,28 @@ struct DelayReq {
     delay_id: DelayId,
     expires_at: DateTime<Utc>,
 }
+/*
+mmap_size = 128MB - Set the global memory map so all processes can share some data
+https://www.sqlite.org/pragma.html#pragma_mmap_size
+https://www.sqlite.org/mmap.html
 
+journal_size_limit = 64 MB - limit on the WAL file to prevent unlimited growth
+https://www.sqlite.org/pragma.html#pragma_journal_size_limit
+
+Inspired by https://github.com/rails/rails/pull/49349
+*/
 const PRAGMA: &str = r"
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = true;
 PRAGMA busy_timeout = 1000;
 PRAGMA cache_size = 10000;
 PRAGMA temp_store = MEMORY;
-PRAGMA mmap_size = 2147483648;
 PRAGMA page_size = 8192;
+PRAGMA mmap_size = 134217728;
+PRAGMA journal_size_limit = 67108864;
 ";
+const PRAGMA_JOURNAL_MODE: &str = "journal_mode";
+const PRAGMA_JOURNAL_MODE_WAL: &str = "wal";
 
 // TODO metadata table with current schema version, migrations
 
@@ -458,7 +470,9 @@ impl SqlitePool {
                     }
                     init_tx
                 };
-                if let Err(err) = conn.pragma_update(None, "journal_mode", "wal") {
+                if let Err(err) =
+                    conn.pragma_update(None, PRAGMA_JOURNAL_MODE, PRAGMA_JOURNAL_MODE_WAL)
+                {
                     error!("Cannot set journal_mode - {err:?}");
                     init_tx
                         .send(Err(err))
