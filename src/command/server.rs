@@ -527,6 +527,7 @@ pub(crate) async fn verify(
     Ok(())
 }
 
+#[instrument(skip_all, name = "verify")]
 async fn verify_internal(
     config: ObeliskConfig,
     clean_db: bool,
@@ -755,6 +756,7 @@ struct ServerInit {
 }
 
 impl ServerInit {
+    #[instrument(skip_all)]
     async fn spawn_executors_and_webhooks(
         mut verified: ServerVerified,
     ) -> Result<(ServerInit, ComponentConfigRegistryRO), anyhow::Error> {
