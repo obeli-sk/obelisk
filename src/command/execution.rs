@@ -81,7 +81,7 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_statu
             "BlockedByJoinSetClosing".to_string()
         }
         Status::Finished(Finished { .. }) => {
-            return; // Skip, the final result will be sent in the next messag.
+            return; // Skip, the final result will be sent in the next message, since we set `send_finished_status` to true.
         }
     };
     if *old_pending_status != new_pending_status {

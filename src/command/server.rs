@@ -20,6 +20,7 @@ use crate::grpc_util::TonicResult;
 use crate::init;
 use anyhow::bail;
 use anyhow::Context;
+use assert_matches::assert_matches;
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
@@ -203,10 +204,10 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .argument_must_exist("execution_id")?
             .try_into()?;
         tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let conn = self.db_pool.connection();
+        let current_pending_state = conn.get_pending_state(&execution_id).await.to_status()?;
         let (create_request, mut current_pending_state, grpc_pending_status) = {
-            let conn = self.db_pool.connection();
             let create_request = conn.get_create_request(&execution_id).await.to_status()?;
-            let current_pending_state = conn.get_pending_state(&execution_id).await.to_status()?;
             let grpc_pending_status = grpc::ExecutionStatus::from(current_pending_state);
             (create_request, current_pending_state, grpc_pending_status)
         };
@@ -219,10 +220,29 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             })),
         };
         if is_finished || !request.follow {
-            let output = tokio_stream::once(Ok(summary));
-            Ok(tonic::Response::new(
-                Box::pin(output) as Self::GetStatusStream
-            ))
+            let output: Self::GetStatusStream = if request.send_finished_status && is_finished {
+                let finished = assert_matches!(current_pending_state, PendingState::Finished { finished } => finished);
+                // TODO: Extract current_pending_state -> Message::FinishedStatus into a function
+                let result = conn
+                    .get_finished_result(&execution_id, finished)
+                    .await
+                    .to_status()?;
+                let finished_message = grpc::GetStatusResponse {
+                    message: Some(Message::FinishedStatus(grpc::FinishedStatus {
+                        result: to_any(
+                            result,
+                            format!("urn:obelisk:json:params:{}", create_request.ffqn),
+                        ),
+                        created_at: Some(create_request.created_at.into()),
+                        finished_at: Some(finished.finished_at.into()),
+                        result_kind: grpc::ResultKind::from(finished.result_kind).into(),
+                    })),
+                };
+                Box::pin(tokio_stream::iter([Ok(summary), Ok(finished_message)]))
+            } else {
+                Box::pin(tokio_stream::iter([Ok(summary)]))
+            };
+            Ok(tonic::Response::new(output))
         } else {
             let (tx, rx) = mpsc::channel(1);
             // send current pending status
@@ -270,6 +290,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                                             return;
                                         }
                                         // Send the last message and close the RPC.
+                                        // TODO: Extract current_pending_state -> Message::FinishedStatus into a function
                                         let result = match conn
                                             .get_finished_result(&execution_id, finished)
                                             .await
