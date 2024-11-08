@@ -2300,7 +2300,7 @@ impl DbConnection for SqlitePool {
             }
         };
         if !execution_ids_versions.is_empty() {
-            info!("Empty execution_ids_versions");
+            trace!("Empty execution_ids_versions");
             tokio::time::sleep_until(sleep_until).await;
             return;
         }
