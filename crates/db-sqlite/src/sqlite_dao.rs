@@ -85,6 +85,9 @@ CREATE TABLE IF NOT EXISTS t_execution_log (
 const CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_version  ON t_execution_log (execution_id, version);
 "; // Used in `fetch_created` and `get_execution_event`
+const CREATE_INDEX_IDX_T_EXECUTION_ID_EXECUTION_ID_VARIANT: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_variant  ON t_execution_log (execution_id, variant);
+"; // Used in `lock_inner` to filter by execution ID and variant (created or event history)
 
 /// Stores child execution return values. Append only.
 const CREATE_TABLE_T_JOIN_SET_RESPONSE: &str = r"
@@ -487,6 +490,10 @@ impl SqlitePool {
                 let init_tx = init(
                     init_tx,
                     CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION,
+                );
+                let init_tx = init(
+                    init_tx,
+                    CREATE_INDEX_IDX_T_EXECUTION_ID_EXECUTION_ID_VARIANT,
                 );
                 // t_join_set_response
                 let init_tx = init(init_tx, CREATE_TABLE_T_JOIN_SET_RESPONSE);
