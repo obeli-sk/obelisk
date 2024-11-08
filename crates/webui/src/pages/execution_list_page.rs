@@ -168,27 +168,32 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
             if let (Some(topmost_exe), Some(bottommost_exe)) = (topmost_exe, bottommost_exe) {
                 <p>
                     <Link<Route> to={Route::ExecutionListNewer { execution_id: topmost_exe }}>
-                        {format!("Newer")}
+                        {"Newer"}
                     </Link<Route>>
                 </p>
                 <p>
                     <Link<Route> to={Route::ExecutionListOlder { execution_id: bottommost_exe }}>
-                        {format!("Older")}
+                        {"Older"}
                     </Link<Route>>
                 </p>
             } else if let ExecutionFilter::Newer { execution_id, including_cursor: false } = filter {
                 <p>
                     <Link<Route> to={Route::ExecutionListOlderIncluding { execution_id: execution_id.clone() }}>
-                        {format!("Older")}
+                        {"Older"}
                     </Link<Route>>
                 </p>
             } else if let ExecutionFilter::Older { execution_id, including_cursor: false } = filter {
                 <p>
                     <Link<Route> to={Route::ExecutionListNewerIncluding { execution_id: execution_id.clone() }}>
-                        {format!("Newer")}
+                        {"Newer"}
                     </Link<Route>>
                 </p>
             }
+            <p>
+                <Link<Route> to={Route::ExecutionList}>
+                    {"Latest"}
+                </Link<Route>>
+            </p>
         </>}
     } else {
         html! {
