@@ -925,42 +925,37 @@ impl SqlitePool {
         ffqn_when_creating: Option<FunctionFqn>, // Must be provided when creating, is also used in PendingAt or fetched lazily
     ) -> Result<IndexUpdated, DbError> {
         debug!("update_index");
-        let execution_id_str = execution_id.to_string();
 
-        let expected_current_version = if let Some(expected_current_version) =
-            expected_current_version_or_create
-        {
-            expected_current_version
-        } else {
-            // Creating
-            let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
-            let ffqn = assert_matches!(ffqn_when_creating, Some(ffqn) => ffqn);
-            debug!("Creating with `Pending(`{scheduled_at:?}`)");
-            let ffqn_id =
-                Self::get_ffqn_id(tx, &ffqn)?.expect("created in create_inner before this call");
-            tx.prepare(
-                "INSERT INTO t_state (state, execution_id, next_version, pending_expires_finished, ffqn_id) \
-                VALUES (:state, :execution_id, :next_version, :pending_expires_finished, :ffqn_id)",
-            )
-            .map_err(convert_err)?
-            .execute(named_params! {
-                ":state": STATE_PENDING_AT,
-                ":execution_id": execution_id_str,
-                ":next_version": next_version.0,
-                ":pending_expires_finished": scheduled_at,
-                ":ffqn_id": ffqn_id,
-            })
-            .map_err(convert_err)?;
-            return Ok(IndexUpdated {
-                intermittent_event_count: None,
-                pending_at: Some(PendingAt { scheduled_at, ffqn }),
-            });
-        };
-
-        match pending_state {
-            PendingState::PendingAt { scheduled_at } => {
-                debug!("Setting state `Pending(`{scheduled_at:?}`)");
-                let updated = tx
+        match expected_current_version_or_create {
+            None => {
+                // Creating
+                let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
+                let ffqn = assert_matches!(ffqn_when_creating, Some(ffqn) => ffqn);
+                debug!("Creating with `Pending(`{scheduled_at:?}`)");
+                let ffqn_id = Self::get_ffqn_id(tx, &ffqn)?
+                    .expect("created in create_inner before this call");
+                tx.prepare(
+                    "INSERT INTO t_state (state, execution_id, next_version, pending_expires_finished, ffqn_id) \
+                    VALUES (:state, :execution_id, :next_version, :pending_expires_finished, :ffqn_id)",
+                )
+                .map_err(convert_err)?
+                .execute(named_params! {
+                    ":state": STATE_PENDING_AT,
+                    ":execution_id": execution_id.to_string(),
+                    ":next_version": next_version.0,
+                    ":pending_expires_finished": scheduled_at,
+                    ":ffqn_id": ffqn_id,
+                })
+                .map_err(convert_err)?;
+                Ok(IndexUpdated {
+                    intermittent_event_count: None,
+                    pending_at: Some(PendingAt { scheduled_at, ffqn }),
+                })
+            }
+            Some(expected_current_version) => match pending_state {
+                PendingState::PendingAt { scheduled_at } => {
+                    debug!("Setting state `Pending(`{scheduled_at:?}`)");
+                    let updated = tx
                     .prepare(
                         "UPDATE t_state SET \
                         state=:state, next_version = :next_version, pending_expires_finished = :pending_expires_finished, \
@@ -976,40 +971,41 @@ impl SqlitePool {
                         ":pending_expires_finished": scheduled_at,
                         ":state": STATE_PENDING_AT,
 
-                        ":execution_id": execution_id_str,
+                        ":execution_id": execution_id.to_string(),
                         ":expected_current_version": expected_current_version.0,
 
                     })
                     .map_err(convert_err)?;
-                if updated != 1 {
-                    error!(backtrace = %std::backtrace::Backtrace::capture(), "Failed updating state to {pending_state:?}");
-                    return Err(DbError::Specific(SpecificError::ConsistencyError(
-                        "updating state failed".into(),
-                    )));
+                    if updated != 1 {
+                        error!(backtrace = %std::backtrace::Backtrace::capture(), "Failed updating state to {pending_state:?}");
+                        return Err(DbError::Specific(SpecificError::ConsistencyError(
+                            "updating state failed".into(),
+                        )));
+                    }
+                    let ffqn = if let Some(ffqn) = ffqn_when_creating {
+                        ffqn
+                    } else {
+                        Self::fetch_created_event(tx, execution_id)?.ffqn
+                    };
+                    Ok(IndexUpdated {
+                        intermittent_event_count: None,
+                        pending_at: Some(PendingAt { scheduled_at, ffqn }),
+                    })
                 }
-                let ffqn = if let Some(ffqn) = ffqn_when_creating {
-                    ffqn
-                } else {
-                    Self::fetch_created_event(tx, execution_id)?.ffqn
-                };
-                Ok(IndexUpdated {
-                    intermittent_event_count: None,
-                    pending_at: Some(PendingAt { scheduled_at, ffqn }),
-                })
-            }
-            PendingState::Locked {
-                lock_expires_at,
-                executor_id,
-                run_id,
-            } => {
-                debug!(
-                    %executor_id,
-                    %run_id, "Setting state `Locked({next_version}, {lock_expires_at})`"
-                );
-                let intermittent_event_count = Self::count_intermittent_events(tx, execution_id)?;
-                let create_req = Self::fetch_created_event(tx, execution_id)?;
+                PendingState::Locked {
+                    lock_expires_at,
+                    executor_id,
+                    run_id,
+                } => {
+                    debug!(
+                        %executor_id,
+                        %run_id, "Setting state `Locked({next_version}, {lock_expires_at})`"
+                    );
+                    let intermittent_event_count =
+                        Self::count_intermittent_events(tx, execution_id)?;
+                    let create_req = Self::fetch_created_event(tx, execution_id)?;
 
-                let updated = tx
+                    let updated = tx
                     .prepare(
                         "UPDATE t_state SET \
                         state=:state, next_version = :next_version, pending_expires_finished = :pending_expires_finished, \
@@ -1034,30 +1030,30 @@ impl SqlitePool {
                         ":parent_execution_id": create_req.parent.as_ref().map(|(pid, _) | pid.to_string()),
                         ":parent_join_set_id": create_req.parent.as_ref().map(|(_, join_set_id)| join_set_id.to_string()),
 
-                        ":execution_id": execution_id_str,
+                        ":execution_id": execution_id.to_string(),
                         ":expected_current_version": expected_current_version.0,
 
                     })
                     .map_err(convert_err)?;
-                if updated != 1 {
-                    error!(backtrace = %std::backtrace::Backtrace::capture(), "Failed updating state to {pending_state:?}");
-                    return Err(DbError::Specific(SpecificError::ConsistencyError(
-                        "updating state failed".into(),
-                    )));
-                }
+                    if updated != 1 {
+                        error!(backtrace = %std::backtrace::Backtrace::capture(), "Failed updating state to {pending_state:?}");
+                        return Err(DbError::Specific(SpecificError::ConsistencyError(
+                            "updating state failed".into(),
+                        )));
+                    }
 
-                Ok(IndexUpdated {
-                    intermittent_event_count: Some(intermittent_event_count),
-                    pending_at: None,
-                })
-            }
-            PendingState::BlockedByJoinSet {
-                join_set_id,
-                lock_expires_at,
-                closing: join_set_closing,
-            } => {
-                debug!(%join_set_id, "Setting state `BlockedByJoinSet({next_version},{lock_expires_at})`");
-                let updated = tx
+                    Ok(IndexUpdated {
+                        intermittent_event_count: Some(intermittent_event_count),
+                        pending_at: None,
+                    })
+                }
+                PendingState::BlockedByJoinSet {
+                    join_set_id,
+                    lock_expires_at,
+                    closing: join_set_closing,
+                } => {
+                    debug!(%join_set_id, "Setting state `BlockedByJoinSet({next_version},{lock_expires_at})`");
+                    let updated = tx
                     .prepare(
                         "UPDATE t_state SET \
                         state=:state, next_version = :next_version, pending_expires_finished = :pending_expires_finished, \
@@ -1076,31 +1072,31 @@ impl SqlitePool {
                         ":join_set_id": join_set_id.to_string(),
                         ":join_set_closing": join_set_closing,
 
-                        ":execution_id": execution_id_str,
+                        ":execution_id": execution_id.to_string(),
                         ":expected_current_version": expected_current_version.0,
 
                     })
                     .map_err(convert_err)?;
-                if updated != 1 {
-                    error!(backtrace = %std::backtrace::Backtrace::capture(), "Failed updating state to {pending_state:?}");
-                    return Err(DbError::Specific(SpecificError::ConsistencyError(
-                        "updating state failed".into(),
-                    )));
-                }
+                    if updated != 1 {
+                        error!(backtrace = %std::backtrace::Backtrace::capture(), "Failed updating state to {pending_state:?}");
+                        return Err(DbError::Specific(SpecificError::ConsistencyError(
+                            "updating state failed".into(),
+                        )));
+                    }
 
-                Ok(IndexUpdated::default())
-            }
-            PendingState::Finished {
-                finished:
-                    PendingStateFinished {
-                        version: finished_version,
-                        finished_at,
-                        result_kind,
-                    },
-            } => {
-                debug!("Setting state `Finished`");
-                assert_eq!(finished_version, expected_current_version.0);
-                let updated = tx
+                    Ok(IndexUpdated::default())
+                }
+                PendingState::Finished {
+                    finished:
+                        PendingStateFinished {
+                            version: finished_version,
+                            finished_at,
+                            result_kind,
+                        },
+                } => {
+                    debug!("Setting state `Finished`");
+                    assert_eq!(finished_version, expected_current_version.0);
+                    let updated = tx
                     .prepare(
                         "UPDATE t_state SET \
                         state=:state, next_version = :next_version, pending_expires_finished = :pending_expires_finished, \
@@ -1118,20 +1114,21 @@ impl SqlitePool {
 
                         ":result_kind": result_kind.to_string(),
 
-                        ":execution_id": execution_id_str,
+                        ":execution_id": execution_id.to_string(),
                         ":expected_current_version": expected_current_version.0,
 
                     })
                     .map_err(convert_err)?;
-                if updated != 1 {
-                    error!(backtrace = %std::backtrace::Backtrace::capture(), "Failed updating state to {pending_state:?}");
-                    return Err(DbError::Specific(SpecificError::ConsistencyError(
-                        "updating state failed".into(),
-                    )));
-                }
+                    if updated != 1 {
+                        error!(backtrace = %std::backtrace::Backtrace::capture(), "Failed updating state to {pending_state:?}");
+                        return Err(DbError::Specific(SpecificError::ConsistencyError(
+                            "updating state failed".into(),
+                        )));
+                    }
 
-                Ok(IndexUpdated::default())
-            }
+                    Ok(IndexUpdated::default())
+                }
+            },
         }
     }
 
