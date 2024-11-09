@@ -14,6 +14,7 @@ use concepts::{
     ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
 };
 use derivative::Derivative;
+use hdrhistogram::{Counter, Histogram};
 use rusqlite::{
     named_params,
     types::{FromSql, FromSqlError},
@@ -392,6 +393,8 @@ enum ThreadCommand {
         #[derivative(Debug = "ignore")]
         func: Box<dyn FnOnce(&mut Connection) + Send>,
         priority: CommandPriority,
+        sent_at: Instant,
+        name: &'static str,
     },
     Shutdown(oneshot::Sender<()>),
 }
@@ -521,11 +524,24 @@ impl SqlitePool {
                 let init_tx = init(init_tx, IDX_T_STATE_FFQN);
                 // t_delay
                 let init_tx = init(init_tx, CREATE_TABLE_T_DELAY);
-
                 init_tx.send(Ok(())).expect("sending init OK must succeed");
+
                 let mut vec: Vec<ThreadCommand> = Vec::with_capacity(config.queue_capacity);
+                // measure how long it takes to receive the `ThreadCommand`. 1us-1s
+                let mut send_hist = Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap();
+                let mut func_histograms = hashbrown::HashMap::new();
+                let mut metric_dumping_counter = 0;
+                let print_histogram = |name, histogram: &Histogram<u32>, trailing_coma| {
+                    print!(
+                        "\"{name}\": {} {}",
+                        histogram.mean() * histogram.len().as_f64(),
+                        if trailing_coma { "," } else { "" }
+                    )
+                };
+                const METRIC_DUMPING_TRESHOLD: usize = 0; // 0 to disable histogram dumping
                 loop {
                     vec.clear();
+                    metric_dumping_counter += 1;
                     vec.push(
                         command_rx
                             .blocking_recv()
@@ -558,10 +574,23 @@ impl SqlitePool {
                                     item,
                                     ThreadCommand::Shutdown(oneshot::channel().0),
                                 );
-                                let func =
-                                    assert_matches!(item, ThreadCommand::Func{func, ..} => func);
+                                let (func, sent_at, name) = assert_matches!(item, ThreadCommand::Func{func, sent_at, name, ..} => (func, sent_at, name));
+                                let sent_at = sent_at.elapsed();
+                                let started_at = Instant::now();
                                 func(&mut conn);
+                                let started_at = started_at.elapsed();
                                 processed += 1;
+                                // update hdr metrics
+                                send_hist
+                                    .record(u64::from(sent_at.subsec_micros()))
+                                    .unwrap();
+                                func_histograms
+                                    .entry(name)
+                                    .or_insert_with(|| {
+                                        Histogram::<u32>::new_with_bounds(1, 1_000_000, 3).unwrap()
+                                    })
+                                    .record(u64::from(started_at.subsec_micros()))
+                                    .unwrap();
                             }
                         }
                         processed
@@ -571,7 +600,19 @@ impl SqlitePool {
                     if processed < config.low_prio_threshold {
                         execute(CommandPriority::Low);
                     }
-                }
+
+                    if metric_dumping_counter == METRIC_DUMPING_TRESHOLD {
+                        print!("{{");
+                        metric_dumping_counter = 0;
+                        func_histograms.iter_mut().for_each(|(name, h)| {
+                            print_histogram(*name, &h, true);
+                            h.clear();
+                        });
+                        print_histogram("send", &send_hist, false);
+                        send_hist.clear();
+                        println!("}}");
+                    }
+                } // /loop
             })
         };
         match init_rx.await {
@@ -592,26 +633,31 @@ impl SqlitePool {
         })
     }
 
-    #[instrument(level = Level::TRACE, skip_all)]
-    pub async fn transaction_write<F, T>(&self, func: F) -> Result<T, DbError>
+    #[instrument(level = Level::TRACE, skip_all, fields(name))]
+    pub async fn transaction_write<F, T>(&self, func: F, name: &'static str) -> Result<T, DbError>
     where
         F: FnOnce(&mut rusqlite::Transaction) -> Result<T, DbError> + Send + 'static,
         T: Send + 'static,
     {
-        self.transaction(func, true).await
+        self.transaction(func, true, name).await
     }
 
-    #[instrument(level = Level::TRACE, skip_all)]
-    pub async fn transaction_read<F, T>(&self, func: F) -> Result<T, DbError>
+    #[instrument(level = Level::TRACE, skip_all, fields(name))]
+    pub async fn transaction_read<F, T>(&self, func: F, name: &'static str) -> Result<T, DbError>
     where
         F: FnOnce(&mut rusqlite::Transaction) -> Result<T, DbError> + Send + 'static,
         T: Send + 'static,
     {
-        self.transaction(func, false).await
+        self.transaction(func, false, name).await
     }
 
     /// Invokes the provided function wrapping a new [`rusqlite::Transaction`] that is committed automatically.
-    async fn transaction<F, T>(&self, func: F, write: bool) -> Result<T, DbError>
+    async fn transaction<F, T>(
+        &self,
+        func: F,
+        write: bool,
+        name: &'static str,
+    ) -> Result<T, DbError>
     where
         F: FnOnce(&mut rusqlite::Transaction) -> Result<T, DbError> + Send + 'static,
         T: Send + 'static,
@@ -644,6 +690,8 @@ impl SqlitePool {
                     });
                     _ = tx.send(res);
                 }),
+                sent_at: Instant::now(),
+                name,
             })
             .await
             .map_err(|_send_err| DbError::Connection(DbConnectionError::SendError))?;
@@ -651,8 +699,8 @@ impl SqlitePool {
             .map_err(|_recv_err| DbError::Connection(DbConnectionError::RecvError))?
     }
 
-    #[instrument(level = Level::TRACE, skip_all)]
-    pub async fn conn_low_prio<F, T>(&self, func: F) -> Result<T, DbError>
+    #[instrument(level = Level::TRACE, skip_all, fields(name))]
+    pub async fn conn_low_prio<F, T>(&self, func: F, name: &'static str) -> Result<T, DbError>
     where
         F: FnOnce(&Connection) -> Result<T, DbError> + Send + 'static,
         T: Send + 'static + Default,
@@ -665,6 +713,8 @@ impl SqlitePool {
                 func: Box::new(move |conn| {
                     _ = tx.send(span.in_scope(|| func(conn)));
                 }),
+                sent_at: Instant::now(),
+                name,
             })
             .await
             .map_err(|_send_err| DbError::Connection(DbConnectionError::SendError))?;
@@ -790,8 +840,8 @@ impl SqlitePool {
         Ok(())
     }
 
-    fn get_ffqn_id(tx: &Transaction, ffqn: &FunctionFqn) -> Result<Option<usize>, DbError> {
-        tx.prepare("SELECT id FROM t_ffqn WHERE ffqn = :ffqn")
+    fn get_ffqn_id(conn: &Connection, ffqn: &FunctionFqn) -> Result<Option<usize>, DbError> {
+        conn.prepare("SELECT id FROM t_ffqn WHERE ffqn = :ffqn")
             .map_err(convert_err)?
             .query_row(
                 named_params! {
@@ -1997,7 +2047,7 @@ impl DbConnection for SqlitePool {
         trace!(?req, "create");
         let created_at = req.created_at;
         let (version, pending_at) = self
-            .transaction_write(move |tx| Self::create_inner(tx, req))
+            .transaction_write(move |tx| Self::create_inner(tx, req), "create")
             .await?;
         if let Some(pending_at) = pending_at {
             self.notify_pending(pending_at, created_at);
@@ -2018,36 +2068,40 @@ impl DbConnection for SqlitePool {
     ) -> Result<LockPendingResponse, DbError> {
         trace!("lock_pending");
         let execution_ids_versions = self
-            .conn_low_prio(move |conn| {
-                Self::get_pending(conn, batch_size, pending_at_or_sooner, &ffqns)
-            })
+            .conn_low_prio(
+                move |conn| Self::get_pending(conn, batch_size, pending_at_or_sooner, &ffqns),
+                "get_pending",
+            )
             .await?;
         if execution_ids_versions.is_empty() {
             Ok(vec![])
         } else {
             debug!("Locking {execution_ids_versions:?}");
-            self.transaction_write(move |tx| {
-                let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
-                // Append lock
-                for (execution_id, version) in execution_ids_versions {
-                    match Self::lock_inner(
-                        tx,
-                        created_at,
-                        config_id.clone(),
-                        &execution_id,
-                        RunId::generate(),
-                        version,
-                        executor_id,
-                        lock_expires_at,
-                    ) {
-                        Ok(locked) => locked_execs.push(locked),
-                        Err(err) => {
-                            warn!("Locking row {execution_id} failed - {err:?}");
+            self.transaction_write(
+                move |tx| {
+                    let mut locked_execs = Vec::with_capacity(execution_ids_versions.len());
+                    // Append lock
+                    for (execution_id, version) in execution_ids_versions {
+                        match Self::lock_inner(
+                            tx,
+                            created_at,
+                            config_id.clone(),
+                            &execution_id,
+                            RunId::generate(),
+                            version,
+                            executor_id,
+                            lock_expires_at,
+                        ) {
+                            Ok(locked) => locked_execs.push(locked),
+                            Err(err) => {
+                                warn!("Locking row {execution_id} failed - {err:?}");
+                            }
                         }
                     }
-                }
-                Ok(locked_execs)
-            })
+                    Ok(locked_execs)
+                },
+                "lock_pending",
+            )
             .await
         }
     }
@@ -2066,19 +2120,22 @@ impl DbConnection for SqlitePool {
     ) -> Result<LockResponse, DbError> {
         debug!("lock");
         let execution_id = execution_id.clone();
-        self.transaction_write(move |tx| {
-            let locked = Self::lock_inner(
-                tx,
-                created_at,
-                config_id,
-                &execution_id,
-                run_id,
-                version,
-                executor_id,
-                lock_expires_at,
-            )?;
-            Ok((locked.event_history, locked.version))
-        })
+        self.transaction_write(
+            move |tx| {
+                let locked = Self::lock_inner(
+                    tx,
+                    created_at,
+                    config_id,
+                    &execution_id,
+                    run_id,
+                    version,
+                    executor_id,
+                    lock_expires_at,
+                )?;
+                Ok((locked.event_history, locked.version))
+            },
+            "lock_inner",
+        )
         .await
         .map_err(DbError::from)
     }
@@ -2098,7 +2155,10 @@ impl DbConnection for SqlitePool {
             panic!("Cannot append `Created` event - use `create` instead");
         }
         let (version, pending_at) = self
-            .transaction_write(move |tx| Self::append(tx, &execution_id, &req, version))
+            .transaction_write(
+                move |tx| Self::append(tx, &execution_id, &req, version),
+                "append",
+            )
             .await
             .map_err(DbError::from)?;
         if let Some(pending_at) = pending_at {
@@ -2125,19 +2185,22 @@ impl DbConnection for SqlitePool {
             panic!("Cannot append `Created` event - use `create` instead");
         }
         let (version, pending_at) = self
-            .transaction_write(move |tx| {
-                let mut version = version;
-                let mut pending_at = None;
-                for event in batch {
-                    (version, pending_at) = Self::append(
-                        tx,
-                        &execution_id,
-                        &AppendRequest { created_at, event },
-                        version,
-                    )?;
-                }
-                Ok((version, pending_at))
-            })
+            .transaction_write(
+                move |tx| {
+                    let mut version = version;
+                    let mut pending_at = None;
+                    for event in batch {
+                        (version, pending_at) = Self::append(
+                            tx,
+                            &execution_id,
+                            &AppendRequest { created_at, event },
+                            version,
+                        )?;
+                    }
+                    Ok((version, pending_at))
+                },
+                "append_batch",
+            )
             .await
             .map_err(DbError::from)?;
         if let Some(pending_at) = pending_at {
@@ -2197,16 +2260,19 @@ impl DbConnection for SqlitePool {
         }
 
         let (version, pending_ats) = self
-            .transaction_write(move |tx| {
-                append_batch_create_new_execution_inner(
-                    tx,
-                    created_at,
-                    batch,
-                    &execution_id,
-                    version,
-                    child_req,
-                )
-            })
+            .transaction_write(
+                move |tx| {
+                    append_batch_create_new_execution_inner(
+                        tx,
+                        created_at,
+                        batch,
+                        &execution_id,
+                        version,
+                        child_req,
+                    )
+                },
+                "append_batch_create_new_execution_inner",
+            )
             .await
             .map_err(DbError::from)?;
         self.notify_pending_all(pending_ats.into_iter(), created_at);
@@ -2252,26 +2318,33 @@ impl DbConnection for SqlitePool {
         };
         let (version, response_subscriber, pending_ats) = {
             let event = event.clone();
-            self.transaction_write(move |tx| {
-                let mut version = version;
-                let mut pending_at_child = None;
-                for event in batch {
-                    (version, pending_at_child) = Self::append(
-                        tx,
-                        &execution_id,
-                        &AppendRequest { created_at, event },
-                        version,
-                    )?;
-                }
+            self.transaction_write(
+                move |tx| {
+                    let mut version = version;
+                    let mut pending_at_child = None;
+                    for event in batch {
+                        (version, pending_at_child) = Self::append(
+                            tx,
+                            &execution_id,
+                            &AppendRequest { created_at, event },
+                            version,
+                        )?;
+                    }
 
-                let (response_subscriber, pending_at_parent) =
-                    Self::append_response(tx, &parent_execution_id, &event, &response_subscribers)?;
-                Ok((
-                    version,
-                    response_subscriber,
-                    vec![pending_at_child, pending_at_parent],
-                ))
-            })
+                    let (response_subscriber, pending_at_parent) = Self::append_response(
+                        tx,
+                        &parent_execution_id,
+                        &event,
+                        &response_subscribers,
+                    )?;
+                    Ok((
+                        version,
+                        response_subscriber,
+                        vec![pending_at_child, pending_at_parent],
+                    ))
+                },
+                "append_batch_respond_to_parent",
+            )
             .await
             .map_err(DbError::from)?
         };
@@ -2291,7 +2364,7 @@ impl DbConnection for SqlitePool {
     ) -> Result<concepts::storage::ExecutionLog, DbError> {
         trace!("get");
         let execution_id = execution_id.clone();
-        self.transaction_read(move |tx| Self::get(tx, &execution_id))
+        self.transaction_read(move |tx| Self::get(tx, &execution_id), "get")
             .await
             .map_err(DbError::from)
     }
@@ -2306,20 +2379,23 @@ impl DbConnection for SqlitePool {
         let execution_id = execution_id.clone();
         let response_subscribers = self.response_subscribers.clone();
         let resp_or_receiver = self
-            .transaction_write(move |tx| {
-                let responses = Self::get_responses_with_offset(tx, &execution_id, start_idx)?;
-                if responses.is_empty() {
-                    // cannot race as we have the transaction write lock
-                    let (sender, receiver) = oneshot::channel();
-                    response_subscribers
-                        .lock()
-                        .unwrap()
-                        .insert(execution_id, sender);
-                    Ok(itertools::Either::Right(receiver))
-                } else {
-                    Ok(itertools::Either::Left(responses))
-                }
-            })
+            .transaction_write(
+                move |tx| {
+                    let responses = Self::get_responses_with_offset(tx, &execution_id, start_idx)?;
+                    if responses.is_empty() {
+                        // cannot race as we have the transaction write lock
+                        let (sender, receiver) = oneshot::channel();
+                        response_subscribers
+                            .lock()
+                            .unwrap()
+                            .insert(execution_id, sender);
+                        Ok(itertools::Either::Right(receiver))
+                    } else {
+                        Ok(itertools::Either::Left(responses))
+                    }
+                },
+                "subscribe_to_next_responses",
+            )
             .await
             .map_err(DbError::from)?;
         match resp_or_receiver {
@@ -2346,9 +2422,10 @@ impl DbConnection for SqlitePool {
         };
         let (response_subscriber, pending_at) = {
             let event = event.clone();
-            self.transaction_write(move |tx| {
-                Self::append_response(tx, &execution_id, &event, &response_subscribers)
-            })
+            self.transaction_write(
+                move |tx| Self::append_response(tx, &execution_id, &event, &response_subscribers),
+                "append_response",
+            )
             .await
             .map_err(DbError::from)?
         };
@@ -2413,7 +2490,7 @@ impl DbConnection for SqlitePool {
                     debug!("get_expired_timers found {expired_timers:?}");
                 }
                 Ok(expired_timers)
-            }
+            }, "get_expired_timers"
         )
         .await
         .map_err(DbError::from)
@@ -2436,10 +2513,13 @@ impl DbConnection for SqlitePool {
             }
         }
         let execution_ids_versions = match self
-            .conn_low_prio({
-                let ffqns = ffqns.clone();
-                move |conn| Self::get_pending(conn, 1, pending_at_or_sooner, ffqns.as_ref())
-            })
+            .conn_low_prio(
+                {
+                    let ffqns = ffqns.clone();
+                    move |conn| Self::get_pending(conn, 1, pending_at_or_sooner, ffqns.as_ref())
+                },
+                "subscribe_to_pending",
+            )
             .await
         {
             Ok(ok) => ok,
@@ -2493,7 +2573,7 @@ impl DbConnection for SqlitePool {
                             } else {
                                 Ok(None)
                             }
-                        })
+                        }, "wait_for_finished_result")
                         .await?
                     {
                         return Ok(execution_result);
@@ -2522,14 +2602,20 @@ impl DbConnection for SqlitePool {
     ) -> Result<ExecutionEvent, DbError> {
         let version = version.0;
         let execution_id = execution_id.clone();
-        self.transaction_read(move |tx| Self::get_execution_event(tx, &execution_id, version))
-            .await
+        self.transaction_read(
+            move |tx| Self::get_execution_event(tx, &execution_id, version),
+            "get_execution_event",
+        )
+        .await
     }
 
     async fn get_pending_state(&self, execution_id: &ExecutionId) -> Result<PendingState, DbError> {
         let execution_id = execution_id.clone();
         Ok(self
-            .transaction_read(move |tx| Self::get_combined_state(tx, &execution_id))
+            .transaction_read(
+                move |tx| Self::get_combined_state(tx, &execution_id),
+                "get_pending_state",
+            )
             .await?
             .pending_state)
     }
@@ -2540,7 +2626,10 @@ impl DbConnection for SqlitePool {
         pagination: Pagination<ExecutionId>,
     ) -> Result<Vec<(ExecutionId, FunctionFqn, PendingState)>, DbError> {
         Ok(self
-            .transaction_read(move |tx| Self::list_executions(tx, ffqn, pagination))
+            .transaction_read(
+                move |tx| Self::list_executions(tx, ffqn, pagination),
+                "list_executions",
+            )
             .await?)
     }
 }
