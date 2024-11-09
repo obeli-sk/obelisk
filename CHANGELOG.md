@@ -3,6 +3,109 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/obeli-sk/obelisk/compare/v0.6.1...v0.7.0) - 2024-11-09
+
+### Added
+
+- *(ui)* Print status with chrono formatted dates
+- Mark traps on workflows as permanent failures, allow overriding via `retry_on_trap`
+- [**breaking**] Introduce `ListExecutions` RPC
+- Add execution submit page
+- Switch component list to `<ComponentTree />`
+- Add `submittable` to `FunctionDetails` proto message
+- Implement `webui-proxy`, enable it in the TOML
+- Validate name of `http_server`
+- Add `obelisk-webui`
+- Introduce `FunctionExtension`
+- *(wit)* [**breaking**] Remove `id` function from `join-set-id`
+- Add execution id hierachy for workflows - `-submit` and direct call
+- Add execution id hierarchy to direct calls from webhook
+
+### Fixed
+
+- *(grpc)* Send the finished result when requested at all times
+- Sync `wasm-bindgen`,`wasm-bindgen-futures` with `wasm-bindgen-cli`
+- [**breaking**] Disallow zero `retry_exp_backoff` for workflows
+- Disallow submitting ext functions
+- Filter out ext fns in `ComponentConfigRegistryRO`
+- Return non-ext functions in `Worker::exported_functions`
+- Panic when `increment` is called on the top level `ExecutionId`
+- Check for multiple '.' separators when parsing FFQN
+- *(sqlite)* Rollback wrong sleep when a pending execution is found
+- Convert some `ValidationFailed` errors in sqlite to `panic!`
+- Sleep until timeout in `subscribe_to_pending` on empty pending list
+- Exclude state `BlockedByJoinSet` in sqlite's `get_pending`
+- [**breaking**] Use snake_case for `TypeWrapper` serialization
+- [**breaking**] Serialize `Enum` into string
+- [**breaking**] Serialize unit-like variants as strings
+- Serialize result variants into snake_case
+- Fix `bindgen!` macro use for v26.0
+
+### Other
+
+- Add `hdrmetrics` to sqlite
+- Bump webui
+- Improve startup traces
+- Update the readme
+- *(db)* [**breaking**] Remove `topmost_parent`, add `scheduled_by`
+- Fix a typo
+- *(gRPC)* [**breaking**] Remove `execution_id` from `SubmitRequest`
+- [**breaking**] Make `ExecutionId` hierarchical
+- *(grpc)* [**breaking**] Rename pagination messages
+- *(db)* [**breaking**] Remove `return_type` from `CreateRequest`, `t_state`
+- *(ui)* Move the dev trunk build directory to `dist-dev`
+- Increase default pagination size to 20
+- [**breaking**] Merge `Scheduler` into `ExecutionRepository` service
+- Add `send_finished_status` flag to `GetStatus`
+- Simplify return type of `get_finished_result`
+- Fix clippy issues
+- Query `ListComponents` only once, sort components,ifcs,fns
+- Bump `waki`
+- Bump `oci-client`,`oci-wasm`
+- Run `cargo upgrade`
+- Remove `tailwindcss`
+- Run `nix flake update`
+- Bump `webui` version in TOML
+- Bump `wasmtime` to v26.0
+- Use `indexmap` for grouping fns by interfaces
+- [**breaking**] Extract `ComponentType` in the protobuf schema
+- Extract webui components to their own modules
+- Add logging to `webui`
+- Add `tailwindcss`
+- Fix `wasm-bindgen` version based on flakes
+- Track binarien version in `dev-deps`
+- Add `trunk`,`wasm-bindgen` to dev-deps
+- Add `webui-builder`
+- Add `http://` prefix when starting http servers
+- Remove CORS filter
+- Remove unused `prost-build`
+- Add and enable `tonic-web`
+- Update the readme
+- Bump `flake.lock`
+- [**breaking**] Rename `max_inflight_instances` default to `unlimited`
+- [**breaking**] Drop `default_` from `max_retries`,`retry_exp_backoff`
+- Update the milestones
+- Fix `release-3-upload-artifacts.yml`
+- Fix clippy
+- Return executions in a specific order in `list_executions`
+- Use `can_be_retried_after` in `expired_timers_watcher`
+- Fix clippy
+- Fix clippy
+- Add name to `tx_begin` and `tx_commit` spans
+- *(db)* [**breaking**] Change index and query for `get_pending`
+- *(db)* [**breaking**] Add `t_ffqn`
+- *(sqlite)* Avoid looking up `ffqn` when possible in `update_state`
+- *(sqlite)* Add index on `(id,variant)` of `t_execution_log`
+- *(sqlite)* Add index on `(id,version)` of `t_execution_log`
+- Make spans usable on debug level
+- *(sqlite)* Tweak pragma settings
+- Change level for a trace message
+- *(sqlite)* [**breaking**] Add `state` column to `t_state`
+- Do not bail out `lock_pending` if a row fails to lock
+- Verify JSON representation
+- Replace an `unwrap` with `expect`
+- Fix clippy issues
+
 ## [0.6.1](https://github.com/obeli-sk/obelisk/compare/v0.6.0...v0.6.1) - 2024-10-19
 
 ### Other
