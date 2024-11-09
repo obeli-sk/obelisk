@@ -7,10 +7,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Add `hdrmetrics` to sqlite
 - *(ui)* Print status with chrono formatted dates
 - Mark traps on workflows as permanent failures, allow overriding via `retry_on_trap`
-- feat! Introduce `ListExecutions` RPC
+- [**breaking**] Introduce `ListExecutions` RPC
 - Add execution submit page
 - Switch component list to `<ComponentTree />`
 - Add `submittable` to `FunctionDetails` proto message
@@ -44,6 +43,7 @@ All notable changes to this project will be documented in this file.
 
 ### Other
 
+- Add `hdrmetrics` to sqlite
 - Bump webui
 - Improve startup traces
 - Update the readme
