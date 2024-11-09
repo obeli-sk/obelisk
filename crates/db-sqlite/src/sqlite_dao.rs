@@ -2534,8 +2534,7 @@ impl DbConnection for SqlitePool {
             }
         };
         if !execution_ids_versions.is_empty() {
-            trace!("Empty execution_ids_versions");
-            tokio::time::sleep_until(sleep_until).await;
+            trace!("Not waiting, database already contains new pending executions");
             return;
         }
         tokio::select! { // future's liveness: Dropping the loser immediately.
