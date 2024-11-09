@@ -60,11 +60,6 @@ fn get_blueprint_css() -> &'static [u8] {
 impl Guest for Component {
     fn handle(incoming_request: IncomingRequest, response_outparam: ResponseOutparam) {
         match incoming_request.path_with_query().as_deref() {
-            Some("/") => {
-                let content = get_index();
-                let content_type = "text/html";
-                write_static_response(content, content_type, response_outparam);
-            }
             Some("/webui_bg.wasm") => {
                 let content = get_webui_bg_wasm();
                 let content_type = "application/wasm";
@@ -138,16 +133,14 @@ impl Guest for Component {
                 })
             }
             _ => {
-                eprintln!("404: {:?}", incoming_request.path_with_query());
-                destination_not_found(response_outparam)
+                let content = get_index();
+                let content_type = "text/html";
+                write_static_response(content, content_type, response_outparam);
             }
         }
     }
 }
 
-fn destination_not_found(response_out: ResponseOutparam) {
-    respond(404, response_out)
-}
 fn server_error(response_out: ResponseOutparam) {
     respond(500, response_out)
 }
