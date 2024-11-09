@@ -457,6 +457,7 @@ pub struct SqliteConfig {
 }
 
 impl SqlitePool {
+    #[expect(clippy::items_after_statements)]
     #[instrument(level = Level::DEBUG, skip_all, name = "sqlite_new")]
     pub async fn new<P: AsRef<Path>>(path: P, config: SqliteConfig) -> Result<Self, DbError> {
         let path = path.as_ref().to_owned();
@@ -536,7 +537,7 @@ impl SqlitePool {
                         "\"{name}\": {} {}",
                         histogram.mean() * histogram.len().as_f64(),
                         if trailing_coma { "," } else { "" }
-                    )
+                    );
                 };
                 const METRIC_DUMPING_TRESHOLD: usize = 0; // 0 to disable histogram dumping
                 loop {
@@ -605,7 +606,7 @@ impl SqlitePool {
                         print!("{{");
                         metric_dumping_counter = 0;
                         func_histograms.iter_mut().for_each(|(name, h)| {
-                            print_histogram(*name, &h, true);
+                            print_histogram(*name, h, true);
                             h.clear();
                         });
                         print_histogram("send", &send_hist, false);
@@ -874,7 +875,7 @@ impl SqlitePool {
         debug!("create_inner");
 
         //TODO(perf): Move to initialization
-        Self::insert_ffqn(&tx, &req.ffqn)?;
+        Self::insert_ffqn(tx, &req.ffqn)?;
         let version = Version::new(0);
         let execution_id = req.execution_id.clone();
         let execution_id_str = execution_id.to_string();

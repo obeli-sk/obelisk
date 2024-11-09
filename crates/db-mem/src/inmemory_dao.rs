@@ -647,9 +647,7 @@ impl DbHolder {
         execution_id: &ExecutionId,
         mut appending_version: Version,
     ) -> Result<AppendBatchResponse, SpecificError> {
-        if batch.is_empty() {
-            panic!("Empty batch request");
-        }
+        assert!(!batch.is_empty(), "Empty batch request");
         if batch
             .iter()
             .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
