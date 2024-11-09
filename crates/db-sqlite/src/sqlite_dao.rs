@@ -673,7 +673,7 @@ impl SqlitePool {
                     CommandPriority::Medium
                 },
                 func: Box::new(move |conn| {
-                    let res = debug_span!(parent: &parent_span, "tx_begin").in_scope(|| {
+                    let res = debug_span!(parent: &parent_span, "tx_begin", name).in_scope(|| {
                         conn.transaction_with_behavior(if write {
                             rusqlite::TransactionBehavior::Immediate
                         } else {
@@ -685,7 +685,7 @@ impl SqlitePool {
                         parent_span.in_scope(|| func(&mut transaction).map(|ok| (ok, transaction)))
                     });
                     let res = res.and_then(|(ok, transaction)| {
-                        debug_span!(parent: &parent_span, "tx_commit")
+                        debug_span!(parent: &parent_span, "tx_commit", name)
                             .in_scope(|| transaction.commit().map(|()| ok).map_err(convert_err))
                     });
                     _ = tx.send(res);
