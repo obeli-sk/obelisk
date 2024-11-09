@@ -151,7 +151,7 @@ const STATE_LOCKED: &str = "Locked";
 const STATE_FINISHED: &str = "Finished";
 
 const IDX_T_STATE_LOCK_PENDING: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (ffqn_id, pending_expires_finished);
+CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (state, pending_expires_finished, ffqn_id);
 ";
 const IDX_T_STATE_EXPIRED_TIMERS: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_expired_timers ON t_state (pending_expires_finished) WHERE executor_id IS NOT NULL;
@@ -1957,11 +1957,15 @@ impl SqlitePool {
 
         for ffqn in ffqns {
             // Select executions in PendingAt or Locked after expiry.
+            let Some(ffqn_id) = Self::get_ffqn_id(conn, ffqn)? else {
+                // no execution was created yet for this ffqn
+                continue;
+            };
             let mut stmt = conn
                 .prepare(&format!(
-                    "SELECT execution_id, next_version FROM t_state INNER JOIN t_ffqn ON t_state.ffqn_id = t_ffqn.id WHERE \
+                    "SELECT execution_id, next_version FROM t_state WHERE \
                             (state = \"{STATE_PENDING_AT}\" OR state = \"{STATE_LOCKED}\") AND \
-                            pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn \
+                            pending_expires_finished <= :pending_expires_finished AND ffqn_id = :ffqn_id \
                             ORDER BY pending_expires_finished LIMIT :batch_size"
                 ))
                 .map_err(convert_err)?;
@@ -1969,7 +1973,7 @@ impl SqlitePool {
                 .query_map(
                     named_params! {
                         ":pending_expires_finished": pending_at_or_sooner,
-                        ":ffqn": ffqn.to_string(),
+                        ":ffqn_id": ffqn_id,
                         ":batch_size": batch_size - execution_ids_versions.len(),
                     },
                     |row| {
