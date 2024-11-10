@@ -534,9 +534,11 @@ impl SqlitePool {
                 let mut metric_dumping_counter = 0;
                 let print_histogram = |name, histogram: &Histogram<u32>, trailing_coma| {
                     print!(
-                        "\"{name}\": {} {}",
-                        histogram.mean() * histogram.len().as_f64(),
-                        if trailing_coma { "," } else { "" }
+                        "\"{name}\": {mean}, \"{name}_len\": {len}, \"{name}_meanlen\": {meanlen} {coma}",
+                        mean = histogram.mean(),
+                        len = histogram.len(),
+                        meanlen = histogram.mean() * histogram.len().as_f64(),
+                        coma = if trailing_coma { "," } else { "" }
                     );
                 };
                 const METRIC_DUMPING_TRESHOLD: usize = 0; // 0 to disable histogram dumping
