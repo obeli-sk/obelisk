@@ -70,14 +70,6 @@ const PRAGMA_JOURNAL_MODE_WAL: &str = "wal";
 
 // TODO metadata table with current schema version, migrations
 
-// Assigns internal IDs for ffqns for normalization and performance reasons. Currently the CreateEvent still holds the ffqn string.
-const CREATE_TABLE_T_FFQN: &str = r"
-CREATE TABLE IF NOT EXISTS t_ffqn (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ffqn TEXT NOT NULL UNIQUE
-)
-";
-
 /// Stores execution history. Append only.
 const CREATE_TABLE_T_EXECUTION_LOG: &str = r"
 CREATE TABLE IF NOT EXISTS t_execution_log (
@@ -125,7 +117,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     execution_id TEXT NOT NULL,
     next_version INTEGER NOT NULL,
     pending_expires_finished TEXT NOT NULL,
-    ffqn_id INTEGER NOT NULL,
+    ffqn TEXT NOT NULL,
     state TEXT NOT NULL,
 
     join_set_id TEXT,
@@ -141,8 +133,7 @@ CREATE TABLE IF NOT EXISTS t_state (
 
     result_kind TEXT,
 
-    PRIMARY KEY (execution_id),
-    FOREIGN KEY (ffqn_id) REFERENCES t_ffqn(id)
+    PRIMARY KEY (execution_id)
 )
 ";
 const STATE_PENDING_AT: &str = "PendingAt";
@@ -151,7 +142,7 @@ const STATE_LOCKED: &str = "Locked";
 const STATE_FINISHED: &str = "Finished";
 
 const IDX_T_STATE_LOCK_PENDING: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (state, pending_expires_finished, ffqn_id);
+CREATE INDEX IF NOT EXISTS idx_t_state_lock_pending ON t_state (state, pending_expires_finished, ffqn);
 ";
 const IDX_T_STATE_EXPIRED_TIMERS: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_expired_timers ON t_state (pending_expires_finished) WHERE executor_id IS NOT NULL;
@@ -161,7 +152,7 @@ CREATE INDEX IF NOT EXISTS idx_t_state_execution_id ON t_state (execution_id);
 ";
 // For list_executions by ffqn
 const IDX_T_STATE_FFQN: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_state_ffqn_id ON t_state (ffqn_id);
+CREATE INDEX IF NOT EXISTS idx_t_state_ffqn ON t_state (ffqn);
 ";
 
 /// Represents [`ExpiredTimer::AsyncDelay`] . Rows are deleted when the delay is processed.
@@ -499,8 +490,7 @@ impl SqlitePool {
                     return;
                 }
                 let init_tx = init(init_tx, PRAGMA);
-                // t_ffqn
-                let init_tx = init(init_tx, CREATE_TABLE_T_FFQN);
+
                 // t_execution_log
                 let init_tx = init(init_tx, CREATE_TABLE_T_EXECUTION_LOG);
                 let init_tx = init(
@@ -843,32 +833,6 @@ impl SqlitePool {
         Ok(())
     }
 
-    fn get_ffqn_id(conn: &Connection, ffqn: &FunctionFqn) -> Result<Option<usize>, DbError> {
-        conn.prepare("SELECT id FROM t_ffqn WHERE ffqn = :ffqn")
-            .map_err(convert_err)?
-            .query_row(
-                named_params! {
-                    ":ffqn": ffqn.to_string(),
-                },
-                |row| {
-                    let ffqn_id: usize = row.get("id")?;
-                    Ok(ffqn_id)
-                },
-            )
-            .optional()
-            .map_err(convert_err)
-    }
-
-    fn insert_ffqn(tx: &Transaction, ffqn: &FunctionFqn) -> Result<(), DbError> {
-        tx.prepare("INSERT OR IGNORE INTO t_ffqn (ffqn) VALUES (:ffqn)")
-            .map_err(convert_err)?
-            .execute(named_params! {
-                ":ffqn": ffqn.to_string(),
-            })
-            .map(|_| ())
-            .map_err(convert_err)
-    }
-
     #[instrument(level = Level::TRACE, skip_all, fields(execution_id = %req.execution_id))]
     fn create_inner(
         tx: &Transaction,
@@ -876,8 +840,6 @@ impl SqlitePool {
     ) -> Result<(AppendResponse, Option<PendingAt>), DbError> {
         debug!("create_inner");
 
-        //TODO(perf): Move to initialization
-        Self::insert_ffqn(tx, &req.ffqn)?;
         let version = Version::new(0);
         let execution_id = req.execution_id.clone();
         let execution_id_str = execution_id.to_string();
@@ -934,11 +896,9 @@ impl SqlitePool {
                 let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
                 let ffqn = assert_matches!(ffqn_when_creating, Some(ffqn) => ffqn);
                 debug!("Creating with `Pending(`{scheduled_at:?}`)");
-                let ffqn_id = Self::get_ffqn_id(tx, &ffqn)?
-                    .expect("created in create_inner before this call");
                 tx.prepare(
-                    "INSERT INTO t_state (state, execution_id, next_version, pending_expires_finished, ffqn_id) \
-                    VALUES (:state, :execution_id, :next_version, :pending_expires_finished, :ffqn_id)",
+                    "INSERT INTO t_state (state, execution_id, next_version, pending_expires_finished, ffqn) \
+                    VALUES (:state, :execution_id, :next_version, :pending_expires_finished, :ffqn)",
                 )
                 .map_err(convert_err)?
                 .execute(named_params! {
@@ -946,7 +906,7 @@ impl SqlitePool {
                     ":execution_id": execution_id.to_string(),
                     ":next_version": next_version.0,
                     ":pending_expires_finished": scheduled_at,
-                    ":ffqn_id": ffqn_id,
+                    ":ffqn": ffqn.to_string(),
                 })
                 .map_err(convert_err)?;
                 Ok(IndexUpdated {
@@ -1185,8 +1145,8 @@ impl SqlitePool {
         execution_id: &ExecutionId,
     ) -> Result<CombinedState, DbError> {
         let mut stmt = tx.prepare(
-            "SELECT state, ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind FROM t_state INNER JOIN t_ffqn ON t_state.ffqn_id = t_ffqn.id WHERE \
-        execution_id = :execution_id",
+            "SELECT state, ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind FROM t_state WHERE \
+            execution_id = :execution_id",
         ).map_err(convert_err)?;
         stmt.query_row(
             named_params! {
@@ -1286,7 +1246,7 @@ impl SqlitePool {
             format!("WHERE {}", where_vec.join(" AND "))
         };
         let sql = format!("SELECT state, execution_id, ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
-            FROM t_state INNER JOIN t_ffqn ON t_state.ffqn_id = t_ffqn.id {where_str} ORDER BY execution_id {desc} LIMIT {limit}",
+            FROM t_state {where_str} ORDER BY execution_id {desc} LIMIT {limit}",
             desc = if limit_desc { "DESC" } else { "" } );
 
         let mut vec: Vec<_> = read_tx
@@ -1957,15 +1917,11 @@ impl SqlitePool {
 
         for ffqn in ffqns {
             // Select executions in PendingAt or Locked after expiry.
-            let Some(ffqn_id) = Self::get_ffqn_id(conn, ffqn)? else {
-                // no execution was created yet for this ffqn
-                continue;
-            };
             let mut stmt = conn
                 .prepare(&format!(
                     "SELECT execution_id, next_version FROM t_state WHERE \
                             (state = \"{STATE_PENDING_AT}\" OR state = \"{STATE_LOCKED}\") AND \
-                            pending_expires_finished <= :pending_expires_finished AND ffqn_id = :ffqn_id \
+                            pending_expires_finished <= :pending_expires_finished AND ffqn = :ffqn \
                             ORDER BY pending_expires_finished LIMIT :batch_size"
                 ))
                 .map_err(convert_err)?;
@@ -1973,7 +1929,7 @@ impl SqlitePool {
                 .query_map(
                     named_params! {
                         ":pending_expires_finished": pending_at_or_sooner,
-                        ":ffqn_id": ffqn_id,
+                        ":ffqn": ffqn.to_string(),
                         ":batch_size": batch_size - execution_ids_versions.len(),
                     },
                     |row| {
