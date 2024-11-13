@@ -2,6 +2,7 @@ use crate::{
     grpc::{ffqn::FunctionFqn, grpc_client},
     pages::{
         component_list_page::ComponentListPage,
+        execution_detail_page::ExecutionDetailPage,
         execution_list_page::{ExecutionFilter, ExecutionListPage},
         execution_submit_page::ExecutionSubmitPage,
         not_found::NotFound,
@@ -32,7 +33,6 @@ pub enum Route {
     /// Show paginated table of executions, fiterable by component, interface, ffqn, pending state etc.
     #[at("/execution/list")]
     ExecutionList,
-
     #[at("/execution/list/older/:execution_id")]
     ExecutionListOlder {
         execution_id: grpc_client::ExecutionId,
@@ -41,7 +41,6 @@ pub enum Route {
     ExecutionListOlderIncluding {
         execution_id: grpc_client::ExecutionId,
     },
-
     #[at("/execution/list/newer/:execution_id")]
     ExecutionListNewer {
         execution_id: grpc_client::ExecutionId,
@@ -50,7 +49,6 @@ pub enum Route {
     ExecutionListNewerIncluding {
         execution_id: grpc_client::ExecutionId,
     },
-
     #[at("/execution/list/ffqn/:ffqn")]
     ExecutionListByFfqn { ffqn: String },
     #[at("/execution/list/execution_id/:execution_id")]
@@ -59,11 +57,10 @@ pub enum Route {
     },
 
     /// Show details including pending state, event history
-    // #[at("/execution/:id")]
-    // ExecutionDetail,
-    /// Show WIT schema explorer, allow showing/hiding obelisk extensions.
-    // #[at("/wit")]
-    // WitExplore,
+    #[at("/execution/:execution_id")]
+    ExecutionDetail {
+        execution_id: grpc_client::ExecutionId,
+    },
     #[not_found]
     #[at("/404")]
     NotFound,
@@ -75,6 +72,9 @@ impl Route {
             Route::Home | Route::ExecutionList => html! { <ExecutionListPage /> },
             Route::ComponentList => html! { <ComponentListPage /> },
             Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
+            Route::ExecutionDetail { execution_id } => {
+                html! { <ExecutionDetailPage {execution_id} /> }
+            }
             Route::ExecutionListOlder { execution_id } => {
                 html! { <ExecutionListPage filter={ExecutionFilter::Older { execution_id, including_cursor: false }} /> }
             }

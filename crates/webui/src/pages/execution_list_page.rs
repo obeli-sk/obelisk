@@ -139,7 +139,9 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                     .expect("`execution_id` is sent by the server");
                 html! {
                     <tr>
-                    <td>{&execution_id}</td>
+                    <td>
+                        <Link<Route> to={Route::ExecutionDetail { execution_id: execution_id.clone() }}>{&execution_id}</Link<Route>>
+                    </td>
                         <td><Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.to_string() }}>{ffqn.to_string()}</Link<Route>></td>
                     <td><ExecutionStatus {status} {execution_id} /></td>
                     </tr>
@@ -154,12 +156,12 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
             <h3>{"Executions"}</h3>
             if let ExecutionFilter::Ffqn{ffqn} = filter {
                 <h4>{format!("Filtered by function: {ffqn}")}</h4>
-                <p><Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.to_string() }}>{format!("Submit new execution")}</Link<Route>></p>
-                <p><Link<Route> to={Route::ExecutionList}>{format!("Remove filter")}</Link<Route>></p>
+                <p><Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.to_string() }}>{"Submit new execution"}</Link<Route>></p>
+                <p><Link<Route> to={Route::ExecutionList}>{"Remove filter"}</Link<Route>></p>
             }
             if let ExecutionFilter::ExecutionId{execution_id} = filter {
                 <h4>{format!("Filtered by execution ID: {execution_id}")}</h4>
-                <p><Link<Route> to={Route::ExecutionList}>{format!("Remove filter")}</Link<Route>></p>
+                <p><Link<Route> to={Route::ExecutionList}>{"Remove filter"}</Link<Route>></p>
             }
             <ComponentTree components={app_state.components} show_extensions={ false } {submittable_link_fn} show_submittable_only={true}/>
             <table>
