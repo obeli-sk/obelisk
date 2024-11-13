@@ -21,10 +21,9 @@ pub fn execution_submit_page(ExecutionSubmitPageProps { ffqn }: &ExecutionSubmit
         .ok_or("function not found")
     {
         Ok(function_detail) => {
-            let ffqn = FunctionFqn::from_fn_detail(function_detail);
             html! {<>
                 <h3>{ ffqn.to_string() }</h3>
-                <p><Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.to_string() }}>{"Go to execution list"}</Link<Route>></p>
+                <p><Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() }}>{"Go to execution list"}</Link<Route>></p>
                 <h4><FunctionSignature params = {function_detail.params.clone()} return_type = {function_detail.return_type.clone()} /></h4>
                 <ExecutionSubmitForm {function_detail} />
             </>}

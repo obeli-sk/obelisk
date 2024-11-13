@@ -8,8 +8,7 @@ use crate::{
         not_found::NotFound,
     },
 };
-use log::debug;
-use std::{ops::Deref, str::FromStr};
+use std::ops::Deref;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
@@ -50,7 +49,7 @@ pub enum Route {
         execution_id: grpc_client::ExecutionId,
     },
     #[at("/execution/list/ffqn/:ffqn")]
-    ExecutionListByFfqn { ffqn: String },
+    ExecutionListByFfqn { ffqn: FunctionFqn },
     #[at("/execution/list/execution_id/:execution_id")]
     ExecutionListByExecutionId {
         execution_id: grpc_client::ExecutionId,
@@ -89,10 +88,6 @@ impl Route {
             }
 
             Route::ExecutionListByFfqn { ffqn } => {
-                debug!("Parsing ffqn {ffqn}");
-                let Ok(ffqn) = FunctionFqn::from_str(&ffqn) else {
-                    return html! { <NotFound /> }; // TODO: Error page
-                };
                 html! { <ExecutionListPage filter={ExecutionFilter::Ffqn { ffqn } } /> }
             }
             Route::ExecutionListByExecutionId { execution_id } => {

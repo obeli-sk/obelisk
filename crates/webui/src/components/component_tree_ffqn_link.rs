@@ -13,7 +13,7 @@ pub fn component_tree_ffqn_link(
 ) -> Html {
     html! {
         <div style="display: inline-flex;">
-            <Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.to_string() } }>
+            <Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() } }>
                 <Icon icon = { Icon::Search }/>
             </Link<Route>>
             <Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.clone() } }>
