@@ -72,10 +72,9 @@ pub enum Route {
 impl Route {
     pub fn render(route: Route) -> Html {
         match route {
-            Route::Home => html! { <ComponentListPage /> },
+            Route::Home | Route::ExecutionList => html! { <ExecutionListPage /> },
             Route::ComponentList => html! { <ComponentListPage /> },
             Route::ExecutionSubmit { ffqn } => html! { <ExecutionSubmitPage {ffqn} /> },
-            Route::ExecutionList => html! { <ExecutionListPage /> },
             Route::ExecutionListOlder { execution_id } => {
                 html! { <ExecutionListPage filter={ExecutionFilter::Older { execution_id, including_cursor: false }} /> }
             }
@@ -127,8 +126,17 @@ pub fn app(AppProps { components }: &AppProps) -> Html {
         submittable_ffqns_to_details,
     });
     html! {
-         <ContextProvider<AppState> context={app_state.deref().clone()}>
+        <ContextProvider<AppState> context={app_state.deref().clone()}>
             <BrowserRouter>
+                <p>
+                    <Link<Route> to={Route::ExecutionList }>
+                        {"Execution List"}
+                    </Link<Route>>
+                    <Link<Route> to={Route::ComponentList }>
+                        {"Component list"}
+                    </Link<Route>>
+
+                </p>
                 <Switch<Route> render={Route::render} />
             </BrowserRouter>
         </ContextProvider<AppState>>

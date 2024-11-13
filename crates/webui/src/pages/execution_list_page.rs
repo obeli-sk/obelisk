@@ -151,13 +151,14 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
             Callback::from(|ffqn: FunctionFqn| html! { <ComponentTreeFfqnLink {ffqn} /> });
 
         html! {<>
+            <h3>{"Executions"}</h3>
             if let ExecutionFilter::Ffqn{ffqn} = filter {
-                <h3>{format!("Filtering by function: {ffqn}")}</h3>
+                <h4>{format!("Filtered by function: {ffqn}")}</h4>
                 <p><Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.to_string() }}>{format!("Submit new execution")}</Link<Route>></p>
                 <p><Link<Route> to={Route::ExecutionList}>{format!("Remove filter")}</Link<Route>></p>
             }
             if let ExecutionFilter::ExecutionId{execution_id} = filter {
-                <h3>{format!("Filtering by execution ID: {execution_id}")}</h3>
+                <h4>{format!("Filtered by execution ID: {execution_id}")}</h4>
                 <p><Link<Route> to={Route::ExecutionList}>{format!("Remove filter")}</Link<Route>></p>
             }
             <ComponentTree components={app_state.components} show_extensions={ false } {submittable_link_fn} show_submittable_only={true}/>

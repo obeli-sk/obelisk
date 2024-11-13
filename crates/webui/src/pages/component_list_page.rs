@@ -22,14 +22,11 @@ pub fn component_list_page() -> Html {
     let submittable_link_fn =
         Callback::from(|ffqn: FunctionFqn| html! { <ComponentTreeFfqnLink {ffqn} /> });
     html! {<>
-        <h1>{ "Obelisk WebUI" }</h1>
-        <div>
             <h3>{"Components"}</h3>
             <p>
                 <input type="checkbox" checked={*extensions_state} onclick={&on_extensions_change} />
                 <label onclick={&on_extensions_change}> { "Show function extensions" }</label>
             </p>
             <ComponentTree components={app_state.components} show_extensions={ *extensions_state } {submittable_link_fn} show_submittable_only={false} />
-        </div>
     </>}
 }
