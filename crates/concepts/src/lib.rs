@@ -965,10 +965,10 @@ pub mod prefixed_ulid {
             match &self.0 {
                 ExecutionIdInner::TopLevel(top_level) => Display::fmt(top_level, f),
                 ExecutionIdInner::Derived(top_level, suffix) => {
-                    write!(f, "{top_level}{TOP_LEVEL_INFIX}")?;
+                    write!(f, "{top_level}{EXECUTION_ID_INFIX}")?;
                     for (idx, part) in suffix.iter().enumerate() {
                         if idx > 0 {
-                            write!(f, "{DERIVED_INFIX}")?;
+                            write!(f, "{EXECUTION_ID_INFIX}")?;
                         }
                         write!(f, "{part}")?;
                     }
@@ -978,8 +978,7 @@ pub mod prefixed_ulid {
         }
     }
 
-    const TOP_LEVEL_INFIX: char = ':';
-    const DERIVED_INFIX: char = '.';
+    const EXECUTION_ID_INFIX: char = '.';
 
     #[derive(Debug, thiserror::Error)]
     pub enum ExecutionIdParseError {
@@ -993,10 +992,10 @@ pub mod prefixed_ulid {
         type Err = ExecutionIdParseError;
 
         fn from_str(input: &str) -> Result<Self, Self::Err> {
-            if let Some((prefix, suffix)) = input.split_once(TOP_LEVEL_INFIX) {
+            if let Some((prefix, suffix)) = input.split_once(EXECUTION_ID_INFIX) {
                 let top_level = PrefixedUlid::from_str(prefix)?;
                 let suffix = suffix
-                    .split(DERIVED_INFIX)
+                    .split(EXECUTION_ID_INFIX)
                     .map(u64::from_str)
                     .collect::<Result<SuffixVec, _>>()?;
                 Ok(ExecutionId(ExecutionIdInner::Derived(top_level, suffix)))
@@ -1522,21 +1521,21 @@ mod tests {
     fn execution_id_next_level_should_work() {
         let top_level = ExecutionId::generate();
         let first_child = top_level.next_level();
-        assert_eq!(format!("{top_level}:0"), first_child.to_string());
+        assert_eq!(format!("{top_level}.0"), first_child.to_string());
     }
 
     #[test]
     fn execution_id_increment_twice() {
         let top_level = ExecutionId::generate();
         let second_child = top_level.next_level().increment();
-        assert_eq!(format!("{top_level}:1"), second_child.to_string());
+        assert_eq!(format!("{top_level}.1"), second_child.to_string());
     }
 
     #[test]
     fn execution_id_next_level_twice() {
         let top_level = ExecutionId::generate();
         let second_child = top_level.next_level().next_level().increment();
-        assert_eq!(format!("{top_level}:0.1"), second_child.to_string());
+        assert_eq!(format!("{top_level}.0.1"), second_child.to_string());
     }
 
     #[test]
