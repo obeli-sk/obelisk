@@ -16,7 +16,7 @@ pub fn component_tree_ffqn_link(
             <Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.to_string() } }>
                 <Icon icon = { Icon::Search }/>
             </Link<Route>>
-            <Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.to_string() } }>
+            <Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.clone() } }>
                 <Icon icon = { Icon::Play }/>
             </Link<Route>>
             {format!("{} ", ffqn.function_name)}

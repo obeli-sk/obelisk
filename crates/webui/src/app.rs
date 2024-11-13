@@ -29,7 +29,7 @@ pub enum Route {
     ComponentList,
     /// Show the parameters inputs with their WIT schemas. Allow submitting new execution.
     #[at("/execution/submit/:ffqn")]
-    ExecutionSubmit { ffqn: String },
+    ExecutionSubmit { ffqn: FunctionFqn },
     /// Show paginated table of executions, fiterable by component, interface, ffqn, pending state etc.
     #[at("/execution/list")]
     ExecutionList,

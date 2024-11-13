@@ -156,7 +156,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
             <h3>{"Executions"}</h3>
             if let ExecutionFilter::Ffqn{ffqn} = filter {
                 <h4>{format!("Filtered by function: {ffqn}")}</h4>
-                <p><Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.to_string() }}>{"Submit new execution"}</Link<Route>></p>
+                <p><Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.clone() }}>{"Submit new execution"}</Link<Route>></p>
                 <p><Link<Route> to={Route::ExecutionList}>{"Remove filter"}</Link<Route>></p>
             }
             if let ExecutionFilter::ExecutionId{execution_id} = filter {

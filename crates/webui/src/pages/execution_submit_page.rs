@@ -3,25 +3,23 @@ use crate::{
     components::{execution_submit::ExecutionSubmitForm, function_signature::FunctionSignature},
     grpc::ffqn::FunctionFqn,
 };
-use std::str::FromStr;
 use yew::prelude::*;
 use yew_router::prelude::Link;
 
 #[derive(Properties, PartialEq)]
 pub struct ExecutionSubmitPageProps {
-    pub ffqn: String,
+    pub ffqn: FunctionFqn,
 }
 #[function_component(ExecutionSubmitPage)]
 pub fn execution_submit_page(ExecutionSubmitPageProps { ffqn }: &ExecutionSubmitPageProps) -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
 
-    match FunctionFqn::from_str(ffqn).and_then(|ffqn| {
-        app_state
-            .submittable_ffqns_to_details
-            .get(&ffqn)
-            .ok_or("function not found")
-    }) {
+    match app_state
+        .submittable_ffqns_to_details
+        .get(ffqn)
+        .ok_or("function not found")
+    {
         Ok(function_detail) => {
             let ffqn = FunctionFqn::from_fn_detail(function_detail);
             html! {<>
