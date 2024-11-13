@@ -316,6 +316,10 @@ unknown_lints = "deny"
 overflow-checks = true
 lto = true
 
+[profile.release_trunk]
+inherits = "release"
+strip = "symbols"
+
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/obelisk-{ target }.tar.gz"
 pkg-fmt = "tgz"

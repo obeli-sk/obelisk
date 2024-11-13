@@ -38,7 +38,3 @@ tonic-build = { workspace = true, default-features = false, features = [
     "prost",
 ] }
 yewprint-css.workspace = true
-
-# TODO: Configure in Trunk.toml in trunk 21.0+ : cargo_profile = "trunk-release"
-# [profile.release]
-# strip = "symbols"
