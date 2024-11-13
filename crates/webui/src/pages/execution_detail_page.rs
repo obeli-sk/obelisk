@@ -1,11 +1,6 @@
-use crate::{
-    app::{AppState, Route},
-    components::function_signature::FunctionSignature,
-    grpc::{ffqn::FunctionFqn, grpc_client},
-};
-use std::str::FromStr;
+use crate::components::execution_status::ExecutionStatus;
+use crate::grpc::grpc_client;
 use yew::prelude::*;
-use yew_router::prelude::Link;
 
 #[derive(Properties, PartialEq)]
 pub struct ExecutionDetailPageProps {
@@ -15,12 +10,14 @@ pub struct ExecutionDetailPageProps {
 pub fn execution_detail_page(
     ExecutionDetailPageProps { execution_id }: &ExecutionDetailPageProps,
 ) -> Html {
-    let app_state =
-        use_context::<AppState>().expect("AppState context is set when starting the App");
+    // let app_state =
+    //     use_context::<AppState>().expect("AppState context is set when starting the App");
 
     html! {
+        <>
         <h3>{execution_id.to_string() }</h3>
-    }
+        <ExecutionStatus execution_id={execution_id.clone()} status={None} />
+    </>}
     // match FunctionFqn::from_str(ffqn).and_then(|ffqn| {
     //     app_state
     //         .submittable_ffqns_to_details

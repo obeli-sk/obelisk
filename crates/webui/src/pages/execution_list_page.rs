@@ -126,12 +126,12 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                         .clone()
                         .expect("`function_name` is sent by the server"),
                 );
-                let status = execution
+                let status = Some(execution
                     .current_status
                     .clone()
                     .expect("`current_status` is sent by the server")
                     .status
-                    .expect("`current_status.status` is sent by the server");
+                    .expect("`current_status.status` is sent by the server"));
 
                 let execution_id = execution
                     .execution_id

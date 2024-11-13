@@ -10,7 +10,7 @@ use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
 pub struct ExecutionStatusProps {
-    pub status: grpc_client::execution_status::Status,
+    pub status: Option<grpc_client::execution_status::Status>,
     pub execution_id: grpc_client::ExecutionId,
 }
 #[function_component(ExecutionStatus)]
@@ -21,7 +21,10 @@ pub fn execution_status(
     }: &ExecutionStatusProps,
 ) -> Html {
     let status = status.clone();
-    let is_finished = matches!(status, grpc_client::execution_status::Status::Finished(_));
+    let is_finished = matches!(
+        status,
+        Some(grpc_client::execution_status::Status::Finished(_))
+    );
     let status_state = use_state(move || status);
     {
         let status_state = status_state.clone();
@@ -59,25 +62,28 @@ pub fn execution_status(
                                 ..
                             })
                             | get_status_response::Message::CurrentStatus(status) => {
-                                status_state.set(
+                                status_state.set(Some(
                                     status
                                         .status
                                         .expect("ExecutionStatus.status is sent by the server"),
-                                );
+                                ));
                             }
                             _ => {
                                 unreachable!("send_finished_status is set to false, server sends ExecutionSummary.currentStatus")
                             }
                         }
                     }
-
-                    // status_state.set(Some(response.executions));
                 })
             }
         });
     }
-
-    status_to_string(status_state.deref())
+    if let Some(status) = status_state.deref() {
+        status_to_string(status)
+    } else {
+        html! {
+            {"Loading..."}
+        }
+    }
 }
 
 fn status_to_string(status: &grpc_client::execution_status::Status) -> Html {
