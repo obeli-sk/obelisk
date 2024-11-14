@@ -88,7 +88,7 @@ pub fn execution_status(
         }))
         | Some(get_status_response::Message::CurrentStatus(GExecutionStatus {
             status: Some(status),
-        })) => status_to_string(&status),
+        })) => status_to_string(status),
         Some(get_status_response::Message::FinishedStatus(FinishedStatus {
             result: Some(result),
             created_at,
