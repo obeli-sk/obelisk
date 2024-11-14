@@ -123,7 +123,7 @@ pub fn app(AppProps { components }: &AppProps) -> Html {
     html! {
         <ContextProvider<AppState> context={app_state.deref().clone()}>
             <BrowserRouter>
-                <p>
+                <nav>
                     <Link<Route> to={Route::ExecutionList }>
                         {"Execution List"}
                     </Link<Route>>
@@ -131,7 +131,7 @@ pub fn app(AppProps { components }: &AppProps) -> Html {
                         {"Component list"}
                     </Link<Route>>
 
-                </p>
+                </nav>
                 <Switch<Route> render={Route::render} />
             </BrowserRouter>
         </ContextProvider<AppState>>
