@@ -37,7 +37,7 @@ pub fn execution_detail_page(
         <>
 
         <h3>{ execution_parts }</h3>
-        <ExecutionStatus execution_id={execution_id.clone()} status={None} />
+        <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
     </>}
     // match FunctionFqn::from_str(ffqn).and_then(|ffqn| {
     //     app_state
