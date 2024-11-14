@@ -1,7 +1,8 @@
 use crate::grpc::grpc_client::{
     self,
     execution_status::{Finished, Locked, PendingAt},
-    get_status_response, ExecutionSummary, FinishedStatus, ResultKind,
+    get_status_response, ExecutionStatus as GExecutionStatus, ExecutionSummary, FinishedStatus,
+    ResultKind,
 };
 use chrono::DateTime;
 use log::debug;
@@ -24,16 +25,21 @@ pub fn execution_status(
     }: &ExecutionStatusProps,
 ) -> Html {
     let print_finished_status = *print_finished_status;
-    let status = status.as_ref();
     let is_finished = matches!(
         status,
         Some(grpc_client::execution_status::Status::Finished(_))
     );
-    let status_state = use_state(move || status.map(status_to_string));
+    // If the status was passed in props, store it inside `status_state`.
+    let status_state = use_state(move || {
+        status.clone().map(|s| {
+            get_status_response::Message::CurrentStatus(GExecutionStatus { status: Some(s) })
+        })
+    });
     {
+        // Subscribe to GetStatus if needed.
         let status_state = status_state.clone();
         let execution_id = execution_id.clone();
-        use_effect_with(execution_id.clone(), move |_x| {
+        use_effect_with(execution_id.clone(), move |_| {
             if !is_finished || print_finished_status {
                 debug!("Subscribing to status of {execution_id}");
                 wasm_bindgen_futures::spawn_local(async move {
@@ -60,58 +66,49 @@ pub fn execution_status(
                             .message
                             .expect("GetStatusResponse.message is sent by the server");
                         debug!("Got {status:?}");
-                        status_state.set(Some(match status {
-                            get_status_response::Message::Summary(ExecutionSummary {
-                                current_status: Some(status),
-                                ..
-                            })
-                            | get_status_response::Message::CurrentStatus(status) => {
-                                status_to_string(
-                                    &status
-                                        .status
-                                        .expect("ExecutionStatus.status is sent by the server"),
-                                )
-                            }
-                            get_status_response::Message::FinishedStatus(FinishedStatus {
-                                result,
-                                created_at,
-                                finished_at,
-                                result_kind,
-                            }) => {
-                                let result_kind = ResultKind::try_from(result_kind)
-                                    .expect("ResultKind must be known");
-                                let result = result
-                                    .map(|r| String::from_utf8(r.value).expect("must be UTF-8"))
-                                    .unwrap_or("(no value)".to_string());
-                                let finished_at = DateTime::from(
-                                    finished_at.expect("finished_at is sent by the server"),
-                                );
-                                let created_at = DateTime::from(
-                                    created_at.expect("created_at is sent by the server"),
-                                );
-                                let since_created = (finished_at - created_at)
-                                    .to_std()
-                                    .expect("must be non-negative");
-                                html! {<>
-                                    <p>
-                                    {format!("{result_kind:?} {result}")}
-                                    </p>
-                                    <p>{format!("Execution took: {since_created:?}, created at: {created_at:?}, finished at: {finished_at}")}</p>
-                                </>}
-                            }
-                            _ => unreachable!("?"),
-                        }));
+                        status_state.set(Some(status));
                     }
                 })
             }
         });
     }
-    if let Some(status) = status_state.deref() {
-        status.clone()
-    } else {
-        html! {
-            {"Loading..."}
+    // Render `status_state`.
+    match status_state.deref() {
+        None => {
+            html! {
+                {"Loading..."}
+            }
         }
+        Some(get_status_response::Message::Summary(ExecutionSummary {
+            current_status:
+                Some(GExecutionStatus {
+                    status: Some(status),
+                }),
+            ..
+        }))
+        | Some(get_status_response::Message::CurrentStatus(GExecutionStatus {
+            status: Some(status),
+        })) => status_to_string(&status),
+        Some(get_status_response::Message::FinishedStatus(FinishedStatus {
+            result: Some(result),
+            created_at,
+            finished_at,
+            result_kind,
+        })) => {
+            let result_kind = ResultKind::try_from(*result_kind).expect("ResultKind must be known");
+            let result = String::from_utf8(result.value.clone()).expect("must be UTF-8");
+            let finished_at =
+                DateTime::from(finished_at.expect("finished_at is sent by the server"));
+            let created_at = DateTime::from(created_at.expect("created_at is sent by the server"));
+            let since_created = (finished_at - created_at)
+                .to_std()
+                .expect("must be non-negative");
+            html! {<>
+                <p>{format!("{result_kind:?} {result}")}</p>
+                <p>{format!("Execution took: {since_created:?}, created at: {created_at:?}, finished at: {finished_at}")}</p>
+            </>}
+        }
+        Some(unknown) => unreachable!("unexpected {unknown:?}"),
     }
 }
 
