@@ -12,7 +12,6 @@ use crate::config::ComponentConfig;
 use crate::config::ComponentConfigImportable;
 use crate::grpc_util::extractor::accept_trace;
 use crate::grpc_util::grpc_mapping::db_error_to_status;
-use crate::grpc_util::grpc_mapping::PendingStatusExt as _;
 use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
 use crate::grpc_util::grpc_mapping::TonicServerResultExt;
 use crate::grpc_util::TonicRespResult;
@@ -211,7 +210,6 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             let grpc_pending_status = grpc::ExecutionStatus::from(current_pending_state);
             (create_request, current_pending_state, grpc_pending_status)
         };
-        let is_finished = grpc_pending_status.is_finished();
         let summary = grpc::GetStatusResponse {
             message: Some(Message::Summary(ExecutionSummary {
                 execution_id: Some(grpc::ExecutionId::from(&execution_id)),
@@ -219,14 +217,15 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 current_status: Some(grpc_pending_status),
             })),
         };
-        if is_finished || !request.follow {
-            let output: Self::GetStatusStream = if request.send_finished_status && is_finished {
+        if current_pending_state.is_finished() || !request.follow {
+            let output: Self::GetStatusStream = if request.send_finished_status {
                 let finished = assert_matches!(current_pending_state, PendingState::Finished { finished } => finished);
                 // TODO: Extract current_pending_state -> Message::FinishedStatus into a function
                 let result = conn
                     .get_finished_result(&execution_id, finished)
                     .await
-                    .to_status()?;
+                    .to_status()?
+                    .expect("checked using `current_pending_state.is_finished()` that the execution is finished");
                 let finished_message = grpc::GetStatusResponse {
                     message: Some(Message::FinishedStatus(grpc::FinishedStatus {
                         result: to_any(
@@ -295,7 +294,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                                             .get_finished_result(&execution_id, finished)
                                             .await
                                         {
-                                            Ok(ok) => ok,
+                                            Ok(ok) => ok.expect("checked using `if let PendingState::Finished` that the execution is finished"),
                                             Err(db_err) => {
                                                 error!("Cannot obtain finished result: {db_err:?}");
                                                 let _ =

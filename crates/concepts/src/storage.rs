@@ -714,17 +714,14 @@ pub trait DbConnection: Send + Sync {
         &self,
         execution_id: &ExecutionId,
         finished: PendingStateFinished,
-    ) -> Result<FinishedExecutionResult, DbError> {
+    ) -> Result<Option<FinishedExecutionResult>, DbError> {
         let last_event = self
             .get_execution_event(execution_id, &Version::new(finished.version))
             .await?;
         if let ExecutionEventInner::Finished { result } = last_event.event {
-            Ok(result)
+            Ok(Some(result))
         } else {
-            error!(%execution_id, %finished, "Execution event is not the `Finished` variant");
-            Err(DbError::Specific(SpecificError::ConsistencyError(
-                StrVariant::Static("execution event is not the `Finished` variant"),
-            )))
+            Ok(None)
         }
     }
 

@@ -134,22 +134,6 @@ impl<T: Borrow<FunctionFqn>> From<T> for grpc::FunctionName {
     }
 }
 
-pub trait PendingStatusExt {
-    fn is_finished(&self) -> bool;
-}
-
-impl PendingStatusExt for grpc::ExecutionStatus {
-    fn is_finished(&self) -> bool {
-        use grpc::execution_status::Status;
-        matches!(
-            self,
-            grpc::ExecutionStatus {
-                status: Some(Status::Finished(..))
-            }
-        )
-    }
-}
-
 impl From<ConfigIdType> for grpc::ComponentType {
     fn from(value: ConfigIdType) -> Self {
         grpc::ComponentType::from_str_name(&value.to_string().to_uppercase()).unwrap()
