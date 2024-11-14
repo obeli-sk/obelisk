@@ -33,7 +33,7 @@ pub fn execution_status(
     {
         let status_state = status_state.clone();
         let execution_id = execution_id.clone();
-        use_effect_with((), move |_x| {
+        use_effect_with(execution_id.clone(), move |_x| {
             if !is_finished || print_finished_status {
                 debug!("Subscribing to status of {execution_id}");
                 wasm_bindgen_futures::spawn_local(async move {
