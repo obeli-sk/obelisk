@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 import "google/protobuf/any.proto";
 
 package obelisk;
@@ -53,7 +54,7 @@ message ListExecutionsResponse {
 }
 
 message ListComponentsRequest {
-    optional FunctionName function = 1;
+    optional FunctionName function = 1; // FIXME: function_name
     optional ConfigId config_id = 2;
     bool extensions = 3;
 }
@@ -79,7 +80,7 @@ enum ComponentType {
 }
 
 message FunctionDetail {
-    FunctionName function = 1;
+    FunctionName function = 1;  // FIXME: function_name
     repeated FunctionParameter params = 2;
     optional WitType return_type = 3;
     optional FunctionExtension extension = 4;
@@ -114,6 +115,10 @@ message JoinSetId {
     string id = 1;
 }
 
+message DelayId {
+    string id = 1;
+}
+
 // Identifier for given configuration.
 // Uniqueness is not guaranteed.
 // The id is not persisted, only appears in logs and traces and gRPC responses.
@@ -128,7 +133,7 @@ message FunctionName {
 }
 
 message SubmitRequest {
-    FunctionName function = 1;
+    FunctionName function = 1; // FIXME: function_name
     google.protobuf.Any params = 2;
     reserved 3;
     reserved 4;
@@ -222,5 +227,114 @@ message GetStatusResponse {
         ExecutionStatus current_status = 2;
         // Finished status
         FinishedStatus finished_status = 3;
+    }
+}
+
+message ExecutionEvent {
+
+    message Created {
+        FunctionName function_name = 1;
+        google.protobuf.Any params = 2;
+        google.protobuf.Timestamp scheduled_at = 3;
+        string config_id = 4;
+        optional ExecutionId scheduled_by = 5;
+    }
+
+    message Locked {
+        string config_id = 1;
+        string run_id = 4;
+        google.protobuf.Timestamp lock_expires_at = 3;
+    }
+
+    message Unlocked {}
+
+    message IntermittentlyFailed {
+        string reason = 1;
+        google.protobuf.Timestamp backoff_expires_at = 2;
+    }
+
+    message IntermittentlyTimedOut {
+        google.protobuf.Timestamp backoff_expires_at = 1;
+    }
+
+    message Finished {
+        ResultDetail result_detail = 1;
+    }
+
+    message HistoryEvent {
+
+        message Persist {
+            google.protobuf.Any data = 1;
+        }
+
+        message JoinSetCreated {
+            JoinSetId join_set_id = 1;
+        }
+
+        message JoinSetRequest {
+
+            message DelayRequest {
+                DelayId delay_id = 1;
+                google.protobuf.Timestamp expires_at = 2;
+            }
+
+            message ChildExecutionRequest {
+                ExecutionId child_execution_id = 1;
+            }
+
+            JoinSetId join_set_id = 1;
+            oneof join_set_request {
+                DelayRequest delay_request = 2;
+                ChildExecutionRequest child_execution_request = 3;
+            }
+        }
+
+        message JoinNext {
+            JoinSetId join_set_id = 1;
+            google.protobuf.Timestamp run_expires_at = 2;
+            bool closing = 3;
+        }
+
+        message Schedule {
+            message ScheduledAt {
+                message Now {}
+
+                message At {
+                    google.protobuf.Timestamp at = 1;
+                }
+
+                message In {
+                    google.protobuf.Duration in = 1;
+                }
+
+                oneof variant {
+                    Now now = 1;
+                    At at = 2;
+                    In in = 3;
+                }
+            }
+            ExecutionId execution_id = 1;
+            ScheduledAt scheduled_at = 2;
+        }
+
+        oneof event {
+            Persist persist = 1;
+            JoinSetCreated join_set_created = 2;
+            JoinSetRequest join_set_request = 3;
+            JoinNext join_next = 4;
+            Schedule schedule = 5;
+        }
+    }
+
+    google.protobuf.Timestamp created_at = 1;
+
+    oneof event {
+        Created created = 2;
+        Locked locked = 3;
+        Unlocked unlocked = 4;
+        IntermittentlyFailed failed = 5;
+        IntermittentlyTimedOut timed_out = 6;
+        Finished finished = 7;
+        HistoryEvent history_variant = 8;
     }
 }
