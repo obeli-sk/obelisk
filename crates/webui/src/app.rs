@@ -15,7 +15,7 @@ use yew_router::prelude::*;
 #[derive(Clone, PartialEq)]
 pub struct AppState {
     pub components: Vec<grpc_client::Component>,
-    pub submittable_ffqns_to_details: hashbrown::HashMap<FunctionFqn, grpc_client::FunctionDetails>,
+    pub submittable_ffqns_to_details: hashbrown::HashMap<FunctionFqn, grpc_client::FunctionDetail>,
 }
 
 #[derive(Clone, Routable, PartialEq)]

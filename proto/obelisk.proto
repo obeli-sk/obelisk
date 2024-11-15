@@ -68,8 +68,8 @@ message Component {
     string name = 3;
     ComponentType type = 4;
     reserved 5;
-    repeated FunctionDetails exports = 6; // Functions are sorted by their interface name
-    repeated FunctionDetails imports = 7; // Functions are sorted by their interface name
+    repeated FunctionDetail exports = 6; // Functions are sorted by their interface name
+    repeated FunctionDetail imports = 7; // Functions are sorted by their interface name
 }
 
 enum ComponentType {
@@ -78,7 +78,7 @@ enum ComponentType {
     WEBHOOK_WASM = 2;
 }
 
-message FunctionDetails { // FIXME: Rename to FunctionDetail
+message FunctionDetail {
     FunctionName function = 1;
     repeated FunctionParameter params = 2;
     optional WitType return_type = 3;

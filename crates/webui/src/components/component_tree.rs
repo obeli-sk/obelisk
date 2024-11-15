@@ -34,7 +34,7 @@ impl ComponentTree {
 
     fn fill_interfaces_and_fns(
         tree: &mut yewprint::id_tree::Tree<NodeData<i32>>,
-        exports_or_imports: IndexMap<String, Vec<grpc_client::FunctionDetails>>,
+        exports_or_imports: IndexMap<String, Vec<grpc_client::FunctionDetail>>,
         parent_node_id: &NodeId,
         submittable_link_on_exports: Option<&SubmittableLinkFn>,
     ) {
@@ -164,12 +164,12 @@ impl ComponentTree {
     }
 
     fn map_interfaces_to_fn_details(
-        functions: &[grpc_client::FunctionDetails],
+        functions: &[grpc_client::FunctionDetail],
         show_extensions: bool,
-    ) -> IndexMap<String, Vec<grpc_client::FunctionDetails>> {
-        let mut interfaces_to_fn_details: IndexMap<String, Vec<grpc_client::FunctionDetails>> =
+    ) -> IndexMap<String, Vec<grpc_client::FunctionDetail>> {
+        let mut interfaces_to_fn_details: IndexMap<String, Vec<grpc_client::FunctionDetail>> =
             IndexMap::new();
-        let mut extensions: IndexMap<String, Vec<grpc_client::FunctionDetails>> = IndexMap::new();
+        let mut extensions: IndexMap<String, Vec<grpc_client::FunctionDetail>> = IndexMap::new();
         for function_detail in functions {
             let function_name = function_detail
                 .function

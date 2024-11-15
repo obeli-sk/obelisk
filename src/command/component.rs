@@ -70,7 +70,7 @@ pub(crate) async fn list_components(
     Ok(())
 }
 
-fn print_fn_details(vec: Vec<grpc::FunctionDetails>) -> Result<(), anyhow::Error> {
+fn print_fn_details(vec: Vec<grpc::FunctionDetail>) -> Result<(), anyhow::Error> {
     for fn_detail in vec {
         let func = FunctionFqn::try_from(fn_detail.function.context("function must exist")?)
             .expect("ffqn sent by the server must be valid");

@@ -7,7 +7,7 @@ use yew_router::hooks::use_navigator;
 
 #[derive(Properties, PartialEq)]
 pub struct ExecutionSubmitFormProps {
-    pub function_detail: grpc_client::FunctionDetails,
+    pub function_detail: grpc_client::FunctionDetail,
 }
 #[function_component(ExecutionSubmitForm)]
 pub fn execution_submit_form(

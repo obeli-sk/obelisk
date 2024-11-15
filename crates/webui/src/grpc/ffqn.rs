@@ -7,7 +7,7 @@ pub struct FunctionFqn {
     pub function_name: String,
 }
 impl FunctionFqn {
-    pub fn from_fn_detail(fn_detail: &grpc_client::FunctionDetails) -> FunctionFqn {
+    pub fn from_fn_detail(fn_detail: &grpc_client::FunctionDetail) -> FunctionFqn {
         let Some(function) = &fn_detail.function else {
             unreachable!("FunctionDetails.function is sent by the server");
         };

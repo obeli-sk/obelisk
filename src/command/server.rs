@@ -452,7 +452,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
     }
 }
 
-fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc::FunctionDetails> {
+fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc::FunctionDetail> {
     let mut vec = Vec::with_capacity(functions.len());
     for FunctionMetadata {
         ffqn,
@@ -461,7 +461,7 @@ fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc
         extension,
     } in functions
     {
-        let fun = grpc::FunctionDetails {
+        let fun = grpc::FunctionDetail {
             params: parameter_types
                 .0
                 .into_iter()
