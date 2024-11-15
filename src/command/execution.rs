@@ -5,7 +5,6 @@ use crate::grpc_util::grpc_mapping::TonicClientResultExt;
 use crate::ExecutionRepositoryClient;
 use anyhow::Context;
 use chrono::DateTime;
-use concepts::FinishedExecutionResult;
 use concepts::{ExecutionId, FunctionFqn};
 use grpc::execution_status::Status;
 use std::str::FromStr;
@@ -43,10 +42,7 @@ pub(crate) async fn submit(
     Ok(())
 }
 
-fn print_status(
-    response: grpc::GetStatusResponse,
-    old_pending_status: &mut String,
-) -> Result<(), anyhow::Error> {
+fn print_status(response: grpc::GetStatusResponse, old_pending_status: &mut String) {
     use grpc::get_status_response::Message;
     match response.message.expect("message expected") {
         Message::Summary(summary) => {
@@ -63,10 +59,9 @@ fn print_status(
             print_pending_status(pending_status, old_pending_status);
         }
         Message::FinishedStatus(finished_sattus) => {
-            print_finished_status(finished_sattus, old_pending_status)?;
+            print_finished_status(finished_sattus, old_pending_status);
         }
     }
-    Ok(())
 }
 
 fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_status: &mut String) {
@@ -90,10 +85,7 @@ fn print_pending_status(pending_status: grpc::ExecutionStatus, old_pending_statu
     }
 }
 
-fn print_finished_status(
-    finished_status: grpc::FinishedStatus,
-    old_pending_status: &mut String,
-) -> Result<(), anyhow::Error> {
+fn print_finished_status(finished_status: grpc::FinishedStatus, old_pending_status: &mut String) {
     let new_pending_status = {
         let created_at = DateTime::from(
             finished_status
@@ -105,29 +97,41 @@ fn print_finished_status(
                 .finished_at
                 .expect("`finished_at` is sent by the server"),
         );
-        let result = String::from_utf8(
-            finished_status
-                .result
-                .expect("`result` is sent by the server")
-                .value,
-        )
-        .expect("`result` must be UTF-8 encoded");
-        let result_kind = grpc::ResultKind::try_from(finished_status.result_kind)
-            .expect("must be convertible back to ResultKind");
-        let result: FinishedExecutionResult =
-            serde_json::from_str(&result).context("cannot deserialize `result`")?;
-        let mut new_pending_status = match &result {
-            Ok(ret_val) => {
-                let mut new_pending_status =
-                    format!("Execution finished: {}", result_kind.as_str_name());
-                let val = serde_json::to_string_pretty(&ret_val.value()).unwrap();
-                new_pending_status.push_str(&format!("\n{val}"));
-                new_pending_status
+
+        let new_pending_status = match finished_status
+            .result_detail
+            .expect("`result_detail` is sent by the server")
+            .value
+        {
+            Some(grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
+                return_value: Some(return_value),
+            })) => {
+                let return_value = String::from_utf8_lossy(&return_value.value);
+                format!("OK: {return_value}")
             }
-            Err(err) => {
-                format!("Execution error - {err}")
+            Some(grpc::result_detail::Value::FallibleError(
+                grpc::result_detail::FallibleError {
+                    return_value: Some(return_value),
+                },
+            )) => {
+                let return_value = String::from_utf8_lossy(&return_value.value);
+                format!("Err: {return_value}")
             }
+            Some(grpc::result_detail::Value::Timeout(_)) => "Timeout".to_string(),
+            Some(grpc::result_detail::Value::ExecutionFailure(
+                grpc::result_detail::ExecutionFailure { reason },
+            )) => {
+                format!("Execution failure: {reason}")
+            }
+            Some(grpc::result_detail::Value::NondeterminismDetected(
+                grpc::result_detail::NondeterminismDetected { reason },
+            )) => {
+                format!("Nondeterminism detected: {reason}")
+            }
+            other => unreachable!("unexpected variant {other:?}"),
         };
+        let mut new_pending_status = format!("Execution finished: {new_pending_status}");
+
         new_pending_status.push_str(&format!(
             "\nExecution took {since_created:?}.",
             since_created = (finished_at - created_at)
@@ -140,7 +144,6 @@ fn print_finished_status(
         println!("{new_pending_status}");
         let _ = std::mem::replace(old_pending_status, new_pending_status);
     }
-    Ok(())
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -178,7 +181,7 @@ pub(crate) async fn get(
         .into_inner();
     let mut pending_status_cache = String::new();
     while let Some(status) = stream.message().await? {
-        print_status(status, &mut pending_status_cache)?;
+        print_status(status, &mut pending_status_cache);
     }
     Ok(())
 }

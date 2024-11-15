@@ -20,6 +20,8 @@ use crate::init;
 use anyhow::bail;
 use anyhow::Context;
 use assert_matches::assert_matches;
+use chrono::DateTime;
+use chrono::Utc;
 use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
@@ -31,6 +33,8 @@ use concepts::ConfigId;
 use concepts::ConfigIdType;
 use concepts::ContentDigest;
 use concepts::ExecutionId;
+use concepts::FinishedExecutionError;
+use concepts::FinishedExecutionResult;
 use concepts::FunctionExtension;
 use concepts::FunctionFqn;
 use concepts::FunctionMetadata;
@@ -39,6 +43,7 @@ use concepts::PackageIfcFns;
 use concepts::ParameterType;
 use concepts::Params;
 use concepts::ReturnType;
+use concepts::SupportedFunctionReturnValue;
 use db_sqlite::sqlite_dao::SqliteConfig;
 use db_sqlite::sqlite_dao::SqlitePool;
 use directories::ProjectDirs;
@@ -219,23 +224,18 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         };
         if current_pending_state.is_finished() || !request.follow {
             let output: Self::GetStatusStream = if request.send_finished_status {
-                let finished = assert_matches!(current_pending_state, PendingState::Finished { finished } => finished);
-                // TODO: Extract current_pending_state -> Message::FinishedStatus into a function
-                let result = conn
-                    .get_finished_result(&execution_id, finished)
+                let pending_state_finished = assert_matches!(current_pending_state, PendingState::Finished { finished } => finished);
+                let finished_result = conn
+                    .get_finished_result(&execution_id, pending_state_finished)
                     .await
                     .to_status()?
                     .expect("checked using `current_pending_state.is_finished()` that the execution is finished");
                 let finished_message = grpc::GetStatusResponse {
-                    message: Some(Message::FinishedStatus(grpc::FinishedStatus {
-                        result: to_any(
-                            result,
-                            format!("urn:obelisk:json:params:{}", create_request.ffqn),
-                        ),
-                        created_at: Some(create_request.created_at.into()),
-                        finished_at: Some(finished.finished_at.into()),
-                        result_kind: grpc::ResultKind::from(finished.result_kind).into(),
-                    })),
+                    message: Some(Message::FinishedStatus(to_finished_status(
+                        finished_result,
+                        &create_request,
+                        pending_state_finished.finished_at,
+                    ))),
                 };
                 Box::pin(tokio_stream::iter([Ok(summary), Ok(finished_message)]))
             } else {
@@ -284,14 +284,13 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                                         error!("Cannot send the message - {err:?}");
                                         return;
                                     }
-                                    if let PendingState::Finished { finished } = pending_state {
+                                    if let PendingState::Finished { finished: pending_state_finished } = pending_state {
                                         if !request.send_finished_status {
                                             return;
                                         }
                                         // Send the last message and close the RPC.
-                                        // TODO: Extract current_pending_state -> Message::FinishedStatus into a function
-                                        let result = match conn
-                                            .get_finished_result(&execution_id, finished)
+                                        let finished_result = match conn
+                                            .get_finished_result(&execution_id, pending_state_finished)
                                             .await
                                         {
                                             Ok(ok) => ok.expect("checked using `if let PendingState::Finished` that the execution is finished"),
@@ -303,25 +302,11 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                                             }
                                         };
                                         let message = grpc::GetStatusResponse {
-                                            message: Some(Message::FinishedStatus(
-                                                grpc::FinishedStatus {
-                                                    result: to_any(
-                                                        result,
-                                                        format!(
-                                                            "urn:obelisk:json:params:{}",
-                                                            create_request.ffqn
-                                                        ),
-                                                    ),
-                                                    created_at: Some(
-                                                        create_request.created_at.into(),
-                                                    ),
-                                                    finished_at: Some(finished.finished_at.into()),
-                                                    result_kind: grpc::ResultKind::from(
-                                                        finished.result_kind,
-                                                    )
-                                                    .into(),
-                                                },
-                                            )),
+                                            message: Some(Message::FinishedStatus(to_finished_status(
+                                                finished_result,
+                                                &create_request,
+                                                pending_state_finished.finished_at,
+                                            ))),
                                         };
                                         let send_res = tx.send(TonicResult::Ok(message)).await;
                                         if let Err(err) = send_res {
@@ -383,6 +368,54 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         Ok(tonic::Response::new(grpc::ListExecutionsResponse {
             executions,
         }))
+    }
+}
+
+fn to_finished_status(
+    finished_result: FinishedExecutionResult,
+    create_request: &CreateRequest,
+    finished_at: DateTime<Utc>,
+) -> grpc::FinishedStatus {
+    let value = match finished_result {
+        Ok(SupportedFunctionReturnValue::None) => {
+            grpc::result_detail::Value::Ok(grpc::result_detail::Ok { return_value: None })
+        }
+        Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(val_with_type)) => {
+            grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
+                return_value: to_any(
+                    val_with_type.value,
+                    format!("urn:obelisk:json:params:{}", create_request.ffqn),
+                ),
+            })
+        }
+        Ok(SupportedFunctionReturnValue::FallibleResultErr(val_with_type)) => {
+            grpc::result_detail::Value::FallibleError(grpc::result_detail::FallibleError {
+                return_value: to_any(
+                    val_with_type.value,
+                    format!("urn:obelisk:json:params:{}", create_request.ffqn),
+                ),
+            })
+        }
+        Err(FinishedExecutionError::PermanentTimeout) => {
+            grpc::result_detail::Value::Timeout(grpc::result_detail::Timeout {})
+        }
+        Err(FinishedExecutionError::PermanentFailure(reason)) => {
+            grpc::result_detail::Value::ExecutionFailure(grpc::result_detail::ExecutionFailure {
+                reason: reason.to_string(),
+            })
+        }
+        Err(FinishedExecutionError::NondeterminismDetected(reason)) => {
+            grpc::result_detail::Value::NondeterminismDetected(
+                grpc::result_detail::NondeterminismDetected {
+                    reason: reason.to_string(),
+                },
+            )
+        }
+    };
+    grpc::FinishedStatus {
+        result_detail: Some(grpc::ResultDetail { value: Some(value) }),
+        created_at: Some(create_request.created_at.into()),
+        finished_at: Some(finished_at.into()),
     }
 }
 

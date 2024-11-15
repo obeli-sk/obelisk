@@ -90,21 +90,70 @@ pub fn execution_status(
             status: Some(status),
         })) => status_to_string(status),
         Some(get_status_response::Message::FinishedStatus(FinishedStatus {
-            result: Some(result),
-            created_at,
-            finished_at,
-            result_kind,
+            created_at: Some(created_at),
+            finished_at: Some(finished_at),
+            result_detail: Some(result_detail),
         })) => {
-            let result_kind = ResultKind::try_from(*result_kind).expect("ResultKind must be known");
-            let result = String::from_utf8(result.value.clone()).expect("must be UTF-8");
-            let finished_at =
-                DateTime::from(finished_at.expect("finished_at is sent by the server"));
-            let created_at = DateTime::from(created_at.expect("created_at is sent by the server"));
+            let result = match &result_detail.value {
+                Some(grpc_client::result_detail::Value::Ok(grpc_client::result_detail::Ok {
+                    return_value: Some(return_value),
+                })) => {
+                    let return_value = String::from_utf8_lossy(&return_value.value);
+                    html! {<>
+                        <span>{"OK"}</span>
+                        <span style="color:green">
+                            {return_value}
+                        </span>
+                    </>}
+                }
+                Some(grpc_client::result_detail::Value::FallibleError(
+                    grpc_client::result_detail::FallibleError {
+                        return_value: Some(return_value),
+                    },
+                )) => {
+                    let return_value = String::from_utf8_lossy(&return_value.value);
+                    html! {<>
+                        <span>{"Err"}</span>
+                        <span style="color:red">
+                            {return_value}
+                        </span>
+                    </>}
+                }
+                Some(grpc_client::result_detail::Value::Timeout(_)) => {
+                    html! {<>
+                        <span>{"Timeout"}</span>
+                    </>}
+                }
+                Some(grpc_client::result_detail::Value::ExecutionFailure(
+                    grpc_client::result_detail::ExecutionFailure { reason },
+                )) => {
+                    html! {<>
+                        <span>{"Execution failure"}</span>
+                        <span style="color:red">
+                            {reason}
+                        </span>
+                    </>}
+                }
+                Some(grpc_client::result_detail::Value::NondeterminismDetected(
+                    grpc_client::result_detail::NondeterminismDetected { reason },
+                )) => {
+                    html! {<>
+                        <span>{"Nondeterminism detected"}</span>
+                        <span style="color:red">
+                            {reason}
+                        </span>
+                    </>}
+                }
+                other => unreachable!("unexpected variant {other:?}"),
+            };
+
+            let finished_at = DateTime::from(*finished_at);
+            let created_at = DateTime::from(*created_at);
             let since_created = (finished_at - created_at)
                 .to_std()
                 .expect("must be non-negative");
             html! {<>
-                <p>{format!("{result_kind:?} {result}")}</p>
+                <p>{result}</p>
                 <p>{format!("Execution took: {since_created:?}, created at: {created_at:?}, finished at: {finished_at}")}</p>
             </>}
         }

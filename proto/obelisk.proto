@@ -181,11 +181,37 @@ message ExecutionStatus {
 }
 
 message FinishedStatus {
-    google.protobuf.Any result = 1;
+    reserved 1;
     google.protobuf.Timestamp created_at = 2;
     reserved 3;
     google.protobuf.Timestamp finished_at = 4;
-    ResultKind result_kind = 5;
+    reserved 5;
+    ResultDetail result_detail = 6;
+}
+
+message ResultDetail {
+    message Ok {
+        optional google.protobuf.Any return_value = 1;
+    }
+    message Timeout {
+    }
+    message NondeterminismDetected {
+        string reason = 1;
+    }
+    message ExecutionFailure {
+        string reason = 1;
+    }
+    message FallibleError {
+        // The top level JSON attribute "err" must be present.
+        google.protobuf.Any return_value = 1;
+    }
+    oneof value {
+        Ok ok = 1;
+        FallibleError fallible_error = 2;
+        Timeout timeout = 3;
+        NondeterminismDetected nondeterminism_detected = 4;
+        ExecutionFailure execution_failure = 5;
+    }
 }
 
 message GetStatusResponse {
