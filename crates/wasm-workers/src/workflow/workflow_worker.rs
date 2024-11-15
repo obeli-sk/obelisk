@@ -819,7 +819,8 @@ pub(crate) mod tests {
             .await
             .unwrap()
             .unwrap();
-        let res = assert_matches!(res, SupportedFunctionReturnValue::Infallible(val) => val);
+        let res =
+            assert_matches!(res, SupportedFunctionReturnValue::InfallibleOrResultOk(val) => val);
         let res = assert_matches!(res, WastValWithType{ value: WastVal::U64(actual), r#type: TypeWrapper::U64} => actual);
         assert_eq!(FIBO_10_OUTPUT, res,);
         workflow_exec_task.close().await;

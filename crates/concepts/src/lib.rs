@@ -39,7 +39,7 @@ pub enum FinishedExecutionError {
     #[error("nondeterminism detected: `{0}`")]
     NondeterminismDetected(StrVariant),
     #[error("permanent failure: `{0}`")]
-    PermanentFailure(StrVariant), // intermittent failure that is not retried (anymore) and cannot be mapped to the function result type
+    PermanentFailure(StrVariant), // intermittent failure that is not retried (anymore)
 }
 
 impl FinishedExecutionError {
@@ -388,8 +388,10 @@ impl<'a> arbitrary::Arbitrary<'a> for FunctionFqn {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SupportedFunctionReturnValue {
     None,
-    Fallible(WastValWithType),
-    Infallible(WastValWithType),
+    // Top level type is result<_,_> with Err variant
+    FallibleResultErr(WastValWithType),
+    // All other top level types
+    InfallibleOrResultOk(WastValWithType),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -415,18 +417,25 @@ impl SupportedFunctionReturnValue {
             let r#type = TypeWrapper::try_from(r#type)?;
             let val = WastVal::try_from(val)?;
             match &val {
-                WastVal::Result(_) => Ok(Self::Fallible(WastValWithType { r#type, value: val })),
-                _ => Ok(Self::Infallible(WastValWithType { r#type, value: val })),
+                WastVal::Result(Err(_)) => Ok(Self::FallibleResultErr(WastValWithType {
+                    r#type,
+                    value: val,
+                })),
+                _ => Ok(Self::InfallibleOrResultOk(WastValWithType {
+                    r#type,
+                    value: val,
+                })),
             }
         } else {
             Err(ResultParsingError::MultiValue)
         }
     }
 
+    #[cfg(feature = "test")]
     #[must_use]
     pub fn fallible_err(&self) -> Option<Option<&WastVal>> {
         match self {
-            SupportedFunctionReturnValue::Fallible(WastValWithType {
+            SupportedFunctionReturnValue::FallibleResultErr(WastValWithType {
                 value: WastVal::Result(Err(err)),
                 ..
             }) => Some(err.as_deref()),
@@ -434,10 +443,11 @@ impl SupportedFunctionReturnValue {
         }
     }
 
+    #[cfg(feature = "test")]
     #[must_use]
     pub fn fallible_ok(&self) -> Option<Option<&WastVal>> {
         match self {
-            SupportedFunctionReturnValue::Fallible(WastValWithType {
+            SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
                 value: WastVal::Result(Ok(ok)),
                 ..
             }) => Some(ok.as_deref()),
@@ -445,18 +455,13 @@ impl SupportedFunctionReturnValue {
         }
     }
 
+    #[cfg(feature = "test")]
     #[must_use]
-    pub fn fallible_result(&self) -> Option<Result<Option<&WastVal>, Option<&WastVal>>> {
+    pub fn val_type(&self) -> Option<&TypeWrapper> {
         match self {
-            SupportedFunctionReturnValue::Fallible(WastValWithType {
-                value: WastVal::Result(Ok(ok)),
-                ..
-            }) => Some(Ok(ok.as_deref())),
-            SupportedFunctionReturnValue::Fallible(WastValWithType {
-                value: WastVal::Result(Err(err)),
-                ..
-            }) => Some(Err(err.as_deref())),
-            _ => None,
+            SupportedFunctionReturnValue::None => None,
+            SupportedFunctionReturnValue::FallibleResultErr(v)
+            | SupportedFunctionReturnValue::InfallibleOrResultOk(v) => Some(&v.r#type),
         }
     }
 
@@ -464,8 +469,8 @@ impl SupportedFunctionReturnValue {
     pub fn value(&self) -> Option<&WastVal> {
         match self {
             SupportedFunctionReturnValue::None => None,
-            SupportedFunctionReturnValue::Fallible(v)
-            | SupportedFunctionReturnValue::Infallible(v) => Some(&v.value),
+            SupportedFunctionReturnValue::FallibleResultErr(v)
+            | SupportedFunctionReturnValue::InfallibleOrResultOk(v) => Some(&v.value),
         }
     }
 
@@ -473,8 +478,8 @@ impl SupportedFunctionReturnValue {
     pub fn into_value(self) -> Option<WastVal> {
         match self {
             SupportedFunctionReturnValue::None => None,
-            SupportedFunctionReturnValue::Fallible(v)
-            | SupportedFunctionReturnValue::Infallible(v) => Some(v.value),
+            SupportedFunctionReturnValue::FallibleResultErr(v)
+            | SupportedFunctionReturnValue::InfallibleOrResultOk(v) => Some(v.value),
         }
     }
 
@@ -493,7 +498,7 @@ impl SupportedFunctionReturnValue {
 
     #[must_use]
     pub fn as_pending_state_finished_result(&self) -> PendingStateFinishedResultKind {
-        if self.fallible_err().is_some() {
+        if let SupportedFunctionReturnValue::FallibleResultErr(_) = self {
             PendingStateFinishedResultKind(Err(PendingStateFinishedError::FallibleError))
         } else {
             PendingStateFinishedResultKind(Ok(()))

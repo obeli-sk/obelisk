@@ -477,8 +477,8 @@ impl<C: ClockFn> EventHistory<C> {
                                         )))))
                                     }
                                     Ok(
-                                        SupportedFunctionReturnValue::Fallible(v)
-                                        | SupportedFunctionReturnValue::Infallible(v),
+                                        SupportedFunctionReturnValue::InfallibleOrResultOk(v)
+                                        | SupportedFunctionReturnValue::FallibleResultErr(v),
                                     ) => {
                                         // result<(execution-id, inner>, tuple<execution-id, execution-error>>
                                         Ok(Some(ChildReturnValue::WastVal(WastVal::Result(Ok(
@@ -1323,7 +1323,7 @@ mod tests {
         #[values(0, 10)] batching: u32,
     ) {
         const CHILD_RESP: SupportedFunctionReturnValue =
-            SupportedFunctionReturnValue::Infallible(WastValWithType {
+            SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(1),
             });
@@ -1479,12 +1479,12 @@ mod tests {
         #[values(0, 10)] batching: u32,
     ) {
         const KID_A: SupportedFunctionReturnValue =
-            SupportedFunctionReturnValue::Infallible(WastValWithType {
+            SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(1),
             });
         const KID_B: SupportedFunctionReturnValue =
-            SupportedFunctionReturnValue::Infallible(WastValWithType {
+            SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {
                 r#type: TypeWrapper::U8,
                 value: WastVal::U8(2),
             });

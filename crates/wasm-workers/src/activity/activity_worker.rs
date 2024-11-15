@@ -182,11 +182,12 @@ impl<C: ClockFn + 'static> Worker for ActivityWorker<C> {
 
                 if retry_on_err {
                     // Interpret any `SupportedFunctionResult::Fallible` Err variant as an retry request (IntermittentError)
-                    if let Some(exec_err) = result.fallible_err() {
+                    if let SupportedFunctionReturnValue::FallibleResultErr(result_err) = &result {
                         if ctx.can_be_retried {
-                            let reason = StrVariant::Arc(Arc::from(format!(
-                                "`result::err`: `{exec_err:?}`"
-                            )));
+                            let result_err = serde_json::to_string(result_err).expect(
+                                "SupportedFunctionReturnValue should be serializable to JSON",
+                            );
+                            let reason = StrVariant::Arc(Arc::from(result_err));
                             return WorkerResult::Err(WorkerError::IntermittentError {
                                 reason,
                                 err: None,
@@ -363,7 +364,7 @@ pub(crate) mod tests {
             .unwrap();
         // Check the result.
         let fibo = assert_matches!(db_connection.wait_for_finished_result(&execution_id, None).await.unwrap(),
-            Ok(SupportedFunctionReturnValue::Infallible(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 })) => val);
+            Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(WastValWithType {value: WastVal::U64(val), r#type: TypeWrapper::U64 })) => val);
         assert_eq!(FIBO_10_OUTPUT, fibo);
         drop(db_connection);
         exec_task.close().await;
@@ -705,10 +706,10 @@ pub(crate) mod tests {
             let val = assert_matches!(wast_val, WastVal::String(val) => val);
             assert_eq!(BODY, val.deref());
             // check types
-            let (ok, err) = assert_matches!(res, SupportedFunctionReturnValue::Fallible(WastValWithType{value: _,
-                r#type: TypeWrapper::Result{ok, err}}) => (ok, err));
-            assert_eq!(Some(Box::new(TypeWrapper::String)), ok);
-            assert_eq!(Some(Box::new(TypeWrapper::String)), err);
+            let (ok, err) =
+                assert_matches!(res.val_type(), Some(TypeWrapper::Result{ok, err}) => (ok, err));
+            assert_eq!(Some(Box::new(TypeWrapper::String)), *ok);
+            assert_eq!(Some(Box::new(TypeWrapper::String)), *err);
             drop(db_connection);
             drop(exec_task);
             db_pool.close().await.unwrap();
@@ -872,10 +873,10 @@ pub(crate) mod tests {
                 assert_eq!("wrong status code: 404", val.deref());
             }
             // check types
-            let (ok, err) = assert_matches!(res, SupportedFunctionReturnValue::Fallible(WastValWithType{value: _,
-                r#type: TypeWrapper::Result{ok, err}}) => (ok, err));
-            assert_eq!(Some(Box::new(TypeWrapper::String)), ok);
-            assert_eq!(Some(Box::new(TypeWrapper::String)), err);
+            let (ok, err) =
+                assert_matches!(res.val_type(), Some(TypeWrapper::Result{ok, err}) => (ok, err));
+            assert_eq!(Some(Box::new(TypeWrapper::String)), *ok);
+            assert_eq!(Some(Box::new(TypeWrapper::String)), *err);
             drop(db_connection);
             drop(exec_task);
             db_pool.close().await.unwrap();
