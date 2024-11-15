@@ -1037,7 +1037,7 @@ mod tests {
             let join_next = ExecutionEventInner::HistoryEvent {
                 event: HistoryEvent::JoinNext {
                     join_set_id,
-                    lock_expires_at: sim_clock.now(),
+                    run_expires_at: sim_clock.now(),
                     closing: false,
                 },
             };

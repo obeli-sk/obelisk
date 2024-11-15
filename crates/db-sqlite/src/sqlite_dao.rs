@@ -1592,7 +1592,7 @@ impl SqlitePool {
                 event:
                     HistoryEvent::JoinNext {
                         join_set_id,
-                        lock_expires_at,
+                        run_expires_at,
                         closing,
                     },
             } => {
@@ -1608,12 +1608,12 @@ impl SqlitePool {
                 }) = nth_response
                 {
                     // No need to block
-                    let scheduled_at = max(*lock_expires_at, nth_created_at);
+                    let scheduled_at = max(*run_expires_at, nth_created_at);
                     IndexAction::PendingStateChanged(PendingState::PendingAt { scheduled_at })
                 } else {
                     IndexAction::PendingStateChanged(PendingState::BlockedByJoinSet {
                         join_set_id: *join_set_id,
-                        lock_expires_at: *lock_expires_at,
+                        lock_expires_at: *run_expires_at,
                         closing: *closing,
                     })
                 }

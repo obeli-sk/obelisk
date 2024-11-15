@@ -819,7 +819,7 @@ impl<C: ClockFn> EventHistory<C> {
                     .await?;
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
-                    lock_expires_at,
+                    run_expires_at: lock_expires_at,
                     closing,
                 };
                 let history_events = vec![event.clone()];
@@ -856,7 +856,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let child_exec_req = ExecutionEventInner::HistoryEvent { event };
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
-                    lock_expires_at,
+                    run_expires_at: lock_expires_at,
                     closing: false,
                 };
                 history_events.push(event.clone());
@@ -920,7 +920,7 @@ impl<C: ClockFn> EventHistory<C> {
                 let delay_req = ExecutionEventInner::HistoryEvent { event };
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
-                    lock_expires_at,
+                    run_expires_at: lock_expires_at,
                     closing: false,
                 };
                 history_events.push(event.clone());

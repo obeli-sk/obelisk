@@ -629,7 +629,7 @@ pub async fn append_batch_respond_to_parent(
                     event: ExecutionEventInner::HistoryEvent {
                         event: HistoryEvent::JoinNext {
                             join_set_id,
-                            lock_expires_at: sim_clock.now(),
+                            run_expires_at: sim_clock.now(),
                             closing: false,
                         },
                     },
@@ -722,7 +722,7 @@ pub async fn append_batch_respond_to_parent(
                     event: ExecutionEventInner::HistoryEvent {
                         event: HistoryEvent::JoinNext {
                             join_set_id,
-                            lock_expires_at: sim_clock.now(),
+                            run_expires_at: sim_clock.now(),
                             closing: false,
                         },
                     },

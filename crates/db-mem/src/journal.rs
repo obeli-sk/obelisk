@@ -181,7 +181,7 @@ impl ExecutionJournal {
                     event:
                         HistoryEvent::JoinNext {
                             join_set_id: expected_join_set_id,
-                            lock_expires_at,
+                            run_expires_at: lock_expires_at,
                             closing,
                         },
                     ..

@@ -282,14 +282,17 @@ pub enum ExecutionEventInner {
     #[display("IntermittentFailure(`{expires_at}`)")]
     IntermittentFailure {
         //TODO: Rename to IntermittentlyFailed
-        expires_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>, // TODO: rename to backoff_expires_at
         #[arbitrary(value = StrVariant::Static("reason"))]
         reason: StrVariant,
     },
     // Created by the executor holding last lock.
     // After expiry interpreted as pending.
     #[display("IntermittentTimeout(`{expires_at}`)")]
-    IntermittentTimeout { expires_at: DateTime<Utc> }, // TODO: Rename to IntermittentlyTimeouted
+    // TODO: Rename to IntermittentlyTimeouted
+    IntermittentTimeout {
+        expires_at: DateTime<Utc>, // TODO: rename to backoff_expires_at
+    },
     // Created by the executor holding last lock.
     // Processed by a scheduler if a parent execution needs to be notified,
     // also when
@@ -363,8 +366,8 @@ pub enum HistoryEvent {
     #[display("JoinNext({join_set_id})")]
     JoinNext {
         join_set_id: JoinSetId,
-        /// Set to a future time if the worker is keeping the execution warm waiting for the result.
-        lock_expires_at: DateTime<Utc>,
+        /// Set to a future time if the worker is keeping the execution invocation warm waiting for the result.
+        run_expires_at: DateTime<Utc>,
         /// Is the joinset being closed?
         closing: bool,
     },
