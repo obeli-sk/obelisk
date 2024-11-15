@@ -812,11 +812,11 @@ pub(crate) mod tests {
 
                 let (reason, found_expires_at) = assert_matches!(
                     &exec_log.last_event().event,
-                    ExecutionEventInner::IntermittentFailure {
-                        expires_at,
+                    ExecutionEventInner::IntermittentlyFailed {
+                        backoff_expires_at,
                         reason,
                     }
-                    => (reason, *expires_at)
+                    => (reason, *backoff_expires_at)
                 );
                 assert_eq!(sim_clock.now() + RETRY_EXP_BACKOFF, found_expires_at);
                 assert!(

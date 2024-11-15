@@ -1540,7 +1540,10 @@ impl SqlitePool {
             ExecutionEventInner::Locked { .. } => {
                 unreachable!("handled above")
             }
-            ExecutionEventInner::IntermittentFailure { expires_at, .. }
+            ExecutionEventInner::IntermittentlyFailed {
+                backoff_expires_at: expires_at,
+                ..
+            }
             | ExecutionEventInner::IntermittentTimeout { expires_at } => {
                 IndexAction::PendingStateChanged(PendingState::PendingAt {
                     scheduled_at: *expires_at,

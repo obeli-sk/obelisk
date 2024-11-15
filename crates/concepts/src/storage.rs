@@ -225,8 +225,8 @@ pub const DUMMY_INTERMITTENT_TIMEOUT: ExecutionEventInner =
         expires_at: DateTime::from_timestamp_nanos(0),
     };
 pub const DUMMY_INTERMITTENT_FAILURE: ExecutionEventInner =
-    ExecutionEventInner::IntermittentFailure {
-        expires_at: DateTime::from_timestamp_nanos(0),
+    ExecutionEventInner::IntermittentlyFailed {
+        backoff_expires_at: DateTime::from_timestamp_nanos(0),
         reason: StrVariant::empty(),
     };
 
@@ -279,10 +279,9 @@ pub enum ExecutionEventInner {
     Unlocked,
     // Created by the executor holding the lock.
     // After expiry interpreted as pending.
-    #[display("IntermittentFailure(`{expires_at}`)")]
-    IntermittentFailure {
-        //TODO: Rename to IntermittentlyFailed
-        expires_at: DateTime<Utc>, // TODO: rename to backoff_expires_at
+    #[display("IntermittentlyFailed(`{backoff_expires_at}`)")]
+    IntermittentlyFailed {
+        backoff_expires_at: DateTime<Utc>,
         #[arbitrary(value = StrVariant::Static("reason"))]
         reason: StrVariant,
     },
@@ -311,7 +310,7 @@ impl ExecutionEventInner {
     pub fn is_intermittent_event(&self) -> bool {
         matches!(
             self,
-            Self::IntermittentFailure { .. } | Self::IntermittentTimeout { .. }
+            Self::IntermittentlyFailed { .. } | Self::IntermittentTimeout { .. }
         )
     }
 

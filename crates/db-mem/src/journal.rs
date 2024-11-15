@@ -170,7 +170,10 @@ impl ExecutionJournal {
                     run_id: *run_id,
                 }),
 
-                ExecutionEventInner::IntermittentFailure { expires_at, .. }
+                ExecutionEventInner::IntermittentlyFailed {
+                    backoff_expires_at: expires_at,
+                    ..
+                }
                 | ExecutionEventInner::IntermittentTimeout { expires_at, .. } => {
                     Some(PendingState::PendingAt {
                         scheduled_at: *expires_at,

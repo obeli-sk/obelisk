@@ -355,7 +355,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                             let expires_at = result_obtained_at + duration;
                             debug!("Retrying failed execution after {duration:?} at {expires_at}");
                             (
-                                ExecutionEventInner::IntermittentFailure { expires_at, reason },
+                                ExecutionEventInner::IntermittentlyFailed {
+                                    backoff_expires_at: expires_at,
+                                    reason,
+                                },
                                 None,
                                 version,
                             )
@@ -832,13 +835,13 @@ mod tests {
             let (reason, at, expires_at) = assert_matches!(
                 &execution_log.events.get(2).unwrap(),
                 ExecutionEvent {
-                    event: ExecutionEventInner::IntermittentFailure {
+                    event: ExecutionEventInner::IntermittentlyFailed {
                         reason,
-                        expires_at,
+                        backoff_expires_at,
                     },
                     created_at: at,
                 }
-                => (reason, *at, *expires_at)
+                => (reason, *at, *backoff_expires_at)
             );
             assert_eq!("fail", reason.deref());
             assert_eq!(at, sim_clock.now());
