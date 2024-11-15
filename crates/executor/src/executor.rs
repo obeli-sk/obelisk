@@ -1242,9 +1242,9 @@ mod tests {
         assert_matches!(
             &execution_log.events.get(2).unwrap(),
             ExecutionEvent {
-                event: ExecutionEventInner::IntermittentTimeout { expires_at },
+                event: ExecutionEventInner::IntermittentTimedOut { backoff_expires_at },
                 created_at: at,
-            } if *at == now_after_first_lock_expiry && *expires_at == expected_first_timeout_expiry
+            } if *at == now_after_first_lock_expiry && *backoff_expires_at == expected_first_timeout_expiry
         );
         assert_eq!(
             PendingState::PendingAt {

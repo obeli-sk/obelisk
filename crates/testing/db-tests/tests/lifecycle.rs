@@ -272,8 +272,8 @@ pub async fn lifecycle(db_connection: &impl DbConnection, sim_clock: SimClock) {
         info!(now = %created_at, "Intermittent timeout");
         let req = AppendRequest {
             created_at,
-            event: ExecutionEventInner::IntermittentTimeout {
-                expires_at: created_at + lock_expiry,
+            event: ExecutionEventInner::IntermittentTimedOut {
+                backoff_expires_at: created_at + lock_expiry,
             },
         };
 

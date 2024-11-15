@@ -123,11 +123,13 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                     max_retries,
                     retry_exp_backoff,
                 ) {
-                    let expires_at = executed_at + duration;
-                    debug!(%execution_id, "Retrying execution with expired lock after {duration:?} at {expires_at}");
+                    let backoff_expires_at = executed_at + duration;
+                    debug!(%execution_id, "Retrying execution with expired lock after {duration:?} at {backoff_expires_at}");
                     Append {
                         created_at: executed_at,
-                        primary_event: ExecutionEventInner::IntermittentTimeout { expires_at }, // not converting for clarity
+                        primary_event: ExecutionEventInner::IntermittentTimedOut {
+                            backoff_expires_at,
+                        }, // not converting for clarity
                         execution_id: execution_id.clone(),
                         version,
                         parent: None,

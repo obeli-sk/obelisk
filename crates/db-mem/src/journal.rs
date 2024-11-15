@@ -174,11 +174,12 @@ impl ExecutionJournal {
                     backoff_expires_at: expires_at,
                     ..
                 }
-                | ExecutionEventInner::IntermittentTimeout { expires_at, .. } => {
-                    Some(PendingState::PendingAt {
-                        scheduled_at: *expires_at,
-                    })
-                }
+                | ExecutionEventInner::IntermittentTimedOut {
+                    backoff_expires_at: expires_at,
+                    ..
+                } => Some(PendingState::PendingAt {
+                    scheduled_at: *expires_at,
+                }),
 
                 ExecutionEventInner::HistoryEvent {
                     event:
