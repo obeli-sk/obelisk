@@ -12,101 +12,103 @@ use yew_router::prelude::Link;
 use yewprint::id_tree::{InsertBehavior, Node, NodeId, TreeBuilder};
 use yewprint::{Icon, NodeData, TreeData};
 
-#[derive(Properties, PartialEq)]
+#[derive(Properties, PartialEq, Clone)]
 pub struct CreateProps {
     pub ffqn: FunctionFqn,
     pub params: Vec<Value>,
     pub scheduled_by: Option<ExecutionId>,
 }
 
-#[function_component(Create)]
-pub fn create(
-    CreateProps {
-        ffqn,
-        params,
-        scheduled_by,
-    }: &CreateProps,
-) -> Html {
-    debug!("<Create /> Rendering");
-    let tree_state = use_state(|| {
-        debug!("<Create /> Called use_state ");
-        let mut tree = TreeBuilder::new().build();
-        let root_id = tree
-            .insert(
-                Node::new(NodeData {
-                    data: 0_i32,
-                    ..Default::default()
-                }),
-                InsertBehavior::AsRoot,
-            )
-            .unwrap();
-        let event_type = tree
-            .insert(
-                Node::new(NodeData {
-                    icon: Icon::FolderClose,
-                    label: "Created".into(),
-                    has_caret: true,
-                    data: 1,
-                    ..Default::default()
-                }),
-                InsertBehavior::UnderNode(&root_id),
-            )
-            .unwrap();
-        // ffqn
+fn construct_tree(props: &CreateProps) -> Rc<RefCell<TreeData<u32>>> {
+    debug!("<Create /> construct_tree");
+    let mut tree = TreeBuilder::new().build();
+    let root_id = tree
+        .insert(
+            Node::new(NodeData {
+                data: 0_u32,
+                ..Default::default()
+            }),
+            InsertBehavior::AsRoot,
+        )
+        .unwrap();
+    let event_type = tree
+        .insert(
+            Node::new(NodeData {
+                icon: Icon::FolderClose,
+                label: "Created".into(),
+                has_caret: true,
+                data: 1,
+                ..Default::default()
+            }),
+            InsertBehavior::UnderNode(&root_id),
+        )
+        .unwrap();
+    // ffqn
+    tree
+        .insert(
+            Node::new(NodeData {
+                icon: Icon::Function,
+                label: html!{ <Link<Route> to={Route::ExecutionListByFfqn { ffqn: props.ffqn.clone() } }>{&props.ffqn}</Link<Route>> },
+                has_caret: false,
+                data: 1,
+                ..Default::default()
+            }),
+            InsertBehavior::UnderNode(&event_type),
+        )
+        .unwrap();
+    // params
+    let params_node_id = tree
+        .insert(
+            Node::new(NodeData {
+                icon: Icon::Function,
+                label: "Parameters".into_html(),
+                has_caret: true,
+                data: 1,
+                ..Default::default()
+            }),
+            InsertBehavior::UnderNode(&event_type),
+        )
+        .unwrap();
+    for param in &props.params {
+        tree.insert(
+            Node::new(NodeData {
+                icon: Icon::Function,
+                label: param.to_string().into_html(),
+                has_caret: false,
+                data: 1,
+                ..Default::default()
+            }),
+            InsertBehavior::UnderNode(&params_node_id),
+        )
+        .unwrap();
+    }
+    // scheduled by
+    if let Some(scheduled_by) = &props.scheduled_by {
         tree
-                .insert(
-                    Node::new(NodeData {
-                        icon: Icon::Function,
-                        label: html!{ <Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() } }>{ffqn}</Link<Route>> },
-                        has_caret: false,
-                        data: 1,
-                        ..Default::default()
-                    }),
-                    InsertBehavior::UnderNode(&event_type),
-                )
-                .unwrap();
-        // params
-        let params_node_id = tree
-            .insert(
-                Node::new(NodeData {
-                    icon: Icon::Function,
-                    label: "Parameters".into_html(),
-                    has_caret: true,
-                    data: 1,
-                    ..Default::default()
-                }),
-                InsertBehavior::UnderNode(&event_type),
-            )
-            .unwrap();
-        for param in params {
-            tree.insert(
-                Node::new(NodeData {
-                    icon: Icon::Function,
-                    label: param.to_string().into_html(),
-                    has_caret: false,
-                    data: 1,
-                    ..Default::default()
-                }),
-                InsertBehavior::UnderNode(&params_node_id),
-            )
-            .unwrap();
-        }
-        // scheduled by
-        if let Some(scheduled_by) = scheduled_by {
-            tree
-                .insert(
-                    Node::new(NodeData {
-                        icon: Icon::Time,
-                        label: html!{ <> {"Scheduled by "} <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_by.clone() } }>{scheduled_by}</Link<Route>> </>},
-                        has_caret: false,
-                        data: 1,
-                        ..Default::default()
-                    }),
-                    InsertBehavior::UnderNode(&event_type),
-                )
-                .unwrap();
-        }
-        Rc::new(RefCell::new(TreeData::from(tree)))
+        .insert(
+            Node::new(NodeData {
+                icon: Icon::Time,
+                label: html!{ <> {"Scheduled by "} <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_by.clone() } }>{scheduled_by}</Link<Route>> </>},
+                has_caret: false,
+                data: 1,
+                ..Default::default()
+            }),
+            InsertBehavior::UnderNode(&event_type),
+        )
+        .unwrap();
+    }
+    Rc::new(RefCell::new(TreeData::from(tree)))
+}
+
+#[function_component(Create)]
+pub fn create(props: &CreateProps) -> Html {
+    debug!("<Create /> Rendering");
+    // TODO: called unnecessary second time with `use_effect_with`
+    let tree_state = use_state(|| construct_tree(props));
+    // Must ensure that the tree is re-constructed when props change :(
+    use_effect_with(props.clone(), {
+        let tree_state = tree_state.clone();
+        move |props| tree_state.set(construct_tree(props))
     });
 
     let on_expand_node = {
@@ -125,11 +127,10 @@ pub fn create(
         })
     };
     html! {
-        <yewprint::Tree<i32>
-        tree={tree_state.deref().borrow().deref()}
+        <yewprint::Tree<u32>
+            tree={tree_state.deref().borrow().deref()}
             on_collapse={Some(on_expand_node.clone())}
             on_expand={Some(on_expand_node)}
-
         />
     }
 }
