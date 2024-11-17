@@ -135,7 +135,15 @@ impl ExecutionLog {
 
 pub type VersionType = u32;
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, serde::Serialize, serde::Deserialize,
+    Debug,
+    Default,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 #[serde(transparent)]
 pub struct Version(pub VersionType);

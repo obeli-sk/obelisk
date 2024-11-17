@@ -12,6 +12,9 @@ use crate::config::ComponentConfig;
 use crate::config::ComponentConfigImportable;
 use crate::grpc_util::extractor::accept_trace;
 use crate::grpc_util::grpc_mapping::db_error_to_status;
+use crate::grpc_util::grpc_mapping::from_execution_event_to_grpc;
+use crate::grpc_util::grpc_mapping::from_finished_result_to_grpc_result_detail;
+use crate::grpc_util::grpc_mapping::to_any;
 use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
 use crate::grpc_util::grpc_mapping::TonicServerResultExt;
 use crate::grpc_util::TonicRespResult;
@@ -26,6 +29,8 @@ use concepts::prefixed_ulid::ExecutorId;
 use concepts::storage::CreateRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
+use concepts::storage::ExecutionEvent;
+use concepts::storage::ExecutionEventInner;
 use concepts::storage::Pagination;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
@@ -34,7 +39,6 @@ use concepts::ConfigId;
 use concepts::ConfigIdType;
 use concepts::ContentDigest;
 use concepts::ExecutionId;
-use concepts::FinishedExecutionError;
 use concepts::FinishedExecutionResult;
 use concepts::FunctionExtension;
 use concepts::FunctionFqn;
@@ -44,7 +48,6 @@ use concepts::PackageIfcFns;
 use concepts::ParameterType;
 use concepts::Params;
 use concepts::ReturnType;
-use concepts::SupportedFunctionReturnValue;
 use db_sqlite::sqlite_dao::SqliteConfig;
 use db_sqlite::sqlite_dao::SqlitePool;
 use directories::ProjectDirs;
@@ -390,9 +393,23 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let events = conn
             .list_execution_events(&execution_id, &Version(version_from), length)
             .await
-            .to_status()?
+            .to_status()?;
+        let ffqn = if let Some(ExecutionEvent {
+            event: ExecutionEventInner::Created { ffqn, .. },
+            ..
+        }) = events.first()
+        {
+            ffqn.clone()
+        } else {
+            // TODO(perf): This db fetch could be omitted if the finished event is not serialized.
+            conn.get_create_request(&execution_id)
+                .await
+                .to_status()?
+                .ffqn
+        };
+        let events = events
             .into_iter()
-            .map(|execution_event| todo!())
+            .map(|execution_event| from_execution_event_to_grpc(execution_event, &ffqn))
             .collect();
         Ok(tonic::Response::new(grpc::ListExecutionEventsResponse {
             events,
@@ -405,44 +422,10 @@ fn to_finished_status(
     create_request: &CreateRequest,
     finished_at: DateTime<Utc>,
 ) -> grpc::FinishedStatus {
-    let value = match finished_result {
-        Ok(SupportedFunctionReturnValue::None) => {
-            grpc::result_detail::Value::Ok(grpc::result_detail::Ok { return_value: None })
-        }
-        Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(val_with_type)) => {
-            grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
-                return_value: to_any(
-                    val_with_type.value,
-                    format!("urn:obelisk:json:params:{}", create_request.ffqn),
-                ),
-            })
-        }
-        Ok(SupportedFunctionReturnValue::FallibleResultErr(val_with_type)) => {
-            grpc::result_detail::Value::FallibleError(grpc::result_detail::FallibleError {
-                return_value: to_any(
-                    val_with_type.value,
-                    format!("urn:obelisk:json:params:{}", create_request.ffqn),
-                ),
-            })
-        }
-        Err(FinishedExecutionError::PermanentTimeout) => {
-            grpc::result_detail::Value::Timeout(grpc::result_detail::Timeout {})
-        }
-        Err(FinishedExecutionError::PermanentFailure(reason)) => {
-            grpc::result_detail::Value::ExecutionFailure(grpc::result_detail::ExecutionFailure {
-                reason: reason.to_string(),
-            })
-        }
-        Err(FinishedExecutionError::NondeterminismDetected(reason)) => {
-            grpc::result_detail::Value::NondeterminismDetected(
-                grpc::result_detail::NondeterminismDetected {
-                    reason: reason.to_string(),
-                },
-            )
-        }
-    };
+    let result_detail =
+        from_finished_result_to_grpc_result_detail(finished_result, &create_request.ffqn);
     grpc::FinishedStatus {
-        result_detail: Some(grpc::ResultDetail { value: Some(value) }),
+        result_detail: Some(result_detail),
         created_at: Some(create_request.created_at.into()),
         finished_at: Some(finished_at.into()),
     }
@@ -528,21 +511,6 @@ fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc
         vec.push(fun);
     }
     vec
-}
-
-fn to_any<T: serde::Serialize>(serializable: T, uri: String) -> Option<prost_wkt_types::Any> {
-    serde_json::to_string(&serializable)
-        .inspect_err(|ser_err| {
-            error!(
-                "Cannot serialize {:?} - {ser_err:?}",
-                std::any::type_name::<T>()
-            );
-        })
-        .ok()
-        .map(|res| prost_wkt_types::Any {
-            type_url: uri,
-            value: res.into_bytes(),
-        })
 }
 
 pub(crate) async fn run(

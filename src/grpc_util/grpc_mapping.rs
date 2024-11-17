@@ -3,10 +3,12 @@ use anyhow::anyhow;
 use concepts::{
     prefixed_ulid::{JoinSetId, RunId},
     storage::{
-        DbError, Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
-        PendingStateFinishedResultKind, SpecificError,
+        DbError, ExecutionEvent, ExecutionEventInner, HistoryEvent, HistoryEventScheduledAt,
+        JoinSetRequest, Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
+        PendingStateFinishedResultKind, SpecificError, Version,
     },
-    ConfigId, ConfigIdType, ExecutionId, FunctionFqn,
+    ConfigId, ConfigIdType, ExecutionId, FinishedExecutionError, FinishedExecutionResult,
+    FunctionFqn, SupportedFunctionReturnValue,
 };
 use std::borrow::Borrow;
 use tracing::error;
@@ -257,4 +259,176 @@ impl TryFrom<grpc::list_executions_request::Pagination> for Pagination<Execution
             },
         })
     }
+}
+
+pub(crate) fn to_any<T: serde::Serialize>(
+    serializable: T,
+    uri: String,
+) -> Option<prost_wkt_types::Any> {
+    serde_json::to_string(&serializable)
+        .inspect_err(|ser_err| {
+            error!(
+                "Cannot serialize {:?} - {ser_err:?}",
+                std::any::type_name::<T>()
+            );
+        })
+        .ok()
+        .map(|res| prost_wkt_types::Any {
+            type_url: uri,
+            value: res.into_bytes(),
+        })
+}
+
+pub(crate) fn from_finished_result_to_grpc_result_detail(
+    finished_result: FinishedExecutionResult,
+    ffqn: &FunctionFqn,
+) -> grpc::ResultDetail {
+    let value = match finished_result {
+        Ok(SupportedFunctionReturnValue::None) => {
+            grpc::result_detail::Value::Ok(grpc::result_detail::Ok { return_value: None })
+        }
+        Ok(SupportedFunctionReturnValue::InfallibleOrResultOk(val_with_type)) => {
+            grpc::result_detail::Value::Ok(grpc::result_detail::Ok {
+                return_value: to_any(
+                    val_with_type.value,
+                    format!("urn:obelisk:json:params:{ffqn}"),
+                ),
+            })
+        }
+        Ok(SupportedFunctionReturnValue::FallibleResultErr(val_with_type)) => {
+            grpc::result_detail::Value::FallibleError(grpc::result_detail::FallibleError {
+                return_value: to_any(
+                    val_with_type.value,
+                    format!("urn:obelisk:json:params:{ffqn}"),
+                ),
+            })
+        }
+        Err(FinishedExecutionError::PermanentTimeout) => {
+            grpc::result_detail::Value::Timeout(grpc::result_detail::Timeout {})
+        }
+        Err(FinishedExecutionError::PermanentFailure(reason)) => {
+            grpc::result_detail::Value::ExecutionFailure(grpc::result_detail::ExecutionFailure {
+                reason: reason.to_string(),
+            })
+        }
+        Err(FinishedExecutionError::NondeterminismDetected(reason)) => {
+            grpc::result_detail::Value::NondeterminismDetected(
+                grpc::result_detail::NondeterminismDetected {
+                    reason: reason.to_string(),
+                },
+            )
+        }
+    };
+    grpc::ResultDetail { value: Some(value) }
+}
+
+#[allow(clippy::too_many_lines)]
+pub(crate) fn from_execution_event_to_grpc(
+    event: ExecutionEvent,
+    ffqn: &FunctionFqn,
+) -> grpc::ExecutionEvent {
+    grpc::ExecutionEvent {
+            created_at: Some(prost_wkt_types::Timestamp::from(event.created_at)),
+            version: Version::default().0,
+            event: Some(match event.event {
+                ExecutionEventInner::Created {
+                    ffqn,
+                    params,
+                    parent: _,
+                    scheduled_at,
+                    retry_exp_backoff: _,
+                    max_retries: _,
+                    config_id,
+                    metadata: _,
+                    scheduled_by,
+                } => grpc::execution_event::Event::Created(grpc::execution_event::Created {
+                    params: to_any(
+                        params,
+                        format!("urn:obelisk:json:params:{ffqn}"),
+                    ),
+                    function_name: Some(grpc::FunctionName::from(ffqn)),
+                    scheduled_at: Some(prost_wkt_types::Timestamp::from(scheduled_at)),
+                    config_id: config_id.to_string(),
+                    scheduled_by: scheduled_by.map(|id| grpc::ExecutionId { id: id.to_string() }),
+                }),
+                ExecutionEventInner::Locked {
+                    config_id,
+                    executor_id: _,
+                    run_id,
+                    lock_expires_at,
+                } => grpc::execution_event::Event::Locked(grpc::execution_event::Locked {
+                    config_id: config_id.to_string(),
+                    run_id: run_id.to_string(),
+                    lock_expires_at: Some(prost_wkt_types::Timestamp::from(lock_expires_at)),
+                }),
+                ExecutionEventInner::Unlocked => grpc::execution_event::Event::Unlocked(grpc::execution_event::Unlocked {}),
+                ExecutionEventInner::IntermittentlyFailed {
+                    backoff_expires_at,
+                    reason,
+                } => grpc::execution_event::Event::Failed(grpc::execution_event::IntermittentlyFailed {
+                    reason: reason.to_string(),
+                    backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
+                }),
+                ExecutionEventInner::IntermittentTimedOut { backoff_expires_at } => grpc::execution_event::Event::TimedOut(grpc::execution_event::IntermittentlyTimedOut {
+                    backoff_expires_at: Some(prost_wkt_types::Timestamp::from(backoff_expires_at)),
+                }),
+                ExecutionEventInner::Finished { result } => grpc::execution_event::Event::Finished(grpc::execution_event::Finished {
+                    result_detail: Some(
+                        from_finished_result_to_grpc_result_detail(result, ffqn)
+                    ),
+                }),
+                ExecutionEventInner::HistoryEvent { event } => grpc::execution_event::Event::HistoryVariant(grpc::execution_event::HistoryEvent {
+                    event: Some(match event {
+                        HistoryEvent::Persist { value } => grpc::execution_event::history_event::Event::Persist(grpc::execution_event::history_event::Persist {
+                            data: Some(prost_wkt_types::Any {
+                                type_url: "unknown".to_string(),
+                                value,
+                            }),
+                        }),
+                        HistoryEvent::JoinSet { join_set_id } => grpc::execution_event::history_event::Event::JoinSetCreated(grpc::execution_event::history_event::JoinSetCreated {
+                            join_set_id: Some(grpc::JoinSetId { id: join_set_id.to_string() }),
+                        }),
+                        HistoryEvent::JoinSetRequest { join_set_id, request } => grpc::execution_event::history_event::Event::JoinSetRequest(grpc::execution_event::history_event::JoinSetRequest {
+                            join_set_id: Some(grpc::JoinSetId { id: join_set_id.to_string() }),
+                            join_set_request: match request {
+                                JoinSetRequest::DelayRequest { delay_id, expires_at } => {
+                                    Some(grpc::execution_event::history_event::join_set_request::JoinSetRequest::DelayRequest(
+                                        grpc::execution_event::history_event::join_set_request::DelayRequest {
+                                            delay_id: Some(grpc::DelayId { id: delay_id.to_string() }),
+                                            expires_at: Some(prost_wkt_types::Timestamp::from(expires_at)),
+                                        }
+                                    ))
+                                }
+                                JoinSetRequest::ChildExecutionRequest { child_execution_id } => {
+                                    Some(grpc::execution_event::history_event::join_set_request::JoinSetRequest::ChildExecutionRequest(
+                                        grpc::execution_event::history_event::join_set_request::ChildExecutionRequest {
+                                            child_execution_id: Some(grpc::ExecutionId { id: child_execution_id.to_string() }),
+                                        }
+                                    ))
+                                }
+                            },
+                        }),
+                        HistoryEvent::JoinNext { join_set_id, run_expires_at, closing } => grpc::execution_event::history_event::Event::JoinNext(grpc::execution_event::history_event::JoinNext {
+                            join_set_id: Some(grpc::JoinSetId { id: join_set_id.to_string() }),
+                            run_expires_at: Some(prost_wkt_types::Timestamp::from(run_expires_at)),
+                            closing,
+                        }),
+                        HistoryEvent::Schedule { execution_id, scheduled_at } => grpc::execution_event::history_event::Event::Schedule(grpc::execution_event::history_event::Schedule {
+                            execution_id: Some(grpc::ExecutionId { id: execution_id.to_string() }),
+                            scheduled_at: Some(grpc::execution_event::history_event::schedule::ScheduledAt {
+                                variant: match scheduled_at {
+                                    HistoryEventScheduledAt::Now => Some(grpc::execution_event::history_event::schedule::scheduled_at::Variant::Now(grpc::execution_event::history_event::schedule::scheduled_at::Now {})),
+                                    HistoryEventScheduledAt::At( at) => Some(grpc::execution_event::history_event::schedule::scheduled_at::Variant::At(grpc::execution_event::history_event::schedule::scheduled_at::At {
+                                        at: Some(prost_wkt_types::Timestamp::from(at)),
+                                    })),
+                                    HistoryEventScheduledAt::In (r#in ) => Some(grpc::execution_event::history_event::schedule::scheduled_at::Variant::In(grpc::execution_event::history_event::schedule::scheduled_at::In {
+                                        r#in: prost_wkt_types::Duration::try_from(r#in).ok(),
+                                    })),
+                                },
+                            }),
+                        }),
+                    }),
+                }),
+            }),
+        }
 }
