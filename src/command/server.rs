@@ -34,6 +34,7 @@ use concepts::storage::ExecutionEventInner;
 use concepts::storage::Pagination;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
+use concepts::storage::VersionType;
 use concepts::ComponentRetryConfig;
 use concepts::ConfigId;
 use concepts::ConfigIdType;
@@ -409,7 +410,15 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         };
         let events = events
             .into_iter()
-            .map(|execution_event| from_execution_event_to_grpc(execution_event, &ffqn))
+            .enumerate()
+            .map(|(idx, execution_event)| {
+                from_execution_event_to_grpc(
+                    execution_event,
+                    version_from
+                        + VersionType::try_from(idx).expect("both from and to are VersionType"),
+                    &ffqn,
+                )
+            })
             .collect();
         Ok(tonic::Response::new(grpc::ListExecutionEventsResponse {
             events,

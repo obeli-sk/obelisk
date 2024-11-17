@@ -5,7 +5,7 @@ use concepts::{
     storage::{
         DbError, ExecutionEvent, ExecutionEventInner, HistoryEvent, HistoryEventScheduledAt,
         JoinSetRequest, Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
-        PendingStateFinishedResultKind, SpecificError, Version,
+        PendingStateFinishedResultKind, SpecificError, VersionType,
     },
     ConfigId, ConfigIdType, ExecutionId, FinishedExecutionError, FinishedExecutionResult,
     FunctionFqn, SupportedFunctionReturnValue,
@@ -325,11 +325,12 @@ pub(crate) fn from_finished_result_to_grpc_result_detail(
 #[allow(clippy::too_many_lines)]
 pub(crate) fn from_execution_event_to_grpc(
     event: ExecutionEvent,
+    version: VersionType,
     ffqn: &FunctionFqn,
 ) -> grpc::ExecutionEvent {
     grpc::ExecutionEvent {
             created_at: Some(prost_wkt_types::Timestamp::from(event.created_at)),
-            version: Version::default().0,
+            version,
             event: Some(match event.event {
                 ExecutionEventInner::Created {
                     ffqn,
