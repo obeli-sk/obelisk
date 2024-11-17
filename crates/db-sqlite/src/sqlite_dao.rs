@@ -9,7 +9,8 @@ use concepts::{
         ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse, JoinSetResponseEvent,
         JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, Pagination,
         PendingState, PendingStateFinished, PendingStateFinishedResultKind, SpecificError, Version,
-        DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
+        VersionType, DUMMY_CREATED, DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE,
+        DUMMY_INTERMITTENT_TIMEOUT,
     },
     ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant,
 };
@@ -809,7 +810,7 @@ impl SqlitePool {
                 ":execution_id": execution_id.to_string(),
             },
             |row| {
-                let version: usize = row.get("version")?;
+                let version: VersionType = row.get("version")?;
                 Ok(Version::new(version))
             },
         )
@@ -1788,7 +1789,7 @@ impl SqlitePool {
     fn get_execution_event(
         tx: &Transaction,
         execution_id: &ExecutionId,
-        version: usize,
+        version: VersionType,
     ) -> Result<ExecutionEvent, DbError> {
         let mut stmt = tx
             .prepare(
@@ -1937,7 +1938,7 @@ impl SqlitePool {
                     |row| {
                         let execution_id =
                             row.get::<_, String>("execution_id")?.parse::<ExecutionId>();
-                        let version = Version::new(row.get::<_, usize>("next_version")?);
+                        let version = Version::new(row.get::<_, VersionType>("next_version")?);
                         Ok(execution_id.map(|e| (e, version)))
                     },
                 )
@@ -2433,7 +2434,7 @@ impl DbConnection for SqlitePool {
                             },
                             |row| {
                                 let execution_id = row.get::<_, ExecutionIdW>("execution_id")?.0;
-                                let version = Version::new(row.get::<_, usize>("next_version")?);
+                                let version = Version::new(row.get::<_, VersionType>("next_version")?);
 
                                 let intermittent_event_count = row.get::<_, u32>("intermittent_event_count")?;
                                 let max_retries = row.get::<_, u32>("max_retries")?;

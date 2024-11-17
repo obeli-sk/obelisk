@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
     CreateRequest, ExecutionEvent, ExecutionEventInner, HistoryEvent, JoinSetResponseEvent,
-    JoinSetResponseEventOuter, PendingStateFinished, PendingStateFinishedResultKind,
+    JoinSetResponseEventOuter, PendingStateFinished, PendingStateFinishedResultKind, VersionType,
 };
 use concepts::storage::{ExecutionLog, PendingState, SpecificError, Version};
 use concepts::{ExecutionId, ExecutionMetadata};
@@ -66,7 +66,10 @@ impl ExecutionJournal {
 
     #[must_use]
     pub fn version(&self) -> Version {
-        Version(self.execution_events.len() - usize::from(self.pending_state.is_finished()))
+        Version(
+            VersionType::try_from(self.execution_events.len()).unwrap()
+                - VersionType::from(self.pending_state.is_finished()), // if is_finished then -1 as it does not grow anymore
+        )
     }
 
     #[must_use]
@@ -152,7 +155,7 @@ impl ExecutionJournal {
                     assert_eq!(self.execution_events.len() - 1, idx);
                     Some(PendingState::Finished {
                         finished: PendingStateFinished {
-                            version: idx,
+                            version: VersionType::try_from(idx).unwrap(),
                             finished_at: event.created_at,
                             result_kind: PendingStateFinishedResultKind::from(result),
                         },

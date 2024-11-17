@@ -133,14 +133,15 @@ impl ExecutionLog {
     }
 }
 
+pub type VersionType = u32;
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, serde::Serialize, serde::Deserialize,
 )]
 #[serde(transparent)]
-pub struct Version(pub usize);
+pub struct Version(pub VersionType);
 impl Version {
     #[must_use]
-    pub fn new(arg: usize) -> Self {
+    pub fn new(arg: VersionType) -> Self {
         Self(arg)
     }
 }
@@ -856,7 +857,7 @@ pub enum PendingState {
 #[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Serialize, Deserialize)]
 #[display("{result_kind}")]
 pub struct PendingStateFinished {
-    pub version: usize, // not Version since it must be Copy
+    pub version: VersionType, // not Version since it must be Copy
     pub finished_at: DateTime<Utc>,
     pub result_kind: PendingStateFinishedResultKind,
 }

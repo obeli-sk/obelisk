@@ -175,7 +175,7 @@ impl DbConnection for InMemoryDbConnection {
         let execution_log = self.0.lock().await.get(execution_id)?;
         Ok(execution_log
             .events
-            .get(version.0)
+            .get(usize::try_from(version.0).unwrap())
             .cloned()
             .ok_or(SpecificError::NotFound)?)
     }
