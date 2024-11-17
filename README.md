@@ -5,8 +5,7 @@ Deterministic workflow engine built on top of the WASM Component Model
 This is a **pre-release**.
 
 This repo contains backend code for local development and testing.
-The software doesn't have backward compatibility guarantees for CLI nor database format.
-Please exercise caution if attempting to use it for production.
+The software doesn't have backward compatibility guarantees for the CLI, gRPC or database schema.
 
 ### Supported platforms
 * Linux x64
