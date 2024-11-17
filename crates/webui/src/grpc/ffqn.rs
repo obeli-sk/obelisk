@@ -1,3 +1,5 @@
+use yew::ToHtml;
+
 use crate::grpc::grpc_client;
 use std::{fmt::Display, str::FromStr};
 
@@ -58,5 +60,11 @@ impl From<grpc_client::FunctionName> for FunctionFqn {
             ifc_fqn: value.interface_name,
             function_name: value.function_name,
         }
+    }
+}
+
+impl ToHtml for FunctionFqn {
+    fn to_html(&self) -> yew::Html {
+        self.to_string().into_html()
     }
 }

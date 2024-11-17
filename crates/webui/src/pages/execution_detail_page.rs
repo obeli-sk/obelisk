@@ -1,8 +1,13 @@
 use crate::app::Route;
+use crate::components::execution_detail::create::Create;
 use crate::components::execution_status::ExecutionStatus;
 use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
-use crate::grpc::grpc_client;
+use crate::grpc::ffqn::FunctionFqn;
+use crate::grpc::grpc_client::execution_event::Created;
+use crate::grpc::grpc_client::{self, execution_event};
+use chrono::DateTime;
 use log::debug;
+use std::ops::Deref;
 use yew::prelude::*;
 use yew_router::prelude::Link;
 
@@ -14,8 +19,33 @@ pub struct ExecutionDetailPageProps {
 pub fn execution_detail_page(
     ExecutionDetailPageProps { execution_id }: &ExecutionDetailPageProps,
 ) -> Html {
-    // let app_state =
-    //     use_context::<AppState>().expect("AppState context is set when starting the App");
+    let events_state = use_state(|| None);
+    use_effect_with((), {
+        let execution_id = execution_id.clone();
+        let events_state = events_state.clone();
+        move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let base_url = "/api";
+                let mut execution_client =
+                    grpc_client::execution_repository_client::ExecutionRepositoryClient::new(
+                        tonic_web_wasm_client::Client::new(base_url.to_string()),
+                    );
+                let events = execution_client
+                    .list_execution_events(grpc_client::ListExecutionEventsRequest {
+                        execution_id: Some(execution_id.clone()),
+                        version_from: 0,
+                        length: 20,
+                    })
+                    .await
+                    .unwrap()
+                    .into_inner()
+                    .events;
+                debug!("Got {} events", events.len());
+                events_state.set(Some(events));
+            })
+        }
+    });
+
     let execution_parts = execution_id.as_hierarchy();
     debug!("execution_parts {execution_parts:?}");
     let execution_parts: Vec<_> = execution_parts
@@ -33,29 +63,62 @@ pub fn execution_detail_page(
         })
         .collect();
 
+    let details = if let Some(events) = events_state.deref() {
+        let rows: Vec<_> = events
+            .iter()
+            .map(|event| {
+                let detail = match event.event.as_ref().expect("event is sent by the server") {
+                    execution_event::Event::Created(Created {
+                        function_name: Some(function_name),
+                        params: Some(params),
+                        scheduled_at: _,
+                        config_id: _,
+                        scheduled_by,
+                    }) => {
+                        let ffqn = FunctionFqn::from(function_name.clone());
+                        let params: Vec<serde_json::Value> =
+                            serde_json::from_slice(&params.value).expect("`params` must be a JSON array");
+                        let scheduled_by = scheduled_by.clone();
+                        html!{
+                            <Create {ffqn} {params} {scheduled_by} />
+                        }
+                    }
+                    // execution_event::Event::Locked(_) => todo!(),
+                    // execution_event::Event::Unlocked(_) => todo!(),
+                    // execution_event::Event::Failed(_) => todo!(),
+                    // execution_event::Event::TimedOut(_) => todo!(),
+                    // execution_event::Event::Finished(_) => todo!(),
+                    // execution_event::Event::HistoryVariant(_) => todo!(),
+                    other => html! { {format!("unknown variant {other:?}")}},
+                };
+
+                html! { <tr>
+                    <td>{event.version}</td>
+                    <td>{DateTime::from(event.created_at.expect("`created_at` sent by the server")).to_rfc3339()}</td>
+                    <td>{detail}</td>
+                </tr>}
+            })
+            .collect();
+        html! {
+            <table>
+            <tr>
+                <th>{"Version"}</th>
+                <th>{"Created at"}</th>
+                <th>{"Detail"}</th>
+            </tr>
+            {rows}
+            </table>
+        }
+    } else {
+        html! {
+            <p>{"Loading"}</p>
+        }
+    };
+
     html! {
         <>
-
         <h3>{ execution_parts }</h3>
         <ExecutionStatus execution_id={execution_id.clone()} status={None} print_finished_status={true} />
+        {details}
     </>}
-    // match FunctionFqn::from_str(ffqn).and_then(|ffqn| {
-    //     app_state
-    //         .submittable_ffqns_to_details
-    //         .get(&ffqn)
-    //         .ok_or("function not found")
-    // }) {
-    //     Ok(function_detail) => {
-    //         let ffqn = FunctionFqn::from_fn_detail(function_detail);
-    //         html! {<>
-    //             <h3>{ ffqn.to_string() }</h3>
-    //             <p><Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.to_string() }}>{"Go to execution list"}</Link<Route>></p>
-    //             <h4><FunctionSignature params = {function_detail.params.clone()} return_type = {function_detail.return_type.clone()} /></h4>
-
-    //         </>}
-    //     }
-    //     Err(err) => html! {
-    //         <p>{ err }</p>
-    //     },
-    // }
 }
