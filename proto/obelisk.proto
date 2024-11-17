@@ -10,6 +10,7 @@ service ExecutionRepository {
     rpc Submit(SubmitRequest) returns (SubmitResponse);
     rpc GetStatus(GetStatusRequest) returns (stream GetStatusResponse);
     rpc ListExecutions(ListExecutionsRequest) returns (ListExecutionsResponse);
+    rpc GetExecutionLog(GetExecutionLogRequest) returns (GetExecutionLogResponse);
 }
 
 service FunctionRepository {
@@ -327,14 +328,25 @@ message ExecutionEvent {
     }
 
     google.protobuf.Timestamp created_at = 1;
+    uint32 version = 2;
 
     oneof event {
-        Created created = 2;
-        Locked locked = 3;
-        Unlocked unlocked = 4;
-        IntermittentlyFailed failed = 5;
-        IntermittentlyTimedOut timed_out = 6;
-        Finished finished = 7;
-        HistoryEvent history_variant = 8;
+        Created created = 3;
+        Locked locked = 4;
+        Unlocked unlocked = 5;
+        IntermittentlyFailed failed = 6;
+        IntermittentlyTimedOut timed_out = 7;
+        Finished finished = 8;
+        HistoryEvent history_variant = 9;
     }
+}
+
+message GetExecutionLogRequest {
+    ExecutionId execution_id = 1;
+    uint32 version_from = 2;
+    uint32 length = 3;
+}
+
+message GetExecutionLogResponse {
+    repeated ExecutionEvent events = 2;
 }

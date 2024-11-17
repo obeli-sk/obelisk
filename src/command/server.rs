@@ -369,6 +369,13 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             executions,
         }))
     }
+
+    async fn get_execution_log(
+        &self,
+        request: tonic::Request<grpc::GetExecutionLogRequest>,
+    ) -> std::result::Result<tonic::Response<grpc::GetExecutionLogResponse>, tonic::Status> {
+        todo!()
+    }
 }
 
 fn to_finished_status(
