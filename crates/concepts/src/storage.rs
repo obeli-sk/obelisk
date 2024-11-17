@@ -664,6 +664,13 @@ pub trait DbConnection: Send + Sync {
     /// Get execution log.
     async fn get(&self, execution_id: &ExecutionId) -> Result<ExecutionLog, DbError>;
 
+    async fn get_execution_events(
+        &self,
+        execution_id: &ExecutionId,
+        since: &Version,
+        max_length: VersionType,
+    ) -> Result<Vec<ExecutionEvent>, DbError>;
+
     async fn get_execution_event(
         &self,
         execution_id: &ExecutionId,

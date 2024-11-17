@@ -1786,6 +1786,45 @@ impl SqlitePool {
         })
     }
 
+    fn get_execution_events(
+        tx: &Transaction,
+        execution_id: &ExecutionId,
+        version_min: VersionType,
+        version_max_excluding: VersionType,
+    ) -> Result<Vec<ExecutionEvent>, DbError> {
+        tx
+        .prepare(
+            "SELECT created_at, json_value FROM t_execution_log WHERE \
+            execution_id = :execution_id AND version >= :version_min AND version < :version_max_excluding
+            ORDER BY version",
+        )
+        .map_err(convert_err)?
+        .query_map(
+            named_params! {
+                ":execution_id": execution_id.to_string(),
+                ":version_min": version_min,
+                ":version_max_excluding": version_max_excluding
+            },
+            |row| {
+                let created_at = row.get("created_at")?;
+                let event = serde_json::from_value::<ExecutionEventInner>(
+                    row.get::<_, serde_json::Value>("json_value")?,
+                )
+                .map(|event| ExecutionEvent { created_at, event })
+                .map_err(|serde| {
+                    error!("Cannot deserialize {row:?} - {serde:?}");
+                    parsing_err(serde)
+                });
+                Ok(event)
+            },
+        )
+        .map_err(convert_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(convert_err)?
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+    }
+
     fn get_execution_event(
         tx: &Transaction,
         execution_id: &ExecutionId,
@@ -2330,6 +2369,23 @@ impl DbConnection for SqlitePool {
         self.transaction_read(move |tx| Self::get(tx, &execution_id), "get")
             .await
             .map_err(DbError::from)
+    }
+
+    #[instrument(level = Level::DEBUG, skip(self))]
+    async fn get_execution_events(
+        &self,
+        execution_id: &ExecutionId,
+        since: &Version,
+        max_length: VersionType,
+    ) -> Result<Vec<ExecutionEvent>, DbError> {
+        let execution_id = execution_id.clone();
+        let since = since.0;
+        self.transaction_read(
+            move |tx| Self::get_execution_events(tx, &execution_id, since, since + max_length),
+            "get",
+        )
+        .await
+        .map_err(DbError::from)
     }
 
     #[instrument(level = Level::DEBUG, skip(self))]
