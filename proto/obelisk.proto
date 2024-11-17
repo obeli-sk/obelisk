@@ -23,7 +23,7 @@ message ListExecutionsRequest {
     }
     message NewerThan {
         uint32 next = 1;
-        ExecutionId cursor = 2;
+        string cursor = 2;
         bool including_cursor = 3;
     }
     message Latest {
@@ -31,7 +31,7 @@ message ListExecutionsRequest {
     }
     message OlderThan {
         uint32 previous = 1;
-        ExecutionId cursor = 2;
+        string cursor = 2;
         bool including_cursor = 3;
     }
 
@@ -48,10 +48,13 @@ message ExecutionSummary {
     ExecutionId execution_id = 1;
     FunctionName function_name = 2;
     ExecutionStatus current_status = 3;
+    google.protobuf.Timestamp created_at = 4;
 }
 
 message ListExecutionsResponse {
-    repeated ExecutionSummary executions = 1;
+    optional string cursor_newest = 1;
+    optional string cursor_oldest = 2;
+    repeated ExecutionSummary executions = 3;
 }
 
 message ListComponentsRequest {

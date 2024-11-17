@@ -215,7 +215,7 @@ impl DbConnection for DbConnectionProxy {
     async fn list_executions(
         &self,
         ffqn: Option<FunctionFqn>,
-        pagination: Pagination<ExecutionId>,
+        pagination: Pagination<DateTime<Utc>>,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
         self.0.list_executions(ffqn, pagination).await
     }

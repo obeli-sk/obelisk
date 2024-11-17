@@ -1,5 +1,6 @@
 use crate::command::grpc::{self};
 use anyhow::anyhow;
+use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{JoinSetId, RunId},
     storage::{
@@ -203,30 +204,27 @@ impl From<PendingStateFinishedResultKind> for grpc::ResultKind {
     }
 }
 
-impl TryFrom<grpc::list_executions_request::Pagination> for Pagination<ExecutionId> {
+impl TryFrom<grpc::list_executions_request::Pagination> for Pagination<DateTime<Utc>> {
     type Error = tonic::Status;
     fn try_from(value: grpc::list_executions_request::Pagination) -> Result<Self, Self::Error> {
         Ok(match value {
             grpc::list_executions_request::Pagination::OlderThan(
                 grpc::list_executions_request::OlderThan {
                     previous,
-                    cursor: Some(cursor),
+                    cursor,
                     including_cursor,
                 },
             ) => Pagination::OlderThan {
                 previous,
-                cursor: Some(ExecutionId::try_from(cursor)?),
+                cursor: Some(
+                    DateTime::parse_from_rfc3339(&cursor)
+                        .map_err(|_| tonic::Status::invalid_argument("cursor cannot be parsed"))?
+                        .into(),
+                ),
                 including_cursor,
             },
             grpc::list_executions_request::Pagination::Latest(
                 grpc::list_executions_request::Latest { latest: previous },
-            )
-            | grpc::list_executions_request::Pagination::OlderThan(
-                grpc::list_executions_request::OlderThan {
-                    previous,
-                    cursor: None,
-                    including_cursor: _,
-                },
             ) => Pagination::OlderThan {
                 previous,
                 cursor: None,
@@ -235,23 +233,20 @@ impl TryFrom<grpc::list_executions_request::Pagination> for Pagination<Execution
             grpc::list_executions_request::Pagination::NewerThan(
                 grpc::list_executions_request::NewerThan {
                     next,
-                    cursor: Some(cursor),
+                    cursor,
                     including_cursor,
                 },
             ) => Pagination::NewerThan {
                 next,
-                cursor: Some(ExecutionId::try_from(cursor)?),
+                cursor: Some(
+                    DateTime::parse_from_rfc3339(&cursor)
+                        .map_err(|_| tonic::Status::invalid_argument("cursor cannot be parsed"))?
+                        .into(),
+                ),
                 including_cursor,
             },
             grpc::list_executions_request::Pagination::Oldest(
                 grpc::list_executions_request::Oldest { oldest: next },
-            )
-            | grpc::list_executions_request::Pagination::NewerThan(
-                grpc::list_executions_request::NewerThan {
-                    next,
-                    cursor: None,
-                    including_cursor: _,
-                },
             ) => Pagination::NewerThan {
                 next,
                 cursor: None,

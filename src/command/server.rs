@@ -223,6 +223,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         };
         let summary = grpc::GetStatusResponse {
             message: Some(Message::Summary(ExecutionSummary {
+                created_at: Some(create_request.created_at.into()),
                 execution_id: Some(grpc::ExecutionId::from(&execution_id)),
                 function_name: Some(create_request.ffqn.clone().into()),
                 current_status: Some(grpc_pending_status),
@@ -359,7 +360,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                 ));
         let pagination = Pagination::try_from(pagination)?;
         let conn = self.db_pool.connection();
-        let executions = conn
+        let executions: Vec<_> = conn
             .list_executions(ffqn, pagination)
             .await
             .to_status()?
@@ -374,10 +375,21 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     execution_id: Some(grpc::ExecutionId::from(execution_id)),
                     function_name: Some(ffqn.into()),
                     current_status: Some(grpc::ExecutionStatus::from(pending_state)),
+                    created_at: Some(created_at.into()),
                 },
             )
             .collect();
         Ok(tonic::Response::new(grpc::ListExecutionsResponse {
+            cursor_newest: executions.first().map(|exe| {
+                exe.created_at
+                    .expect("set to Some in this function")
+                    .to_string()
+            }),
+            cursor_oldest: executions.last().map(|exe| {
+                exe.created_at
+                    .expect("set to Some in this function")
+                    .to_string()
+            }),
             executions,
         }))
     }

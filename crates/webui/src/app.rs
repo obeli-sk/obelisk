@@ -32,28 +32,16 @@ pub enum Route {
     /// Show paginated table of executions, fiterable by component, interface, ffqn, pending state etc.
     #[at("/execution/list")]
     ExecutionList,
-    #[at("/execution/list/older/:execution_id")]
-    ExecutionListOlder {
-        execution_id: grpc_client::ExecutionId,
-    },
-    #[at("/execution/list/older_inc/:execution_id")]
-    ExecutionListOlderIncluding {
-        execution_id: grpc_client::ExecutionId,
-    },
-    #[at("/execution/list/newer/:execution_id")]
-    ExecutionListNewer {
-        execution_id: grpc_client::ExecutionId,
-    },
-    #[at("/execution/list/newer_inc/:execution_id")]
-    ExecutionListNewerIncluding {
-        execution_id: grpc_client::ExecutionId,
-    },
+    #[at("/execution/list/older/:cursor")]
+    ExecutionListOlder { cursor: String },
+    #[at("/execution/list/older_inc/:cursor")]
+    ExecutionListOlderIncluding { cursor: String },
+    #[at("/execution/list/newer/:cursor")]
+    ExecutionListNewer { cursor: String },
+    #[at("/execution/list/newer_inc/:cursor")]
+    ExecutionListNewerIncluding { cursor: String },
     #[at("/execution/list/ffqn/:ffqn")]
     ExecutionListByFfqn { ffqn: FunctionFqn },
-    #[at("/execution/list/execution_id/:execution_id")]
-    ExecutionListByExecutionId {
-        execution_id: grpc_client::ExecutionId,
-    },
 
     /// Show details including pending state, event history
     #[at("/execution/:execution_id")]
@@ -74,24 +62,21 @@ impl Route {
             Route::ExecutionDetail { execution_id } => {
                 html! { <ExecutionDetailPage {execution_id} /> }
             }
-            Route::ExecutionListOlder { execution_id } => {
-                html! { <ExecutionListPage filter={ExecutionFilter::Older { execution_id, including_cursor: false }} /> }
+            Route::ExecutionListOlder { cursor } => {
+                html! { <ExecutionListPage filter={ExecutionFilter::Older { cursor, including_cursor: false }} /> }
             }
-            Route::ExecutionListOlderIncluding { execution_id } => {
-                html! { <ExecutionListPage filter={ExecutionFilter::Older { execution_id, including_cursor: true }} /> }
+            Route::ExecutionListOlderIncluding { cursor } => {
+                html! { <ExecutionListPage filter={ExecutionFilter::Older { cursor, including_cursor: true }} /> }
             }
-            Route::ExecutionListNewer { execution_id } => {
-                html! { <ExecutionListPage filter={ExecutionFilter::Newer { execution_id, including_cursor: false }} /> }
+            Route::ExecutionListNewer { cursor } => {
+                html! { <ExecutionListPage filter={ExecutionFilter::Newer { cursor, including_cursor: false }} /> }
             }
-            Route::ExecutionListNewerIncluding { execution_id } => {
-                html! { <ExecutionListPage filter={ExecutionFilter::Newer { execution_id, including_cursor: true }} /> }
+            Route::ExecutionListNewerIncluding { cursor } => {
+                html! { <ExecutionListPage filter={ExecutionFilter::Newer { cursor, including_cursor: true }} /> }
             }
 
             Route::ExecutionListByFfqn { ffqn } => {
                 html! { <ExecutionListPage filter={ExecutionFilter::Ffqn { ffqn } } /> }
-            }
-            Route::ExecutionListByExecutionId { execution_id } => {
-                html! { <ExecutionListPage filter={ExecutionFilter::ExecutionId { execution_id} } /> }
             }
             Route::NotFound => html! { <NotFound /> },
         }

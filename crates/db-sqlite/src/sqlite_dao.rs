@@ -1171,7 +1171,7 @@ impl SqlitePool {
     fn list_executions(
         read_tx: &Transaction,
         ffqn: Option<FunctionFqn>,
-        pagination: Pagination<ExecutionId>,
+        pagination: Pagination<DateTime<Utc>>,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
         let mut where_vec: Vec<String> = vec![];
 
@@ -1179,7 +1179,7 @@ impl SqlitePool {
         let limit;
         let mut limit_desc = false;
         let ffqn_string: String;
-        let execution_id_string: String;
+        let cursor: String;
         if let Some(ffqn) = ffqn {
             where_vec.push("ffqn = :ffqn".to_string());
             ffqn_string = ffqn.to_string();
@@ -1197,12 +1197,12 @@ impl SqlitePool {
                 including_cursor,
             } => {
                 limit = first;
-                execution_id_string = after.to_string();
+                cursor = after.to_string();
                 where_vec.push(format!(
-                    "execution_id {rel} :execution_id",
+                    "created_at {rel} :cursor",
                     rel = if including_cursor { ">=" } else { ">" }
                 ));
-                params.push((":execution_id", &execution_id_string));
+                params.push((":cursor", &cursor));
             }
             Pagination::OlderThan {
                 previous: last,
@@ -1219,12 +1219,12 @@ impl SqlitePool {
             } => {
                 limit_desc = true;
                 limit = last;
-                execution_id_string = before.to_string();
+                cursor = before.to_string();
                 where_vec.push(format!(
-                    "execution_id {rel} :execution_id",
+                    "created_at {rel} :cursor",
                     rel = if including_cursor { "<=" } else { "<" }
                 ));
-                params.push((":execution_id", &execution_id_string));
+                params.push((":cursor", &cursor));
             }
         }
         let where_str = if where_vec.is_empty() {
@@ -1233,7 +1233,7 @@ impl SqlitePool {
             format!("WHERE {}", where_vec.join(" AND "))
         };
         let sql = format!("SELECT created_at,state, execution_id, ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
-            FROM t_state {where_str} ORDER BY execution_id {desc} LIMIT {limit}",
+            FROM t_state {where_str} ORDER BY created_at {desc} LIMIT {limit}",
             desc = if limit_desc { "DESC" } else { "" } );
 
         let mut vec: Vec<_> = read_tx
@@ -2623,7 +2623,7 @@ impl DbConnection for SqlitePool {
     async fn list_executions(
         &self,
         ffqn: Option<FunctionFqn>,
-        pagination: Pagination<ExecutionId>,
+        pagination: Pagination<DateTime<Utc>>,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
         Ok(self
             .transaction_read(

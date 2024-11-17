@@ -20,7 +20,7 @@ pub fn execution_detail_page(
     ExecutionDetailPageProps { execution_id }: &ExecutionDetailPageProps,
 ) -> Html {
     let events_state = use_state(|| None);
-    use_effect_with((), {
+    use_effect_with(execution_id.clone(), {
         let execution_id = execution_id.clone();
         let events_state = events_state.clone();
         move |_| {
@@ -47,7 +47,6 @@ pub fn execution_detail_page(
     });
 
     let execution_parts = execution_id.as_hierarchy();
-    debug!("execution_parts {execution_parts:?}");
     let execution_parts: Vec<_> = execution_parts
         .into_iter()
         .enumerate()

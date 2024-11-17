@@ -1,6 +1,7 @@
 use crate::app::Route;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::grpc_client::ExecutionId;
+use log::debug;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::ops::Deref;
@@ -26,7 +27,9 @@ pub fn create(
         scheduled_by,
     }: &CreateProps,
 ) -> Html {
+    debug!("<Create /> Rendering");
     let tree_state = use_state(|| {
+        debug!("<Create /> Called use_state ");
         let mut tree = TreeBuilder::new().build();
         let root_id = tree
             .insert(
@@ -94,7 +97,7 @@ pub fn create(
                 .insert(
                     Node::new(NodeData {
                         icon: Icon::Time,
-                        label: html!{ <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_by.clone() } }>{"Scheduled by"}</Link<Route>> },
+                        label: html!{ <> {"Scheduled by "} <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_by.clone() } }>{scheduled_by}</Link<Route>> </>},
                         has_caret: false,
                         data: 1,
                         ..Default::default()
@@ -109,6 +112,7 @@ pub fn create(
     let on_expand_node = {
         let tree_state = tree_state.clone();
         Callback::from(move |(node_id, _): (NodeId, MouseEvent)| {
+            debug!("<Create /> on_expand_node");
             let tree = tree_state.deref().clone();
             {
                 let mut tree = tree.borrow_mut();

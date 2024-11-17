@@ -8,7 +8,7 @@ use crate::{
         ffqn::FunctionFqn,
         grpc_client::{
             self,
-            list_executions_request::{Latest, NewerThan, OlderThan, Pagination},
+            list_executions_request::{NewerThan, OlderThan, Pagination},
         },
     },
 };
@@ -21,15 +21,12 @@ use yew_router::prelude::Link;
 pub enum ExecutionFilter {
     #[default]
     All,
-    ExecutionId {
-        execution_id: grpc_client::ExecutionId,
-    },
     Older {
-        execution_id: grpc_client::ExecutionId,
+        cursor: String,
         including_cursor: bool,
     },
     Newer {
-        execution_id: grpc_client::ExecutionId,
+        cursor: String,
         including_cursor: bool,
     },
     Ffqn {
@@ -46,10 +43,10 @@ pub struct ExecutionListPageProps {
 pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPageProps) -> Html {
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
-    let executions_state = use_state(|| None);
+    let response_state = use_state(|| None);
     {
         let page_size = 20;
-        let executions_state = executions_state.clone();
+        let response_state = response_state.clone();
         use_effect_with(filter.clone(), move |filter| {
             let filter = filter.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -59,36 +56,26 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                         tonic_web_wasm_client::Client::new(base_url.to_string()),
                     );
                 let (ffqn, pagination) = match filter {
-                    ExecutionFilter::All => {
-                        (None, Some(Pagination::Latest(Latest { latest: page_size })))
-                    }
-                    ExecutionFilter::ExecutionId { execution_id } => (
-                        None,
-                        Some(Pagination::NewerThan(NewerThan {
-                            cursor: Some(execution_id.clone()),
-                            next: 1,
-                            including_cursor: true,
-                        })),
-                    ),
+                    ExecutionFilter::All => (None, None),
                     ExecutionFilter::Ffqn { ffqn } => (Some(ffqn), None),
                     ExecutionFilter::Older {
-                        execution_id,
+                        cursor,
                         including_cursor,
                     } => (
                         None,
                         Some(Pagination::OlderThan(OlderThan {
-                            cursor: Some(execution_id.clone()),
+                            cursor,
                             previous: page_size,
                             including_cursor,
                         })),
                     ),
                     ExecutionFilter::Newer {
-                        execution_id,
+                        cursor,
                         including_cursor,
                     } => (
                         None,
                         Some(Pagination::NewerThan(NewerThan {
-                            cursor: Some(execution_id.clone()),
+                            cursor,
                             next: page_size,
                             including_cursor,
                         })),
@@ -103,21 +90,13 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                     .unwrap()
                     .into_inner();
                 debug!("Got ListExecutionsResponse");
-                executions_state.set(Some(response.executions));
+                response_state.set(Some(response));
             })
         });
     }
 
-    if let Some(executions) = executions_state.deref() {
-        let (topmost_exe, bottommost_exe) = (
-            executions
-                .first()
-                .and_then(|summary| summary.execution_id.clone()),
-            executions
-                .last()
-                .and_then(|summary| summary.execution_id.clone()),
-        );
-        let rows = executions
+    if let Some(response) = response_state.deref() {
+        let rows = response.executions
             .iter()
             .map(|execution| {
                 let ffqn = FunctionFqn::from(
@@ -159,35 +138,31 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                 <p><Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.clone() }}>{"Submit new execution"}</Link<Route>></p>
                 <p><Link<Route> to={Route::ExecutionList}>{"Remove filter"}</Link<Route>></p>
             }
-            if let ExecutionFilter::ExecutionId{execution_id} = filter {
-                <h4>{format!("Filtered by execution ID: {execution_id}")}</h4>
-                <p><Link<Route> to={Route::ExecutionList}>{"Remove filter"}</Link<Route>></p>
-            }
             <ComponentTree components={app_state.components} show_extensions={ false } {submittable_link_fn} show_submittable_only={true}/>
             <table>
                 <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
                 { rows }
             </table>
-            if let (Some(topmost_exe), Some(bottommost_exe)) = (topmost_exe, bottommost_exe) {
+            if let (Some(cursor_newest), Some(cursor_oldest)) = (&response.cursor_newest, &response.cursor_oldest) {
                 <p>
-                    <Link<Route> to={Route::ExecutionListNewer { execution_id: topmost_exe }}>
+                    <Link<Route> to={Route::ExecutionListNewer { cursor: cursor_newest.clone() }}>
                         {"Newer"}
                     </Link<Route>>
                 </p>
                 <p>
-                    <Link<Route> to={Route::ExecutionListOlder { execution_id: bottommost_exe }}>
+                    <Link<Route> to={Route::ExecutionListOlder { cursor: cursor_oldest.clone() }}>
                         {"Older"}
                     </Link<Route>>
                 </p>
-            } else if let ExecutionFilter::Newer { execution_id, including_cursor: false } = filter {
+            } else if let ExecutionFilter::Newer { cursor, including_cursor: false } = filter {
                 <p>
-                    <Link<Route> to={Route::ExecutionListOlderIncluding { execution_id: execution_id.clone() }}>
+                    <Link<Route> to={Route::ExecutionListOlderIncluding { cursor: cursor.clone() }}>
                         {"Older"}
                     </Link<Route>>
                 </p>
-            } else if let ExecutionFilter::Older { execution_id, including_cursor: false } = filter {
+            } else if let ExecutionFilter::Older { cursor, including_cursor: false } = filter {
                 <p>
-                    <Link<Route> to={Route::ExecutionListNewerIncluding { execution_id: execution_id.clone() }}>
+                    <Link<Route> to={Route::ExecutionListNewerIncluding { cursor: cursor.clone() }}>
                         {"Newer"}
                     </Link<Route>>
                 </p>

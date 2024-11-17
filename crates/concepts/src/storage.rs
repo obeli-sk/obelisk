@@ -780,7 +780,7 @@ pub trait DbConnection: Send + Sync {
     async fn list_executions(
         &self,
         ffqn: Option<FunctionFqn>,
-        pagination: Pagination<ExecutionId>,
+        pagination: Pagination<DateTime<Utc>>,
     ) -> Result<Vec<ExecutionWithState>, DbError>;
 }
 
