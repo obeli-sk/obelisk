@@ -21,9 +21,9 @@ pub fn execution_detail_page(
 ) -> Html {
     let events_state = use_state(|| None);
     use_effect_with(execution_id.clone(), {
-        let execution_id = execution_id.clone();
         let events_state = events_state.clone();
-        move |_| {
+        move |execution_id| {
+            let execution_id = execution_id.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let base_url = "/api";
                 let mut execution_client =
