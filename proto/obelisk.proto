@@ -10,7 +10,7 @@ service ExecutionRepository {
     rpc Submit(SubmitRequest) returns (SubmitResponse);
     rpc GetStatus(GetStatusRequest) returns (stream GetStatusResponse);
     rpc ListExecutions(ListExecutionsRequest) returns (ListExecutionsResponse);
-    rpc GetExecutionLog(GetExecutionLogRequest) returns (GetExecutionLogResponse);
+    rpc ListExecutionEvents(ListExecutionEventsRequest) returns (ListExecutionEventsResponse);
 }
 
 service FunctionRepository {
@@ -341,12 +341,12 @@ message ExecutionEvent {
     }
 }
 
-message GetExecutionLogRequest {
+message ListExecutionEventsRequest {
     ExecutionId execution_id = 1;
     uint32 version_from = 2;
     uint32 length = 3;
 }
 
-message GetExecutionLogResponse {
+message ListExecutionEventsResponse {
     repeated ExecutionEvent events = 2;
 }

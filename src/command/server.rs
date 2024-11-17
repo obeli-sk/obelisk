@@ -28,6 +28,7 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::storage::Pagination;
 use concepts::storage::PendingState;
+use concepts::storage::Version;
 use concepts::ComponentRetryConfig;
 use concepts::ConfigId;
 use concepts::ConfigIdType;
@@ -334,7 +335,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         }
     }
 
-    #[instrument(skip_all, fields(execution_id))]
+    #[instrument(skip_all, fields(ffqn))]
     async fn list_executions(
         &self,
         request: tonic::Request<grpc::ListExecutionsRequest>,
@@ -344,6 +345,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .function_name
             .map(FunctionFqn::try_from)
             .transpose()?;
+        tracing::Span::current().record("ffqn", tracing::field::debug(&ffqn));
         let pagination =
             request
                 .pagination
@@ -370,11 +372,31 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         }))
     }
 
-    async fn get_execution_log(
+    #[instrument(skip_all, fields(execution_id))]
+    async fn list_execution_events(
         &self,
-        request: tonic::Request<grpc::GetExecutionLogRequest>,
-    ) -> std::result::Result<tonic::Response<grpc::GetExecutionLogResponse>, tonic::Status> {
-        todo!()
+        request: tonic::Request<grpc::ListExecutionEventsRequest>,
+    ) -> std::result::Result<tonic::Response<grpc::ListExecutionEventsResponse>, tonic::Status>
+    {
+        let request = request.into_inner();
+        let execution_id: ExecutionId = request
+            .execution_id
+            .argument_must_exist("execution_id")?
+            .try_into()?;
+        tracing::Span::current().record("execution_id", tracing::field::display(&execution_id));
+        let version_from = request.version_from;
+        let length = request.length;
+        let conn = self.db_pool.connection();
+        let events = conn
+            .list_execution_events(&execution_id, &Version(version_from), length)
+            .await
+            .to_status()?
+            .into_iter()
+            .map(|execution_event| todo!())
+            .collect();
+        Ok(tonic::Response::new(grpc::ListExecutionEventsResponse {
+            events,
+        }))
     }
 }
 
