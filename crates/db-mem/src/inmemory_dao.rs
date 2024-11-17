@@ -290,7 +290,7 @@ impl DbConnection for InMemoryDbConnection {
         unimplemented!("only needed for gRPC")
     }
 
-    async fn get_execution_events(
+    async fn list_execution_events(
         &self,
         _execution_id: &ExecutionId,
         _since: &Version,

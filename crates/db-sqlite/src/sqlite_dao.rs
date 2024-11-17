@@ -1786,7 +1786,7 @@ impl SqlitePool {
         })
     }
 
-    fn get_execution_events(
+    fn list_execution_events(
         tx: &Transaction,
         execution_id: &ExecutionId,
         version_min: VersionType,
@@ -2372,7 +2372,7 @@ impl DbConnection for SqlitePool {
     }
 
     #[instrument(level = Level::DEBUG, skip(self))]
-    async fn get_execution_events(
+    async fn list_execution_events(
         &self,
         execution_id: &ExecutionId,
         since: &Version,
@@ -2381,7 +2381,7 @@ impl DbConnection for SqlitePool {
         let execution_id = execution_id.clone();
         let since = since.0;
         self.transaction_read(
-            move |tx| Self::get_execution_events(tx, &execution_id, since, since + max_length),
+            move |tx| Self::list_execution_events(tx, &execution_id, since, since + max_length),
             "get",
         )
         .await

@@ -220,14 +220,14 @@ impl DbConnection for DbConnectionProxy {
         self.0.list_executions(ffqn, pagination).await
     }
 
-    async fn get_execution_events(
+    async fn list_execution_events(
         &self,
         execution_id: &ExecutionId,
         since: &Version,
         max_length: VersionType,
     ) -> Result<Vec<ExecutionEvent>, DbError> {
         self.0
-            .get_execution_events(execution_id, since, max_length)
+            .list_execution_events(execution_id, since, max_length)
             .await
     }
 }
