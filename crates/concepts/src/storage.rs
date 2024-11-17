@@ -781,7 +781,14 @@ pub trait DbConnection: Send + Sync {
         &self,
         ffqn: Option<FunctionFqn>,
         pagination: Pagination<ExecutionId>,
-    ) -> Result<Vec<(ExecutionId, FunctionFqn, PendingState)>, DbError>;
+    ) -> Result<Vec<ExecutionWithState>, DbError>;
+}
+
+pub struct ExecutionWithState {
+    pub execution_id: ExecutionId,
+    pub ffqn: FunctionFqn,
+    pub pending_state: PendingState,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy)]

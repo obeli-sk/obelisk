@@ -31,6 +31,7 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionEvent;
 use concepts::storage::ExecutionEventInner;
+use concepts::storage::ExecutionWithState;
 use concepts::storage::Pagination;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
@@ -364,7 +365,12 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             .to_status()?
             .into_iter()
             .map(
-                |(execution_id, ffqn, pending_state)| grpc::ExecutionSummary {
+                |ExecutionWithState {
+                     execution_id,
+                     ffqn,
+                     pending_state,
+                     created_at,
+                 }| grpc::ExecutionSummary {
                     execution_id: Some(grpc::ExecutionId::from(execution_id)),
                     function_name: Some(ffqn.into()),
                     current_status: Some(grpc::ExecutionStatus::from(pending_state)),

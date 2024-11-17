@@ -11,8 +11,8 @@ use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest, DbConnection,
     DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
-    ExpiredTimer, JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution,
-    Pagination, SpecificError, Version, VersionType,
+    ExecutionWithState, ExpiredTimer, JoinSetResponseEventOuter, LockPendingResponse, LockResponse,
+    LockedExecution, Pagination, SpecificError, Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant};
@@ -286,7 +286,7 @@ impl DbConnection for InMemoryDbConnection {
         &self,
         _ffqn: Option<FunctionFqn>,
         _pagination: Pagination<ExecutionId>,
-    ) -> Result<Vec<(ExecutionId, FunctionFqn, PendingState)>, DbError> {
+    ) -> Result<Vec<ExecutionWithState>, DbError> {
         unimplemented!("only needed for gRPC")
     }
 

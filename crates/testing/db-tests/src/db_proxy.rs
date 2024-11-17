@@ -7,8 +7,8 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
         DbConnection, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
-        ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
-        LockResponse, Pagination, PendingState, Version, VersionType,
+        ExecutionWithState, ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        LockPendingResponse, LockResponse, Pagination, PendingState, Version, VersionType,
     },
     ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn,
 };
@@ -216,7 +216,7 @@ impl DbConnection for DbConnectionProxy {
         &self,
         ffqn: Option<FunctionFqn>,
         pagination: Pagination<ExecutionId>,
-    ) -> Result<Vec<(ExecutionId, FunctionFqn, PendingState)>, DbError> {
+    ) -> Result<Vec<ExecutionWithState>, DbError> {
         self.0.list_executions(ffqn, pagination).await
     }
 
