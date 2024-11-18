@@ -1,7 +1,10 @@
 use crate::worker::{FatalError, Worker, WorkerContext, WorkerError, WorkerResult};
 use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::JoinSetId;
-use concepts::storage::{DbPool, ExecutionLog, JoinSetResponseEvent, LockedExecution};
+use concepts::storage::{
+    AppendRequest, DbPool, ExecutionLog, JoinSetResponseEvent, JoinSetResponseEventOuter,
+    LockedExecution,
+};
 use concepts::{prefixed_ulid::ExecutorId, ExecutionId, FunctionFqn, StrVariant};
 use concepts::{
     storage::{DbConnection, DbError, ExecutionEventInner, JoinSetResponse, Version},
@@ -326,7 +329,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                     result.as_pending_state_finished_result()
                 );
                 let parent = parent.map(|(p, j)| (p, j, Ok(result.clone())));
-                let primary_event = ExecutionEventInner::Finished { result: Ok(result) };
+                let primary_event = AppendRequest {
+                    created_at: result_obtained_at,
+                    event: ExecutionEventInner::Finished { result: Ok(result) },
+                };
                 Some(Append {
                     created_at: result_obtained_at,
                     primary_event,
@@ -420,7 +426,10 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
                 };
                 Some(Append {
                     created_at: result_obtained_at,
-                    primary_event,
+                    primary_event: AppendRequest {
+                        created_at: result_obtained_at,
+                        event: primary_event,
+                    },
                     execution_id,
                     version,
                     parent,
@@ -433,7 +442,7 @@ impl<C: ClockFn + 'static, DB: DbConnection + 'static, P: DbPool<DB> + 'static> 
 #[derive(Debug, Clone)]
 pub(crate) struct Append {
     pub(crate) created_at: DateTime<Utc>,
-    pub(crate) primary_event: ExecutionEventInner,
+    pub(crate) primary_event: AppendRequest,
     pub(crate) execution_id: ExecutionId,
     pub(crate) version: Version,
     pub(crate) parent: Option<(ExecutionId, JoinSetId, FinishedExecutionResult)>,
@@ -449,11 +458,14 @@ impl Append {
                     vec![self.primary_event],
                     self.version,
                     parent_id,
-                    JoinSetResponseEvent {
-                        join_set_id,
-                        event: JoinSetResponse::ChildExecutionFinished {
-                            child_execution_id: self.execution_id,
-                            result,
+                    JoinSetResponseEventOuter {
+                        created_at: self.created_at,
+                        event: JoinSetResponseEvent {
+                            join_set_id,
+                            event: JoinSetResponse::ChildExecutionFinished {
+                                child_execution_id: self.execution_id,
+                                result,
+                            },
                         },
                     },
                 )

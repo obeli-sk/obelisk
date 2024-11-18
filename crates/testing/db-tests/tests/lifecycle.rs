@@ -649,16 +649,22 @@ pub async fn append_batch_respond_to_parent(
             .append_batch_respond_to_parent(
                 child_id.clone(),
                 sim_clock.now(),
-                vec![ExecutionEventInner::Finished {
-                    result: Ok(concepts::SupportedFunctionReturnValue::None),
+                vec![AppendRequest {
+                    created_at: sim_clock.now(),
+                    event: ExecutionEventInner::Finished {
+                        result: Ok(concepts::SupportedFunctionReturnValue::None),
+                    },
                 }],
                 child_version,
                 parent_id.clone(),
-                JoinSetResponseEvent {
-                    join_set_id,
-                    event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id: child_id.clone(),
-                        result: Ok(concepts::SupportedFunctionReturnValue::None),
+                JoinSetResponseEventOuter {
+                    created_at: sim_clock.now(),
+                    event: JoinSetResponseEvent {
+                        join_set_id,
+                        event: JoinSetResponse::ChildExecutionFinished {
+                            child_execution_id: child_id.clone(),
+                            result: Ok(concepts::SupportedFunctionReturnValue::None),
+                        },
                     },
                 },
             )
@@ -690,8 +696,11 @@ pub async fn append_batch_respond_to_parent(
             })
             .await
             .unwrap();
-        let child_resp = vec![ExecutionEventInner::Finished {
-            result: Ok(concepts::SupportedFunctionReturnValue::None),
+        let child_resp = vec![AppendRequest {
+            created_at: sim_clock.now(),
+            event: ExecutionEventInner::Finished {
+                result: Ok(concepts::SupportedFunctionReturnValue::None),
+            },
         }];
 
         db_connection
@@ -701,11 +710,14 @@ pub async fn append_batch_respond_to_parent(
                 child_resp,
                 child_version,
                 parent_id.clone(),
-                JoinSetResponseEvent {
-                    join_set_id,
-                    event: JoinSetResponse::ChildExecutionFinished {
-                        child_execution_id: child_id.clone(),
-                        result: Ok(concepts::SupportedFunctionReturnValue::None),
+                JoinSetResponseEventOuter {
+                    created_at: sim_clock.now(),
+                    event: JoinSetResponseEvent {
+                        join_set_id,
+                        event: JoinSetResponse::ChildExecutionFinished {
+                            child_execution_id: child_id.clone(),
+                            result: Ok(concepts::SupportedFunctionReturnValue::None),
+                        },
                     },
                 },
             )

@@ -6,9 +6,9 @@ use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
-        DbConnection, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
-        ExecutionWithState, ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter,
-        LockPendingResponse, LockResponse, Pagination, PendingState, Version, VersionType,
+        DbConnection, DbError, DbPool, ExecutionEvent, ExecutionLog, ExecutionWithState,
+        ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
+        LockResponse, Pagination, PendingState, Version, VersionType,
     },
     ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn,
 };
@@ -113,13 +113,13 @@ impl DbConnection for DbConnectionProxy {
 
     async fn append_batch(
         &self,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
-            .append_batch(created_at, batch, execution_id, version)
+            .append_batch(current_time, batch, execution_id, version)
             .await
     }
 
@@ -145,16 +145,16 @@ impl DbConnection for DbConnectionProxy {
     async fn append_batch_respond_to_parent(
         &self,
         execution_id: ExecutionId,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
         version: Version,
         parent_execution_id: ExecutionId,
-        parent_response_event: JoinSetResponseEvent,
+        parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
             .append_batch_respond_to_parent(
                 execution_id,
-                created_at,
+                current_time,
                 batch,
                 version,
                 parent_execution_id,

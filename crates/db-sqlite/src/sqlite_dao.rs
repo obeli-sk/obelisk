@@ -1983,10 +1983,10 @@ impl SqlitePool {
     }
 
     #[instrument(level = Level::TRACE, skip_all)]
-    fn notify_pending(&self, pending_at: PendingAt, created_at: DateTime<Utc>) {
+    fn notify_pending(&self, pending_at: PendingAt, current_time: DateTime<Utc>) {
         Self::notify_pending_locked(
             pending_at,
-            created_at,
+            current_time,
             &self.ffqn_to_pending_subscription.lock().unwrap(),
         );
     }
@@ -2156,18 +2156,17 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip(self, batch))]
     async fn append_batch(
         &self,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
         debug!("append_batch");
         trace!(?batch, "append_batch");
         assert!(!batch.is_empty(), "Empty batch request");
-        if batch
-            .iter()
-            .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
-        {
+        if batch.iter().any(|append_request| {
+            matches!(append_request.event, ExecutionEventInner::Created { .. })
+        }) {
             panic!("Cannot append `Created` event - use `create` instead");
         }
         let (version, pending_at) = self
@@ -2175,13 +2174,9 @@ impl DbConnection for SqlitePool {
                 move |tx| {
                     let mut version = version;
                     let mut pending_at = None;
-                    for event in batch {
-                        (version, pending_at) = Self::append(
-                            tx,
-                            &execution_id,
-                            &AppendRequest { created_at, event },
-                            version,
-                        )?;
+                    for append_request in batch {
+                        (version, pending_at) =
+                            Self::append(tx, &execution_id, &append_request, version)?;
                     }
                     Ok((version, pending_at))
                 },
@@ -2190,7 +2185,7 @@ impl DbConnection for SqlitePool {
             .await
             .map_err(DbError::from)?;
         if let Some(pending_at) = pending_at {
-            self.notify_pending(pending_at, created_at);
+            self.notify_pending(pending_at, current_time);
         }
         Ok(version)
     }
@@ -2260,11 +2255,11 @@ impl DbConnection for SqlitePool {
     async fn append_batch_respond_to_parent(
         &self,
         execution_id: ExecutionId,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
         version: Version,
         parent_execution_id: ExecutionId,
-        parent_response_event: JoinSetResponseEvent,
+        parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<AppendBatchResponse, DbError> {
         debug!("append_batch_respond_to_parent");
         if execution_id == parent_execution_id {
@@ -2282,30 +2277,21 @@ impl DbConnection for SqlitePool {
             "append_batch_respond_to_parent"
         );
         assert!(!batch.is_empty(), "Empty batch request");
-        if batch
-            .iter()
-            .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
-        {
+        if batch.iter().any(|append_request| {
+            matches!(append_request.event, ExecutionEventInner::Created { .. })
+        }) {
             panic!("Cannot append `Created` event - use `create` instead");
         }
         let response_subscribers = self.response_subscribers.clone();
-        let event = JoinSetResponseEventOuter {
-            created_at,
-            event: parent_response_event,
-        };
         let (version, response_subscriber, pending_ats) = {
-            let event = event.clone();
+            let event = parent_response_event.clone();
             self.transaction_write(
                 move |tx| {
                     let mut version = version;
                     let mut pending_at_child = None;
-                    for event in batch {
-                        (version, pending_at_child) = Self::append(
-                            tx,
-                            &execution_id,
-                            &AppendRequest { created_at, event },
-                            version,
-                        )?;
+                    for append_request in batch {
+                        (version, pending_at_child) =
+                            Self::append(tx, &execution_id, &append_request, version)?;
                     }
 
                     let (response_subscriber, pending_at_parent) = Self::append_response(
@@ -2326,10 +2312,10 @@ impl DbConnection for SqlitePool {
             .map_err(DbError::from)?
         };
         if let Some(response_subscriber) = response_subscriber {
-            let notified = response_subscriber.send(event);
+            let notified = response_subscriber.send(parent_response_event);
             debug!("Notifying response subscriber: {notified:?}");
         }
-        self.notify_pending_all(pending_ats.into_iter().flatten(), created_at);
+        self.notify_pending_all(pending_ats.into_iter().flatten(), current_time);
         Ok(version)
     }
 

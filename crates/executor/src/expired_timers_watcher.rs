@@ -1,5 +1,6 @@
 use crate::executor::Append;
 use chrono::{DateTime, Utc};
+use concepts::storage::AppendRequest;
 use concepts::storage::DbConnection;
 use concepts::storage::DbError;
 use concepts::storage::DbPool;
@@ -127,22 +128,25 @@ pub(crate) async fn tick<DB: DbConnection + 'static>(
                     debug!(%execution_id, "Retrying execution with expired lock after {duration:?} at {backoff_expires_at}");
                     Append {
                         created_at: executed_at,
-                        primary_event: ExecutionEventInner::IntermittentTimedOut {
-                            backoff_expires_at,
-                        }, // not converting for clarity
+                        primary_event: AppendRequest {
+                            created_at: executed_at,
+                            event: ExecutionEventInner::IntermittentTimedOut { backoff_expires_at },
+                        },
                         execution_id: execution_id.clone(),
                         version,
                         parent: None,
                     }
                 } else {
                     info!(%execution_id, "Marking execution with expired lock as permanently timed out");
-                    // Try to convert to SupportedFunctionResult::Fallible
                     let finished_exec_result = Err(FinishedExecutionError::PermanentTimeout);
                     let parent = parent.map(|(p, j)| (p, j, finished_exec_result.clone()));
                     Append {
                         created_at: executed_at,
-                        primary_event: ExecutionEventInner::Finished {
-                            result: finished_exec_result,
+                        primary_event: AppendRequest {
+                            created_at: executed_at,
+                            event: ExecutionEventInner::Finished {
+                                result: finished_exec_result,
+                            },
                         },
                         execution_id: execution_id.clone(),
                         version,

@@ -923,7 +923,10 @@ impl<C: ClockFn> EventHistory<C> {
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSet { join_set_id };
                 history_events.push(event.clone());
-                let join_set = ExecutionEventInner::HistoryEvent { event };
+                let join_set = AppendRequest {
+                    created_at: called_at,
+                    event: ExecutionEventInner::HistoryEvent { event },
+                };
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::DelayRequest {
@@ -932,14 +935,20 @@ impl<C: ClockFn> EventHistory<C> {
                     },
                 };
                 history_events.push(event.clone());
-                let delay_req = ExecutionEventInner::HistoryEvent { event };
+                let delay_req = AppendRequest {
+                    created_at: called_at,
+                    event: ExecutionEventInner::HistoryEvent { event },
+                };
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
                     run_expires_at: lock_expires_at,
                     closing: false,
                 };
                 history_events.push(event.clone());
-                let join_next = ExecutionEventInner::HistoryEvent { event };
+                let join_next = AppendRequest {
+                    created_at: called_at,
+                    event: ExecutionEventInner::HistoryEvent { event },
+                };
                 debug!(%delay_id, %join_set_id, "BlockingDelayRequest: appending JoinSet,DelayRequest,JoinNext");
                 *version = db_connection
                     .append_batch(

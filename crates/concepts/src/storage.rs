@@ -642,8 +642,8 @@ pub trait DbConnection: Send + Sync {
     /// Append one or more events to an existing execution log
     async fn append_batch(
         &self,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
+        batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
     ) -> Result<AppendBatchResponse, DbError>;
@@ -661,11 +661,11 @@ pub trait DbConnection: Send + Sync {
     async fn append_batch_respond_to_parent(
         &self,
         execution_id: ExecutionId,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
+        batch: Vec<AppendRequest>,
         version: Version,
         parent_execution_id: ExecutionId,
-        parent_response_event: JoinSetResponseEvent,
+        parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<AppendBatchResponse, DbError>;
 
     #[cfg(feature = "test")]

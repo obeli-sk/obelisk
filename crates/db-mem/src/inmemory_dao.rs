@@ -105,22 +105,15 @@ impl DbConnection for InMemoryDbConnection {
     #[instrument(skip_all, %execution_id)]
     async fn append_batch(
         &self,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        _created_at: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         appending_version: Version,
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
             .lock()
             .await
-            .append_batch(
-                batch
-                    .into_iter()
-                    .map(|event| AppendRequest { event, created_at })
-                    .collect(),
-                &execution_id,
-                appending_version,
-            )
+            .append_batch(batch, &execution_id, appending_version)
             .map_err(DbError::Specific)
     }
 
@@ -144,18 +137,17 @@ impl DbConnection for InMemoryDbConnection {
     async fn append_batch_respond_to_parent(
         &self,
         execution_id: ExecutionId,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        _created_at: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
         version: Version,
         parent_execution_id: ExecutionId,
-        parent_response_event: JoinSetResponseEvent,
+        parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<AppendBatchResponse, DbError> {
         self.0
             .lock()
             .await
             .append_batch_respond_to_parent(
                 &execution_id,
-                created_at,
                 batch,
                 version,
                 &parent_execution_id,
@@ -217,7 +209,13 @@ impl DbConnection for InMemoryDbConnection {
         self.0
             .lock()
             .await
-            .append_response(created_at, &execution_id, response_event)
+            .append_response(
+                &execution_id,
+                JoinSetResponseEventOuter {
+                    created_at,
+                    event: response_event,
+                },
+            )
             .map_err(DbError::Specific)
     }
 
@@ -722,34 +720,25 @@ impl DbHolder {
     fn append_batch_respond_to_parent(
         &mut self,
         execution_id: &ExecutionId,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        batch: Vec<AppendRequest>,
         version: Version,
         parent_execution_id: &ExecutionId,
-        parent_response_event: JoinSetResponseEvent,
+        parent_response_event: JoinSetResponseEventOuter,
     ) -> Result<Version, SpecificError> {
-        let child_version = self.append_batch(
-            batch
-                .into_iter()
-                .map(|event| AppendRequest { event, created_at })
-                .collect(),
-            execution_id,
-            version,
-        )?;
-        self.append_response(created_at, parent_execution_id, parent_response_event)?;
+        let child_version = self.append_batch(batch, execution_id, version)?;
+        self.append_response(parent_execution_id, parent_response_event)?;
         Ok(child_version)
     }
 
     fn append_response(
         &mut self,
-        created_at: DateTime<Utc>,
         execution_id: &ExecutionId,
-        response_event: JoinSetResponseEvent,
+        response_event: JoinSetResponseEventOuter,
     ) -> Result<(), SpecificError> {
         let Some(journal) = self.journals.get_mut(execution_id) else {
             return Err(SpecificError::NotFound);
         };
-        journal.append_response(created_at, response_event);
+        journal.append_response(response_event.created_at, response_event.event);
         self.index.update(journal);
         if matches!(journal.pending_state, PendingState::PendingAt { .. }) {
             if let Some(subscription) = self.ffqn_to_pending_subscription.get(journal.ffqn()) {
