@@ -561,7 +561,7 @@ mod tests {
     use crate::{expired_timers_watcher, worker::WorkerResult};
     use assert_matches::assert_matches;
     use async_trait::async_trait;
-    use concepts::storage::{CreateRequest, JoinSetRequest};
+    use concepts::storage::{AppendRequest, CreateRequest, JoinSetRequest};
     use concepts::storage::{
         DbConnection, ExecutionEvent, ExecutionEventInner, HistoryEvent, PendingState,
     };
@@ -1026,28 +1026,38 @@ mod tests {
                 config_id: ConfigId::dummy_activity(),
                 scheduled_by: None,
             };
-            let join_set = ExecutionEventInner::HistoryEvent {
-                event: HistoryEvent::JoinSet { join_set_id },
+            let current_time = sim_clock.now();
+            let join_set = AppendRequest {
+                created_at: current_time,
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSet { join_set_id },
+                },
             };
-            let child_exec_req = ExecutionEventInner::HistoryEvent {
-                event: HistoryEvent::JoinSetRequest {
-                    join_set_id,
-                    request: JoinSetRequest::ChildExecutionRequest {
-                        child_execution_id: child_execution_id.clone(),
+            let child_exec_req = AppendRequest {
+                created_at: current_time,
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id,
+                        request: JoinSetRequest::ChildExecutionRequest {
+                            child_execution_id: child_execution_id.clone(),
+                        },
                     },
                 },
             };
-            let join_next = ExecutionEventInner::HistoryEvent {
-                event: HistoryEvent::JoinNext {
-                    join_set_id,
-                    run_expires_at: sim_clock.now(),
-                    closing: false,
+            let join_next = AppendRequest {
+                created_at: current_time,
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinNext {
+                        join_set_id,
+                        run_expires_at: sim_clock.now(),
+                        closing: false,
+                    },
                 },
             };
             db_pool
                 .connection()
                 .append_batch_create_new_execution(
-                    sim_clock.now(),
+                    current_time,
                     vec![join_set, child_exec_req, join_next],
                     parent_execution_id.clone(),
                     Version::new(2),

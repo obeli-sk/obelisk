@@ -97,7 +97,7 @@ pub(crate) struct EventHistory<C: ClockFn> {
 #[cfg_attr(test, derive(Clone))]
 enum NonBlockingCache {
     StartAsync {
-        batch: Vec<ExecutionEventInner>,
+        batch: Vec<AppendRequest>,
         version: Version,
         child_req: CreateRequest,
     },
@@ -593,11 +593,11 @@ impl<C: ClockFn> EventHistory<C> {
     async fn flush_non_blocking_event_cache_if_full<DB: DbConnection>(
         &mut self,
         db_connection: &DB,
-        created_at: DateTime<Utc>,
+        current_time: DateTime<Utc>,
     ) -> Result<(), DbError> {
         match &self.non_blocking_event_batch {
             Some(vec) if vec.len() >= self.non_blocking_event_batch_size => {
-                self.flush_non_blocking_event_cache(db_connection, created_at)
+                self.flush_non_blocking_event_cache(db_connection, current_time)
                     .await
             }
             _ => Ok(()),
@@ -608,7 +608,7 @@ impl<C: ClockFn> EventHistory<C> {
     async fn flush_non_blocking_event_cache<DB: DbConnection>(
         &mut self,
         db_connection: &DB,
-        created_at: DateTime<Utc>,
+        current_time: DateTime<Utc>,
     ) -> Result<(), DbError> {
         match &mut self.non_blocking_event_batch {
             Some(non_blocking_event_batch) if !non_blocking_event_batch.is_empty() => {
@@ -632,7 +632,7 @@ impl<C: ClockFn> EventHistory<C> {
                 }
                 db_connection
                     .append_batch_create_new_execution(
-                        created_at,
+                        current_time,
                         batches,
                         self.execution_id.clone(),
                         first_version.expect("checked that !non_blocking_event_batch.is_empty()"),
@@ -699,7 +699,10 @@ impl<C: ClockFn> EventHistory<C> {
                     },
                 };
                 let history_events = vec![event.clone()];
-                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
+                let child_exec_req = AppendRequest {
+                    created_at: called_at,
+                    event: ExecutionEventInner::HistoryEvent { event },
+                };
                 debug!(%child_execution_id, %join_set_id, "StartAsync: appending ChildExecutionRequest");
                 let (
                     FunctionMetadata {
@@ -761,7 +764,10 @@ impl<C: ClockFn> EventHistory<C> {
                 };
                 let scheduled_at = scheduled_at.as_date_time(called_at);
                 let history_events = vec![event.clone()];
-                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
+                let child_exec_req = AppendRequest {
+                    event: ExecutionEventInner::HistoryEvent { event },
+                    created_at: called_at,
+                };
                 debug!(%new_execution_id, "ScheduleRequest: appending");
                 let (
                     FunctionMetadata {
@@ -845,7 +851,10 @@ impl<C: ClockFn> EventHistory<C> {
                 let mut history_events = Vec::with_capacity(3);
                 let event = HistoryEvent::JoinSet { join_set_id };
                 history_events.push(event.clone());
-                let join_set = ExecutionEventInner::HistoryEvent { event };
+                let join_set = AppendRequest {
+                    event: ExecutionEventInner::HistoryEvent { event },
+                    created_at: called_at,
+                };
                 let event = HistoryEvent::JoinSetRequest {
                     join_set_id,
                     request: JoinSetRequest::ChildExecutionRequest {
@@ -853,14 +862,20 @@ impl<C: ClockFn> EventHistory<C> {
                     },
                 };
                 history_events.push(event.clone());
-                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
+                let child_exec_req = AppendRequest {
+                    event: ExecutionEventInner::HistoryEvent { event },
+                    created_at: called_at,
+                };
                 let event = HistoryEvent::JoinNext {
                     join_set_id,
                     run_expires_at: lock_expires_at,
                     closing: false,
                 };
                 history_events.push(event.clone());
-                let join_next = ExecutionEventInner::HistoryEvent { event };
+                let join_next = AppendRequest {
+                    event: ExecutionEventInner::HistoryEvent { event },
+                    created_at: called_at,
+                };
                 debug!(%child_execution_id, %join_set_id, "BlockingChildExecutionRequest: Appending JoinSet,ChildExecutionRequest,JoinNext");
                 let (
                     FunctionMetadata {

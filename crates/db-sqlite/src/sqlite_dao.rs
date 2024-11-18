@@ -1995,23 +1995,23 @@ impl SqlitePool {
     fn notify_pending_all(
         &self,
         pending_ats: impl Iterator<Item = PendingAt>,
-        created_at: DateTime<Utc>,
+        current_time: DateTime<Utc>,
     ) {
         let ffqn_to_pending_subscription = self.ffqn_to_pending_subscription.lock().unwrap();
         for pending_at in pending_ats {
-            Self::notify_pending_locked(pending_at, created_at, &ffqn_to_pending_subscription);
+            Self::notify_pending_locked(pending_at, current_time, &ffqn_to_pending_subscription);
         }
     }
 
     fn notify_pending_locked(
         pending_at: PendingAt,
-        created_at: DateTime<Utc>,
+        current_time: DateTime<Utc>,
         ffqn_to_pending_subscription: &std::sync::MutexGuard<
             hashbrown::HashMap<FunctionFqn, mpsc::Sender<()>>,
         >,
     ) {
         match pending_at {
-            PendingAt { scheduled_at, ffqn } if scheduled_at <= created_at => {
+            PendingAt { scheduled_at, ffqn } if scheduled_at <= current_time => {
                 if let Some(subscription) = ffqn_to_pending_subscription.get(&ffqn) {
                     debug!("Notifying pending subscriber");
                     let _ = subscription.try_send(());
@@ -2198,8 +2198,8 @@ impl DbConnection for SqlitePool {
     #[instrument(level = Level::DEBUG, skip(self, batch, child_req))]
     async fn append_batch_create_new_execution(
         &self,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
@@ -2207,30 +2207,24 @@ impl DbConnection for SqlitePool {
         debug!("append_batch_create_new_execution");
         trace!(?batch, ?child_req, "append_batch_create_new_execution");
         assert!(!batch.is_empty(), "Empty batch request");
-        if batch
-            .iter()
-            .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
-        {
+        if batch.iter().any(|append_request| {
+            matches!(append_request.event, ExecutionEventInner::Created { .. })
+        }) {
             panic!("Cannot append `Created` event - use `create` instead");
         }
 
         #[instrument(level = Level::TRACE, skip_all)]
         fn append_batch_create_new_execution_inner(
             tx: &mut rusqlite::Transaction,
-            created_at: DateTime<Utc>,
-            batch: Vec<ExecutionEventInner>,
+            batch: Vec<AppendRequest>,
             execution_id: &ExecutionId,
             mut version: Version,
             child_req: Vec<CreateRequest>,
         ) -> Result<(Version, Vec<PendingAt>), DbError> {
             let mut pending_at = None;
-            for event in batch {
-                (version, pending_at) = SqlitePool::append(
-                    tx,
-                    execution_id,
-                    &AppendRequest { created_at, event },
-                    version,
-                )?;
+            for append_request in batch {
+                (version, pending_at) =
+                    SqlitePool::append(tx, execution_id, &append_request, version)?;
             }
             let mut pending_ats = Vec::new();
             if let Some(pending_at) = pending_at {
@@ -2248,7 +2242,6 @@ impl DbConnection for SqlitePool {
                 move |tx| {
                     append_batch_create_new_execution_inner(
                         tx,
-                        created_at,
                         batch,
                         &execution_id,
                         version,
@@ -2259,7 +2252,7 @@ impl DbConnection for SqlitePool {
             )
             .await
             .map_err(DbError::from)?;
-        self.notify_pending_all(pending_ats.into_iter(), created_at);
+        self.notify_pending_all(pending_ats.into_iter(), current_time);
         Ok(version)
     }
 

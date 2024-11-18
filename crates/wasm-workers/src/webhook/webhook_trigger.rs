@@ -10,8 +10,8 @@ use crate::std_output_stream::{LogStream, StdOutput};
 use crate::WasmFileError;
 use concepts::prefixed_ulid::JoinSetId;
 use concepts::storage::{
-    ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner, HistoryEvent,
-    HistoryEventScheduledAt, JoinSetRequest, Version,
+    AppendRequest, ClientError, CreateRequest, DbConnection, DbError, DbPool, ExecutionEventInner,
+    HistoryEvent, HistoryEventScheduledAt, JoinSetRequest, Version,
 };
 use concepts::{
     ConfigId, ExecutionId, ExecutionMetadata, FinishedExecutionError, FunctionFqn,
@@ -462,7 +462,10 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                     scheduled_at,
                 };
                 let scheduled_at = scheduled_at.as_date_time(created_at);
-                let child_exec_req = ExecutionEventInner::HistoryEvent { event };
+                let child_exec_req = AppendRequest {
+                    event: ExecutionEventInner::HistoryEvent { event },
+                    created_at,
+                };
 
                 let create_child_req = CreateRequest {
                     created_at,
@@ -509,11 +512,14 @@ impl<C: ClockFn, DB: DbConnection, P: DbPool<DB>> WebhookCtx<C, DB, P> {
                 return Err(WebhookFunctionError::FunctionMetadataNotFound { ffqn });
             };
             let join_set_id = JoinSetId::generate();
-            let child_exec_req = ExecutionEventInner::HistoryEvent {
-                event: HistoryEvent::JoinSetRequest {
-                    join_set_id,
-                    request: JoinSetRequest::ChildExecutionRequest {
-                        child_execution_id: child_execution_id.clone(),
+            let child_exec_req = AppendRequest {
+                created_at,
+                event: ExecutionEventInner::HistoryEvent {
+                    event: HistoryEvent::JoinSetRequest {
+                        join_set_id,
+                        request: JoinSetRequest::ChildExecutionRequest {
+                            child_execution_id: child_execution_id.clone(),
+                        },
                     },
                 },
             };

@@ -113,15 +113,22 @@ impl DbConnection for InMemoryDbConnection {
         self.0
             .lock()
             .await
-            .append_batch(created_at, batch, &execution_id, appending_version)
+            .append_batch(
+                batch
+                    .into_iter()
+                    .map(|event| AppendRequest { event, created_at })
+                    .collect(),
+                &execution_id,
+                appending_version,
+            )
             .map_err(DbError::Specific)
     }
 
     #[instrument(skip_all, %execution_id)]
     async fn append_batch_create_new_execution(
         &self,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        _current_time: DateTime<Utc>,
+        batch: Vec<AppendRequest>,
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
@@ -129,7 +136,7 @@ impl DbConnection for InMemoryDbConnection {
         self.0
             .lock()
             .await
-            .append_batch_create_child(created_at, batch, &execution_id, version, child_req)
+            .append_batch_create_child(batch, &execution_id, version, child_req)
             .map_err(DbError::Specific)
     }
 
@@ -651,23 +658,21 @@ impl DbHolder {
 
     fn append_batch(
         &mut self,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        batch: Vec<AppendRequest>,
         execution_id: &ExecutionId,
         mut appending_version: Version,
     ) -> Result<AppendBatchResponse, SpecificError> {
         assert!(!batch.is_empty(), "Empty batch request");
-        if batch
-            .iter()
-            .any(|event| matches!(event, ExecutionEventInner::Created { .. }))
-        {
+        if batch.iter().any(|append_request| {
+            matches!(append_request.event, ExecutionEventInner::Created { .. })
+        }) {
             panic!("Cannot append `Created` event - use `create` instead");
         }
         let Some(journal) = self.journals.get_mut(execution_id) else {
             return Err(SpecificError::NotFound);
         };
         let truncate_len = journal.len();
-        for event in batch {
+        for append_request in batch {
             let expected_version = journal.version();
             if appending_version != expected_version {
                 // Rollback
@@ -678,7 +683,7 @@ impl DbHolder {
                     expected_version,
                 });
             }
-            match journal.append(created_at, event) {
+            match journal.append(append_request.created_at, append_request.event) {
                 Ok(new_version) => {
                     appending_version = new_version;
                 }
@@ -702,13 +707,12 @@ impl DbHolder {
 
     fn append_batch_create_child(
         &mut self,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        batch: Vec<AppendRequest>,
         execution_id: &ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
     ) -> Result<AppendBatchResponse, SpecificError> {
-        let parent_version = self.append_batch(created_at, batch, execution_id, version)?;
+        let parent_version = self.append_batch(batch, execution_id, version)?;
         for child_req in child_req {
             self.create(child_req)?;
         }
@@ -724,7 +728,14 @@ impl DbHolder {
         parent_execution_id: &ExecutionId,
         parent_response_event: JoinSetResponseEvent,
     ) -> Result<Version, SpecificError> {
-        let child_version = self.append_batch(created_at, batch, execution_id, version)?;
+        let child_version = self.append_batch(
+            batch
+                .into_iter()
+                .map(|event| AppendRequest { event, created_at })
+                .collect(),
+            execution_id,
+            version,
+        )?;
         self.append_response(created_at, parent_execution_id, parent_response_event)?;
         Ok(child_version)
     }

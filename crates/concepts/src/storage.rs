@@ -651,8 +651,8 @@ pub trait DbConnection: Send + Sync {
     /// Append one or more events to the parent execution log, and create zero or more child execution logs.
     async fn append_batch_create_new_execution(
         &self,
-        created_at: DateTime<Utc>,
-        batch: Vec<ExecutionEventInner>,
+        current_time: DateTime<Utc>, // not persisted, can be used for unblocking `subscribe_to_pending`
+        batch: Vec<AppendRequest>,   // must not contain `ExecutionEventInner::Created` events
         execution_id: ExecutionId,
         version: Version,
         child_req: Vec<CreateRequest>,
