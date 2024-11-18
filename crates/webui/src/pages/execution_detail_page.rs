@@ -93,8 +93,8 @@ pub fn execution_detail_page(
                             scheduled_at.expect("`scheduled_at` is sent by the server"),
                         );
                         let scheduled_by = scheduled_by.clone();
-                        html!{
-                            <Create {ffqn} {params} {scheduled_by} />
+                        html! {
+                            <Create {ffqn} {params} {created_at} {scheduled_at} {scheduled_by} />
                         }
                     }
                     // execution_event::Event::Locked(_) => todo!(),

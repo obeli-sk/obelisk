@@ -1,6 +1,7 @@
 use crate::app::Route;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::grpc_client::ExecutionId;
+use chrono::{DateTime, Utc};
 use log::debug;
 use serde_json::Value;
 use std::cell::RefCell;
@@ -14,6 +15,8 @@ use yewprint::{Icon, NodeData, TreeData};
 
 #[derive(Properties, PartialEq, Clone)]
 pub struct CreateProps {
+    pub created_at: DateTime<Utc>,
+    pub scheduled_at: DateTime<Utc>,
     pub ffqn: FunctionFqn,
     pub params: Vec<Value>,
     pub scheduled_by: Option<ExecutionId>,
@@ -37,12 +40,32 @@ fn construct_tree(props: &CreateProps) -> Rc<RefCell<TreeData<u32>>> {
                 icon: Icon::FolderClose,
                 label: "Created".into(),
                 has_caret: true,
-                data: 1,
                 ..Default::default()
             }),
             InsertBehavior::UnderNode(&root_id),
         )
         .unwrap();
+    // created at
+    tree.insert(
+        Node::new(NodeData {
+            icon: Icon::Time,
+            label: html! { {format!("Created at {}", props.created_at)} },
+            has_caret: false,
+            ..Default::default()
+        }),
+        InsertBehavior::UnderNode(&event_type),
+    )
+    .unwrap();
+    tree.insert(
+        Node::new(NodeData {
+            icon: Icon::Time,
+            label: html! { {format!("Scheduled at {}", props.scheduled_at)} },
+            has_caret: false,
+            ..Default::default()
+        }),
+        InsertBehavior::UnderNode(&event_type),
+    )
+    .unwrap();
     // ffqn
     tree
         .insert(
@@ -50,7 +73,6 @@ fn construct_tree(props: &CreateProps) -> Rc<RefCell<TreeData<u32>>> {
                 icon: Icon::Function,
                 label: html!{ <Link<Route> to={Route::ExecutionListByFfqn { ffqn: props.ffqn.clone() } }>{&props.ffqn}</Link<Route>> },
                 has_caret: false,
-                data: 1,
                 ..Default::default()
             }),
             InsertBehavior::UnderNode(&event_type),
@@ -63,7 +85,6 @@ fn construct_tree(props: &CreateProps) -> Rc<RefCell<TreeData<u32>>> {
                 icon: Icon::Function,
                 label: "Parameters".into_html(),
                 has_caret: true,
-                data: 1,
                 ..Default::default()
             }),
             InsertBehavior::UnderNode(&event_type),
@@ -75,7 +96,6 @@ fn construct_tree(props: &CreateProps) -> Rc<RefCell<TreeData<u32>>> {
                 icon: Icon::Function,
                 label: param.to_string().into_html(),
                 has_caret: false,
-                data: 1,
                 ..Default::default()
             }),
             InsertBehavior::UnderNode(&params_node_id),
@@ -90,7 +110,6 @@ fn construct_tree(props: &CreateProps) -> Rc<RefCell<TreeData<u32>>> {
                 icon: Icon::Time,
                 label: html!{ <> {"Scheduled by "} <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_by.clone() } }>{scheduled_by}</Link<Route>> </>},
                 has_caret: false,
-                data: 1,
                 ..Default::default()
             }),
             InsertBehavior::UnderNode(&event_type),
@@ -130,7 +149,8 @@ pub fn create(props: &CreateProps) -> Html {
         <yewprint::Tree<u32>
             tree={tree_state.deref().borrow().deref()}
             on_collapse={Some(on_expand_node.clone())}
-            on_expand={Some(on_expand_node)}
+            on_expand={Some(on_expand_node.clone())}
+            onclick={Some(on_expand_node)}
         />
     }
 }
