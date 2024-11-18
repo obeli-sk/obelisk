@@ -63,6 +63,13 @@ pub fn execution_detail_page(
         .collect();
 
     let details = if let Some(events) = events_state.deref() {
+        let execution_created_at = DateTime::from(
+            events
+                .first()
+                .expect("not found is sent as an error")
+                .created_at
+                .expect("`created_at` is sent by the server"),
+        );
         let rows: Vec<_> = events
             .iter()
             .map(|event| {
@@ -70,13 +77,21 @@ pub fn execution_detail_page(
                     execution_event::Event::Created(Created {
                         function_name: Some(function_name),
                         params: Some(params),
-                        scheduled_at: _,
+                        scheduled_at,
                         config_id: _,
                         scheduled_by,
                     }) => {
                         let ffqn = FunctionFqn::from(function_name.clone());
-                        let params: Vec<serde_json::Value> =
-                            serde_json::from_slice(&params.value).expect("`params` must be a JSON array");
+                        let params: Vec<serde_json::Value> = serde_json::from_slice(&params.value)
+                            .expect("`params` must be a JSON array");
+                        let created_at = DateTime::from(
+                            event
+                                .created_at
+                                .expect("`created_at` is sent by the server"),
+                        );
+                        let scheduled_at = DateTime::from(
+                            scheduled_at.expect("`scheduled_at` is sent by the server"),
+                        );
                         let scheduled_by = scheduled_by.clone();
                         html!{
                             <Create {ffqn} {params} {scheduled_by} />
@@ -90,10 +105,14 @@ pub fn execution_detail_page(
                     // execution_event::Event::HistoryVariant(_) => todo!(),
                     other => html! { {format!("unknown variant {other:?}")}},
                 };
-
+                let created_at =
+                    DateTime::from(event.created_at.expect("`created_at` sent by the server"));
+                let created_in = (created_at - execution_created_at)
+                    .to_std()
+                    .expect("must be non-negative");
                 html! { <tr>
                     <td>{event.version}</td>
-                    <td>{DateTime::from(event.created_at.expect("`created_at` sent by the server")).to_rfc3339()}</td>
+                    <td>{format!("{created_in:?}")}</td>
                     <td>{detail}</td>
                 </tr>}
             })
@@ -102,7 +121,7 @@ pub fn execution_detail_page(
             <table>
             <tr>
                 <th>{"Version"}</th>
-                <th>{"Created at"}</th>
+                <th>{"Created after"}</th>
                 <th>{"Detail"}</th>
             </tr>
             {rows}

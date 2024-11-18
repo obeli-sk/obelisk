@@ -163,7 +163,7 @@ pub fn execution_status(
                 .expect("must be non-negative");
             html! {<>
                 <p>{result}</p>
-                <p>{format!("Execution took: {since_created:?}, created at: {created_at:?}, finished at: {finished_at}")}</p>
+                <p>{format!("Execution finished after {since_created:?} since its creation")}</p>
             </>}
         }
         Some(unknown) => unreachable!("unexpected {unknown:?}"),
