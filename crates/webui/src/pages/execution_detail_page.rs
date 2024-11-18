@@ -1,5 +1,5 @@
 use crate::app::Route;
-use crate::components::execution_detail::create::Create;
+use crate::components::execution_detail::create::CreateEvent;
 use crate::components::execution_status::ExecutionStatus;
 use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
 use crate::grpc::ffqn::FunctionFqn;
@@ -94,7 +94,7 @@ pub fn execution_detail_page(
                         );
                         let scheduled_by = scheduled_by.clone();
                         html! {
-                            <Create {ffqn} {params} {created_at} {scheduled_at} {scheduled_by} />
+                            <CreateEvent {ffqn} {params} {created_at} {scheduled_at} {scheduled_by} />
                         }
                     }
                     // execution_event::Event::Locked(_) => todo!(),

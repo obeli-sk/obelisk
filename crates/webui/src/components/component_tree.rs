@@ -267,7 +267,7 @@ impl Component for ComponentTree {
     type Properties = ComponentTreeProps;
 
     fn create(ctx: &Context<Self>) -> Self {
-        log::debug!("create");
+        log::debug!("<ComponentTree /> create");
         let ComponentTreeProps {
             components,
             show_extensions,
@@ -288,9 +288,9 @@ impl Component for ComponentTree {
     }
 
     fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
-        log::debug!("update");
+        log::debug!("<ComponentTree /> update");
         match msg {
-            Msg::ExpandNode(node_id) => {
+            Self::Message::ExpandNode(node_id) => {
                 let mut tree = self.tree.borrow_mut();
                 let node = tree.get_mut(&node_id).unwrap();
                 let data = node.data_mut();
@@ -301,7 +301,7 @@ impl Component for ComponentTree {
     }
 
     fn changed(&mut self, ctx: &Context<Self>, _old_props: &Self::Properties) -> bool {
-        log::debug!("changed");
+        log::debug!("<ComponentTree /> changed");
         let ComponentTreeProps {
             components,
             show_extensions: extensions,
@@ -319,10 +319,10 @@ impl Component for ComponentTree {
     }
 
     fn view(&self, _ctx: &Context<Self>) -> Html {
-        log::debug!("view");
+        log::debug!("<ComponentTree /> view");
         html! {
             <yewprint::Tree<i32>
-                tree={self.tree.clone()}
+                tree={&self.tree}
                 on_collapse={ Some(self.callback_expand_node.clone()) }
                 on_expand={ Some(self.callback_expand_node.clone()) }
                 onclick={ Some(self.callback_expand_node.clone()) }

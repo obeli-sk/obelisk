@@ -5,7 +5,7 @@ use crate::grpc::grpc_client::{
     ResultKind,
 };
 use chrono::DateTime;
-use log::debug;
+use log::trace;
 use std::ops::Deref;
 use yew::prelude::*;
 
@@ -41,7 +41,7 @@ pub fn execution_status(
         let execution_id = execution_id.clone();
         use_effect_with(execution_id.clone(), move |_| {
             if !is_finished || print_finished_status {
-                debug!("Subscribing to status of {execution_id}");
+                trace!("<ExecutionStatus /> Subscribing to status of {execution_id}");
                 wasm_bindgen_futures::spawn_local(async move {
                     let base_url = "/api";
                     let mut execution_client =
@@ -65,7 +65,7 @@ pub fn execution_status(
                         let status = status
                             .message
                             .expect("GetStatusResponse.message is sent by the server");
-                        debug!("Got {status:?}");
+                        trace!("<ExecutionStatus /> Got {status:?}");
                         status_state.set(Some(status));
                     }
                 })

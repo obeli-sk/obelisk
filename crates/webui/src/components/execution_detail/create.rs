@@ -4,17 +4,14 @@ use crate::grpc::grpc_client::ExecutionId;
 use chrono::{DateTime, Utc};
 use log::debug;
 use serde_json::Value;
-use std::cell::RefCell;
-use std::ops::Deref;
-use std::rc::Rc;
 use yew::prelude::*;
-use yew::{function_component, Html};
+use yew::Html;
 use yew_router::prelude::Link;
 use yewprint::id_tree::{InsertBehavior, Node, NodeId, TreeBuilder};
 use yewprint::{Icon, NodeData, TreeData};
 
 #[derive(Properties, PartialEq, Clone)]
-pub struct CreateProps {
+pub struct CreateEventProps {
     pub created_at: DateTime<Utc>,
     pub scheduled_at: DateTime<Utc>,
     pub ffqn: FunctionFqn,
@@ -22,8 +19,68 @@ pub struct CreateProps {
     pub scheduled_by: Option<ExecutionId>,
 }
 
-fn construct_tree(props: &CreateProps) -> Rc<RefCell<TreeData<u32>>> {
-    debug!("<Create /> construct_tree");
+pub struct CreateEvent {
+    tree: TreeData<u32>,
+    on_expand_node: Callback<(NodeId, MouseEvent)>,
+}
+
+#[derive(Debug)]
+pub enum Action {
+    ExpandNode(NodeId),
+}
+
+impl Component for CreateEvent {
+    type Message = Action;
+    type Properties = CreateEventProps;
+
+    fn create(ctx: &Context<Self>) -> Self {
+        debug!("<CreateEvent /> create");
+        let props = ctx.props();
+        let tree = construct_tree(props);
+        Self {
+            tree,
+            on_expand_node: ctx
+                .link()
+                .callback(|(node_id, _)| Action::ExpandNode(node_id)),
+        }
+    }
+
+    fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+        log::debug!("<CreateEvent /> update");
+        match msg {
+            Self::Message::ExpandNode(node_id) => {
+                let mut tree = self.tree.borrow_mut();
+                let node = tree.get_mut(&node_id).unwrap();
+                let data = node.data_mut();
+                data.is_expanded ^= true;
+            }
+        }
+        true
+    }
+
+    fn changed(&mut self, ctx: &Context<Self>, _old_props: &Self::Properties) -> bool {
+        log::debug!("<CreateEvent /> changed");
+        let props = ctx.props();
+        let tree = construct_tree(props);
+        self.tree = tree;
+        true
+    }
+
+    fn view(&self, _ctx: &Context<Self>) -> Html {
+        debug!("<CreateEvent /> view");
+        html! {
+            <yewprint::Tree<u32>
+                tree={&self.tree}
+                on_collapse={Some(self.on_expand_node.clone())}
+                on_expand={Some(self.on_expand_node.clone())}
+                onclick={Some(self.on_expand_node.clone())}
+            />
+        }
+    }
+}
+
+fn construct_tree(props: &CreateEventProps) -> TreeData<u32> {
+    debug!("<CreateEvent /> construct_tree");
     let mut tree = TreeBuilder::new().build();
     let root_id = tree
         .insert(
@@ -116,41 +173,5 @@ fn construct_tree(props: &CreateProps) -> Rc<RefCell<TreeData<u32>>> {
         )
         .unwrap();
     }
-    Rc::new(RefCell::new(TreeData::from(tree)))
-}
-
-#[function_component(Create)]
-pub fn create(props: &CreateProps) -> Html {
-    debug!("<Create /> Rendering");
-    // TODO: called unnecessary second time with `use_effect_with`
-    let tree_state = use_state(|| construct_tree(props));
-    // Must ensure that the tree is re-constructed when props change :(
-    use_effect_with(props.clone(), {
-        let tree_state = tree_state.clone();
-        move |props| tree_state.set(construct_tree(props))
-    });
-
-    let on_expand_node = {
-        let tree_state = tree_state.clone();
-        Callback::from(move |(node_id, _): (NodeId, MouseEvent)| {
-            debug!("<Create /> on_expand_node");
-            let tree = tree_state.deref().clone();
-            {
-                let mut tree = tree.borrow_mut();
-                let mut tree = tree.borrow_mut();
-                let node = tree.get_mut(&node_id).unwrap();
-                let data = node.data_mut();
-                data.is_expanded ^= true;
-            }
-            tree_state.set(tree);
-        })
-    };
-    html! {
-        <yewprint::Tree<u32>
-            tree={tree_state.deref().borrow().deref()}
-            on_collapse={Some(on_expand_node.clone())}
-            on_expand={Some(on_expand_node.clone())}
-            onclick={Some(on_expand_node)}
-        />
-    }
+    TreeData::from(tree)
 }
