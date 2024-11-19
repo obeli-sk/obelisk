@@ -213,22 +213,6 @@ impl<T: 'static> FromSql for PrefixedUlidWrapper<T> {
     }
 }
 
-#[deprecated]
-struct ExecutionIdW(ExecutionId);
-impl FromSql for ExecutionIdW {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        let str = value.as_str()?;
-        let str = str.parse::<ExecutionId>().map_err(|err| {
-            error!(
-                backtrace = %std::backtrace::Backtrace::capture(),
-                "Cannot convert to ExecutionId value:`{str}` - {err:?}"
-            );
-            FromSqlError::InvalidType
-        })?;
-        Ok(Self(str))
-    }
-}
-
 struct JsonWrapper<T>(T);
 impl<T: serde::de::DeserializeOwned + 'static> FromSql for JsonWrapper<T> {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
@@ -2455,7 +2439,7 @@ impl DbConnection for SqlitePool {
                             ":at": at,
                         },
                         |row| {
-                            let execution_id = row.get::<_, ExecutionIdW>("execution_id")?.0;
+                            let execution_id = row.get("execution_id")?;
                             let join_set_id = row.get::<_, JoinSetIdW>("join_set_id")?.0;
                             let delay_id = row.get::<_, DelayIdW>("delay_id")?.0;
                             Ok(ExpiredTimer::AsyncDelay { execution_id, join_set_id, delay_id })
@@ -2473,13 +2457,13 @@ impl DbConnection for SqlitePool {
                                 ":at": at,
                             },
                             |row| {
-                                let execution_id = row.get::<_, ExecutionIdW>("execution_id")?.0;
+                                let execution_id = row.get("execution_id")?;
                                 let version = Version::new(row.get::<_, VersionType>("next_version")?);
 
                                 let intermittent_event_count = row.get::<_, u32>("intermittent_event_count")?;
                                 let max_retries = row.get::<_, u32>("max_retries")?;
                                 let retry_exp_backoff = Duration::from_millis(row.get::<_, u64>("retry_exp_backoff_millis")?);
-                                let parent_execution_id = row.get::<_, Option<ExecutionIdW>>("parent_execution_id")?.map(|it|it.0);
+                                let parent_execution_id = row.get::<_, Option<ExecutionId>>("parent_execution_id")?;
                                 let parent_join_set_id = row.get::<_, Option<JoinSetIdW>>("parent_join_set_id")?.map(|it|it.0);
 
                                 Ok(ExpiredTimer::Lock { execution_id, version, intermittent_event_count, max_retries,
