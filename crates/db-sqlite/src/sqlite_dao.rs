@@ -1158,15 +1158,16 @@ impl SqlitePool {
         ffqn: Option<FunctionFqn>,
         pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
+        struct StatementModifier {
+            where_vec: Vec<String>,
+            params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)>,
+            limit: u32,
+            limit_desc: bool,
+        }
         fn paginate<T: rusqlite::ToSql + 'static>(
             pagination: Pagination<T>,
             column: &str,
-        ) -> (
-            Vec<String>,
-            Vec<(&'static str, Box<dyn rusqlite::ToSql>)>,
-            u32,
-            bool,
-        ) {
+        ) -> StatementModifier {
             let mut where_vec: Vec<String> = vec![];
             let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
             let limit;
@@ -1212,9 +1213,14 @@ impl SqlitePool {
                     params.push((":cursor", Box::new(before)));
                 }
             }
-            (where_vec, params, limit, limit_desc)
+            StatementModifier {
+                where_vec,
+                params,
+                limit,
+                limit_desc,
+            }
         }
-        let (mut where_vec, mut params, limit, limit_desc) = match pagination {
+        let mut statement_mod = match pagination {
             ExecutionListPagination::CreatedBy(pagination) => paginate(pagination, "created_at"),
             ExecutionListPagination::ExecutionId(pagination) => {
                 paginate(pagination, "execution_id")
@@ -1222,14 +1228,16 @@ impl SqlitePool {
         };
 
         if let Some(ffqn) = ffqn {
-            where_vec.push("ffqn = :ffqn".to_string());
-            params.push((":ffqn", Box::new(ffqn.to_string())));
+            statement_mod.where_vec.push("ffqn = :ffqn".to_string());
+            statement_mod
+                .params
+                .push((":ffqn", Box::new(ffqn.to_string())));
         }
 
-        let where_str = if where_vec.is_empty() {
+        let where_str = if statement_mod.where_vec.is_empty() {
             String::new()
         } else {
-            format!("WHERE {}", where_vec.join(" AND "))
+            format!("WHERE {}", statement_mod.where_vec.join(" AND "))
         };
         let sql = format!("SELECT created_at,state, execution_id, ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
             FROM t_state {where_str} ORDER BY created_at {desc} LIMIT {limit}",
@@ -1240,7 +1248,8 @@ impl SqlitePool {
             .prepare(&sql)
             .map_err(convert_err)?
             .query_map::<_, &[(&'static str, &dyn rusqlite::ToSql)], _>(
-                params
+                statement_mod
+                    .params
                     .iter()
                     .map(|(key, value)| (*key, value.as_ref()))
                     .collect::<Vec<_>>()
@@ -1289,8 +1298,8 @@ impl SqlitePool {
             .into_iter()
             .collect::<Result<_, _>>()?;
 
-        if !limit_desc {
-            // the list should be sorted from newest to oldest
+        if !statement_mod.limit_desc {
+            // the list must be sorted in descending order
             vec.reverse();
         }
         Ok(vec)

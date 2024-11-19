@@ -775,7 +775,7 @@ pub trait DbConnection: Send + Sync {
         max_wait: Duration,
     );
 
-    /// Returns executions sorted from newest to oldest.
+    /// Returns executions sorted in descending order.
     /// Used by gRPC only.
     async fn list_executions(
         &self,
