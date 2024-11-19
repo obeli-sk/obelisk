@@ -10,7 +10,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-concepts.workspace = true
+concepts = { workspace = true, features = ["rusqlite"] }
 val-json.workspace = true
 
 arbitrary.workspace = true

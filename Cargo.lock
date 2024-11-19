@@ -2953,6 +2953,7 @@ dependencies = [
  "obeli-sk-val-json",
  "opentelemetry",
  "rstest",
+ "rusqlite",
  "serde",
  "serde_json",
  "serde_with",
@@ -6039,6 +6040,7 @@ name = "webui"
 version = "0.7.0"
 dependencies = [
  "chrono",
+ "derive_more",
  "hashbrown 0.15.1",
  "implicit-clone 0.5.0",
  "indexmap 2.6.0",
