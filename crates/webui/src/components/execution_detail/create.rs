@@ -1,7 +1,9 @@
+use crate::app::AppState;
 use crate::app::Route;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::grpc_client::ExecutionId;
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use log::debug;
 use serde_json::Value;
 use yew::prelude::*;
@@ -21,6 +23,7 @@ pub struct CreateEventProps {
 
 pub struct CreateEvent {
     tree: TreeData<u32>,
+    params: IndexMap<String, Value>,
     on_expand_node: Callback<(NodeId, MouseEvent)>,
 }
 
@@ -36,9 +39,37 @@ impl Component for CreateEvent {
     fn create(ctx: &Context<Self>) -> Self {
         debug!("<CreateEvent /> create");
         let props = ctx.props();
-        let tree = construct_tree(props);
+
+        let app_state = ctx
+            .link()
+            .context::<AppState>(Callback::noop())
+            .expect("AppState context is set when starting the App")
+            .0;
+        let params = match app_state.submittable_ffqns_to_details.get(&props.ffqn) {
+            Some(function_detail) if function_detail.params.len() == props.params.len() => {
+                let param_tuples = function_detail.params.iter().zip(props.params.iter()).map(
+                    |(fn_param, param_value)| {
+                        (
+                            fn_param.name.as_deref().unwrap_or("(unknown)").to_string(),
+                            param_value.clone(),
+                        )
+                    },
+                );
+
+                IndexMap::from_iter(param_tuples)
+            }
+            _ => IndexMap::from_iter(
+                props
+                    .params
+                    .iter()
+                    .map(|param_value| ("(unknown)".to_string(), param_value.clone())),
+            ),
+        };
+        let tree = construct_tree(props, &params);
+
         Self {
             tree,
+            params,
             on_expand_node: ctx
                 .link()
                 .callback(|(node_id, _)| Action::ExpandNode(node_id)),
@@ -61,7 +92,7 @@ impl Component for CreateEvent {
     fn changed(&mut self, ctx: &Context<Self>, _old_props: &Self::Properties) -> bool {
         log::debug!("<CreateEvent /> changed");
         let props = ctx.props();
-        let tree = construct_tree(props);
+        let tree = construct_tree(props, &self.params);
         self.tree = tree;
         true
     }
@@ -78,8 +109,7 @@ impl Component for CreateEvent {
         }
     }
 }
-
-fn construct_tree(props: &CreateEventProps) -> TreeData<u32> {
+fn construct_tree(props: &CreateEventProps, params: &IndexMap<String, Value>) -> TreeData<u32> {
     debug!("<CreateEvent /> construct_tree");
     let mut tree = TreeBuilder::new().build();
     let root_id = tree
@@ -147,11 +177,11 @@ fn construct_tree(props: &CreateEventProps) -> TreeData<u32> {
             InsertBehavior::UnderNode(&event_type),
         )
         .unwrap();
-    for param in &props.params {
+    for (param_name, param_value) in params {
         tree.insert(
             Node::new(NodeData {
                 icon: Icon::Function,
-                label: param.to_string().into_html(),
+                label: format!("{param_name}: {param_value}").into_html(),
                 has_caret: false,
                 ..Default::default()
             }),
