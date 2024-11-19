@@ -96,10 +96,6 @@ fn print_fn_details(vec: Vec<grpc::FunctionDetail>) -> Result<(), anyhow::Error>
 fn print_wit_type(wit_type: grpc::WitType) -> Result<(), anyhow::Error> {
     if let Some(wit_type) = wit_type.wit_type {
         print!("{wit_type}");
-    } else if let Some(internal) = wit_type.internal {
-        let str = String::from_utf8(internal.value)
-            .with_context(|| format!("cannot convert to UTF-8 - {}", internal.type_url))?;
-        print!("{str}");
     } else {
         print!("<unknown type>");
     }

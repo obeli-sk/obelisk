@@ -14,7 +14,6 @@ use crate::grpc_util::extractor::accept_trace;
 use crate::grpc_util::grpc_mapping::db_error_to_status;
 use crate::grpc_util::grpc_mapping::from_execution_event_to_grpc;
 use crate::grpc_util::grpc_mapping::from_finished_result_to_grpc_result_detail;
-use crate::grpc_util::grpc_mapping::to_any;
 use crate::grpc_util::grpc_mapping::TonicServerOptionExt;
 use crate::grpc_util::grpc_mapping::TonicServerResultExt;
 use crate::grpc_util::TonicRespResult;
@@ -501,20 +500,15 @@ fn list_fns(functions: Vec<FunctionMetadata>, listing_exports: bool) -> Vec<grpc
                     name: p.name.map(|s| s.to_string()),
                     r#type: Some(grpc::WitType {
                         wit_type: p.wit_type.map(|s| s.to_string()),
-                        internal: to_any(
-                            &p.type_wrapper,
-                            format!("urn:obelisk:json:params:{ffqn}"),
-                        ),
                     }),
                 })
                 .collect(),
             return_type: return_type.map(
                 |ReturnType {
-                     type_wrapper,
+                     type_wrapper: _,
                      wit_type,
                  }| grpc::WitType {
                     wit_type: wit_type.map(|s| s.to_string()),
-                    internal: to_any(&type_wrapper, format!("urn:obelisk:json:ret:{ffqn}")),
                 },
             ),
             function: Some(ffqn.into()),

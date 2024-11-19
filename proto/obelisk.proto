@@ -100,7 +100,7 @@ message FunctionParameter {
 
 message WitType {
     optional string wit_type = 1;
-    google.protobuf.Any internal = 2;
+    reserved 2;
 }
 
 message ExecutionId {
