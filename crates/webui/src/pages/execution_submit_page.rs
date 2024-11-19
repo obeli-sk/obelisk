@@ -15,21 +15,16 @@ pub fn execution_submit_page(ExecutionSubmitPageProps { ffqn }: &ExecutionSubmit
     let app_state =
         use_context::<AppState>().expect("AppState context is set when starting the App");
 
-    match app_state
-        .submittable_ffqns_to_details
-        .get(ffqn)
-        .ok_or("function not found")
-    {
-        Ok(function_detail) => {
-            html! {<>
-                <h3>{ ffqn.to_string() }</h3>
-                <p><Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() }}>{"Go to execution list"}</Link<Route>></p>
-                <h4><FunctionSignature params = {function_detail.params.clone()} return_type = {function_detail.return_type.clone()} /></h4>
-                <ExecutionSubmitForm {function_detail} />
-            </>}
+    if let Some(function_detail) = app_state.submittable_ffqns_to_details.get(ffqn) {
+        html! {<>
+            <h3>{ ffqn.to_string() }</h3>
+            <p><Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() }}>{"Go to execution list"}</Link<Route>></p>
+            <h4><FunctionSignature params = {function_detail.params.clone()} return_type = {function_detail.return_type.clone()} /></h4>
+            <ExecutionSubmitForm {function_detail} />
+        </>}
+    } else {
+        html! {
+            <p>{"function not found"}</p>
         }
-        Err(err) => html! {
-            <p>{ err }</p>
-        },
     }
 }
