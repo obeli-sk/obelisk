@@ -16,6 +16,11 @@ pub fn ffqn_with_links(
         fully_qualified,
     }: &FfqnWithLinksProps,
 ) -> Html {
+    let label = if *fully_qualified {
+        ffqn.to_string()
+    } else {
+        ffqn.function_name.clone()
+    };
     html! {
         <div style="display: inline-flex;">
             <Link<Route> to={Route::ExecutionListByFfqn { ffqn: ffqn.clone() } }>
@@ -24,7 +29,7 @@ pub fn ffqn_with_links(
             <Link<Route> to={Route::ExecutionSubmit { ffqn: ffqn.clone() } }>
                 <Icon icon = { Icon::Play }/>
             </Link<Route>>
-            {format!("{} ", if *fully_qualified { ffqn.to_string() } else { ffqn.function_name.clone() })}
+            { label }
         </div>
     }
 }
