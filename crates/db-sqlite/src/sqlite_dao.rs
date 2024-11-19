@@ -152,9 +152,13 @@ CREATE INDEX IF NOT EXISTS idx_t_state_expired_timers ON t_state (pending_expire
 const IDX_T_STATE_EXECUTION_ID: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_execution_id ON t_state (execution_id);
 ";
-// For list_executions by ffqn
+// For `list_executions` by ffqn
 const IDX_T_STATE_FFQN: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_state_ffqn ON t_state (ffqn);
+";
+// For `list_executions` by creation date
+const IDX_T_STATE_CREATED_AT: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_state_created_at ON t_state (created_at);
 ";
 
 /// Represents [`ExpiredTimer::AsyncDelay`] . Rows are deleted when the delay is processed.
@@ -500,6 +504,7 @@ impl SqlitePool {
                 let init_tx = init(init_tx, IDX_T_STATE_EXPIRED_TIMERS);
                 let init_tx = init(init_tx, IDX_T_STATE_EXECUTION_ID);
                 let init_tx = init(init_tx, IDX_T_STATE_FFQN);
+                let init_tx = init(init_tx, IDX_T_STATE_CREATED_AT);
                 // t_delay
                 let init_tx = init(init_tx, CREATE_TABLE_T_DELAY);
                 init_tx.send(Ok(())).expect("sending init OK must succeed");
