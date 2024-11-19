@@ -18,30 +18,28 @@ service FunctionRepository {
 }
 
 message ListExecutionsRequest {
-    message Oldest {
-        uint32 oldest = 1;
+    message Cursor {
+        oneof cursor {
+            ExecutionId execution_id = 1;
+            google.protobuf.Timestamp created_at = 2;
+        }
     }
     message NewerThan {
-        uint32 next = 1;
-        string cursor = 2;
+        uint32 length = 1;
+        Cursor cursor = 2;
         bool including_cursor = 3;
     }
-    message Latest {
-        uint32 latest = 1;
-    }
     message OlderThan {
-        uint32 previous = 1;
-        string cursor = 2;
+        uint32 length = 1;
+        Cursor cursor = 2;
         bool including_cursor = 3;
     }
 
     optional FunctionName function_name = 1;
-    oneof pagination {
-        Oldest oldest  = 2;
+    oneof pagination { // latest by `created_at` if not set
         NewerThan newer_than = 3;
-        Latest latest = 4;
-        OlderThan older_than = 5;
-    }
+        OlderThan older_than = 4;
+    };
 }
 
 message ExecutionSummary {
@@ -52,8 +50,6 @@ message ExecutionSummary {
 }
 
 message ListExecutionsResponse {
-    optional string cursor_newest = 1;
-    optional string cursor_oldest = 2;
     repeated ExecutionSummary executions = 3;
 }
 

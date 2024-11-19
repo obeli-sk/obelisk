@@ -6,9 +6,9 @@ use concepts::{
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
         DbConnection, DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
-        ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetRequest, JoinSetResponse,
-        JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse, LockResponse,
-        LockedExecution, Pagination, PendingState, PendingStateFinished,
+        ExecutionListPagination, ExecutionWithState, ExpiredTimer, HistoryEvent, JoinSetRequest,
+        JoinSetResponse, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
+        LockResponse, LockedExecution, Pagination, PendingState, PendingStateFinished,
         PendingStateFinishedResultKind, SpecificError, Version, VersionType, DUMMY_CREATED,
         DUMMY_HISTORY_EVENT, DUMMY_INTERMITTENT_FAILURE, DUMMY_INTERMITTENT_TIMEOUT,
     },
@@ -213,6 +213,7 @@ impl<T: 'static> FromSql for PrefixedUlidWrapper<T> {
     }
 }
 
+#[deprecated]
 struct ExecutionIdW(ExecutionId);
 impl FromSql for ExecutionIdW {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
@@ -1171,62 +1172,76 @@ impl SqlitePool {
     fn list_executions(
         read_tx: &Transaction,
         ffqn: Option<FunctionFqn>,
-        pagination: Pagination<DateTime<Utc>>,
+        pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
-        let mut where_vec: Vec<String> = vec![];
+        fn paginate<T: rusqlite::ToSql + 'static>(
+            pagination: Pagination<T>,
+            column: &str,
+        ) -> (
+            Vec<String>,
+            Vec<(&'static str, Box<dyn rusqlite::ToSql>)>,
+            u32,
+            bool,
+        ) {
+            let mut where_vec: Vec<String> = vec![];
+            let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![];
+            let limit;
+            let mut limit_desc = false;
 
-        let mut params: Vec<(&'static str, &dyn rusqlite::ToSql)> = vec![];
-        let limit;
-        let mut limit_desc = false;
-        let ffqn_string: String;
-        let cursor: String;
+            match pagination {
+                Pagination::NewerThan {
+                    length,
+                    cursor: None,
+                    including_cursor: _,
+                } => limit = length,
+                Pagination::NewerThan {
+                    length,
+                    cursor: Some(after),
+                    including_cursor,
+                } => {
+                    limit = length;
+                    where_vec.push(format!(
+                        "{column} {rel} :cursor",
+                        rel = if including_cursor { ">=" } else { ">" }
+                    ));
+                    params.push((":cursor", Box::new(after)));
+                }
+                Pagination::OlderThan {
+                    length,
+                    cursor: None,
+                    including_cursor: _,
+                } => {
+                    limit_desc = true;
+                    limit = length;
+                }
+                Pagination::OlderThan {
+                    length,
+                    cursor: Some(before),
+                    including_cursor,
+                } => {
+                    limit_desc = true;
+                    limit = length;
+                    where_vec.push(format!(
+                        "{column} {rel} :cursor",
+                        rel = if including_cursor { "<=" } else { "<" }
+                    ));
+                    params.push((":cursor", Box::new(before)));
+                }
+            }
+            (where_vec, params, limit, limit_desc)
+        }
+        let (mut where_vec, mut params, limit, limit_desc) = match pagination {
+            ExecutionListPagination::CreatedBy(pagination) => paginate(pagination, "created_at"),
+            ExecutionListPagination::ExecutionId(pagination) => {
+                paginate(pagination, "execution_id")
+            }
+        };
+
         if let Some(ffqn) = ffqn {
             where_vec.push("ffqn = :ffqn".to_string());
-            ffqn_string = ffqn.to_string();
-            params.push((":ffqn", &ffqn_string));
+            params.push((":ffqn", Box::new(ffqn.to_string())));
         }
-        match pagination {
-            Pagination::NewerThan {
-                next: first,
-                cursor: None,
-                including_cursor: _,
-            } => limit = first,
-            Pagination::NewerThan {
-                next: first,
-                cursor: Some(after),
-                including_cursor,
-            } => {
-                limit = first;
-                cursor = after.to_string();
-                where_vec.push(format!(
-                    "created_at {rel} :cursor",
-                    rel = if including_cursor { ">=" } else { ">" }
-                ));
-                params.push((":cursor", &cursor));
-            }
-            Pagination::OlderThan {
-                previous: last,
-                cursor: None,
-                including_cursor: _,
-            } => {
-                limit_desc = true;
-                limit = last;
-            }
-            Pagination::OlderThan {
-                previous: last,
-                cursor: Some(before),
-                including_cursor,
-            } => {
-                limit_desc = true;
-                limit = last;
-                cursor = before.to_string();
-                where_vec.push(format!(
-                    "created_at {rel} :cursor",
-                    rel = if including_cursor { "<=" } else { "<" }
-                ));
-                params.push((":cursor", &cursor));
-            }
-        }
+
         let where_str = if where_vec.is_empty() {
             String::new()
         } else {
@@ -1234,48 +1249,56 @@ impl SqlitePool {
         };
         let sql = format!("SELECT created_at,state, execution_id, ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
             FROM t_state {where_str} ORDER BY created_at {desc} LIMIT {limit}",
-            desc = if limit_desc { "DESC" } else { "" } );
-
+            desc = if statement_mod.limit_desc { "DESC" } else { "" },
+            limit = statement_mod.limit
+        );
         let mut vec: Vec<_> = read_tx
             .prepare(&sql)
             .map_err(convert_err)?
-            .query_map::<_, &[(&'static str, &dyn rusqlite::ToSql)], _>(params.as_ref(), |row| {
-                let execution_id_res = row
-                    .get::<_, String>("execution_id")?
-                    .parse::<ExecutionId>()
-                    .map_err(parsing_err);
-                let created_at = row.get("created_at")?;
-                let combined_state_res = CombinedState::new(
-                    &CombinedStateDTO {
-                        state: row.get("state")?,
-                        ffqn: row.get("ffqn")?,
-                        pending_expires_finished: row
-                            .get::<_, DateTime<Utc>>("pending_expires_finished")?,
-                        executor_id: row
-                            .get::<_, Option<ExecutorIdW>>("executor_id")?
-                            .map(|w| w.0),
-                        run_id: row.get::<_, Option<RunIdW>>("run_id")?.map(|w| w.0),
-                        join_set_id: row
-                            .get::<_, Option<JoinSetIdW>>("join_set_id")?
-                            .map(|w| w.0),
-                        join_set_closing: row.get::<_, Option<bool>>("join_set_closing")?,
-                        result_kind: row
-                            .get::<_, Option<FromStrWrapper<PendingStateFinishedResultKind>>>(
-                                "result_kind",
-                            )?
-                            .map(|wrapper| wrapper.0),
-                    },
-                    Version::new(row.get("next_version")?),
-                );
-                Ok(combined_state_res.and_then(|combined_state| {
-                    execution_id_res.map(|execution_id| ExecutionWithState {
-                        execution_id,
-                        ffqn: combined_state.ffqn,
-                        pending_state: combined_state.pending_state,
-                        created_at,
-                    })
-                }))
-            })
+            .query_map::<_, &[(&'static str, &dyn rusqlite::ToSql)], _>(
+                params
+                    .iter()
+                    .map(|(key, value)| (*key, value.as_ref()))
+                    .collect::<Vec<_>>()
+                    .as_ref(),
+                |row| {
+                    let execution_id_res = row
+                        .get::<_, String>("execution_id")?
+                        .parse::<ExecutionId>()
+                        .map_err(parsing_err);
+                    let created_at = row.get("created_at")?;
+                    let combined_state_res = CombinedState::new(
+                        &CombinedStateDTO {
+                            state: row.get("state")?,
+                            ffqn: row.get("ffqn")?,
+                            pending_expires_finished: row
+                                .get::<_, DateTime<Utc>>("pending_expires_finished")?,
+                            executor_id: row
+                                .get::<_, Option<ExecutorIdW>>("executor_id")?
+                                .map(|w| w.0),
+                            run_id: row.get::<_, Option<RunIdW>>("run_id")?.map(|w| w.0),
+                            join_set_id: row
+                                .get::<_, Option<JoinSetIdW>>("join_set_id")?
+                                .map(|w| w.0),
+                            join_set_closing: row.get::<_, Option<bool>>("join_set_closing")?,
+                            result_kind: row
+                                .get::<_, Option<FromStrWrapper<PendingStateFinishedResultKind>>>(
+                                    "result_kind",
+                                )?
+                                .map(|wrapper| wrapper.0),
+                        },
+                        Version::new(row.get("next_version")?),
+                    );
+                    Ok(combined_state_res.and_then(|combined_state| {
+                        execution_id_res.map(|execution_id| ExecutionWithState {
+                            execution_id,
+                            ffqn: combined_state.ffqn,
+                            pending_state: combined_state.pending_state,
+                            created_at,
+                        })
+                    }))
+                },
+            )
             .map_err(convert_err)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(convert_err)?
@@ -2602,7 +2625,7 @@ impl DbConnection for SqlitePool {
     async fn list_executions(
         &self,
         ffqn: Option<FunctionFqn>,
-        pagination: Pagination<DateTime<Utc>>,
+        pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
         Ok(self
             .transaction_read(

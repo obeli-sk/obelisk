@@ -10,9 +10,10 @@ use chrono::{DateTime, Utc};
 use concepts::prefixed_ulid::{ExecutorId, JoinSetId, RunId};
 use concepts::storage::{
     AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest, DbConnection,
-    DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner, ExecutionLog,
-    ExecutionWithState, ExpiredTimer, JoinSetResponseEventOuter, LockPendingResponse, LockResponse,
-    LockedExecution, Pagination, SpecificError, Version, VersionType,
+    DbConnectionError, DbError, DbPool, ExecutionEvent, ExecutionEventInner,
+    ExecutionListPagination, ExecutionLog, ExecutionWithState, ExpiredTimer,
+    JoinSetResponseEventOuter, LockPendingResponse, LockResponse, LockedExecution, SpecificError,
+    Version, VersionType,
 };
 use concepts::storage::{JoinSetResponseEvent, PendingState};
 use concepts::{ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn, StrVariant};
@@ -290,7 +291,7 @@ impl DbConnection for InMemoryDbConnection {
     async fn list_executions(
         &self,
         _ffqn: Option<FunctionFqn>,
-        _pagination: Pagination<DateTime<Utc>>,
+        _pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
         unimplemented!("only needed for gRPC")
     }

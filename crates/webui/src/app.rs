@@ -1,5 +1,8 @@
 use crate::{
-    grpc::{ffqn::FunctionFqn, grpc_client},
+    grpc::{
+        ffqn::FunctionFqn,
+        grpc_client::{self, ExecutionId},
+    },
     pages::{
         component_list_page::ComponentListPage,
         execution_detail_page::ExecutionDetailPage,
@@ -8,7 +11,8 @@ use crate::{
         not_found::NotFound,
     },
 };
-use std::ops::Deref;
+use chrono::{DateTime, Utc};
+use std::{ops::Deref, str::FromStr};
 use yew::prelude::*;
 use yew_router::prelude::*;
 
@@ -16,6 +20,30 @@ use yew_router::prelude::*;
 pub struct AppState {
     pub components: Vec<grpc_client::Component>,
     pub submittable_ffqns_to_details: hashbrown::HashMap<FunctionFqn, grpc_client::FunctionDetail>,
+}
+
+#[derive(Clone, PartialEq, derive_more::Display)]
+pub enum ExecutionsCursor {
+    #[display("{_0}")]
+    ExecutionId(ExecutionId),
+    #[display("C_{_0:?}")]
+    CreatedAt(DateTime<Utc>),
+}
+
+impl FromStr for ExecutionsCursor {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.split_once("_") {
+            Some(("E", rest)) => Ok(ExecutionsCursor::ExecutionId(ExecutionId {
+                id: format!("E_{rest}"),
+            })),
+            Some(("C", date)) => DateTime::from_str(date)
+                .map(ExecutionsCursor::CreatedAt)
+                .map_err(|_| ()),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Clone, Routable, PartialEq)]
@@ -33,13 +61,13 @@ pub enum Route {
     #[at("/execution/list")]
     ExecutionList,
     #[at("/execution/list/older/:cursor")]
-    ExecutionListOlder { cursor: String },
+    ExecutionListOlder { cursor: ExecutionsCursor },
     #[at("/execution/list/older_inc/:cursor")]
-    ExecutionListOlderIncluding { cursor: String },
+    ExecutionListOlderIncluding { cursor: ExecutionsCursor },
     #[at("/execution/list/newer/:cursor")]
-    ExecutionListNewer { cursor: String },
+    ExecutionListNewer { cursor: ExecutionsCursor },
     #[at("/execution/list/newer_inc/:cursor")]
-    ExecutionListNewerIncluding { cursor: String },
+    ExecutionListNewerIncluding { cursor: ExecutionsCursor },
     #[at("/execution/list/ffqn/:ffqn")]
     ExecutionListByFfqn { ffqn: FunctionFqn },
 

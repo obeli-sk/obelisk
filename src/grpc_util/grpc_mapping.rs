@@ -1,12 +1,11 @@
 use crate::command::grpc::{self};
 use anyhow::anyhow;
-use chrono::{DateTime, Utc};
 use concepts::{
     prefixed_ulid::{JoinSetId, RunId},
     storage::{
-        DbError, ExecutionEvent, ExecutionEventInner, HistoryEvent, HistoryEventScheduledAt,
-        JoinSetRequest, Pagination, PendingState, PendingStateFinished, PendingStateFinishedError,
-        PendingStateFinishedResultKind, SpecificError, VersionType,
+        DbError, ExecutionEvent, ExecutionEventInner, ExecutionListPagination, HistoryEvent,
+        HistoryEventScheduledAt, JoinSetRequest, Pagination, PendingState, PendingStateFinished,
+        PendingStateFinishedError, PendingStateFinishedResultKind, SpecificError, VersionType,
     },
     ConfigId, ConfigIdType, ExecutionId, FinishedExecutionError, FinishedExecutionResult,
     FunctionFqn, SupportedFunctionReturnValue,
@@ -204,53 +203,66 @@ impl From<PendingStateFinishedResultKind> for grpc::ResultKind {
     }
 }
 
-impl TryFrom<grpc::list_executions_request::Pagination> for Pagination<DateTime<Utc>> {
+impl TryFrom<grpc::list_executions_request::Pagination> for ExecutionListPagination {
     type Error = tonic::Status;
-    fn try_from(value: grpc::list_executions_request::Pagination) -> Result<Self, Self::Error> {
-        Ok(match value {
-            grpc::list_executions_request::Pagination::OlderThan(
-                grpc::list_executions_request::OlderThan {
-                    previous,
-                    cursor,
-                    including_cursor,
-                },
-            ) => Pagination::OlderThan {
-                previous,
-                cursor: Some(
-                    DateTime::parse_from_rfc3339(&cursor)
-                        .map_err(|_| tonic::Status::invalid_argument("cursor cannot be parsed"))?
-                        .into(),
-                ),
+
+    fn try_from(
+        pagination: grpc::list_executions_request::Pagination,
+    ) -> Result<Self, Self::Error> {
+        use grpc::list_executions_request::Pagination as GPagination;
+        use grpc::list_executions_request::{
+            cursor::Cursor as InnerCursor, Cursor as OuterCursor, NewerThan, OlderThan,
+        };
+        Ok(match pagination {
+            GPagination::NewerThan(NewerThan {
+                length,
+                cursor,
                 including_cursor,
-            },
-            grpc::list_executions_request::Pagination::Latest(
-                grpc::list_executions_request::Latest { latest: previous },
-            ) => Pagination::OlderThan {
-                previous,
-                cursor: None,
-                including_cursor: false,
-            },
-            grpc::list_executions_request::Pagination::NewerThan(
-                grpc::list_executions_request::NewerThan {
-                    next,
-                    cursor,
+            }) => match cursor {
+                Some(OuterCursor {
+                    cursor: Some(InnerCursor::ExecutionId(id)),
+                }) => ExecutionListPagination::ExecutionId(Pagination::NewerThan {
+                    length,
+                    cursor: Some(ExecutionId::try_from(id)?),
                     including_cursor,
-                },
-            ) => Pagination::NewerThan {
-                next,
-                cursor: Some(
-                    DateTime::parse_from_rfc3339(&cursor)
-                        .map_err(|_| tonic::Status::invalid_argument("cursor cannot be parsed"))?
-                        .into(),
-                ),
-                including_cursor,
+                }),
+                Some(OuterCursor {
+                    cursor: Some(InnerCursor::CreatedAt(timestamp)),
+                }) => ExecutionListPagination::CreatedBy(Pagination::NewerThan {
+                    length,
+                    cursor: Some(timestamp.into()),
+                    including_cursor,
+                }),
+                _ => ExecutionListPagination::CreatedBy(Pagination::NewerThan {
+                    length,
+                    cursor: None,
+                    including_cursor,
+                }),
             },
-            grpc::list_executions_request::Pagination::Oldest(
-                grpc::list_executions_request::Oldest { oldest: next },
-            ) => Pagination::NewerThan {
-                next,
-                cursor: None,
-                including_cursor: false,
+            GPagination::OlderThan(OlderThan {
+                length,
+                cursor,
+                including_cursor,
+            }) => match cursor {
+                Some(OuterCursor {
+                    cursor: Some(InnerCursor::ExecutionId(id)),
+                }) => ExecutionListPagination::ExecutionId(Pagination::OlderThan {
+                    length,
+                    cursor: Some(ExecutionId::try_from(id)?),
+                    including_cursor,
+                }),
+                Some(OuterCursor {
+                    cursor: Some(InnerCursor::CreatedAt(timestamp)),
+                }) => ExecutionListPagination::CreatedBy(Pagination::OlderThan {
+                    length,
+                    cursor: Some(timestamp.into()),
+                    including_cursor,
+                }),
+                _ => ExecutionListPagination::CreatedBy(Pagination::OlderThan {
+                    length,
+                    cursor: None,
+                    including_cursor,
+                }),
             },
         })
     }

@@ -780,7 +780,7 @@ pub trait DbConnection: Send + Sync {
     async fn list_executions(
         &self,
         ffqn: Option<FunctionFqn>,
-        pagination: Pagination<DateTime<Utc>>,
+        pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError>;
 }
 
@@ -791,15 +791,20 @@ pub struct ExecutionWithState {
     pub created_at: DateTime<Utc>,
 }
 
+pub enum ExecutionListPagination {
+    CreatedBy(Pagination<DateTime<Utc>>),
+    ExecutionId(Pagination<ExecutionId>),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Pagination<T> {
     NewerThan {
-        next: u32,
+        length: u32,
         cursor: Option<T>,
         including_cursor: bool,
     },
     OlderThan {
-        previous: u32,
+        length: u32,
         cursor: Option<T>,
         including_cursor: bool,
     },

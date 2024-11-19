@@ -31,8 +31,8 @@ use concepts::storage::DbConnection;
 use concepts::storage::DbPool;
 use concepts::storage::ExecutionEvent;
 use concepts::storage::ExecutionEventInner;
+use concepts::storage::ExecutionListPagination;
 use concepts::storage::ExecutionWithState;
-use concepts::storage::Pagination;
 use concepts::storage::PendingState;
 use concepts::storage::Version;
 use concepts::storage::VersionType;
@@ -355,13 +355,16 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let pagination =
             request
                 .pagination
-                .unwrap_or(grpc::list_executions_request::Pagination::Latest(
-                    grpc::list_executions_request::Latest { latest: 20 },
+                .unwrap_or(grpc::list_executions_request::Pagination::OlderThan(
+                    grpc::list_executions_request::OlderThan {
+                        length: 20,
+                        cursor: None,
+                        including_cursor: false,
+                    },
                 ));
-        let pagination = Pagination::try_from(pagination)?;
         let conn = self.db_pool.connection();
         let executions: Vec<_> = conn
-            .list_executions(ffqn, pagination)
+            .list_executions(ffqn, ExecutionListPagination::try_from(pagination)?)
             .await
             .to_status()?
             .into_iter()
@@ -380,16 +383,6 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
             )
             .collect();
         Ok(tonic::Response::new(grpc::ListExecutionsResponse {
-            cursor_newest: executions.first().map(|exe| {
-                exe.created_at
-                    .expect("set to Some in this function")
-                    .to_string()
-            }),
-            cursor_oldest: executions.last().map(|exe| {
-                exe.created_at
-                    .expect("set to Some in this function")
-                    .to_string()
-            }),
             executions,
         }))
     }

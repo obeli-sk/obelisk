@@ -6,9 +6,9 @@ use concepts::{
     prefixed_ulid::{ExecutorId, RunId},
     storage::{
         AppendBatchResponse, AppendRequest, AppendResponse, ClientError, CreateRequest,
-        DbConnection, DbError, DbPool, ExecutionEvent, ExecutionLog, ExecutionWithState,
-        ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter, LockPendingResponse,
-        LockResponse, Pagination, PendingState, Version, VersionType,
+        DbConnection, DbError, DbPool, ExecutionEvent, ExecutionListPagination, ExecutionLog,
+        ExecutionWithState, ExpiredTimer, JoinSetResponseEvent, JoinSetResponseEventOuter,
+        LockPendingResponse, LockResponse, PendingState, Version, VersionType,
     },
     ConfigId, ExecutionId, FinishedExecutionResult, FunctionFqn,
 };
@@ -221,7 +221,7 @@ impl DbConnection for DbConnectionProxy {
     async fn list_executions(
         &self,
         ffqn: Option<FunctionFqn>,
-        pagination: Pagination<DateTime<Utc>>,
+        pagination: ExecutionListPagination,
     ) -> Result<Vec<ExecutionWithState>, DbError> {
         self.0.list_executions(ffqn, pagination).await
     }

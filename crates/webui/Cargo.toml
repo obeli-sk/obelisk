@@ -12,6 +12,7 @@ version.workspace = true
 
 [dependencies]
 chrono.workspace = true
+derive_more.workspace = true
 hashbrown.workspace = true
 implicit-clone.workspace = true
 indexmap.workspace = true

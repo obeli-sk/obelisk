@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, Route},
+    app::{AppState, ExecutionsCursor, Route},
     components::{
         component_tree::ComponentTree, component_tree_ffqn_link::ComponentTreeFfqnLink,
         execution_status::ExecutionStatus,
@@ -8,10 +8,12 @@ use crate::{
         ffqn::FunctionFqn,
         grpc_client::{
             self,
-            list_executions_request::{NewerThan, OlderThan, Pagination},
+            list_executions_request::{cursor, NewerThan, OlderThan, Pagination},
+            ExecutionSummary,
         },
     },
 };
+use chrono::DateTime;
 use log::debug;
 use std::ops::Deref;
 use yew::prelude::*;
@@ -20,18 +22,60 @@ use yew_router::prelude::Link;
 #[derive(Default, Clone, PartialEq)]
 pub enum ExecutionFilter {
     #[default]
-    All,
+    Latest,
     Older {
-        cursor: String,
+        cursor: ExecutionsCursor,
         including_cursor: bool,
     },
     Newer {
-        cursor: String,
+        cursor: ExecutionsCursor,
         including_cursor: bool,
     },
     Ffqn {
         ffqn: FunctionFqn,
     },
+}
+
+impl ExecutionFilter {
+    fn get_cursor(&self) -> Option<ExecutionsCursor> {
+        match self {
+            ExecutionFilter::Older { cursor, .. } | ExecutionFilter::Newer { cursor, .. } => {
+                Some(cursor.clone())
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+enum CursorType {
+    #[default]
+    CreatedAt,
+    ExecutionId,
+}
+
+impl ExecutionsCursor {
+    fn into_grpc_cursor(self) -> grpc_client::list_executions_request::Cursor {
+        match self {
+            ExecutionsCursor::ExecutionId(execution_id) => {
+                grpc_client::list_executions_request::Cursor {
+                    cursor: Some(cursor::Cursor::ExecutionId(execution_id)),
+                }
+            }
+            ExecutionsCursor::CreatedAt(created_at) => {
+                grpc_client::list_executions_request::Cursor {
+                    cursor: Some(cursor::Cursor::CreatedAt(created_at.into())),
+                }
+            }
+        }
+    }
+
+    fn as_type(&self) -> CursorType {
+        match self {
+            ExecutionsCursor::CreatedAt(_) => CursorType::CreatedAt,
+            ExecutionsCursor::ExecutionId(_) => CursorType::ExecutionId,
+        }
+    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -56,7 +100,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                         tonic_web_wasm_client::Client::new(base_url.to_string()),
                     );
                 let (ffqn, pagination) = match filter {
-                    ExecutionFilter::All => (None, None),
+                    ExecutionFilter::Latest => (None, None),
                     ExecutionFilter::Ffqn { ffqn } => (Some(ffqn), None),
                     ExecutionFilter::Older {
                         cursor,
@@ -64,8 +108,8 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                     } => (
                         None,
                         Some(Pagination::OlderThan(OlderThan {
-                            cursor,
-                            previous: page_size,
+                            cursor: Some(cursor.into_grpc_cursor()),
+                            length: page_size,
                             including_cursor,
                         })),
                     ),
@@ -75,12 +119,13 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                     } => (
                         None,
                         Some(Pagination::NewerThan(NewerThan {
-                            cursor,
-                            next: page_size,
+                            cursor: Some(cursor.into_grpc_cursor()),
+                            length: page_size,
                             including_cursor,
                         })),
                     ),
                 };
+                debug!("<ExecutionListPage /> pagination {pagination:?}");
                 let response = execution_client
                     .list_executions(grpc_client::ListExecutionsRequest {
                         function_name: ffqn.map(grpc_client::FunctionName::from),
@@ -128,6 +173,27 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
             })
             .collect::<Vec<_>>();
 
+        let to_executions_cursor = |execution: &ExecutionSummary| match filter
+            .get_cursor()
+            .map(|c| c.as_type())
+            .unwrap_or_default()
+        {
+            CursorType::CreatedAt => ExecutionsCursor::CreatedAt(DateTime::from(
+                execution
+                    .created_at
+                    .expect("`created_at` is sent by the server"),
+            )),
+            CursorType::ExecutionId => ExecutionsCursor::ExecutionId(
+                execution
+                    .execution_id
+                    .clone()
+                    .expect("`execution_id` is sent by the server"),
+            ),
+        };
+
+        let cursor_later = response.executions.first().map(to_executions_cursor);
+        let cursor_prev = response.executions.last().map(to_executions_cursor);
+
         let submittable_link_fn =
             Callback::from(|ffqn: FunctionFqn| html! { <ComponentTreeFfqnLink {ffqn} /> });
 
@@ -143,35 +209,26 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
                 <tr><th>{"Execution ID"}</th><th>{"Function"}</th><th>{"Status"}</th></tr>
                 { rows }
             </table>
-            if let (Some(cursor_newest), Some(cursor_oldest)) = (&response.cursor_newest, &response.cursor_oldest) {
-                <p>
-                    <Link<Route> to={Route::ExecutionListNewer { cursor: cursor_newest.clone() }}>
-                        {"Newer"}
-                    </Link<Route>>
-                </p>
-                <p>
-                    <Link<Route> to={Route::ExecutionListOlder { cursor: cursor_oldest.clone() }}>
-                        {"Older"}
-                    </Link<Route>>
-                </p>
-            } else if let ExecutionFilter::Newer { cursor, including_cursor: false } = filter {
-                <p>
-                    <Link<Route> to={Route::ExecutionListOlderIncluding { cursor: cursor.clone() }}>
-                        {"Older"}
-                    </Link<Route>>
-                </p>
-            } else if let ExecutionFilter::Older { cursor, including_cursor: false } = filter {
-                <p>
-                    <Link<Route> to={Route::ExecutionListNewerIncluding { cursor: cursor.clone() }}>
-                        {"Newer"}
-                    </Link<Route>>
-                </p>
-            }
-            <p>
-                <Link<Route> to={Route::ExecutionList}>
-                    {"Latest"}
+            <Link<Route> to={Route::ExecutionList}>
+                {"<< Latest"}
+            </Link<Route>>
+            if let (Some(cursor_later), Some(cursor_prev)) = (cursor_later, cursor_prev) {
+                <Link<Route> to={Route::ExecutionListNewer { cursor: cursor_later }}>
+                    {"< Next"}
                 </Link<Route>>
-            </p>
+                <Link<Route> to={Route::ExecutionListOlder { cursor: cursor_prev }}>
+                    {"Prev >"}
+                </Link<Route>>
+            // If no results are shown, we neeed to go back including the cursor.
+            } else if let ExecutionFilter::Newer { cursor, including_cursor: false } = filter {
+                <Link<Route> to={Route::ExecutionListOlderIncluding { cursor: cursor.clone() }}>
+                    {"Prev >"}
+                </Link<Route>>
+            } else if let ExecutionFilter::Older { cursor, including_cursor: false } = filter {
+                <Link<Route> to={Route::ExecutionListNewerIncluding { cursor: cursor.clone() }}>
+                    {"< Next"}
+                </Link<Route>>
+            }
         </>}
     } else {
         html! {
