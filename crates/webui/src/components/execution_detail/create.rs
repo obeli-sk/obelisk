@@ -1,6 +1,6 @@
 use crate::app::AppState;
 use crate::app::Route;
-use crate::components::component_tree_ffqn_link::ComponentTreeFfqnLink;
+use crate::components::ffqn_with_links::FfqnWithLinks;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::grpc_client::ExecutionId;
 use chrono::{DateTime, Utc};
@@ -158,7 +158,7 @@ fn construct_tree(props: &CreateEventProps, params: &IndexMap<String, Value>) ->
     tree.insert(
         Node::new(NodeData {
             icon: Icon::Function,
-            label: html! { <ComponentTreeFfqnLink ffqn={props.ffqn.clone()} fully_qualified={true} /> },
+            label: html! { <FfqnWithLinks ffqn={props.ffqn.clone()} fully_qualified={true} /> },
             has_caret: false,
             ..Default::default()
         }),

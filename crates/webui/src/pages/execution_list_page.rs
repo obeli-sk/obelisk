@@ -1,8 +1,8 @@
 use crate::{
     app::{AppState, ExecutionsCursor, Route},
     components::{
-        component_tree::ComponentTree, component_tree_ffqn_link::ComponentTreeFfqnLink,
-        execution_status::ExecutionStatus,
+        component_tree::ComponentTree, execution_status::ExecutionStatus,
+        ffqn_with_links::FfqnWithLinks,
     },
     grpc::{
         ffqn::FunctionFqn,
@@ -195,7 +195,7 @@ pub fn execution_list_page(ExecutionListPageProps { filter }: &ExecutionListPage
         let cursor_prev = response.executions.last().map(to_executions_cursor);
 
         let submittable_link_fn =
-            Callback::from(|ffqn: FunctionFqn| html! { <ComponentTreeFfqnLink {ffqn} /> });
+            Callback::from(|ffqn: FunctionFqn| html! { <FfqnWithLinks {ffqn} /> });
 
         html! {<>
             <h3>{"Executions"}</h3>
