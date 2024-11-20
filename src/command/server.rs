@@ -223,6 +223,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
         let summary = grpc::GetStatusResponse {
             message: Some(Message::Summary(ExecutionSummary {
                 created_at: Some(create_request.created_at.into()),
+                scheduled_at: Some(create_request.scheduled_at.into()),
                 execution_id: Some(grpc::ExecutionId::from(&execution_id)),
                 function_name: Some(create_request.ffqn.clone().into()),
                 current_status: Some(grpc_pending_status),
@@ -379,6 +380,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                     function_name: Some(ffqn.into()),
                     current_status: Some(grpc::ExecutionStatus::from(pending_state)),
                     created_at: Some(created_at.into()),
+                    scheduled_at: Some(scheduled_at.into()),
                 },
             )
             .collect();
