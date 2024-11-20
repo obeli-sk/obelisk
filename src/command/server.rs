@@ -449,6 +449,7 @@ fn to_finished_status(
     grpc::FinishedStatus {
         result_detail: Some(result_detail),
         created_at: Some(create_request.created_at.into()),
+        scheduled_at: Some(create_request.scheduled_at.into()),
         finished_at: Some(finished_at.into()),
     }
 }

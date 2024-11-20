@@ -187,12 +187,10 @@ message ExecutionStatus {
 }
 
 message FinishedStatus {
-    reserved 1;
-    google.protobuf.Timestamp created_at = 2;
-    reserved 3;
-    google.protobuf.Timestamp finished_at = 4;
-    reserved 5;
-    ResultDetail result_detail = 6;
+    google.protobuf.Timestamp created_at = 1;
+    google.protobuf.Timestamp scheduled_at = 2;
+    google.protobuf.Timestamp finished_at = 3;
+    ResultDetail result_detail = 4;
 }
 
 message ResultDetail {
