@@ -1,11 +1,10 @@
-use super::super::tree_component::{
-    TreeComponent, TreeComponentAction, TreeComponentInner, TreeFactory,
+use crate::{
+    app::Route, components::execution_detail::tree_component::TreeComponent, grpc::grpc_client,
 };
-use crate::{app::Route, grpc::grpc_client};
 use yew::prelude::*;
 use yew_router::prelude::Link;
 use yewprint::{
-    id_tree::{InsertBehavior, Node, NodeId, TreeBuilder},
+    id_tree::{InsertBehavior, Node, TreeBuilder},
     Icon, NodeData, TreeData,
 };
 
@@ -14,7 +13,7 @@ pub struct HistoryScheduleEventProps {
     pub event: grpc_client::execution_event::history_event::Schedule,
 }
 
-impl TreeFactory for HistoryScheduleEventProps {
+impl HistoryScheduleEventProps {
     fn construct_tree(&self) -> TreeData<u32> {
         let mut tree = TreeBuilder::new().build();
         let root_id = tree
@@ -37,7 +36,9 @@ impl TreeFactory for HistoryScheduleEventProps {
                     icon: Icon::FolderClose,
                     label: html!{<>
                         {"Scheduled execution "}
-                        <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_execution_id.clone() } }>{scheduled_execution_id}</Link<Route>>
+                        <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_execution_id.clone() } }>
+                            {scheduled_execution_id}
+                        </Link<Route>>
                     </>},
                     has_caret: true,
                     ..Default::default()
@@ -64,47 +65,10 @@ impl TreeFactory for HistoryScheduleEventProps {
     }
 }
 
-pub struct HistoryScheduleEvent {
-    inner: TreeComponentInner<HistoryScheduleEvent>,
-}
-
-impl Component for HistoryScheduleEvent {
-    type Message = TreeComponentAction;
-    type Properties = HistoryScheduleEventProps;
-
-    fn create(ctx: &Context<Self>) -> Self {
-        Self {
-            inner: TreeComponentInner::create(ctx),
-        }
-    }
-
-    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
-        TreeComponent::update(self, ctx, msg)
-    }
-
-    fn changed(&mut self, ctx: &Context<Self>, old_props: &Self::Properties) -> bool {
-        TreeComponent::changed(self, ctx, old_props)
-    }
-
-    fn view(&self, ctx: &Context<Self>) -> Html {
-        TreeComponent::view(self, ctx)
-    }
-}
-
-impl TreeComponent for HistoryScheduleEvent {
-    fn tree_get(&self) -> &TreeData<u32> {
-        &self.inner.tree
-    }
-
-    fn tree_mut(&mut self) -> &mut TreeData<u32> {
-        &mut self.inner.tree
-    }
-
-    fn tree_set(&mut self, tree: TreeData<u32>) {
-        self.inner.tree = tree;
-    }
-
-    fn on_expand_node(&self) -> Callback<(NodeId, MouseEvent)> {
-        self.inner.on_expand_node.clone()
+#[function_component(HistoryScheduleEvent)]
+pub fn history_schedule_event(props: &HistoryScheduleEventProps) -> Html {
+    let tree = props.construct_tree();
+    html! {
+        <TreeComponent {tree} />
     }
 }
