@@ -147,7 +147,10 @@ impl ProcessedProps {
             .insert(
                 Node::new(NodeData {
                     icon: Icon::Time,
-                    label: html!{ <> {"Scheduled by "} <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_by.clone() } }>{scheduled_by}</Link<Route>> </>},
+                    label: html!{ <>
+                        {"Scheduled by "}
+                        <Link<Route> to={Route::ExecutionDetail { execution_id: scheduled_by.clone() } }>{scheduled_by}</Link<Route>>
+                    </>},
                     has_caret: false,
                     ..Default::default()
                 }),

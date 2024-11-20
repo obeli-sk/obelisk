@@ -1,5 +1,6 @@
 use crate::app::Route;
 use crate::components::execution_detail::created::CreatedEvent;
+use crate::components::execution_detail::history::schedule::HistoryScheduleEvent;
 use crate::components::execution_detail::locked::LockedEvent;
 use crate::components::execution_status::ExecutionStatus;
 use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
@@ -97,7 +98,11 @@ pub fn execution_detail_page(
                     // execution_event::Event::Failed(_) => todo!(),
                     // execution_event::Event::TimedOut(_) => todo!(),
                     // execution_event::Event::Finished(_) => todo!(),
-                    // execution_event::Event::HistoryVariant(_) => todo!(),
+                    execution_event::Event::HistoryVariant(execution_event::HistoryEvent {
+                        event: Some(execution_event::history_event::Event::Schedule(schedule)),
+                    }) => html! {
+                        <HistoryScheduleEvent event={schedule.clone()} />
+                    },
                     other => html! { {format!("unknown variant {other:?}")}},
                 };
                 let created_at =
