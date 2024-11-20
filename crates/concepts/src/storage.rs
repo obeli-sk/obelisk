@@ -789,6 +789,7 @@ pub struct ExecutionWithState {
     pub ffqn: FunctionFqn,
     pub pending_state: PendingState,
     pub created_at: DateTime<Utc>,
+    pub scheduled_at: DateTime<Utc>,
 }
 
 pub enum ExecutionListPagination {

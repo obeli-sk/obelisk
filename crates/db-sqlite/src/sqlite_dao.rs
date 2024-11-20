@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS t_state (
     ffqn TEXT NOT NULL,
     state TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    scheduled_at TEXT NOT NULL,
 
     join_set_id TEXT,
     join_set_closing INTEGER,
@@ -864,12 +865,13 @@ impl SqlitePool {
             let scheduled_at = assert_matches!(pending_state, PendingState::PendingAt { scheduled_at } => scheduled_at);
             debug!("Creating with `Pending(`{scheduled_at:?}`)");
             tx.prepare(
-                "INSERT INTO t_state (created_at, state, execution_id, next_version, pending_expires_finished, ffqn) \
-                VALUES (:created_at, :state, :execution_id, :next_version, :pending_expires_finished, :ffqn)",
+                "INSERT INTO t_state (created_at, scheduled_at, state, execution_id, next_version, pending_expires_finished, ffqn) \
+                VALUES (:created_at, :scheduled_at, :state, :execution_id, :next_version, :pending_expires_finished, :ffqn)",
             )
             .map_err(convert_err)?
             .execute(named_params! {
                 ":created_at": created_at,
+                ":scheduled_at": scheduled_at,
                 ":state": STATE_PENDING_AT,
                 ":execution_id": execution_id.to_string(),
                 ":next_version": next_version.0,
@@ -1244,7 +1246,8 @@ impl SqlitePool {
         } else {
             format!("WHERE {}", statement_mod.where_vec.join(" AND "))
         };
-        let sql = format!("SELECT created_at,state, execution_id, ffqn, next_version, pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
+        let sql = format!("SELECT created_at, scheduled_at, state, execution_id, ffqn, next_version, \
+            pending_expires_finished, executor_id, run_id, join_set_id, join_set_closing, result_kind \
             FROM t_state {where_str} ORDER BY created_at {desc} LIMIT {limit}",
             desc = if statement_mod.limit_desc { "DESC" } else { "" },
             limit = statement_mod.limit
@@ -1265,6 +1268,7 @@ impl SqlitePool {
                         .parse::<ExecutionId>()
                         .map_err(parsing_err);
                     let created_at = row.get("created_at")?;
+                    let scheduled_at = row.get("scheduled_at")?;
                     let combined_state_res = CombinedState::new(
                         &CombinedStateDTO {
                             state: row.get("state")?,
@@ -1293,6 +1297,7 @@ impl SqlitePool {
                             ffqn: combined_state.ffqn,
                             pending_state: combined_state.pending_state,
                             created_at,
+                            scheduled_at,
                         })
                     }))
                 },

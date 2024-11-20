@@ -373,6 +373,7 @@ impl<DB: DbConnection + 'static, P: DbPool<DB> + 'static>
                      ffqn,
                      pending_state,
                      created_at,
+                     scheduled_at,
                  }| grpc::ExecutionSummary {
                     execution_id: Some(grpc::ExecutionId::from(execution_id)),
                     function_name: Some(ffqn.into()),
