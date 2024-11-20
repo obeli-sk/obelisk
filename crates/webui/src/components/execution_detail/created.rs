@@ -94,6 +94,7 @@ impl ProcessedProps {
                 InsertBehavior::UnderNode(&root_id),
             )
             .unwrap();
+        // Scheduled at
         tree.insert(
             Node::new(NodeData {
                 icon: Icon::Time,
@@ -119,7 +120,7 @@ impl ProcessedProps {
         let params_node_id = tree
             .insert(
                 Node::new(NodeData {
-                    icon: Icon::Function,
+                    icon: Icon::FolderClose,
                     label: "Parameters".into_html(),
                     has_caret: true,
                     is_expanded: true,

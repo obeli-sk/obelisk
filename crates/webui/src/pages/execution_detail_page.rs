@@ -1,5 +1,6 @@
 use crate::app::Route;
 use crate::components::execution_detail::created::CreatedEvent;
+use crate::components::execution_detail::locked::LockedEvent;
 use crate::components::execution_status::ExecutionStatus;
 use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
 use crate::grpc::grpc_client::{self, execution_event};
@@ -89,7 +90,9 @@ pub fn execution_detail_page(
                             <CreatedEvent created={created.clone()} />
                         }
                     }
-                    // execution_event::Event::Locked(_) => todo!(),
+                    execution_event::Event::Locked(locked) => html! {
+                        <LockedEvent locked={locked.clone()} />
+                    },
                     // execution_event::Event::Unlocked(_) => todo!(),
                     // execution_event::Event::Failed(_) => todo!(),
                     // execution_event::Event::TimedOut(_) => todo!(),
