@@ -19,7 +19,6 @@ use yewprint::{Icon, NodeData, TreeData};
 pub struct CreateEventProps {
     pub created: Created,
 }
-
 impl CreateEventProps {
     fn process(&self, app_state: &AppState) -> ProcessedProps {
         let Created {
@@ -48,7 +47,6 @@ impl CreateEventProps {
                         )
                     },
                 );
-
                 IndexMap::from_iter(param_tuples)
             }
             _ => IndexMap::from_iter(
@@ -64,16 +62,6 @@ impl CreateEventProps {
             scheduled_by,
         }
     }
-}
-
-pub struct CreateEvent {
-    tree: TreeData<u32>,
-    on_expand_node: Callback<(NodeId, MouseEvent)>,
-}
-
-#[derive(Debug)]
-pub enum Action {
-    ExpandNode(NodeId),
 }
 
 struct ProcessedProps {
@@ -134,6 +122,7 @@ impl ProcessedProps {
                     icon: Icon::Function,
                     label: "Parameters".into_html(),
                     has_caret: true,
+                    is_expanded: true,
                     ..Default::default()
                 }),
                 InsertBehavior::UnderNode(&event_type),
@@ -167,6 +156,16 @@ impl ProcessedProps {
         }
         TreeData::from(tree)
     }
+}
+
+#[derive(Debug)]
+pub enum Action {
+    ExpandNode(NodeId),
+}
+
+pub struct CreateEvent {
+    tree: TreeData<u32>,
+    on_expand_node: Callback<(NodeId, MouseEvent)>,
 }
 impl Component for CreateEvent {
     type Message = Action;
