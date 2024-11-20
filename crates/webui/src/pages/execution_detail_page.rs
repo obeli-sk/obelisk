@@ -1,5 +1,5 @@
 use crate::app::Route;
-use crate::components::execution_detail::create::CreateEvent;
+use crate::components::execution_detail::created::CreatedEvent;
 use crate::components::execution_status::ExecutionStatus;
 use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
 use crate::grpc::grpc_client::{self, execution_event};
@@ -86,7 +86,7 @@ pub fn execution_detail_page(
                 let detail = match event.event.as_ref().expect("event is sent by the server") {
                     execution_event::Event::Created(created) => {
                         html! {
-                            <CreateEvent created={created.clone()} />
+                            <CreatedEvent created={created.clone()} />
                         }
                     }
                     // execution_event::Event::Locked(_) => todo!(),

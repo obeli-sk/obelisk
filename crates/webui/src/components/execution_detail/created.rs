@@ -16,10 +16,10 @@ use yewprint::id_tree::{InsertBehavior, Node, NodeId, TreeBuilder};
 use yewprint::{Icon, NodeData, TreeData};
 
 #[derive(Properties, PartialEq, Clone)]
-pub struct CreateEventProps {
+pub struct CreatedEventProps {
     pub created: Created,
 }
-impl CreateEventProps {
+impl CreatedEventProps {
     fn process(&self, app_state: &AppState) -> ProcessedProps {
         let Created {
             function_name: Some(function_name),
@@ -72,7 +72,7 @@ struct ProcessedProps {
 }
 impl ProcessedProps {
     fn construct_tree(self) -> TreeData<u32> {
-        debug!("<CreateEvent /> construct_tree");
+        debug!("<CreatedEvent /> construct_tree");
         let mut tree = TreeBuilder::new().build();
         let root_id = tree
             .insert(
@@ -163,16 +163,16 @@ pub enum Action {
     ExpandNode(NodeId),
 }
 
-pub struct CreateEvent {
+pub struct CreatedEvent {
     tree: TreeData<u32>,
     on_expand_node: Callback<(NodeId, MouseEvent)>,
 }
-impl Component for CreateEvent {
+impl Component for CreatedEvent {
     type Message = Action;
-    type Properties = CreateEventProps;
+    type Properties = CreatedEventProps;
 
     fn create(ctx: &Context<Self>) -> Self {
-        debug!("<CreateEvent /> create");
+        debug!("<CreatedEvent /> create");
         let app_state = ctx
             .link()
             .context::<AppState>(Callback::noop())
@@ -188,7 +188,7 @@ impl Component for CreateEvent {
     }
 
     fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
-        log::debug!("<CreateEvent /> update");
+        log::debug!("<CreatedEvent /> update");
         match msg {
             Self::Message::ExpandNode(node_id) => {
                 let mut tree = self.tree.borrow_mut();
@@ -201,7 +201,7 @@ impl Component for CreateEvent {
     }
 
     fn changed(&mut self, ctx: &Context<Self>, _old_props: &Self::Properties) -> bool {
-        log::debug!("<CreateEvent /> changed");
+        log::debug!("<CreatedEvent /> changed");
         let app_state = ctx
             .link()
             .context::<AppState>(Callback::noop())
@@ -213,7 +213,7 @@ impl Component for CreateEvent {
     }
 
     fn view(&self, _ctx: &Context<Self>) -> Html {
-        debug!("<CreateEvent /> view");
+        debug!("<CreatedEvent /> view");
         html! {
             <yewprint::Tree<u32>
                 tree={&self.tree}
