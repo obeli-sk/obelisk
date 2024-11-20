@@ -1,5 +1,6 @@
 use crate::app::AppState;
 use crate::app::Route;
+use crate::components::execution_detail::tree_component::TreeComponent;
 use crate::components::ffqn_with_links::FfqnWithLinks;
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::grpc_client;
@@ -167,64 +168,12 @@ pub enum Action {
     ExpandNode(NodeId),
 }
 
-pub struct CreatedEvent {
-    tree: TreeData<u32>,
-    on_expand_node: Callback<(NodeId, MouseEvent)>,
-}
-impl Component for CreatedEvent {
-    type Message = Action;
-    type Properties = CreatedEventProps;
-
-    fn create(ctx: &Context<Self>) -> Self {
-        debug!("<CreatedEvent /> create");
-        let app_state = ctx
-            .link()
-            .context::<AppState>(Callback::noop())
-            .expect("AppState context is set when starting the App")
-            .0;
-        let tree = ctx.props().process(&app_state).construct_tree();
-        Self {
-            tree,
-            on_expand_node: ctx
-                .link()
-                .callback(|(node_id, _)| Action::ExpandNode(node_id)),
-        }
-    }
-
-    fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
-        log::debug!("<CreatedEvent /> update");
-        match msg {
-            Self::Message::ExpandNode(node_id) => {
-                let mut tree = self.tree.borrow_mut();
-                let node = tree.get_mut(&node_id).unwrap();
-                let data = node.data_mut();
-                data.is_expanded ^= true;
-            }
-        }
-        true
-    }
-
-    fn changed(&mut self, ctx: &Context<Self>, _old_props: &Self::Properties) -> bool {
-        log::debug!("<CreatedEvent /> changed");
-        let app_state = ctx
-            .link()
-            .context::<AppState>(Callback::noop())
-            .expect("AppState context is set when starting the App")
-            .0;
-        let tree = ctx.props().process(&app_state).construct_tree();
-        self.tree = tree;
-        true
-    }
-
-    fn view(&self, _ctx: &Context<Self>) -> Html {
-        debug!("<CreatedEvent /> view");
-        html! {
-            <yewprint::Tree<u32>
-                tree={&self.tree}
-                on_collapse={Some(self.on_expand_node.clone())}
-                on_expand={Some(self.on_expand_node.clone())}
-                onclick={Some(self.on_expand_node.clone())}
-            />
-        }
+#[function_component(CreatedEvent)]
+pub fn created_event(props: &CreatedEventProps) -> Html {
+    let app_state =
+        use_context::<AppState>().expect("AppState context is set when starting the App");
+    let tree = props.process(&app_state).construct_tree();
+    html! {
+        <TreeComponent {tree} />
     }
 }
