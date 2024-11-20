@@ -7,15 +7,18 @@ use yewprint::{
     Icon, NodeData, TreeData,
 };
 
-#[derive(Properties, PartialEq)]
+pub(crate) trait TreeFactory {
+    fn construct_tree(&self) -> TreeData<u32>;
+}
+
+#[derive(Properties, PartialEq, Clone)]
 pub struct LockedProps {
     pub locked: grpc_client::execution_event::Locked,
 }
 
-#[function_component(LockedEvent)]
-pub fn locked_event(LockedProps { locked }: &LockedProps) -> Html {
-    debug!("<LockedEvent /> render");
-    let tree_state = use_state(|| {
+impl TreeFactory for LockedProps {
+    fn construct_tree(&self) -> TreeData<u32> {
+        let locked = &self.locked;
         let mut tree = TreeBuilder::new().build();
         let root_id = tree
             .insert(
@@ -37,7 +40,6 @@ pub fn locked_event(LockedProps { locked }: &LockedProps) -> Html {
                 InsertBehavior::UnderNode(&root_id),
             )
             .unwrap();
-
         tree.insert(
             Node::new(NodeData {
                 icon: Icon::Time,
@@ -49,7 +51,24 @@ pub fn locked_event(LockedProps { locked }: &LockedProps) -> Html {
         )
         .unwrap();
         TreeData::from(tree)
+    }
+}
+
+#[function_component(LockedEvent)]
+pub fn locked_event(props: &LockedProps) -> Html {
+    let tree = props.construct_tree();
+    let tree_state = use_state(|| {
+        debug!("<LockedEvent /> use_state");
+        tree
     });
+
+    {
+        // When prpos change, set new tree to `tree_state`, otherwise the old tree is kept in `tree_state`.
+        let tree_state = tree_state.clone();
+        use_effect_with(props.clone(), move |props| {
+            tree_state.set(props.construct_tree());
+        });
+    }
 
     let expand_collapse = {
         let tree_state = tree_state.clone();
