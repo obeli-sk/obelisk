@@ -1,22 +1,17 @@
+use super::tree_component::{TreeComponent, TreeComponentAction, TreeComponentInner, TreeFactory};
 use crate::grpc::grpc_client;
-use log::debug;
-use std::ops::Deref;
 use yew::prelude::*;
 use yewprint::{
-    id_tree::{InsertBehavior, Node, TreeBuilder},
+    id_tree::{InsertBehavior, Node, NodeId, TreeBuilder},
     Icon, NodeData, TreeData,
 };
 
-pub(crate) trait TreeFactory {
-    fn construct_tree(&self) -> TreeData<u32>;
-}
-
 #[derive(Properties, PartialEq, Clone)]
-pub struct LockedProps {
+pub struct LockedEventProps {
     pub locked: grpc_client::execution_event::Locked,
 }
 
-impl TreeFactory for LockedProps {
+impl TreeFactory for LockedEventProps {
     fn construct_tree(&self) -> TreeData<u32> {
         let locked = &self.locked;
         let mut tree = TreeBuilder::new().build();
@@ -54,41 +49,47 @@ impl TreeFactory for LockedProps {
     }
 }
 
-#[function_component(LockedEvent)]
-pub fn locked_event(props: &LockedProps) -> Html {
-    let tree = props.construct_tree();
-    let tree_state = use_state(|| {
-        debug!("<LockedEvent /> use_state");
-        tree
-    });
+pub struct LockedEvent {
+    inner: TreeComponentInner<LockedEvent>,
+}
 
-    {
-        // When prpos change, set new tree to `tree_state`, otherwise the old tree is kept in `tree_state`.
-        let tree_state = tree_state.clone();
-        use_effect_with(props.clone(), move |props| {
-            tree_state.set(props.construct_tree());
-        });
+impl Component for LockedEvent {
+    type Message = TreeComponentAction;
+    type Properties = LockedEventProps;
+
+    fn create(ctx: &Context<Self>) -> Self {
+        Self {
+            inner: TreeComponentInner::create(ctx),
+        }
     }
 
-    let expand_collapse = {
-        let tree_state = tree_state.clone();
-        Callback::from(move |(node_id, _)| {
-            let mut tree = tree_state.deref().clone();
-            {
-                let mut tree = tree.borrow_mut();
-                let node = tree.get_mut(&node_id).unwrap();
-                let data = node.data_mut();
-                data.is_expanded ^= true;
-            }
-            tree_state.set(tree); // Setter must be called to notify yew that we request render
-        })
-    };
-    html! {
-        <yewprint::Tree<u32>
-            tree={tree_state.deref()}
-            on_collapse={Some(expand_collapse.clone())}
-            on_expand={Some(expand_collapse.clone())}
-            onclick={Some(expand_collapse.clone())}
-        />
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+        TreeComponent::update(self, ctx, msg)
+    }
+
+    fn changed(&mut self, ctx: &Context<Self>, old_props: &Self::Properties) -> bool {
+        TreeComponent::changed(self, ctx, old_props)
+    }
+
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        TreeComponent::view(self, ctx)
+    }
+}
+
+impl TreeComponent for LockedEvent {
+    fn tree_get(&self) -> &TreeData<u32> {
+        &self.inner.tree
+    }
+
+    fn tree_mut(&mut self) -> &mut TreeData<u32> {
+        &mut self.inner.tree
+    }
+
+    fn tree_set(&mut self, tree: TreeData<u32>) {
+        self.inner.tree = tree;
+    }
+
+    fn on_expand_node(&self) -> Callback<(NodeId, MouseEvent)> {
+        self.inner.on_expand_node.clone()
     }
 }
