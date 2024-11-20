@@ -90,7 +90,8 @@ pub fn execution_status(
             status: Some(status),
         })) => status_to_string(status),
         Some(get_status_response::Message::FinishedStatus(FinishedStatus {
-            created_at: Some(created_at),
+            created_at: _,
+            scheduled_at: Some(scheduled_at),
             finished_at: Some(finished_at),
             result_detail: Some(result_detail),
         })) => {
@@ -157,13 +158,13 @@ pub fn execution_status(
             };
 
             let finished_at = DateTime::from(*finished_at);
-            let created_at = DateTime::from(*created_at);
-            let since_created = (finished_at - created_at)
+            let scheduled_at = DateTime::from(*scheduled_at);
+            let since_scheduled = (finished_at - scheduled_at)
                 .to_std()
                 .expect("must be non-negative");
             html! {<>
                 <p>{result}</p>
-                <p>{format!("Execution finished after {since_created:?} since its creation")}</p>
+                <p>{format!("Execution finished after {since_scheduled:?} after it was scheduled")}</p>
             </>}
         }
         Some(unknown) => unreachable!("unexpected {unknown:?}"),
