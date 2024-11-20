@@ -5,9 +5,11 @@ use crate::grpc::execution_id::{ExecutionIdExt, EXECUTION_ID_INFIX};
 use crate::grpc::ffqn::FunctionFqn;
 use crate::grpc::grpc_client::execution_event::Created;
 use crate::grpc::grpc_client::{self, execution_event};
+use assert_matches::assert_matches;
 use chrono::DateTime;
 use log::debug;
 use std::ops::Deref;
+use std::time::Duration;
 use yew::prelude::*;
 use yew_router::prelude::Link;
 
@@ -63,13 +65,24 @@ pub fn execution_detail_page(
         .collect();
 
     let details = if let Some(events) = events_state.deref() {
-        let execution_created_at = DateTime::from(
-            events
+        let execution_scheduled_at = {
+            let create_event = events
                 .first()
                 .expect("not found is sent as an error")
-                .created_at
-                .expect("`created_at` is sent by the server"),
-        );
+                .event
+                .as_ref()
+                .expect("`event` is sent by the server");
+            let create_event = assert_matches!(
+                create_event,
+                grpc_client::execution_event::Event::Created(created) => created
+            );
+
+            DateTime::from(
+                create_event
+                    .scheduled_at
+                    .expect("`scheduled_at` is sent by the server"),
+            )
+        };
         let rows: Vec<_> = events
             .iter()
             .map(|event| {
@@ -107,12 +120,15 @@ pub fn execution_detail_page(
                 };
                 let created_at =
                     DateTime::from(event.created_at.expect("`created_at` sent by the server"));
-                let created_in = (created_at - execution_created_at)
-                    .to_std()
-                    .expect("must be non-negative");
+                let since_scheduled = (created_at - execution_scheduled_at).to_std().ok().unwrap_or_default();
                 html! { <tr>
                     <td>{event.version}</td>
-                    <td>{format!("{created_in:?}")}</td>
+                        <td>{created_at.to_string()}</td>
+                    <td>
+                        if !since_scheduled.is_zero() {
+                            {format!("{since_scheduled:?}")}
+                        }
+                    </td>
                     <td>{detail}</td>
                 </tr>}
             })
@@ -121,7 +137,8 @@ pub fn execution_detail_page(
             <table>
             <tr>
                 <th>{"Version"}</th>
-                <th>{"Created after"}</th>
+                <th>{"Timestamp"}</th>
+                <th>{"Since scheduled"}</th>
                 <th>{"Detail"}</th>
             </tr>
             {rows}

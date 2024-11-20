@@ -6039,6 +6039,7 @@ dependencies = [
 name = "webui"
 version = "0.7.0"
 dependencies = [
+ "assert_matches",
  "chrono",
  "derive_more",
  "hashbrown 0.15.1",
