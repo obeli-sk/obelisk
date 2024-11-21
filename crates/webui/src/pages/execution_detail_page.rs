@@ -30,12 +30,19 @@ pub struct ExecutionDetailPageProps {
 pub fn execution_detail_page(
     ExecutionDetailPageProps { execution_id }: &ExecutionDetailPageProps,
 ) -> Html {
+    let execution_id_state = use_state(|| execution_id.clone());
     let version_from_state = use_state(|| 0);
     let events_state = use_state(|| None::<Vec<ExecutionEvent>>);
-    use_effect_with((execution_id.clone(), version_from_state.clone()), {
+    use_effect_with((execution_id.clone(), *version_from_state.deref()), {
         let events_state = events_state.clone();
-        move |(execution_id, version_from_state)| {
-            let version_from_state = version_from_state.clone();
+        move |(execution_id, version_from)| {
+            let (version_from, old_events) = if *execution_id != *execution_id_state.deref() {
+                debug!("Execution ID changed");
+                execution_id_state.set(execution_id.clone());
+                (0, None)
+            } else {
+                (*version_from, events_state.deref().clone())
+            };
             let execution_id = execution_id.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let base_url = "/api";
@@ -46,7 +53,7 @@ pub fn execution_detail_page(
                 let events = execution_client
                     .list_execution_events(grpc_client::ListExecutionEventsRequest {
                         execution_id: Some(execution_id.clone()),
-                        version_from: *version_from_state.deref(),
+                        version_from,
                         length: PAGE,
                     })
                     .await
@@ -54,16 +61,14 @@ pub fn execution_detail_page(
                     .into_inner()
                     .events;
                 debug!("Got {} events", events.len());
-                let all_events = if let Some(old) = events_state.deref() {
-                    let mut all_events = Vec::with_capacity(old.len() + events.len());
-                    all_events.extend_from_slice(old);
-                    all_events.extend(events);
-                    all_events
+                let all_events = if let Some(mut old_events) = old_events {
+                    old_events.extend(events);
+                    old_events
                 } else {
                     events
                 };
                 events_state.set(Some(all_events));
-            })
+            });
         }
     });
 
