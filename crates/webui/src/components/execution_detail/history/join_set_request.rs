@@ -63,7 +63,19 @@ impl HistoryJoinSetRequestEventProps {
                                 <>
                                     {"Delay Request: "}
                                     {&delay_id.id}
-                                    {" expires at "}
+                                </>
+                            },
+                            ..Default::default()
+                        }),
+                        InsertBehavior::UnderNode(&join_set_node),
+                    )
+                    .unwrap();
+                    tree.insert(
+                        Node::new(NodeData {
+                            icon: Icon::Time,
+                            label: html! {
+                                <>
+                                    {"Expires At: "}
                                     {expires_at}
                                 </>
                             },
