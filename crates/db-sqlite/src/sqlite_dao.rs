@@ -84,27 +84,31 @@ CREATE TABLE IF NOT EXISTS t_execution_log (
     PRIMARY KEY (execution_id, version)
 );
 ";
+// Used in `fetch_created` and `get_execution_event`
 const CREATE_INDEX_IDX_T_EXECUTION_LOG_EXECUTION_ID_VERSION: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_version  ON t_execution_log (execution_id, version);
-"; // Used in `fetch_created` and `get_execution_event`
+";
+// Used in `lock_inner` to filter by execution ID and variant (created or event history)
 const CREATE_INDEX_IDX_T_EXECUTION_ID_EXECUTION_ID_VARIANT: &str = r"
 CREATE INDEX IF NOT EXISTS idx_t_execution_log_execution_id_variant  ON t_execution_log (execution_id, variant);
-"; // Used in `lock_inner` to filter by execution ID and variant (created or event history)
+";
 
 /// Stores child execution return values. Append only.
 const CREATE_TABLE_T_JOIN_SET_RESPONSE: &str = r"
 CREATE TABLE IF NOT EXISTS t_join_set_response (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
     execution_id TEXT NOT NULL,
     json_value JSONB NOT NULL,
     join_set_id TEXT NOT NULL,
     delay_id TEXT,
     child_execution_id TEXT,
-    PRIMARY KEY (execution_id, join_set_id, delay_id, child_execution_id)
+    UNIQUE (execution_id, join_set_id, delay_id, child_execution_id)
 );
 ";
-const CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_CREATED_AT: &str = r"
-CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_created_at ON t_join_set_response (execution_id, created_at);
+// Used when querying for the next response
+const CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID: &str = r"
+CREATE INDEX IF NOT EXISTS idx_t_join_set_response_execution_id_id ON t_join_set_response (execution_id, id);
 ";
 
 /// Stores executions in `PendingState`
@@ -497,7 +501,7 @@ impl SqlitePool {
                 let init_tx = init(init_tx, CREATE_TABLE_T_JOIN_SET_RESPONSE);
                 let init_tx = init(
                     init_tx,
-                    CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_CREATED_AT,
+                    CREATE_INDEX_IDX_T_JOIN_SET_RESPONSE_EXECUTION_ID_ID,
                 );
                 // t_state
                 let init_tx = init(init_tx, CREATE_TABLE_T_STATE);
@@ -1875,7 +1879,7 @@ impl SqlitePool {
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
         tx.prepare(
             "SELECT created_at, join_set_id, json_value FROM t_join_set_response WHERE \
-                execution_id = :execution_id ORDER BY created_at",
+                execution_id = :execution_id ORDER BY id",
         )
         .map_err(convert_err)?
         .query_map(
@@ -1905,7 +1909,7 @@ impl SqlitePool {
     ) -> Result<Option<JoinSetResponseEventOuter>, DbError> {
         tx.prepare(
             "SELECT created_at, join_set_id, json_value FROM t_join_set_response WHERE \
-            execution_id = :execution_id AND join_set_id = :join_set_id ORDER BY created_at
+            execution_id = :execution_id AND join_set_id = :join_set_id ORDER BY id
             LIMIT 1 OFFSET :offset",
         )
         .map_err(convert_err)?
@@ -1937,7 +1941,7 @@ impl SqlitePool {
     ) -> Result<Vec<JoinSetResponseEventOuter>, DbError> {
         tx.prepare(
             "SELECT created_at, join_set_id, json_value FROM t_join_set_response WHERE \
-            execution_id = :execution_id ORDER BY created_at
+            execution_id = :execution_id ORDER BY id
             LIMIT -1 OFFSET :offset",
         )
         .map_err(convert_err)?
